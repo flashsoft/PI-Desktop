@@ -683,7 +683,7 @@
   padding: 4px;
   border: 1px solid var(--ds-border-subtle);
   border-radius: var(--radius-md);
-  background: var(--ds-bg-elevated);
+  background: var(--ds-bg-elevated-opaque);
   box-shadow: var(--ds-shadow-dialog);
 }
 
