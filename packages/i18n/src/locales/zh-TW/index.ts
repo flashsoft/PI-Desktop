@@ -201,6 +201,14 @@ export const zhTW = {
     referenceUnavailable: "對話無法使用",
     sessionMissing: "該對話已不存在",
   },
+  topbar: {
+    copyBranch: "複製分支「{{branch}}」",
+    copyPath: "複製路徑：{{path}}",
+    copied: "已複製",
+    openLocation: "打開位置",
+    openWith: "用 {{name}} 打開",
+    noOpenLocationApps: "找不到支援的應用程式",
+  },
   chat: {
     emptyTitle: "今天想做點什麼？",
     emptyTitleInProject: "今天想在 {{project}} 裡做點什麼？",

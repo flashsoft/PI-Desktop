@@ -208,6 +208,14 @@ export const tr = {
     referenceUnavailable: "Oturum kullanılamıyor",
     sessionMissing: "Bu oturum artık mevcut değil",
   },
+  topbar: {
+    copyBranch: '"{{branch}}" dalını kopyala',
+    copyPath: "Yolu kopyala: {{path}}",
+    copied: "Kopyalandı",
+    openLocation: "Konumu aç",
+    openWith: "{{name}} ile aç",
+    noOpenLocationApps: "Desteklenen uygulama bulunamadı",
+  },
   chat: {
     emptyTitle: "Neyi birlikte oluşturalım?",
     emptyTitleInProject: "{{project}} içinde ne oluşturalım?",

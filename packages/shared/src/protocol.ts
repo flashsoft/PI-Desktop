@@ -274,6 +274,10 @@ export const IPC = {
     closeBehaviorSet: "pi-desktop/window/closeBehavior/set",
     menuRendererReady: "pi-desktop/menu/rendererReady",
     nativeMenuAction: "pi-desktop/menu/nativeAction",
+    /** Detected whitelisted apps that can open a session directory. */
+    openLocationApps: "pi-desktop/openLocation/apps",
+    /** Open the active session directory in a whitelisted app. */
+    openLocation: "pi-desktop/openLocation/open",
   },
   event: {
     pluginChanged: "pi-desktop/event/pluginChanged",

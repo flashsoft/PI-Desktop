@@ -329,6 +329,32 @@ combined model × reasoning selection (§11).
 
 ---
 
+### 2.7 Session-context cluster
+
+The conversation top bar's right side surfaces the active session's working
+context ahead of the action lane:
+
+```text
+[⑂ branch] [📁 …/tail/of/path] [Open location ▾]   [＋ New] [🔍 Search]
+```
+
+- **Branch badge** — shown when the workspace root resolved a git branch and
+  the session works in that root. Clicking copies the branch name and swaps
+  the glyph to a check briefly.
+- **Path badge** — shows the session's effective directory with the head
+  elided (the tail stays visible at any width), tooltips the full path, and
+  copies the full path on click with the same check feedback.
+- **Open location** — a split button. The main half opens the directory
+  directly with the persisted preferred app (first detected editor by
+  default); the caret opens a menu of the editors, platform file manager, and
+  terminals detected on this machine. Choosing a menu entry persists it as the
+  new default.
+
+Security contract: the renderer names only a session id and a catalog app id.
+The main process resolves the target directory from the host's own session /
+workspace records and launches only whitelisted catalog ids with argument
+arrays — renderer-supplied paths are never trusted.
+
 ## 3. Sidebar
 
 ### 3.1 Purpose

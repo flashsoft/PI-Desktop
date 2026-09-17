@@ -201,6 +201,14 @@ export const zhCN = {
     referenceUnavailable: "会话不可用",
     sessionMissing: "该会话已不存在",
   },
+  topbar: {
+    copyBranch: "复制分支「{{branch}}」",
+    copyPath: "复制路径：{{path}}",
+    copied: "已复制",
+    openLocation: "打开位置",
+    openWith: "用 {{name}} 打开",
+    noOpenLocationApps: "未找到支持的应用",
+  },
   chat: {
     emptyTitle: "今天想做点什么？",
     emptyTitleInProject: "今天想在 {{project}} 里做点什么？",

@@ -206,6 +206,14 @@ export const en = {
     referenceUnavailable: "Session unavailable",
     sessionMissing: "That session no longer exists",
   },
+  topbar: {
+    copyBranch: 'Copy branch "{{branch}}"',
+    copyPath: "Copy path: {{path}}",
+    copied: "Copied",
+    openLocation: "Open location",
+    openWith: "Open with {{name}}",
+    noOpenLocationApps: "No supported applications found",
+  },
   chat: {
     emptyTitle: "What can I help you build?",
     emptyTitleInProject: "What can we build in {{project}}?",

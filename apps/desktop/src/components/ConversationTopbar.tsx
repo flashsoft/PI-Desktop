@@ -6,6 +6,7 @@ import {
   IconSearch,
 } from "./icons";
 import { TooltipButton } from "./ui";
+import { SessionContextBadges } from "./SessionContextBadges";
 
 function projectName(path?: string | null, name?: string | null) {
   if (name) return name;
@@ -90,6 +91,7 @@ export function ConversationTopbar({
       </div>
 
       <div className="ct-right">
+        <SessionContextBadges />
         <div className="ct-actions">
           <TooltipButton
             type="button"
