@@ -18,5 +18,6 @@ export * from "./types/capabilities.js";
 export * from "./types/marketplace.js";
 export * from "./types/composer.js";
 export * from "./types/platform.js";
+export * from "./types/open-location.js";
 export * from "./types/workpanel.js";
 export * from "./types/filesystem.js";

@@ -208,6 +208,14 @@ export const ko = {
     referenceUnavailable: "세션을 사용할 수 없음",
     sessionMissing: "해당 세션이 더 이상 존재하지 않습니다",
   },
+  topbar: {
+    copyBranch: '브랜치 "{{branch}}" 복사',
+    copyPath: "경로 복사: {{path}}",
+    copied: "복사됨",
+    openLocation: "위치 열기",
+    openWith: "{{name}}(으)로 열기",
+    noOpenLocationApps: "지원되는 애플리케이션을 찾을 수 없습니다",
+  },
   chat: {
     emptyTitle: "무엇을 만들어 볼까요?",
     emptyTitleInProject: "{{project}}에서 무엇을 만들어 볼까요?",

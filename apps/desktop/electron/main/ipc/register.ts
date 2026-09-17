@@ -12,6 +12,7 @@ import { registerMarketIpc } from "./market-ipc";
 import { registerMcpIpc } from "./mcp-ipc";
 import { searchMcpMarket } from "../mcp-registry-catalog";
 import { registerNotificationIpc } from "./notification-ipc";
+import { registerOpenLocationIpc } from "./open-location-ipc";
 import { registerPluginIpc } from "./plugin-ipc";
 import { registerPluginUiIpc } from "./plugin-ui-ipc";
 import { registerProviderIpc } from "./provider-ipc";
@@ -255,6 +256,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     executeNativeMenuAction,
   });
   registerPullsIpc({ registrar, getHost });
+  registerOpenLocationIpc({ registrar, getHost });
   registerScheduledIpc({
     registrar,
     getHost,

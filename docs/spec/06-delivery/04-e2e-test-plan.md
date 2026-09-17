@@ -4315,6 +4315,31 @@ identify the platform validation still needed.
 - **Status**: Unit-covered (`icon-tooltip.test.mjs` source contract); rendered
   pointer/Escape/blur validation Draft
 
+#### E2E-UI-topbar-session-context: Branch, path, and open-location controls
+
+- **Preconditions**: PI-Desktop is open on a conversation whose workspace is a
+  git repository, on a machine with at least one catalog editor installed.
+- **Steps**: 1) Click the branch badge and paste elsewhere. 2) Hover the path
+  badge and note the tooltip; click it and paste elsewhere. 3) Narrow the
+  window until the path elides and confirm the tail (the directory name) stays
+  visible. 4) Click the open-location main button and confirm the directory
+  opens in the preferred app. 5) Open the caret menu, choose a different app,
+  and confirm the directory opens there. 6) Click the main button again and
+  confirm the newly chosen app is now the default. 7) Open a projectless
+  temporary chat and confirm the cluster hides or falls back to the workspace
+  root. 8) Open a conversation in a non-git directory and confirm the branch
+  badge hides while the path badge and open-location remain.
+- **Expected**: The branch badge copies the branch name; the path badge
+  tooltips the full path and copies it on click; both show brief check
+  feedback. The menu lists exactly the detected catalog apps in catalog order.
+  Every open action lands in the session's effective directory, never a
+  renderer-supplied path. A chosen app persists across clicks and restarts.
+- **Specs linked**: `04-ux/08-component-spec.md §2.7`
+- **Acceptance**: Quality
+- **Milestone**: M5
+- **Status**: Unit-covered (`open-location.test.mjs`,
+  `session-context.test.mjs`); rendered pointer validation Draft
+
 #### E2E-UI-row-actions-do-not-swallow-the-row-click: A hidden row action is inert
 
 - **Preconditions**: PI-Desktop is open with two retained projects, each with

@@ -199,6 +199,14 @@ export const fr = {
     referenceUnavailable: "Session indisponible",
     sessionMissing: "Cette session n'existe plus",
   },
+  "topbar": {
+    "copyBranch": "Copier la branche « {{branch}} »",
+    "copyPath": "Copier le chemin : {{path}}",
+    "copied": "Copié",
+    "openLocation": "Ouvrir l’emplacement",
+    "openWith": "Ouvrir avec {{name}}",
+    "noOpenLocationApps": "Aucune application prise en charge trouvée",
+  },
   "chat": {
     "emptyTitle": "Que puis-je vous aider à créer ?",
     "emptyTitleInProject": "Que pouvons-nous construire dans {{project}} ?",

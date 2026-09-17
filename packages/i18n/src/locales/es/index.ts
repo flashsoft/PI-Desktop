@@ -199,6 +199,14 @@ export const es = {
     referenceUnavailable: "Sesión no disponible",
     sessionMissing: "Esa sesión ya no existe",
   },
+  "topbar": {
+    "copyBranch": "Copiar rama «{{branch}}»",
+    "copyPath": "Copiar ruta: {{path}}",
+    "copied": "Copiado",
+    "openLocation": "Abrir ubicación",
+    "openWith": "Abrir con {{name}}",
+    "noOpenLocationApps": "No se encontraron aplicaciones compatibles",
+  },
   "chat": {
     "emptyTitle": "¿Qué puedo ayudarte a construir?",
     "emptyTitleInProject": "¿Qué podemos construir en {{project}}?",

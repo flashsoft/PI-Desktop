@@ -45,6 +45,7 @@ import type {
   McpServerRecord,
   McpServerStatus,
   OnboardingState,
+  OpenLocationApp,
   OAuthLoginEvent,
   OAuthRespondInput,
   OAuthStartResult,
@@ -504,6 +505,12 @@ export const api = {
     invoke<{ ok: boolean }>(IPC.invoke.providersOauthCancel, loginId),
   deleteOauthAccount: (providerId: string) =>
     invoke<{ ok: boolean }>(IPC.invoke.providersOauthDelete, providerId),
+  /** Whitelisted local apps that can open the session directory. */
+  listOpenLocationApps: () =>
+    invoke<{ apps: OpenLocationApp[] }>(IPC.invoke.openLocationApps),
+  /** Open the session's working directory in a whitelisted app. */
+  openLocation: (sessionId: string, appId: string) =>
+    invoke<{ ok: boolean }>(IPC.invoke.openLocation, { sessionId, appId }),
   getProject: () =>
     invoke<{ workspace: ProjectWorkspace | null }>(IPC.invoke.projectGet),
   listProjects: () =>
