@@ -1,20 +1,16 @@
-import { lazy, Suspense, type CSSProperties, type ReactNode } from "react";
-import { TooltipButton, cx } from "../../components/ui";
-import {
-  IconNewSession,
-  IconPanel,
-  IconPanelOpen,
-} from "../../components/icons";
-import { Sidebar } from "../../components/Sidebar";
-import { ConversationTopbar } from "../../components/ConversationTopbar";
-import { WorkPanel } from "../../components/workpanel/WorkPanel";
+import { type CSSProperties, lazy, type ReactNode, Suspense } from "react";
 import { ChatSurface } from "../../components/ChatSurface";
-import { SearchDialog } from "../../components/SearchDialog";
-import { ToastHost } from "../../components/Toast";
+import { ConversationTopbar } from "../../components/ConversationTopbar";
 import { ExtensionPromptHost } from "../../components/ExtensionPromptDialog";
+import { IconPanel, IconPanelOpen } from "../../components/icons";
 import { ProjectCreateDialog } from "../../components/ProjectCreateDialog";
+import { SearchDialog } from "../../components/SearchDialog";
+import { Sidebar } from "../../components/Sidebar";
+import { ToastHost } from "../../components/Toast";
 import { UpdateBanner } from "../../components/UpdateBanner";
+import { cx, TooltipButton } from "../../components/ui";
 import { WindowControls } from "../../components/WindowControls";
+import { WorkPanel } from "../../components/workpanel/WorkPanel";
 import { api } from "../../lib/api";
 import { CollapsedTitlebarActions, RoutePending } from "./chrome";
 import { useAppShellRuntime } from "./useAppShellRuntime";
@@ -108,6 +104,8 @@ export function AppShell() {
               sidebarWidth={sidebarWidth}
               onWidthChange={handleSidebarWidthChange}
               onWidthCommit={handleSidebarWidthCommit}
+              onNewTask={() => void runMenuCommand("newTask")}
+              onOpenSearch={() => setSearchOpen(true)}
             />
           ) : null}
 
@@ -126,18 +124,6 @@ export function AppShell() {
                   onNewTask={() => void runMenuCommand("newTask")}
                   sidebarToggleShortcut={sidebarToggleShortcut}
                 />
-              )}
-              {!sidebarCollapsed && (
-                <TooltipButton
-                  type="button"
-                  className="title-nav-btn"
-                  tooltip={t("nav.newTask")}
-                  ariaLabel={t("nav.newTask")}
-                  data-nav="new-task"
-                  onClick={() => void runMenuCommand("newTask")}
-                >
-                  <IconNewSession size={15} />
-                </TooltipButton>
               )}
               <div className="window-chrome-drag" aria-hidden />
               <WindowControls contained />

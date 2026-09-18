@@ -47,17 +47,33 @@ test("sidebar brand returns to the chat home", () => {
   assert.match(brandButton, /t\("app\.shellName"\)/);
 });
 
-test("sidebar header retains non-mac branding and collapse without a search control", () => {
+test("sidebar header hosts branding, search, and collapse controls", () => {
   const header = sidebarSource.match(
     /<div className="sidebar-header">[\s\S]*?<\/div>\s*<\/div>/,
   )?.[0] ?? "";
 
   assert.match(header, /className="brand no-drag"/);
   assert.match(header, /className="sidebar-header-actions no-drag"/);
-  assert.doesNotMatch(header, /IconSearch/);
+  assert.match(header, /<IconSearch/);
+  assert.match(header, /data-nav="open-search"/);
+  assert.match(header, /ariaLabel=\{t\("nav\.search"\)\}/);
   assert.match(header, /<IconSidebar/);
   assert.match(header, /data-nav="toggle-sidebar"/);
   assert.doesNotMatch(appSource, /IconChevronLeft|IconChevronRight/);
+});
+
+test("sidebar primary action row creates a new task", () => {
+  const row = sidebarSource.match(
+    /<div className="sidebar-primary no-drag">[\s\S]*?<\/button>\s*<\/div>/,
+  )?.[0] ?? "";
+
+  assert.match(row, /className="sidebar-new-task"/);
+  assert.match(row, /data-action="new-task"/);
+  assert.match(row, /onClick=\{onNewTask\}/);
+  assert.match(row, /<IconNewSession/);
+  assert.match(row, /t\("nav\.newTask"\)/);
+  assert.match(globalStyles, /\.sidebar-new-task:hover\s*\{[^}]*background:\s*var\(--ds-bg-hover\);/s);
+  assert.match(globalStyles, /\.sidebar-new-task:hover \.sidebar-new-task-plus,/);
 });
 
 test("work panel collapse control is the viewport-fixed shell toggle", () => {

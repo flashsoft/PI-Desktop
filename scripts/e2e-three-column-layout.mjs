@@ -720,13 +720,16 @@ async function main() {
         const sidebar = document.querySelector(".sidebar");
         const platform = document.documentElement.dataset.platform;
         const inset = parseFloat(getComputedStyle(row).paddingLeft);
-        const actionRight = Math.max(...actions.map(el => el.getBoundingClientRect().right));
+        const actionRight = actions.length
+          ? Math.max(...actions.map(el => el.getBoundingClientRect().right))
+          : row.getBoundingClientRect().left;
         return {
           headerLeft: headerBox.left,
           headerRight: headerBox.right,
           actionRight,
-          leftClear: actions.length > 0 && headerBox.left >= actionRight + 8,
-          insetClear: actions[0].getBoundingClientRect().left >= (sidebar?.getBoundingClientRect().right ?? 0) + inset,
+          leftClear: actions.length === 0 || headerBox.left >= actionRight + 8,
+          insetClear: actions.length === 0 ||
+            actions[0].getBoundingClientRect().left >= (sidebar?.getBoundingClientRect().right ?? 0) + inset,
           rightClear: headerBox.right <= window.innerWidth -
             (platform === "win32" || platform === "linux" ? 120 : 0) &&
             (!controls || headerBox.right <= controls.getBoundingClientRect().left),

@@ -1,10 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../stores/app-store";
-import {
-  IconSidebar,
-  IconNewSession,
-  IconSearch,
-} from "./icons";
+import { IconNewSession, IconSearch, IconSidebar } from "./icons";
 import { TooltipButton } from "./ui";
 import { SessionContextBadges } from "./SessionContextBadges";
 
@@ -66,9 +62,9 @@ export function ConversationTopbar({
     >
       <div className="ct-left">
         {/*
-          Always mounted: the slot animates from 0 to 28px with the dock, so
-          unmounting it would reintroduce the first-frame title jump. While the
-          sidebar is open the slot is zero-width and hidden from AT.
+          Always mounted: the slot slides in with the dock, so unmounting it
+          would reintroduce the first-frame title jump. While the sidebar is
+          open the slot sits off the pane's left edge and hidden from AT.
         */}
         <div className="ct-lead" aria-hidden={!sidebarCollapsed}>
           <TooltipButton
@@ -81,6 +77,26 @@ export function ConversationTopbar({
           >
             <IconSidebar size={15} />
           </TooltipButton>
+          <TooltipButton
+            type="button"
+            className="ct-icon-btn"
+            tooltip={t("nav.newTask")}
+            ariaLabel={t("nav.newTask")}
+            tabIndex={sidebarCollapsed ? undefined : -1}
+            onClick={onNewTask}
+          >
+            <IconNewSession size={15} />
+          </TooltipButton>
+          <TooltipButton
+            type="button"
+            className="ct-icon-btn"
+            tooltip={t("nav.search")}
+            ariaLabel={t("nav.search")}
+            tabIndex={sidebarCollapsed ? undefined : -1}
+            onClick={onOpenSearch}
+          >
+            <IconSearch size={15} />
+          </TooltipButton>
         </div>
         <div
           className="ct-title-wrap"
@@ -92,26 +108,6 @@ export function ConversationTopbar({
 
       <div className="ct-right">
         <SessionContextBadges />
-        <div className="ct-actions">
-          <TooltipButton
-            type="button"
-            className="ct-icon-btn"
-            tooltip={t("nav.newTask")}
-            ariaLabel={t("nav.newTask")}
-            onClick={onNewTask}
-          >
-            <IconNewSession size={15} />
-          </TooltipButton>
-          <TooltipButton
-            type="button"
-            className="ct-icon-btn"
-            tooltip={t("nav.search")}
-            ariaLabel={t("nav.search")}
-            onClick={onOpenSearch}
-          >
-            <IconSearch size={15} />
-          </TooltipButton>
-        </div>
       </div>
     </div>
   );

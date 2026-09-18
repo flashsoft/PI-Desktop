@@ -220,15 +220,17 @@ palette / application menu, not the top bar.)
 ### 2.2 Anatomy
 
 ```text
-[☰ Sidebar] [Task title]                          [＋ New] [🔍 Search]
+[☰ Sidebar] [Task title]
 ```
 
 (Icons described functionally; actual render uses Lucide SVGs. The `[☰ Sidebar]`
 toggle renders **only when the sidebar is collapsed**; when the sidebar is
-expanded it owns that control, so the top bar does not duplicate it. The
-`[🔍 Search]` control is the chrome search entry; the expanded sidebar header
-does not duplicate it. Keyboard shortcuts and the application menu remain
-available.)
+expanded it owns that control, so the top bar does not duplicate it. New task
+and global search live in the sidebar (§3): a primary new-task row under the
+sidebar header and a search icon in the header actions. Keyboard shortcuts and
+the application menu remain available. While the sidebar is collapsed, the top
+bar's leading slot mirrors these entries (sidebar toggle, new task, search)
+until the sidebar returns.)
 
 The conversation top bar renders for the chat route only; Pull requests, Scheduled,
 Plugins, and Settings keep the frameless drag band. It owns the task title and
@@ -308,7 +310,6 @@ combined model × reasoning selection (§11).
 | Element | Default | Running | Error | No workspace |
 |---|---|---|---|---|
 | Task title | session title (or untitled), capped at 10 characters with an ellipsis when needed | same | same | same |
-| New task / Search | icon buttons | same | same | same |
 | Composer stop control | hidden | visible only when the running composer draft is empty | hidden | hidden |
 | Project name | title tooltip only | same | same | omitted |
 
@@ -322,7 +323,8 @@ combined model × reasoning selection (§11).
 
 ### 2.6 MVP constraints
 
-- No search field in topbar (deferred)
+- No search field or new-task/search action buttons in the top bar; both live
+  in the sidebar (§3).
 - Notification history is the bounded D117 inbox; scheduled reminders,
   durable permission-request history, and notification preferences remain out
   of scope. Interactive prompt notifications are native-only and do not enter
@@ -333,10 +335,10 @@ combined model × reasoning selection (§11).
 ### 2.7 Session-context cluster
 
 The conversation top bar's right side surfaces the active session's working
-context ahead of the action lane:
+context:
 
 ```text
-[⑂ branch] [📁 …/tail/of/path] [Open location ▾]   [＋ New] [🔍 Search]
+[⑂ branch] [📁 …/tail/of/path] [Open location ▾]
 ```
 
 - **Branch badge** — shown when the workspace root resolved a git branch and
@@ -380,8 +382,9 @@ their hit areas remain in the layout so revealing them does not shift labels.
 ```text
 Expanded (~275px, D034/D070):
 +---------------------------+
-| [lights]             [◧] |  macOS
-| [π] PI-Desktop       [◧] |  Windows/Linux
+| [lights]          [🔍][◧] |  macOS
+| [π] PI-Desktop    [🔍][◧] |  Windows/Linux
+| [✎ New task            +] |
 | PINNED                   |
 |   • Pinned task  project-A|
 | SESSIONS         [msg+][↕]|
@@ -500,8 +503,10 @@ visually distinct from list content.
   right-aligned; clicking the chip checks for updates or opens the available
   release in Settings
 - Click Collapse sidebar at the right of the header row to collapse the sidebar.
-  Global search opens from the conversation topbar, shortcuts, and application
-  menu; the expanded sidebar header does not host a search control
+  Global search opens from the search icon in the sidebar header actions,
+  keyboard shortcuts, and the application menu. The primary new-task row under
+  the header runs the same new-task command as the application menu: it creates
+  a session in the current scope and focuses the composer
 - Drag the expanded sidebar's right edge to adjust its width. The main pane
   reflows continuously, the press position remains anchored, and the final
   width is saved on release. Focus the edge handle and use ArrowLeft/Right,
@@ -686,9 +691,9 @@ visually distinct from list content.
 
 ### 3.8 MVP constraints
 
-- Global search opens from the conversation topbar, keyboard shortcuts, and
-  the application menu; the expanded sidebar header does not host a search
-  control
+- Global search opens from the sidebar header search icon, keyboard shortcuts,
+  and the application menu; the conversation top bar no longer hosts search or
+  new-task controls
 - Project drag/manual reorder is renderer-local and changes presentation only;
   it never moves an on-disk directory or changes the host-selected workspace
 - Project tabs do not create another host workspace or a second main pane

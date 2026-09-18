@@ -89,12 +89,22 @@ test("project title toggles its conversation group without forcing it open", () 
   assert.doesNotMatch(sidebarSource, /className="project-collapse-toggle"/);
 });
 
-test("global search stays on the conversation topbar, not the sidebar header", () => {
-  assert.doesNotMatch(sidebarSource, /onOpenSearch|IconSearch|nav\.search/);
-  assert.doesNotMatch(sidebarSource, /sidebar-session-search|toggleSearch/);
-  assert.match(topbarSource, /onOpenSearch/);
-  assert.match(topbarSource, /<IconSearch/);
-  assert.match(topbarSource, /ariaLabel=\{t\("nav\.search"\)\}/);
+test("global search and new task entries live in the sidebar, not the topbar's action lane", () => {
+  assert.match(sidebarSource, /onOpenSearch/);
+  assert.match(sidebarSource, /<IconSearch/);
+  assert.match(sidebarSource, /ariaLabel=\{t\("nav\.search"\)\}/);
+  assert.match(sidebarSource, /className="sidebar-new-task"/);
+  assert.match(sidebarSource, /data-action="new-task"/);
+  assert.match(sidebarSource, /onClick=\{onNewTask\}/);
+  // The always-visible right-side action lane is gone from the top bar; the
+  // collapsed-only lead slot mirrors the entries while the sidebar is hidden.
+  assert.doesNotMatch(topbarSource, /className="ct-actions"/);
+  const lead = topbarSource.match(
+    /<div className="ct-lead"[\s\S]*?<\/div>\s*<div\s+className="ct-title-wrap"/,
+  )?.[0] ?? "";
+  assert.match(lead, /<IconNewSession/);
+  assert.match(lead, /<IconSearch/);
+  assert.match(lead, /aria-hidden=\{!sidebarCollapsed\}/);
 });
 
 test("project rows expose press-and-move title drag and keyboard reorder behavior", () => {

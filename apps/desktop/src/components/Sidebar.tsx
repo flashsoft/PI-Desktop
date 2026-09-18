@@ -71,6 +71,8 @@ import {
   IconCopy,
   IconCircleAlert,
   IconNewSession,
+  IconPlus,
+  IconSearch,
   IconFolder,
   IconMore,
   IconNewProject,
@@ -196,6 +198,8 @@ function compareOptionalDate(
 
 export function Sidebar({
   onToggleSidebar,
+  onNewTask,
+  onOpenSearch,
   sidebarToggleShortcut,
   sidebarWidth,
   onWidthChange,
@@ -204,6 +208,8 @@ export function Sidebar({
   onAnimationEnd,
 }: {
   onToggleSidebar: () => void;
+  onNewTask: () => void;
+  onOpenSearch: () => void;
   sidebarToggleShortcut: string;
   sidebarWidth: number;
   onWidthChange: (width: number) => void;
@@ -2083,6 +2089,16 @@ export function Sidebar({
           <TooltipButton
             type="button"
             className="icon-btn icon-btn-square"
+            tooltip={t("nav.search")}
+            ariaLabel={t("nav.search")}
+            data-nav="open-search"
+            onClick={onOpenSearch}
+          >
+            <IconSearch size={15} />
+          </TooltipButton>
+          <TooltipButton
+            type="button"
+            className="icon-btn icon-btn-square"
             tooltip={
               sidebarToggleShortcut
                 ? `${t("nav.collapseSidebar")} (${sidebarToggleShortcut})`
@@ -2096,6 +2112,19 @@ export function Sidebar({
             <IconSidebar size={15} />
           </TooltipButton>
         </div>
+      </div>
+
+      <div className="sidebar-primary no-drag">
+        <button
+          type="button"
+          className="sidebar-new-task"
+          data-action="new-task"
+          onClick={onNewTask}
+        >
+          <IconNewSession size={15} aria-hidden />
+          <span className="sidebar-new-task-label">{t("nav.newTask")}</span>
+          <IconPlus size={14} className="sidebar-new-task-plus" aria-hidden />
+        </button>
       </div>
 
       <div className="sidebar-body no-drag">
