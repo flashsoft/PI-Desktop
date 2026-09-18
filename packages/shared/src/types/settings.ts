@@ -6,6 +6,7 @@ import type { ContextCompactionSettings } from "./sessions.js";
 import type { Mode } from "./common.js";
 import type { GlobalPermissionMode } from "./permissions.js";
 import type { PluginMarketSource } from "./plugins.js";
+import type { SpeechSettings } from "./speech.js";
 
 export type ThemePreference = "system" | "light" | "dark" | `plugin:${string}`;
 
@@ -22,6 +23,8 @@ export type CloseBehavior = "ask" | "tray" | "quit";
 export type AppSettings = {
   defaultProviderId?: string;
   defaultModelId?: string;
+  /** Host speech bindings. Absent means voice actions stay disabled. */
+  speech?: SpeechSettings;
   defaultMode: Mode;
   /** Configured command shell for the agent Bash protocol tool. */
   defaultCommandShell?: CommandShellId;
@@ -41,6 +44,8 @@ export type AppSettings = {
    * Absent means 1. Range 0.8–1.5 in 0.025 steps. Window zoom is independent.
    */
   fontScale?: number;
+  /** Transcript presentation only; absent means detailed. Reasoning is retained. */
+  thinkingDisplayMode?: "detailed" | "compact";
   /**
    * @deprecated Unreleased D343 px field. Reads migrate into `fontScale`
    * as `px / 14`; new writes persist `fontScale` instead.
@@ -79,6 +84,11 @@ export type AppSettings = {
    * `external`: Open directly in the system's default web browser.
    */
   linkOpenTarget?: LinkOpenTarget;
+  /**
+   * Attach vendor hosted-search tools when the current wire API supports them.
+   * Absent means off.
+   */
+  nativeWebSearchEnabled?: boolean;
   /**
    * Which context figure the composer ring and its summary lead with (D398).
    * `remaining` (default, absent) counts down from 100%; `used` counts up.

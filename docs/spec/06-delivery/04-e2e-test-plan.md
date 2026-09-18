@@ -154,6 +154,7 @@ The minimum selection is:
 - Imported-extension dependency installation or registry-boundary changes: `pnpm test:e2e:plugin-import-deps`.
 - Trusted extension or plugin-extension changes: `pnpm test:e2e:trusted-extensions`.
 - Session collaboration / Session Orchestrator: `pnpm test:e2e:collaboration`.
+- Completion-notice silence or the silent-turn contract (D193 / D446): `pnpm test:e2e:session-completion`.
 - Changes spanning multiple surfaces use the union of the applicable suites.
 
 `pnpm test:e2e` is the default cross-system smoke suite for host RPC, IPC,
@@ -334,25 +335,6 @@ identify the platform validation still needed.
 - **Milestone**: M6+
 - **Status**: Workflow script/unit-covered; clean-machine journey required for
   each release (run only in a capable environment when this surface changes)
-
-#### E2E-196d: Unsigned macOS packs bind the product codesign identifier
-
-- **Preconditions**: A default unsigned macOS pack (`CSC_IDENTITY_AUTO_DISCOVERY=false`)
-  has produced `PI-Desktop.app` for at least one native architecture.
-- **Steps**: 1) Read `CFBundleIdentifier` from `Contents/Info.plist`. 2) Run
-  `codesign -dv --verbose=4` on the outer app. 3) Confirm the identifier is not
-  `Electron`. 4) With the app unfocused, complete a turn that requests a native
-  task notification.
-- **Expected**: `CFBundleIdentifier` and the codesign `Identifier` are both
-  `net.aiuo.pi-desktop`. `Info.plist` is bound. macOS records the app in
-  System Settings → Notifications and does not require
-  `com.apple.private.usernotifications.bundle-identifiers`. Developer ID
-  packs keep their authority and the same identifier.
-- **Specs linked**: `06-delivery/06-release-runbook.md`, ADR 0278, issue #524
-- **Acceptance**: Quality
-- **Milestone**: M6+
-- **Status**: Automated by `macos-codesign-identity.test.mjs`; native
-  notification delivery remains release-runner validation
 
 #### E2E-212: GitHub Release starts the CNB mirror pipeline
 
@@ -888,6 +870,20 @@ identify the platform validation still needed.
 - **Status**: Source-level regression (`composer-ime.test.mjs`); full UI
   keyboard journey remains Draft. Protocol smoke does not dispatch key events.
 
+#### E2E-008e: Host speech transcribe and speak
+
+- **Preconditions**: A session is open. Settings → AI Voice is unconfigured.
+- **Steps**: 1) Confirm Composer transcribe/speak stay disabled. 2) Bind ASR
+  (`openai_audio` / whisper) and TTS. 3) Attach a small wav and transcribe it
+  into the draft. 4) Read the draft aloud.
+- **Expected**: Unconfigured actions never call the provider. Transcribe inserts
+  text. Speak writes session scratch audio and plays a bounded data URL.
+  Whisper/TTS never appear in the chat model picker.
+- **Specs linked**: `03-runtime/20-speech.md`, `04-ux/06-settings-ia.md`
+- **Acceptance**: C (speech)
+- **Milestone**: M2
+- **Status**: Source-level regression (`speech-capability.test.mjs`,
+  `plugin-speech-adapter.test.mjs`); live provider journey remains Draft.
 
 #### E2E-008a: First-turn tools load on demand
 
@@ -1035,6 +1031,28 @@ identify the platform validation still needed.
 - **Acceptance**: C (abort), F (persistence)
 - **Milestone**: M2
 - **Status**: Draft
+
+#### E2E-SESSION-outbox-duplicate-id-does-not-drop-history
+
+- **Preconditions**: Two sessions whose provider tool rows reuse the same
+  `toolCallId` as `messages.id` (for example `call_421522`). The first session
+  already persisted that id. The second session then runs several turns so
+  assistant/tool rows queue behind the colliding append.
+- **Steps**: 1) Complete a tool call in session A with id `call_421522`.
+  2) In session B, run the same provider tool id, then continue chatting for
+  several turns. 3) Quit and reopen. 4) Open both sessions.
+- **Expected**: Session A still has its original tool row. Session B kept its
+  later turns after reopen; the colliding tool row is stored under
+  `{sessionB}:{call_421522}` (or an equivalent remapped id). The persistence
+  outbox is empty and did not stay paused on `UNIQUE constraint failed:
+  messages.id`. No later assistant/tool row from either session is missing.
+- **Specs linked**: `03-runtime/04-data-storage.md`,
+  `03-runtime/06-host-rpc-protocol.md`, ADR 0041, D444
+- **Acceptance**: F (persistence)
+- **Milestone**: M2
+- **Status**: Unit-covered (`append_message_remaps_ids_owned_by_another_session`,
+  `persistence-outbox.test.mjs`); desktop journey outstanding
+
 
 #### E2E-011: Switch between project and temporary sessions
 
@@ -1549,6 +1567,32 @@ identify the platform validation still needed.
 - **Acceptance**: C
 - **Milestone**: M2
 - **Status**: Draft
+
+#### E2E-COMPOSER-narrow-controls: Composer controls adapt to a narrow chat column
+
+- **Preconditions**: Chat route active; a configured model is selected; the
+  composer is rendered in both empty-home and thread-docked variants.
+- **Steps**: 1) Set the Composer container to 560px and inspect the combined
+  model × reasoning trigger. 2) Set it to 480px, then 450px. 3) At each width,
+  inspect the mode, permission, context, enhancement, and Send/Stop controls;
+  open the model menu from the narrow trigger; repeat the visual check in the
+  other Composer variant.
+- **Expected**: The toolbar remains one non-wrapping row and does not overflow
+  its container. At 560px the reasoning label and separator yield first; at
+  480px the model label is further capped; at the 450px floor the combined
+  model × reasoning trigger is a 32px icon-only control. The full selection is
+  still available through the trigger's menu, tooltip, and accessible name.
+  Mode and permission labels remain single-line and ellipsized, the context
+  ring and action controls retain usable hit targets, and the single Send/Stop
+  slot remains reachable. Home and thread-docked composers match.
+- **Specs linked**: `04-ux/08-component-spec.md` (§11)
+- **Acceptance**: C (send/UI), Quality
+- **Milestone**: M2
+- **Status**: Automated on task candidate `737435248ebd32e0b2a406f93b7b245784bc4289`
+  (base `cea6e02c`): `pnpm test:e2e:layout` 167/167 including the 450px
+  model-chip assertion; `pnpm test:e2e:composer-autocomplete` and
+  `pnpm test:e2e:composer-paste` passed. Source-covered by
+  `composer-responsive.test.mjs`.
 
 #### E2E-090: Transcript bottom reserve tracks the docked composer height
 
@@ -2346,6 +2390,16 @@ identify the platform validation still needed.
 - **Specs linked**: `03-runtime/01-ipc-protocol.md`, `04-ux/07-ui-design-system.md`, `07-plugins/01-plugin-system.md`, `07-plugins/03-plugin-api.md`, `07-plugins/04-plugin-security.md`, `07-plugins/12-plugin-ipc-and-host-services.md`, ADR 0081, ADR 0082, ADR 0092, ADR 0093
 - **Acceptance**: G (isolated panel)
 - **Status**: Documented
+
+#### E2E-024AA: Plugin-owned UI follows the host locale
+
+- **Preconditions**: A loaded plugin with a panel or settings destination, and a plugin process subscribed to `pi.events.on("appearance:changed")`.
+- **Steps**: 1) Call `pi.app.getLocale` / `app.getAppearance` and confirm the tag matches Settings → language. 2) Switch the app language while the plugin stays loaded. 3) Confirm generated `contributes.settings` titles remain the author-language strings. 4) Confirm the plugin process and any open panel receive `appearance:changed` with the new `locale` and restyle their own copy.
+- **Expected**: The host publishes language only. Plugin-owned copy changes without a reload. The generated settings sheet does not parse `{ en, "zh-CN" }` maps. Host-owned identity still follows `manifest.i18n` (ADR 0267).
+- **Specs linked**: `07-plugins/03-plugin-api.md`, `07-plugins/02-plugin-manifest-schema.md`, `04-ux/02-i18n-english-first.md`, ADR 0280
+- **Acceptance**: G (plugin i18n)
+- **Status**: Automated in part (`apps/desktop/test/plugin-settings.test.mjs`, `plugin-work-panel-views.test.mjs`); UI walk-through Documented
+
 
 #### E2E-024Y: Large-file plugin reads and dropped-file grants stay host-gated
 
@@ -4938,8 +4992,15 @@ identify the platform validation still needed.
     overflow.
   - If automatic summary generation fails, a durable retained-tail fallback
     checkpoint is appended, the run stays active, and one warning explains
-    that older model context was reduced; if fallback persistence or the safe
-    budget guard fails, `CONTEXT_COMPACTION_FAILED` is emitted once.
+    that older model context was reduced; the transcript row for that
+    checkpoint reads "summary generation failed · recent context retained",
+    never `summary ≈N tokens` (ADR 0282). Before that fallback, the summary
+    request retries transient provider failures up to three times with
+    2s/4s/8s backoff, Stop cancels the backoff, deterministic failures do not
+    retry, and an input whose serialized prompt exceeds the window is sent
+    once more with tool results cut to a short prefix rather than skipping the
+    model. If fallback persistence or the safe budget guard fails,
+    `CONTEXT_COMPACTION_FAILED` is emitted once.
   - If the newest checkpoint is already the transcript leaf when a follow-up
     prompt crosses the hard budget, the runtime rebuilds a smaller tail from
     the full transcript and carries the existing summary forward instead of
@@ -6180,6 +6241,23 @@ identify the platform validation still needed.
 - **Status**: Unit-covered (`apps/desktop/test/user-mcp.test.mjs`,
   `packages/shared/src/mcp-import.test.ts`, host-core `mcp_servers` tests); full
   UI journey Draft
+
+#### E2E-100B: Remote HTTP MCP server OAuth 2.1 authorization and token lifecycle
+
+- **Preconditions**: An HTTP MCP server endpoint configured requiring OAuth 2.1 authentication (RFC 9728 discovery and PKCE S256).
+- **Steps**:
+  1. Open Settings > Agent > MCP. Add an HTTP MCP server URL.
+  2. The server status displays `Authorization required`.
+  3. Click `Authorize`. Main spins up loopback on `127.0.0.1`, launches external browser to the authorization endpoint with RFC 8707 `resource`.
+  4. Complete login in browser, redirecting to `http://127.0.0.1:<port>/callback`.
+  5. The loopback callback validates state/code, completes token exchange with PKCE verifier, saves token to encrypted secret `secret:mcp:<id>:oauth`, renders escaped success page, and emits `done` event.
+  6. Settings UI updates status to `Ready` with discovered tools, shows localized success toast, and displays `OAuth` badge.
+  7. When access token expires, `UserMcpRuntime` transparently uses refresh token to obtain a fresh access token without user prompt.
+  8. Moving the server via `mcp.transfer` preserves and re-keys the OAuth token secret under the destination ID.
+- **Specs linked**: `03-runtime/01-ipc-protocol.md`, ADR 0281, ADR 0142
+- **Acceptance**: E (tools & permissions), Security
+- **Milestone**: M5
+- **Status**: Unit-covered (`apps/desktop/test/mcp-oauth.test.mjs`, `apps/desktop/test/user-mcp.test.mjs`); full UI journey Draft
 
 #### E2E-101: A user skill is written once and scoped per project
 
@@ -7497,22 +7575,23 @@ identify the platform validation still needed.
 
 | Acceptance | Scenarios |
 |---|---|
+| A / C — Unicode stdio framing | E2E-RPC-unicode-separators |
 | C / G / Quality — Plugins navigation | E2E-NAV-plugins-button-goes-back |
 | C / D / Quality — Sidebar row states | E2E-LAYOUT-sidebar-row-states |
 | A / C / Quality — Sidebar material and settings return | E2E-LAYOUT-sidebar-settings |
 | B / F / Security — Provider copy | E2E-PROVIDER-copy-config-without-credentials |
 | A — App startup | E2E-001, E2E-002, E2E-003, E2E-004, E2E-067, E2E-076, E2E-079, E2E-092, E2E-097, E2E-143, E2E-150, E2E-168, E2E-204 |
 | B — Model config | E2E-005, E2E-006, E2E-007, E2E-038, E2E-050, E2E-052, E2E-055, E2E-066, E2E-080, E2E-082, E2E-102c, E2E-102d, E2E-102e, E2E-151, E2E-154, E2E-163, E2E-166, E2E-172, E2E-174, E2E-197, E2E-005G, E2E-005J, E2E-199, E2E-201, E2E-202, E2E-203, E2E-205, E2E-206, E2E-209 |
-| C — Conversation & stream | E2E-008, E2E-008d, E2E-008a, E2E-009, E2E-010, E2E-011, E2E-011a, E2E-011b, E2E-011d, E2E-011e, E2E-011g, E2E-031, E2E-040, E2E-047, E2E-048, E2E-048A, E2E-049, E2E-052, E2E-053, E2E-054, E2E-055, E2E-059, E2E-059a, E2E-060c, E2E-060d, E2E-061, E2E-061a, E2E-062, E2E-064, E2E-065, E2E-068, E2E-071, E2E-073, E2E-074, E2E-075, E2E-081, E2E-083, E2E-084, E2E-086, E2E-087, E2E-088, E2E-088b, E2E-089, E2E-090, E2E-094, E2E-095, E2E-096, E2E-097, E2E-098, E2E-099, E2E-102, E2E-102a, E2E-102b, E2E-102c, E2E-102d, E2E-102g, E2E-106, E2E-109, E2E-111, E2E-114, E2E-116, E2E-117, E2E-118, E2E-119, E2E-120, E2E-121, E2E-218, E2E-219, E2E-AGENTS-001, E2E-142, E2E-144, E2E-145, E2E-146, E2E-146a, E2E-147, E2E-151, E2E-154, E2E-155, E2E-158, E2E-159, E2E-161, E2E-162, E2E-166, E2E-172, E2E-173, E2E-174, E2E-177, E2E-178, E2E-179, E2E-180, E2E-182, E2E-183, E2E-187, E2E-198, E2E-199, E2E-202, E2E-203, E2E-207, E2E-208, E2E-CHAT-content-width-handles, E2E-250, E2E-102i, E2E-PLUGIN-session-orchestrator-real-workers, E2E-SUBAGENT-settlement-updates-before-parent-poll |
+| C — Conversation & stream | E2E-008, E2E-008d, E2E-008a, E2E-009, E2E-010, E2E-011, E2E-011a, E2E-011b, E2E-011d, E2E-011e, E2E-011g, E2E-031, E2E-040, E2E-047, E2E-048, E2E-048A, E2E-049, E2E-052, E2E-053, E2E-054, E2E-055, E2E-059, E2E-059a, E2E-060c, E2E-060d, E2E-061, E2E-061a, E2E-062, E2E-064, E2E-065, E2E-068, E2E-071, E2E-073, E2E-074, E2E-075, E2E-081, E2E-083, E2E-084, E2E-086, E2E-087, E2E-088, E2E-088b, E2E-089, E2E-090, E2E-COMPOSER-narrow-controls, E2E-094, E2E-095, E2E-096, E2E-097, E2E-098, E2E-099, E2E-102, E2E-102a, E2E-102b, E2E-102c, E2E-102d, E2E-102g, E2E-106, E2E-109, E2E-111, E2E-114, E2E-116, E2E-117, E2E-118, E2E-119, E2E-120, E2E-121, E2E-218, E2E-219, E2E-AGENTS-001, E2E-142, E2E-144, E2E-145, E2E-146, E2E-146a, E2E-147, E2E-151, E2E-154, E2E-155, E2E-158, E2E-159, E2E-161, E2E-162, E2E-166, E2E-172, E2E-173, E2E-174, E2E-177, E2E-178, E2E-179, E2E-180, E2E-182, E2E-183, E2E-187, E2E-198, E2E-199, E2E-202, E2E-203, E2E-207, E2E-208, E2E-CHAT-content-width-handles, E2E-250, E2E-102i, E2E-PLUGIN-session-orchestrator-real-workers, E2E-SUBAGENT-settlement-updates-before-parent-poll, E2E-SUBAGENT-resume-a-settled-delegation |
 | D — Workspace | E2E-012, E2E-013, E2E-022B, E2E-024I, E2E-047, E2E-049, E2E-057, E2E-058, E2E-060, E2E-068, E2E-075, E2E-078, E2E-153, E2E-158, E2E-182, E2E-187, E2E-252 |
 | D — Workspace (project ordering) | E2E-253 |
 | E — Tools & permissions | E2E-008a, E2E-014, E2E-015, E2E-016, E2E-017, E2E-018, E2E-019, E2E-024I, E2E-024K, E2E-040, E2E-049, E2E-074, E2E-093, E2E-097, E2E-099, E2E-100, E2E-101, E2E-102, E2E-102d, E2E-102e, E2E-102g, E2E-103, E2E-105, E2E-106, E2E-107, E2E-111, E2E-112, E2E-113, E2E-114, E2E-115, E2E-116, E2E-119, E2E-121, E2E-122, E2E-142, E2E-145, E2E-147, E2E-155, E2E-158, E2E-166, E2E-181, E2E-PLUGIN-imported-pi-package-skills |
 | F — Persistence | E2E-020, E2E-021, E2E-021a, E2E-036, E2E-037, E2E-038, E2E-040, E2E-042, E2E-047, E2E-048, E2E-051, E2E-054, E2E-056, E2E-061, E2E-062, E2E-064, E2E-066, E2E-068, E2E-071, E2E-072, E2E-073, E2E-082, E2E-084, E2E-096, E2E-098, E2E-102, E2E-102b, E2E-102c, E2E-102d, E2E-102g, E2E-102i, E2E-103, E2E-AGENTS-001, E2E-061a, E2E-073a, E2E-104, E2E-106, E2E-107, E2E-108, E2E-109, E2E-110, E2E-112, E2E-118, E2E-119, E2E-120, E2E-121, E2E-123, E2E-142, E2E-146, E2E-146a, E2E-148, E2E-151, E2E-158, E2E-160, E2E-168, E2E-171, E2E-177, E2E-178, E2E-183, E2E-186, E2E-005J, E2E-PLUGIN-session-orchestrator-real-workers |
 | F — Persistence (project ordering) | E2E-251 |
-| G — Plugins | E2E-022, E2E-022A, E2E-022B, E2E-022C, E2E-023, E2E-024, E2E-024B, E2E-024C, E2E-024D, E2E-024E, E2E-024W, E2E-024F, E2E-024G, E2E-024H, E2E-024I, E2E-024J, E2E-024K, E2E-024L, E2E-024M, E2E-024N, E2E-024O, E2E-024P, E2E-025, E2E-026, E2E-105, E2E-117, E2E-120, E2E-122, E2E-123, E2E-024Q, E2E-148, E2E-152, E2E-153, E2E-PLUGIN-imported-pi-package-skills, E2E-PLUGIN-import-extension-installs-dependencies, E2E-PLUGIN-import-extension-reports-missing-dependency, E2E-PLUGIN-global-shortcut-owns-only-its-own-command, E2E-PLUGIN-permission-gate-for-real-time-capabilities, E2E-PLUGIN-background-audio-and-realtime-connection, E2E-PLUGIN-fs-root-follows-the-calling-session |
+| G — Plugins | E2E-022, E2E-022A, E2E-022B, E2E-022C, E2E-023, E2E-024, E2E-024B, E2E-024C, E2E-024D, E2E-024AA, E2E-024E, E2E-024W, E2E-024F, E2E-024G, E2E-024H, E2E-024I, E2E-024J, E2E-024K, E2E-024L, E2E-024M, E2E-024N, E2E-024O, E2E-024P, E2E-025, E2E-026, E2E-105, E2E-117, E2E-120, E2E-122, E2E-123, E2E-024Q, E2E-148, E2E-152, E2E-153, E2E-PLUGIN-imported-pi-package-skills, E2E-PLUGIN-import-extension-installs-dependencies, E2E-PLUGIN-import-extension-reports-missing-dependency, E2E-PLUGIN-global-shortcut-owns-only-its-own-command, E2E-PLUGIN-permission-gate-for-real-time-capabilities, E2E-PLUGIN-background-audio-and-realtime-connection, E2E-PLUGIN-fs-root-follows-the-calling-session |
 | H — Diagnostics | E2E-027, E2E-031, E2E-034, E2E-042, E2E-096, E2E-098, E2E-104, E2E-107, E2E-108, E2E-109, E2E-110, E2E-113, E2E-115, E2E-116, E2E-118, E2E-121, E2E-146, E2E-146a, E2E-155, E2E-159, E2E-176, E2E-194, E2E-195 |
 | Security | E2E-028, E2E-029, E2E-030, E2E-024J, E2E-024K, E2E-024M, E2E-049, E2E-068, E2E-086, E2E-102c, E2E-102d, E2E-102e, E2E-105, E2E-106, E2E-107, E2E-108, E2E-109, E2E-110, E2E-112, E2E-113, E2E-115, E2E-116, E2E-117, E2E-119, E2E-121, E2E-122, E2E-123, E2E-142, E2E-148, E2E-151, E2E-153, E2E-158, E2E-187, E2E-196c, E2E-196b, E2E-196, E2E-PLUGIN-fs-root-follows-the-calling-session |
-| Quality | E2E-032, E2E-033, E2E-039, E2E-043, E2E-044, E2E-045, E2E-046, E2E-047, E2E-048, E2E-048A, E2E-049, E2E-050, E2E-053, E2E-055, E2E-056, E2E-057, E2E-058, E2E-059, E2E-060, E2E-061, E2E-062, E2E-063, E2E-064, E2E-065, E2E-066, E2E-067, E2E-068, E2E-069, E2E-070, E2E-071, E2E-072, E2E-073, E2E-074, E2E-075, E2E-076, E2E-077, E2E-078, E2E-079, E2E-080, E2E-081, E2E-082, E2E-083, E2E-084, E2E-085, E2E-086, E2E-092, E2E-093, E2E-094, E2E-095, E2E-096, E2E-097, E2E-098, E2E-099, E2E-100, E2E-101, E2E-102, E2E-102a, E2E-102b, E2E-102c, E2E-102d, E2E-102e, E2E-103, E2E-AGENTS-001, E2E-021a, E2E-024N, E2E-059a, E2E-060b, E2E-060c, E2E-061a, E2E-073a, E2E-111, E2E-114, E2E-117, E2E-118, E2E-119, E2E-120, E2E-122, E2E-123, E2E-142, E2E-143, E2E-144, E2E-145, E2E-146, E2E-147, E2E-148, E2E-150, E2E-151, E2E-153, E2E-155, E2E-158, E2E-159, E2E-160, E2E-161, E2E-162, E2E-163, E2E-168, E2E-172, E2E-173, E2E-174, E2E-011g, E2E-176, E2E-177, E2E-178, E2E-179, E2E-180, E2E-181, E2E-182, E2E-183, E2E-186, E2E-187, E2E-194, E2E-195, E2E-196a, E2E-196b, E2E-196c, E2E-198, E2E-199, E2E-200, E2E-196, E2E-201, E2E-204, E2E-202, E2E-203, E2E-205, E2E-206, E2E-207, E2E-208, E2E-209, E2E-210, E2E-218, E2E-219, E2E-250, E2E-252, E2E-102i, E2E-SUBAGENT-settlement-updates-before-parent-poll, E2E-PLUGIN-imported-pi-package-skills, E2E-PLUGIN-fs-root-follows-the-calling-session |
+| Quality | E2E-032, E2E-033, E2E-039, E2E-043, E2E-044, E2E-045, E2E-046, E2E-047, E2E-048, E2E-048A, E2E-049, E2E-050, E2E-053, E2E-055, E2E-056, E2E-057, E2E-058, E2E-059, E2E-060, E2E-061, E2E-062, E2E-063, E2E-064, E2E-065, E2E-066, E2E-067, E2E-068, E2E-069, E2E-070, E2E-071, E2E-072, E2E-073, E2E-074, E2E-075, E2E-076, E2E-077, E2E-078, E2E-079, E2E-080, E2E-081, E2E-082, E2E-083, E2E-084, E2E-085, E2E-086, E2E-092, E2E-093, E2E-094, E2E-095, E2E-096, E2E-097, E2E-098, E2E-099, E2E-100, E2E-101, E2E-102, E2E-102a, E2E-102b, E2E-102c, E2E-102d, E2E-102e, E2E-103, E2E-AGENTS-001, E2E-021a, E2E-024N, E2E-059a, E2E-060b, E2E-060c, E2E-061a, E2E-073a, E2E-111, E2E-114, E2E-117, E2E-118, E2E-119, E2E-120, E2E-122, E2E-123, E2E-142, E2E-143, E2E-144, E2E-145, E2E-146, E2E-147, E2E-148, E2E-150, E2E-151, E2E-153, E2E-155, E2E-158, E2E-159, E2E-160, E2E-161, E2E-162, E2E-163, E2E-168, E2E-172, E2E-173, E2E-174, E2E-011g, E2E-176, E2E-177, E2E-178, E2E-179, E2E-180, E2E-181, E2E-182, E2E-183, E2E-186, E2E-187, E2E-194, E2E-195, E2E-196a, E2E-196b, E2E-196c, E2E-198, E2E-199, E2E-200, E2E-196, E2E-201, E2E-204, E2E-202, E2E-203, E2E-205, E2E-206, E2E-207, E2E-208, E2E-209, E2E-210, E2E-218, E2E-219, E2E-250, E2E-252, E2E-102i, E2E-SUBAGENT-settlement-updates-before-parent-poll, E2E-PLUGIN-imported-pi-package-skills, E2E-PLUGIN-fs-root-follows-the-calling-session, E2E-SUBAGENT-resume-a-settled-delegation |
 | Quality (project ordering) | E2E-253 |
 | C — Conversation & stream (IME slash alias) | E2E-255 |
 | E — Tools & permissions (Skill residency) | E2E-254 |
@@ -7553,7 +7632,7 @@ identify the platform validation still needed.
 | Milestone | Scenarios |
 |---|---|
 | M1 | E2E-001, E2E-002, E2E-003, E2E-028, E2E-029 |
-| M2 | E2E-004, E2E-005, E2E-006, E2E-007, E2E-008, E2E-008d, E2E-009, E2E-010, E2E-011, E2E-011a, E2E-011b, E2E-011d, E2E-011e, E2E-011g, E2E-020, E2E-021, E2E-021a, E2E-027, E2E-031, E2E-036, E2E-037, E2E-042, E2E-087, E2E-088, E2E-088b, E2E-089, E2E-090, E2E-144, E2E-005J, E2E-201, E2E-202, E2E-207, E2E-206 |
+| M2 | E2E-004, E2E-005, E2E-006, E2E-007, E2E-008, E2E-008d, E2E-009, E2E-010, E2E-011, E2E-011a, E2E-011b, E2E-011d, E2E-011e, E2E-011g, E2E-020, E2E-021, E2E-021a, E2E-027, E2E-031, E2E-036, E2E-037, E2E-042, E2E-087, E2E-088, E2E-088b, E2E-089, E2E-090, E2E-COMPOSER-narrow-controls, E2E-144, E2E-005J, E2E-201, E2E-202, E2E-207, E2E-206 |
 | M3 | E2E-012, E2E-013, E2E-014, E2E-015, E2E-016, E2E-017, E2E-018, E2E-019, E2E-040 |
 | M4 | E2E-022, E2E-023, E2E-024, E2E-025, E2E-026, E2E-030, E2E-038 |
 | M5 | E2E-008a, E2E-032, E2E-033, E2E-034, E2E-039, E2E-043, E2E-044, E2E-045, E2E-046, E2E-047, E2E-048, E2E-048A, E2E-049, E2E-050, E2E-051, E2E-052, E2E-053, E2E-054, E2E-055, E2E-056, E2E-057, E2E-058, E2E-059, E2E-060, E2E-061, E2E-062, E2E-063, E2E-064, E2E-065, E2E-066, E2E-067, E2E-068, E2E-069, E2E-070, E2E-071, E2E-072, E2E-073, E2E-074, E2E-075, E2E-076, E2E-077, E2E-078, E2E-079, E2E-080, E2E-081, E2E-082, E2E-083, E2E-084, E2E-085, E2E-086, E2E-092, E2E-093, E2E-096, E2E-097, E2E-098, E2E-099, E2E-100, E2E-101, E2E-102, E2E-102a, E2E-102b, E2E-102c, E2E-102d, E2E-102e, E2E-AGENTS-001, E2E-059a, E2E-060b, E2E-060c, E2E-061a, E2E-073a, E2E-094, E2E-095, E2E-143, E2E-145, E2E-146, E2E-146a, E2E-147, E2E-177, E2E-178, E2E-180, E2E-181, E2E-182, E2E-183, E2E-186, E2E-187, E2E-194, E2E-195, E2E-204, E2E-208, E2E-CHAT-content-width-handles, E2E-250, E2E-252, E2E-102i |
@@ -7561,7 +7640,7 @@ identify the platform validation still needed.
 | M2 (IME slash alias) | E2E-255 |
 | M5 (Skill residency) | E2E-254 |
 | M6 | E2E-104, E2E-105, E2E-106, E2E-107, E2E-108, E2E-109, E2E-110, E2E-111, E2E-112, E2E-113, E2E-114, E2E-115, E2E-116, E2E-117, E2E-118, E2E-119, E2E-120, E2E-103, E2E-172 |
-| M6+ | E2E-121, E2E-122, E2E-148, E2E-150, E2E-151, E2E-154, E2E-155, E2E-158, E2E-159, E2E-160, E2E-161, E2E-162, E2E-163, E2E-166, E2E-168, E2E-173, E2E-174, E2E-176, E2E-179, E2E-196a, E2E-196b, E2E-196c, E2E-198, E2E-199, E2E-200, E2E-202, E2E-203, E2E-205, E2E-209, E2E-210, E2E-212, E2E-213, E2E-214, E2E-215, E2E-216, E2E-217, E2E-218, E2E-219, E2E-257, E2E-SUBAGENT-settlement-updates-before-parent-poll, E2E-PLUGIN-fs-root-follows-the-calling-session |
+| M6+ | E2E-121, E2E-122, E2E-148, E2E-150, E2E-151, E2E-154, E2E-155, E2E-158, E2E-159, E2E-160, E2E-161, E2E-162, E2E-163, E2E-166, E2E-168, E2E-173, E2E-174, E2E-176, E2E-179, E2E-196a, E2E-196b, E2E-196c, E2E-198, E2E-199, E2E-200, E2E-202, E2E-203, E2E-205, E2E-209, E2E-210, E2E-212, E2E-213, E2E-214, E2E-215, E2E-216, E2E-217, E2E-218, E2E-219, E2E-257, E2E-SUBAGENT-settlement-updates-before-parent-poll, E2E-PLUGIN-fs-root-follows-the-calling-session, E2E-SUBAGENT-resume-a-settled-delegation |
 | M6+ (Session Orchestrator) | E2E-PLUGIN-session-orchestrator-real-workers |
 | M6+ (Session list responsiveness) | E2E-SESSION-list-refresh-keeps-desktop-responsive |
 | M6+ (Independent session communication) | E2E-SESSION-independent-top-level-communication, E2E-SESSION-hover-card-model-and-links |
@@ -7767,9 +7846,10 @@ This test plan spec is accepted when:
 - Every visible composer control changes the active session, opens its menu, or
   submits/aborts the current turn.
 
-### US-UI-19 Permanent Stage Manager bounds restore
+### US-UI-19 Permanent Stage Manager bounds restore (macOS only)
 - On macOS with Stage Manager, shrink or unfocus the PI window until width < 1040 or height < 700.
 - Expect the shell to re-assert a Codex-like footprint (~1200×800, min 1040×700) and keep restoring while still collapsed (not only during the first 20s after launch).
+- The recovery watchdog is macOS-only (D447). On Windows/Linux it must not run at all: the app must never re-layer or re-raise its own window unprompted. Focus another window, then confirm PI-Desktop stays behind it instead of jumping back to the top of the stack, and that a stacking check (`xprop -root _NET_CLIENT_LIST_STACKING`) never shows it returning to the top periodically.
 
 ### US-UI-20 Dark floating composer box
 - Switch to dark theme on chat home.
@@ -9458,6 +9538,112 @@ This test plan spec is accepted when:
 - **Status**: Runtime event-order and renderer projection regressions automated;
   desktop journey documented. Required suites: `test:e2e`, `test:e2e:subagents`.
 
+#### E2E-SUBAGENT-resume-a-settled-delegation
+
+- **Preconditions**: An Agent session on a deterministic local transport that can
+  complete, fail, stop, and hold a delegate open on request. Two user
+  definitions, `~/.agents/subagents/scout.md` (read-only) and
+  `~/.agents/subagents/fixer.md`; a workspace file `src/report.ts` whose
+  conclusion is easy to locate by file and line; and a definition model binding
+  that can be removed from the configuration. The parent catalog offers `Task`,
+  `TaskWait`, `TaskList`, and `TaskStop`.
+- **Steps**:
+  1. Delegate `scout` a brief that must end by naming one conclusion with its
+     file and line number, and let it settle `completed`. Note the
+     `delegationId` the Task result returns.
+  2. Send a turn that passes that id as `Task.resume` and asks for the same
+     conclusion plus a second occurrence the first run never reached. Expand the
+     delegation card, then inspect what the parent itself received.
+  3. Send a turn that only says "reuse what the scout already found", with no
+     `resume` value.
+  4. Start a long-running `scout` delegation and call `Task.resume` for it while
+     it works; then, while a resumed run of another chain is still working, call
+     `Task.resume` for that chain again.
+  5. `TaskStop` one delegation, abort a second, and close the app while a third
+     is still working. After relaunch, call `Task.resume` for each of those three
+     ids as reported by `TaskWait`.
+  6. Let a delegation fail after one successful read, then call `Task.resume`
+     for it.
+  7. Send one `Task` call that carries both `resume` and `model`.
+  8. Remove the chain's recorded model from the configuration, then `Task.resume`
+     the chain and read its delegation lifecycle details and card.
+  9. Settle two `scout` chains, `resume` the older one, settle a third chain for
+     the same definition, and read the reusable list the next prompt offers; then
+     keep one chain running while two others settle for that definition.
+  10. Accumulate more than 50,000 lines of read-only tool output in one chain,
+      then call `Task.resume` with its id.
+  11. Resume a `scout` chain while spelling `Task.agent` as `Explorer`, then as
+      `explorer.md`, then as another definition's name.
+  12. Let one chain read more than eight files and send two further prompts in
+      the same session, comparing the reusable list each prompt composes.
+  13. Relaunch the app and, without changing anything else, `Task.resume` a
+      `completed` chain from before the restart.
+  14. From a fixture session that resolves a chain but no longer holds any of its
+      delegate rows, call `Task.resume` with that id.
+- **Expected**:
+  - Step 2 resumes from the chain: the new run answers with the earlier
+    conclusion's exact file and line, and its rows contain no fresh full read of
+    that file. `Task` returns a new `delegationId`, and the parent's own context
+    still holds one final report for that delegation and no delegate tool rows.
+  - Step 3 is a cold start: a brand-new delegate with no earlier conclusion in
+    its rows, a fresh `delegationId`, and no link to the earlier chain. Leaving
+    the id out never inherits context, whatever the prompt says.
+  - Step 4 fails twice as tool errors. The running delegation is reported as
+    still running, with the instruction to converge through `TaskWait` first;
+    nothing is started, nothing is queued, and the running delegate keeps
+    working.
+  - Step 5 refuses `stopped`, `aborted`, and the run the app closed while it was
+    still working (which reads as `interrupted` after relaunch) as not
+    resumable, each naming that reason and the fresh-delegation path instead. No
+    run starts.
+  - Step 6 resumes the failed chain like a completed one: the reads it already
+    made seed the new run, and its failed assistant row is not replayed.
+  - Step 7 is refused as a tool error: a resumed run keeps the chain's model, and
+    the message points at starting a new delegation to change models.
+  - Step 8 still resumes, on the binding the definition resolves to now, and the
+    delegation's lifecycle details carry the previous model id as
+    `modelChangedFrom`. The parent sees it through the lifecycle snapshot it
+    polls and the card shows it with the run, so the switch is never silent.
+  - Step 9 keeps at most two reusable chains per definition: the least recently
+    active settled chain is evicted whole, so every id on it answers as an
+    unknown delegation with the current reusable list, while a chain whose latest
+    run is still working is never evicted — the group may sit over the bound
+    rather than strand a live delegate.
+  - Step 10 drops the over-budget chain from the reusable list without trimming
+    its history: no later prompt offers it and a `resume` for it is refused as
+    having read too much to resume cheaply, while an ordinary delegation for the
+    same work still succeeds from cold.
+  - Step 11 matches the definition name case-insensitively and with the document
+    suffix — `Explorer` and `explorer.md` both resume the chain — while a
+    different definition's name is a name mismatch that lists the agents that do
+    have reusable chains.
+  - Step 12 offers each chain's latest `delegationId`, its objective, and at most
+    eight of the files it read, with a `(+N more)` suffix past that. A chain that
+    just settled is already there in the same session, with no app restart and no
+    new session; running, non-resumable, over-budget, and evicted chains never
+    appear.
+  - Step 13 rebuilds the chain relationship from the transcript, so the
+    `completed` chain is offered again after relaunch and resumes as before.
+  - Step 14 fails as having no recorded history, and that same id is not listed
+    among the reusable ids in the error or in any later prompt: the chain leaves
+    the reusable list.
+  - Throughout, the transcript shows the chain as one continuous multi-turn
+    conversation under its newest Task card, with no "resumed" marker, and the
+    resumed run's counters start at 0 so its turn, tool, and usage numbers
+    describe the new run while the earlier rounds stay readable above it.
+- **Specs linked**: `03-runtime/02-agent-runtime.md` §5f, ADR 0279
+- **Acceptance**: C (conversation), Quality
+- **Milestone**: M6+
+- **Not covered (二期)**: reviving a `stopped`/`aborted` delegation, in-chain
+  compaction, task queuing, and cross-session resumption.
+- **Status**: Draft — chain resolution, resume validation, the reusable list, and
+  transcript chain grouping are unit/regression covered
+  (`packages/agent-runtime/src/delegation-chain.test.ts`,
+  `delegation-history.test.ts`, `runtime.test.ts`,
+  `apps/desktop/test/assistant-turns.test.mjs`); the desktop journey needs a
+  capable environment. Required suites: `test:e2e`, `test:e2e:subagents`,
+  `test:e2e:transcript`.
+
 #### E2E-161: A delegation lifecycle row reads as a subagent row
 
 - **Preconditions**: A project-bound Agent session with a mocked provider stream
@@ -10668,20 +10854,28 @@ are withdrawn with ADR 0165.
   4. Repeat a link click with Ctrl/Cmd, Shift, and Alt held.
 - **Expected**:
   - The Work panel browser is the default plain-click destination.
-  - The Default OS browser setting routes plain HTTP(S) clicks through the
-    main-owned external opener; changing the setting persists after reload.
+  - The Default OS browser setting routes chat, transcript, and plugin HTTP(S)
+    clicks through the main-owned external opener, including markdown links,
+    autolinked URLs, and inline-code URLs in assistant replies; changing the
+    setting persists after reload.
   - The body-level context menu remains interactive when clicked. Its external
     and work-panel actions open the requested destination, and Copy link address
     updates the clipboard before showing the success toast. A rejected clipboard
     write shows an error toast instead of a success toast.
   - Modifier clicks continue to open links externally regardless of the setting.
+  - Plugin/settings clicks that want the work panel return to chat so the
+    dock is visible, without recording a navigation hop. A missing session
+    falls back to the OS browser.
+  - Workspace HTML preview, BrowserPreview, OAuth, and Feedback keep their
+    existing destinations.
 - **Specs linked**: `04-ux/06-settings-ia.md`,
   `04-ux/08-component-spec.md` §8.3, `03-runtime/01-ipc-protocol.md`,
   `08-meta/decisions-log.md` (D330)
 - **Acceptance**: B (settings), C (conversation & stream), Security, Quality
 - **Milestone**: M5
-- **Status**: Unit-covered (`apps/desktop/test/markdown-link-menu.test.mjs` and
-  locale catalog tests); full UI journey Draft (run only in a capable environment when this surface changes)
+- **Status**: Unit-covered (`apps/desktop/test/markdown-link-menu.test.mjs`,
+  locale catalog tests, `apps/desktop/test/open-http-url.test.mjs`); full UI
+  journey Draft (run only in a capable environment when this surface changes)
 
 #### E2E-201: Alias a configured model and copy a model id
 
@@ -11147,6 +11341,38 @@ are withdrawn with ADR 0165.
   `pnpm test:e2e:collaboration`; plugin and host-core regression coverage is
   automated. The live multi-session provider/Electron journey remains runner
   validation under the no-local-E2E policy
+
+#### E2E-SESSION-completion-notice-allows-silence: A trusted completion notice may finish without an acknowledgement
+
+- **Preconditions**: A candidate commit has its own built host-core and runtime
+  sidecar. The local SSE provider deterministically returns visible text or a
+  successful empty response; no live credentials are required.
+- **Steps**: 1) Deliver a task through the real Host collaboration ledger and
+  sidecar, read its successful result, and complete the coordinator summary.
+  2) Resolve the queued completion callback through the production Main input
+  resolver and run the recipient against an empty SSE response. 3) Run another
+  human request, copied completion framing, a ledger task, and a ledger message
+  against empty responses on the same recipient runtime.
+- **Expected**: The original result remains unchanged. The completion has one
+  provider request, no error, one terminal lifecycle, completed ledger status,
+  and no acknowledgement callback. Each ordinary input still retries once and
+  ends with `EMPTY_MODEL_RESPONSE`, and no request the recipient sends after
+  the silent notice carries an empty assistant message. Unit coverage
+  additionally rejects missing reply-to IDs/wrong targets, spends the exception
+  on a tool batch, keeps it across a provider retry, revokes it once accepted
+  user steering enters the context, and keeps the accepted silence out of the
+  runtime entries and pi transcript state.
+- **Specs linked**: `03-runtime/02-agent-runtime.md` §5e,
+  `03-runtime/08-error-codes.md`, ADR 0239 (D446 amendment)
+- **Acceptance**: C (conversation & stream), D (provenance), Quality
+- **Milestone**: M6+
+- **Status**: Automated by `pnpm test:e2e:session-completion` on the committed,
+  rebased candidate in its dedicated worktree. The harness drives real Host
+  RPCs, the production provenance resolver, sidecar, and local SSE, and persists
+  runtime messages before Host settlement. It does not exercise Electron's
+  queue/outbox UI or a live provider. Candidate/base SHAs and results belong in
+  the validation report; existing ledger coverage runs separately through
+  `pnpm test:e2e:collaboration`.
 
 #### E2E-SESSION-hover-card-model-and-links: Session hover cards expose readable model and creation navigation
 
@@ -12174,6 +12400,12 @@ plugin-form fixtures in an isolated temporary directory at runtime.
   28px square on a transparent seat with only a semantic hover wash, so the
   header shows quiet icons rather than filled or raised squares. The collapse
   toggle's open state changes its glyph and ink only.
+- **Overlay coverage measured in the running app**: on the Plugins route a plugin
+  modal opens; the modal veil is the topmost hit at the work-panel toggle inside
+  the titlebar band; the titlebar band is not the topmost hit there, so it does
+  not paint over the modal veil; and closing the modal leaves the route clean.
+  `pnpm test:e2e:layout` asserts those four hits as renderer DOM/CDP evidence,
+  not as native hit-test proof.
 - **Specs linked**: `04-ux/01-ui-ia.md`, `04-ux/07-ui-design-system.md` §10,
   `04-ux/08-component-spec.md` §1 and §5, `04-ux/09-interaction-patterns.md` §8,
   ADR 0238
@@ -12181,10 +12413,10 @@ plugin-form fixtures in an isolated temporary directory at runtime.
 - **Milestone**: Post-M6 desktop shell maintenance
 - **Status**: Automated (`scripts/e2e-three-column-layout.mjs` via
   `pnpm test:e2e:layout` — fixed-window width invariance, the 450px floor across
-  a pointer drag, the unfolded composer row at that floor, sidebar
+  a pointer drag, one non-wrapping composer toolbar at that floor with the
+  model chip collapsed to its 32px icon, sidebar
   yield/restore, the 460px reopen target, the panel action group's shared
   control gap, preview mode, and ordinary Plugins/Pull requests/Scheduled titlebar
-  geometry, light/dark rest/hover styles, and sidebar/New Task DOM actions).
   Source contracts in `chrome-control-geometry.test.mjs` also cover the shared
   disabled state and panel controls' transparent seat; the panel surface still
   needs the eyes-on pass above. DOM/CDP checks establish renderer behavior, not
@@ -12917,3 +13149,63 @@ plugin-form fixtures in an isolated temporary directory at runtime.
 - **Acceptance**: G (remote marketplace source)
 - **Milestone**: M6+
 - **Status**: Draft
+
+### E2E-CHAT-turn-process-and-thinking-display
+
+- **Preconditions:** A turn with thinking, multiple tools, intermediate progress
+  and a final answer; detailed and compact display modes.
+- **Steps:** Stream the turn; finish it; expand/collapse its process; search an
+  intermediate message; switch display modes through Settings → AI → Defaults.
+  Repeat with a stopped partial answer, an assistant error and a failed tool.
+- **Expected:** Completed work has one collapsed process plus its final answer.
+  Manual choices survive updates; search reveals its target; live answer text
+  stays readable. Errors and stopped trailing text stay visible. Compact mode
+  exposes no reasoning text or excerpt, shows a live indicator, and leaves no
+  completed thinking-only header. Tools and progress remain accessible. Switching
+  to detailed restores reasoning from unchanged messages. Saved mode survives
+  application restart; an older settings blob without the field uses detailed.
+- **Automation:** `test:e2e:transcript` covers the mounted renderer interactions,
+  settings control and unchanged-group performance. `test:e2e:transcript-disclosure`
+  covers scroll anchoring; `test:e2e:theme-surfaces` covers the shared theme
+  controls. Isolated Host `settings.set/get` checks verify both modes across
+  process restart and preservation during unrelated partial settings writes.
+  Renderer fixtures alone do not prove settings persistence.
+- **Specs:** 04-ux/06-settings-ia, 04-ux/08-component-spec,
+  04-ux/09-interaction-patterns; ADR turn-process-and-thinking-display.
+
+### E2E-CHAT-hosted-search-citations-stay-local
+
+- **Preconditions:** An assistant turn with `hostedSearch.sources` that include
+  `https://example.com/a`, plus markdown that contains `#cite=1`,
+  `[Read here](https://example.com)`, and `[Same path](https://example.com/a)`.
+- **Steps:** Render the turn. Inspect citation badges, remaining hyperlinks,
+  and favicon image URLs (including failed loads).
+- **Expected:** `#cite=1` and the same-path source URL render as citation
+  badges. The same-host different-path `https://example.com` link stays an
+  ordinary hyperlink with its original text. Favicon requests go only to each
+  source origin's `/favicon.ico`; no third-party favicon host is contacted.
+- **Automation:** `apps/desktop/test/hosted-search-ui.test.mjs`.
+- **Specs:** `03-runtime/11-provider-model-system.md` §16.
+- **Acceptance:** Security + C (sessions/transcript).
+- **Milestone:** M6+.
+- **Status:** Automated unit coverage; renderer E2E still draft.
+
+
+### E2E-RPC-unicode-separators
+
+- **Preconditions:** Built host-core, shared package and agent runtime; isolated
+  temporary data directory; loopback-only fixture provider. No live credentials.
+- **Steps:** Append a user message containing U+2028/U+2029, CJK text, emoji and
+  escaped CR/LF; read it, restart the host, and read it again. Send a Unicode
+  prompt through AgentSidecar; restore history through the parent host proxy;
+  stream and persist a Unicode answer. Send an unknown method containing the
+  same characters, then a health request.
+- **Expected:** Text survives unchanged across persistence and all stdio
+  directions. Requests settle without RPC timeouts; error replies and subsequent
+  requests remain usable. No migration of existing sessions is needed.
+- **Automation:** `pnpm test:e2e:rpc-unicode`; `packages/shared/src/ndjson.test.ts`
+  additionally checks every UTF-8 split boundary, consecutive frames, CRLF, EOF and disposal.
+- **Specs:** 03-runtime/06-host-rpc-protocol §2.
+- **Acceptance:** A (runtime), C (sessions).
+- **Milestone:** M6+.
+- **Status:** Automated; run against the task/PR integration candidate.

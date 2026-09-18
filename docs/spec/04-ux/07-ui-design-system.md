@@ -1023,6 +1023,13 @@ Rules:
   renderer layer, so no `z-index` in the table above can raise a popover over
   them. A body-portaled popover clamps to the conversation pane, which ends
   where the work panel begins, instead of to the viewport.
+- A route surface holds no stacking context once its entrance animation
+  finishes, so an overlay authored inside a route page — a modal, a sheet, or
+  their scrims — covers the titlebar band without any `z-index` juggling. On
+  Windows/Linux the renderer-drawn window controls stay above renderer overlays.
+  Route overlays therefore sit on `z-dialog` (40): a leaf popup (60) or a toast
+  (50) a dialog raises — portaled to `document.body`, so in that same stacking
+  context — keeps painting above the dialog's scrim and keeps taking clicks.
 
 ## 10. Layout shell metrics
 
@@ -1293,7 +1300,7 @@ Full component contract and usage rules: [08-component-spec.md §17](08-componen
 - Floating composer plate: Codex elevated-primary (`#212121f5` / `color-mix(gray-800 96%, transparent)`) with standard elevation-prominent (`0 0 0 .5px` stroke + `0 3px 7.5px #0000000a` + `0 0 20px #0000000d`); no heavier night-only lift
 - Light workspace chips capsule: elevated gray `#f4f4f4` (not pure white-on-white)
 - Combined workspace chips: elevated translucent plate over main, not flat main gray
-- Stage Manager: host re-asserts min bounds while collapsed (permanent watchdog)
+- Stage Manager (macOS only): host re-asserts min bounds while collapsed (permanent watchdog). The watchdog does not run on Windows/Linux, so no platform re-layers its own window unprompted (D447)
 
 ## Destination pages
 

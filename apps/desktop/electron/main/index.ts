@@ -675,6 +675,7 @@ const pluginServices = createPluginServices({
 const {
   plugins,
   userMcp,
+  mcpOAuth,
   pluginScopes,
   sessionProjects,
   emitBrowserState,
@@ -684,6 +685,7 @@ const {
   browserHost,
   browserPane,
   announceTurnEnded,
+  speech,
 } = pluginServices;
 
 const providerCatalogRuntime = createProviderCatalogRuntime({
@@ -1269,6 +1271,7 @@ function registerIpc() {
     persistenceOutbox,
     logger,
     plugins,
+    speech,
     sessionCapabilityContext,
     enrichSession,
     acquireSessionOperation,
@@ -1321,6 +1324,7 @@ function registerIpc() {
     dispatchExecutionForProposal,
     emitAgentEvent,
     userMcp,
+    mcpOAuth,
     refreshUserMcp,
     describeError,
     activeUserSubagentDocuments,
@@ -1480,6 +1484,7 @@ registerShutdownHandlers({
   pluginPanels,
   plugins,
   userMcp,
+  mcpOAuth,
   browserPane,
   pluginViews,
   pluginSettingsViews,

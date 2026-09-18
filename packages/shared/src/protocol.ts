@@ -2,7 +2,7 @@ export const PROTOCOL_VERSION = 11 as const;
 export const SCHEMA_VERSION = 16 as const;
 export const APP_ID = "net.aiuo.pi-desktop";
 export const APP_NAME = "PI-Desktop";
-export const APP_VERSION = "0.14.9";
+export const APP_VERSION = "0.15.0";
 
 export const APP_MENU_COMMANDS = [
   "newTask",
@@ -71,6 +71,9 @@ export const IPC = {
     agentPrompt: "pi-desktop/agent/prompt",
     agentSteer: "pi-desktop/agent/steer",
     promptEnhance: "pi-desktop/prompt/enhance",
+    speechTranscribe: "pi-desktop/speech/transcribe",
+    speechSynthesize: "pi-desktop/speech/synthesize",
+    speechGetStatus: "pi-desktop/speech/getStatus",
     agentCompact: "pi-desktop/agent/compact",
     agentAbort: "pi-desktop/agent/abort",
     agentStop: "pi-desktop/agent/stop",
@@ -208,11 +211,17 @@ export const IPC = {
     mcpSetScope: "pi-desktop/mcp/setScope",
     mcpTransfer: "pi-desktop/mcp/transfer",
     mcpTest: "pi-desktop/mcp/test",
+    mcpOauthStart: "pi-desktop/mcp/oauth/start",
+    mcpOauthCancel: "pi-desktop/mcp/oauth/cancel",
     mcpImport: "pi-desktop/mcp/import",
+    mcpImportScan: "pi-desktop/mcp/importScan",
+    mcpImportRun: "pi-desktop/mcp/importRun",
     mcpMarketSearch: "pi-desktop/mcp/market/search",
     skillList: "pi-desktop/skill/list",
     skillCreate: "pi-desktop/skill/create",
     skillImport: "pi-desktop/skill/import",
+    skillImportScan: "pi-desktop/skill/importScan",
+    skillImportRun: "pi-desktop/skill/importRun",
     skillMarketSearch: "pi-desktop/skill/market/search",
     skillMarketFetch: "pi-desktop/skill/market/fetch",
     skillUpdate: "pi-desktop/skill/update",
@@ -303,6 +312,7 @@ export const IPC = {
     notificationActivated: "pi-desktop/notification/event/activated",
     plansChanged: "pi-desktop/plans/event/changed",
     providersOauth: "pi-desktop/providers/oauth/event",
+    mcpOauth: "pi-desktop/mcp/oauth/event",
     updatesState: "pi-desktop/updates/event/state",
   },
 } as const;

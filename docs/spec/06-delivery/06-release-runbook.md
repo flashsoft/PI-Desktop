@@ -58,7 +58,13 @@ when macOS `iconutil` is available, without overwriting the canonical source.
 
 - Electron app with hardened runtime + entitlements
   (`build/entitlements.mac.plist`: JIT + unsigned-executable-memory +
-  library-validation disable — the standard Electron set).
+  library-validation disable — the standard Electron set), plus the
+  `NSLocalNetworkUsageDescription` string in Info.plist (via
+  `apps/desktop/package.json` → `mac.extendInfo`) so macOS 15+ prompts for
+  Local Network access and grants it to both the Chromium main process and
+  the `ELECTRON_RUN_AS_NODE` agent sidecar — without it, LAN provider
+  requests from the sidecar fail with `EHOSTUNREACH` even though the main
+  process's Test Provider fetch succeeds (issue #573).
 - `Resources/bin/pi-desktop-host-core` — Rust host binary (release build).
 - Windows NSIS builds include an x64 `pi-desktop-host-core.exe` statically
   linked to the MSVC CRT, so a clean Windows x64 or Windows 11 ARM64
@@ -206,8 +212,7 @@ changing the package scripts or release artifacts.
 DMG/ZIP artifacts unsigned by default. Tag pushes and manual runs with
 `sign_macos` omitted or set to `false` disable identity discovery, do not receive
 signing or notarization secrets, and skip macOS stapling and signature
-verification. The unsigned pack still adhoc-signs the outer app so the
-codesign identifier equals `net.aiuo.pi-desktop` (issue #524). To explicitly sign a run, manually dispatch the workflow for the
+verification. To explicitly sign a run, manually dispatch the workflow for the
 target tag with `sign_macos: true`. The local `scripts/release-macos.sh` command
 remains the explicit signed lane.
 

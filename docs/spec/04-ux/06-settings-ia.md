@@ -139,14 +139,25 @@ Settings is a **full-window page** that replaces the app sidebar + main chrome (
   control column.
 - **Defaults** card: the host-backed default operating mode (Agent / Plan / Goal),
   command shell selection, Link open destination, context usage display
-  (remaining or used), Enter-to-send control, and the large text paste
+  (remaining or used), thinking display mode, Enter-to-send control, and the large text paste
   threshold. Link open destination uses the Work panel browser by default
-  and can route plain HTTP(S) link clicks to the system browser. Context
+  and routes chat, transcript, and plugin HTTP(S) clicks to the system
+  browser when set to Default OS browser. Plugin/settings clicks that want
+  the work panel return to chat first so the dock is visible, without
+  recording a navigation hop; a missing session falls back to the OS
+  browser. Workspace HTML preview, BrowserPreview, OAuth, and Feedback
+  keep their existing destinations. Context
   usage display controls whether the composer toolbar context ring and its
   popover lead with the remaining or the used capacity figure; the default
   is remaining. The threshold controls when a text-only paste becomes a
   temporary session-scratch file; it defaults to 600 characters and accepts
   integer values from 1 through 1,000,000.
+- **Thinking display mode** uses a menu select with Detailed (default) and
+  Compact. Detailed retains reasoning text; Compact shows only an active
+  thinking indicator and hides finished thought rows. The global preference
+  persists as `thinkingDisplayMode` in host-owned settings; missing values use
+  Detailed. It affects presentation only, not model reasoning configuration.
+  Settings search indexes the row and both mode names.
 - The **Command shell** row in Defaults uses the host-discovered catalog of native
   PowerShell 5.1, PowerShell 7, cmd, Git Bash, and Bash with IDs
   `windows-powershell`, `windows-pwsh`, `cmd`, `git-bash`, and
@@ -166,6 +177,11 @@ Settings is a **full-window page** that replaces the app sidebar + main chrome (
   Manual `/compact` remains available from the command palette for an idle
   session; the transcript shows where each compaction happened and the context
   usage inspector shows whether a checkpoint is installed.
+- **Voice** card: default ASR and TTS bindings (`AppSettings.speech`). Each
+  role picks an existing provider, a protocol (`openai_audio` /
+  `openai_chat_audio` plus plugin adapters), and a model id. TTS may set a
+  voice. Unconfigured roles disable the matching Composer action. Whisper / TTS
+  models do not appear in the chat model picker. See spec `20-speech.md`.
 
 Token usage is **not a Settings destination** (D335 / ADR 0173). Completed-turn
 history stays host-owned (`session.endTurn.usage`, `stats.getTokenUsageHistory`).

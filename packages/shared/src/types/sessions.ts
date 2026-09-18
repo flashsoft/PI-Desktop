@@ -29,6 +29,8 @@ export type SessionSummary = {
   providerId?: string;
   mode: Mode;
   thinkingLevel: ThinkingLevel;
+  /** Composer-native web search for this session; absent means follow settings. */
+  nativeWebSearch?: boolean;
   /** Per-session permission mode; `inherit` follows the global default (D115). */
   permissionMode: PermissionMode;
   /** Effective capability for this session's exact provider/model pair. */
@@ -106,6 +108,12 @@ export type ContextCompactionMark = ContextCompactionStatus & {
   throughMessageId: string;
   /** False when the window rolled over without asking for a summary. */
   summarized: boolean;
+  /**
+   * Present when summary generation failed and the checkpoint carries only a
+   * recovery notice plus a retained tail; the row must not present that
+   * notice as a summary.
+   */
+  fallback?: ContextCompactionFallback;
 };
 
 export type ContextCompactionReason = "manual" | "threshold" | "overflow";
