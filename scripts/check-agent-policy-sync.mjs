@@ -57,8 +57,8 @@ const claude = claudeRaw ? normalize(claudeRaw) : "";
 /** @type {{ id: string, anyOf: string[] }[]} */
 const REQUIRED_ANCHORS = [
   {
-    id: "worktree-isolation",
-    anyOf: ["1 request = 1 branch + 1 dedicated worktree"],
+    id: "branch-per-request",
+    anyOf: ["1 request = 1 branch"],
   },
   {
     id: "never-develop-on-main",

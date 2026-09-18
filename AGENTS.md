@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Policy-Sync: 2026-02-16.2
+Policy-Sync: 2026-09-18.1
 
 Mandatory rules for AI coding agents working in PI-Desktop.
 
@@ -193,47 +193,50 @@ or security boundary requires an ADR.
 
 ---
 
-## 5. Multi-Agent Isolation Is Mandatory
+## 5. Multi-Agent Safety and Branch Discipline
 
 Assume multiple agents work concurrently.
 
-Every development request uses:
+Every development request uses its own branch:
 
 ```text
-1 request = 1 branch + 1 dedicated worktree
+1 request = 1 branch
 ```
 
-The primary checkout and local `main` are coordination surfaces, not
-development workspaces.
+A dedicated worktree is optional. Create one only when the user asks or
+when concurrent checkouts would collide; otherwise work directly in the
+current checkout on the request branch.
 
 ### Never
 
-* develop directly on `main`
-* develop in the primary checkout
+* develop directly on `main` unless the user explicitly asks
 * merge unvalidated task code into local `main`
 * use local `main` as a temporary integration branch
-* reuse another task's worktree
+* reuse another task's branch or worktree
 * modify another agent's branch
 * delete another agent's branch or worktree
 * reset or discard unrelated work
 * include unrelated changes in your task
-* depend on uncommitted work from another worktree
+* depend on uncommitted work from another checkout
 
 ### Start from current `main`
 
 ```bash
 git fetch origin main
+git switch -c <type>/<short-description> origin/main
+```
 
+When a dedicated worktree is needed:
+
+```bash
 git worktree add \
   -b <type>/<short-description> \
   <worktree-path> \
   origin/main
-
-cd <worktree-path>
 ```
 
 All implementation, targeted validation, conflict resolution, and
-task-candidate E2E happen inside the task's dedicated worktree.
+task-candidate E2E happen on the task branch.
 
 ### Before candidate validation
 
@@ -250,26 +253,26 @@ If the branch has already been shared and rewriting history would be
 unsafe, do not force-push merely to rebase. Use a non-destructive
 integration strategy or rely on the PR integration candidate per § 16.
 
-Resolve conflicts inside your own worktree. Never resolve task conflicts
-by modifying the primary checkout.
+Resolve conflicts on your own branch. Never resolve task conflicts by
+disturbing another checkout's work.
 
 ### Fixed delivery order
 
 ```text
-1. create dedicated branch + worktree from current origin/main
-2. implement in the request worktree
+1. create a request branch from current origin/main
+2. implement on the request branch
 3. run targeted static/unit/integration checks
 4. review the task diff
 5. commit the task
 6. refresh the task branch against latest origin/main
-7. resolve conflicts inside the task worktree
-8. run required task-candidate E2E in the task worktree
+7. resolve conflicts on the task branch
+8. run required task-candidate E2E on the task branch
 9. push the request branch
 10. open/update the PR/MR
 11. validate the PR integration candidate
 12. merge into remote main through repository gates
 13. synchronize local main
-14. remove the worktree and merged local branch
+14. remove the merged local branch (and its worktree, if one was used)
 ```
 
 Do not insert `merge task → local main` between steps 6 and 8. The task
@@ -748,8 +751,8 @@ Task Candidate Validation
 PR Integration Validation
 ```
 
-Task Candidate Validation runs in the request worktree after the
-request branch incorporates the latest available `origin/main`.
+Task Candidate Validation runs on the request branch after it
+incorporates the latest available `origin/main`.
 
 PR Integration Validation verifies the actual code that is about to
 land, using:
@@ -803,7 +806,7 @@ git fetch origin main
 git rebase origin/main
 ```
 
-then E2E from the same task worktree.
+then E2E on the same task branch.
 
 Record:
 

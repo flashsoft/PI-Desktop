@@ -42,7 +42,7 @@ change or starting follow-up:
   preserving the contributor's commits; landing blockers received only
   smallest-on-top commits.
 - [ ] Follow-up started only after the pull request was in `main`, using a
-  new R4 request branch and worktree.
+  new branch when isolation is needed (R4).
 - [ ] If the principle is not sound or a harm blocker exists: the pull
   request was not merged, and a comment recorded the evidence. The idea was
   not silently reimplemented.
@@ -61,15 +61,12 @@ See [R6 — Merge a linked pull request whose principle is sound, then follow up
 Before editing any file for a new request:
 
 - [ ] Existing uncommitted work is identified and preserved.
-- [ ] `origin/main` is fetched and local `main` is fast-forwarded when its
-  worktree is clean.
-- [ ] A dedicated `<type>/<short-description>` request branch and worktree are
-  created from that updated `main` commit.
-- [ ] The request worktree reuses the primary checkout's toolchains, package
-  stores, caches, and ignored local configuration where safe.
-- [ ] Mutable, incompatible, or concurrency-sensitive environment state stays
-  worktree-local and ignored.
-- [ ] The current branch is not `main` before implementation begins.
+- [ ] `origin/main` is fetched and the checkout starts from an up-to-date
+  `main` commit.
+- [ ] Work happens in the primary checkout by default; a dedicated
+  `<type>/<short-description>` task branch or worktree is created only when
+  the user asks or when parallel work needs isolation.
+- [ ] Unvalidated code is never committed or pushed to `main`.
 - [ ] Delivery scope is recorded: a commit request includes local `main`
   integration; a push request includes PR-based remote `main` integration and
   local synchronization. Explicit branch-only or draft-only limits are honored.
@@ -170,7 +167,7 @@ explicit branch-only or draft-only requests retain their narrower scope:
   affected suites were rerun and recorded.
 - [ ] No direct push to `main`, force-push, discarded unrelated work, or bypassed
   gate was inferred from the delivery request. Genuine blockers were reported.
-- [ ] Request worktree is removed after merge.
+- [ ] Request worktree, if one was used, is removed after merge.
 - [ ] Merged request branch is deleted locally (`git branch -d`).
 - [ ] Any remotely published request branch is deleted after merge.
 - [ ] Issue reference is included when applicable (e.g. `Refs #12` or
@@ -180,18 +177,18 @@ explicit branch-only or draft-only requests retain their narrower scope:
 
 ## 6.1 Merge Cleanup Checklist
 
-Run immediately after the request branch is integrated into `main`, whether the
+Run immediately after the request is integrated into `main`, whether the
 merge happened remotely via PR/MR or locally in the primary checkout:
 
 - [ ] Expected commits are verified present in local `main`, and remote `main`
   when remote delivery was requested.
-- [ ] The request worktree is clean — no uncommitted or untracked request files
-  remain.
-- [ ] `git worktree remove <worktree-path>` succeeded without forcing.
+- [ ] If a worktree was used: it is clean — no uncommitted or untracked
+  request files remain — and `git worktree remove <worktree-path>` succeeded
+  without forcing.
 - [ ] `git branch -d <type>/<short-description>` succeeded (no `-D` fallback on
   an unmerged branch).
-- [ ] `git worktree prune` leaves `git worktree list` free of stale entries for
-  this request.
+- [ ] `git worktree list` has no stale entry for this request (when a
+  worktree was used).
 - [ ] No other agent's worktree or branch was removed.
 - [ ] If launch was requested after delivery, the app was built and started
   from the integrated `main` checkout and its development environment.
