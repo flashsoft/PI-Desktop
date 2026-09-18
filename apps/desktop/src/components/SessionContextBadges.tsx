@@ -75,10 +75,9 @@ function appIcon(app: OpenLocationApp | undefined, size = 13) {
 
 /**
  * The conversation topbar's session-context cluster: a branch badge (click to
- * copy the branch name), a path badge (head-elided, full-path tooltip, click
- * to copy), and a split "open location" button whose caret lists the editors,
- * file manager, and terminals detected on this machine. The main half opens
- * the directory directly with the persisted preferred app.
+ * copy the branch name) and a split "open location" button whose caret lists
+ * the editors, file manager, and terminals detected on this machine. The main
+ * half opens the directory directly with the persisted preferred app.
  */
 export function SessionContextBadges() {
   const { t } = useTranslation();
@@ -93,7 +92,6 @@ export function SessionContextBadges() {
   const [apps, setApps] = useState<OpenLocationApp[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [branchCopied, markBranchCopied] = useCopyFeedback();
-  const [pathCopied, markPathCopied] = useCopyFeedback();
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   // Prefetch the detected catalog on mount so a direct click never waits for
@@ -161,21 +159,6 @@ export function SessionContextBadges() {
         </TooltipButton>
       ) : null}
 
-      <TooltipButton
-        type="button"
-        className="sc-badge sc-badge-path"
-        tooltip={pathCopied ? t("topbar.copied") : path}
-        ariaLabel={t("topbar.copyPath", { path })}
-        onClick={() => {
-          void copyText(path).then(markPathCopied);
-        }}
-      >
-        {pathCopied ? <IconCheck size={12} /> : <IconFolder size={12} />}
-        {/* rtl + ellipsis elides the head so the tail stays visible. */}
-        <span className="sc-badge-path-label" dir="rtl">
-          {path}
-        </span>
-      </TooltipButton>
 
       <div className="sc-split" ref={menuRef}>
         <TooltipButton

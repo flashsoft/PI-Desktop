@@ -210,7 +210,6 @@ export const tr = {
   },
   topbar: {
     copyBranch: '"{{branch}}" dalını kopyala',
-    copyPath: "Yolu kopyala: {{path}}",
     copied: "Kopyalandı",
     openLocation: "Konumu aç",
     openWith: "{{name}} ile aç",

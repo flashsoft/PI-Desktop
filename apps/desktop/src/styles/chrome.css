@@ -615,23 +615,6 @@
   white-space: nowrap;
 }
 
-.conversation-topbar .sc-badge-path {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 220px;
-}
-
-/* rtl + ellipsis elides the path head so the tail (the useful part) stays
-   visible regardless of the available width. */
-.conversation-topbar .sc-badge-path-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  unicode-bidi: plaintext;
-  text-align: left;
-}
-
 .conversation-topbar .sc-split {
   position: relative;
   display: inline-flex;

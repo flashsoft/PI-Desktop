@@ -201,7 +201,6 @@ export const es = {
   },
   "topbar": {
     "copyBranch": "Copiar rama «{{branch}}»",
-    "copyPath": "Copiar ruta: {{path}}",
     "copied": "Copiado",
     "openLocation": "Abrir ubicación",
     "openWith": "Abrir con {{name}}",

@@ -201,7 +201,6 @@ export const fr = {
   },
   "topbar": {
     "copyBranch": "Copier la branche « {{branch}} »",
-    "copyPath": "Copier le chemin : {{path}}",
     "copied": "Copié",
     "openLocation": "Ouvrir l’emplacement",
     "openWith": "Ouvrir avec {{name}}",

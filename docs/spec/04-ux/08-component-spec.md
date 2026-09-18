@@ -338,15 +338,12 @@ The conversation top bar's right side surfaces the active session's working
 context:
 
 ```text
-[⑂ branch] [📁 …/tail/of/path] [Open location ▾]
+[⑂ branch] [Open location ▾]
 ```
 
 - **Branch badge** — shown when the workspace root resolved a git branch and
   the session works in that root. Clicking copies the branch name and swaps
   the glyph to a check briefly.
-- **Path badge** — shows the session's effective directory with the head
-  elided (the tail stays visible at any width), tooltips the full path, and
-  copies the full path on click with the same check feedback.
 - **Open location** — a split button. The main half opens the directory
   directly with the persisted preferred app (first detected editor by
   default); the caret opens a menu of the editors, platform file manager, and

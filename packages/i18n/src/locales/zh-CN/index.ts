@@ -203,7 +203,6 @@ export const zhCN = {
   },
   topbar: {
     copyBranch: "复制分支「{{branch}}」",
-    copyPath: "复制路径：{{path}}",
     copied: "已复制",
     openLocation: "打开位置",
     openWith: "用 {{name}} 打开",

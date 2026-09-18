@@ -208,7 +208,6 @@ export const en = {
   },
   topbar: {
     copyBranch: 'Copy branch "{{branch}}"',
-    copyPath: "Copy path: {{path}}",
     copied: "Copied",
     openLocation: "Open location",
     openWith: "Open with {{name}}",

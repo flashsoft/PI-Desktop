@@ -210,7 +210,6 @@ export const ko = {
   },
   topbar: {
     copyBranch: '브랜치 "{{branch}}" 복사',
-    copyPath: "경로 복사: {{path}}",
     copied: "복사됨",
     openLocation: "위치 열기",
     openWith: "{{name}}(으)로 열기",
