@@ -1448,6 +1448,23 @@ sklm: {
       rollbackUnavailable: "无法回退",
       rollbackConflict: "该文件在此消息之后又发生了变化，已跳过回退。",
       rollbackError: "这项改动回退失败。",
+      rollbackTurn: "回滚这一轮",
+      rollbackToBeforeTurn: "回滚到这一轮之前",
+      rollbackTurnConfirmTitle: "回滚到这一轮之前？",
+      rollbackTurnConfirmBody:
+        "这将撤销 {{turns}} 轮对话、{{files}} 处已记录的文件改动。期间被 Bash 命令或外部工具修改过的文件可能会保持原样。完成后请重新构建并测试。",
+      rollbackTurnConfirmAction: "回滚",
+      rollbackTurnBusy: "会话运行中，无法回滚。",
+      rollbackTurnPartial: "部分文件在之后被修改过，已保持原样。",
+      rollbackTurnUnavailable: "本轮存在没有可用快照的文件。",
+      rollbackTurnBlockedBy: "之后在另一个会话中被修改",
+      rollbackNoticeTurn_one: "已回滚这一轮（恢复 {{count}} 个文件）",
+      rollbackNoticeTurn_other: "已回滚这一轮（恢复 {{count}} 个文件）",
+      rollbackNoticeRewind_one: "已回滚到这一轮之前（恢复 {{count}} 个文件）",
+      rollbackNoticeRewind_other: "已回滚到这一轮之前（恢复 {{count}} 个文件）",
+      rollbackNoticePartial:
+        "回滚：恢复 {{rolled}} 个文件，{{conflicts}} 个因之后被修改而保持原样",
+      turnLabel: "第 {{index}} 轮",
       status: {
         added: "新增",
         modified: "修改",

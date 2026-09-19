@@ -14,6 +14,10 @@ import {
 } from "../../lib/session-transcript";
 import { optimisticUserMessage } from "../../lib/session-transcript";
 import { withReviewChangeState } from "../../lib/workspace-review";
+import {
+  appendRollbackNotice,
+  buildRollbackNotice,
+} from "../../lib/rollback-notice";
 import { settleStoppedAssistantMetrics } from "../../lib/context-usage";
 import type { AppState } from "../app-state";
 import type { SessionRuntime } from "../runtime/session-runtime";
@@ -49,6 +53,8 @@ export function createTranscriptSlice({
   | "activateMessageRevision"
   | "deleteMessage"
   | "rollbackWorkspaceChange"
+  | "checkWorkspaceTurn"
+  | "rollbackWorkspaceTurn"
   | "abort"
 > {
   return {
@@ -423,6 +429,127 @@ export function createTranscriptSlice({
           error: error instanceof Error ? error.message : String(error),
           errorCode: (error as { code?: string })?.code ?? null,
         });
+        return null;
+      }
+    },
+
+    checkWorkspaceTurn: async ({ snapshotIds }) => {
+      const sessionId = get().activeSessionId;
+      if (!sessionId || snapshotIds.length === 0) return null;
+      try {
+        return await api.workspaceReviewCheckTurn({ sessionId, snapshotIds });
+      } catch {
+        return null;
+      }
+    },
+
+    rollbackWorkspaceTurn: async ({ snapshotIds, mode }) => {
+      const state = get();
+      const sessionId = state.activeSessionId;
+      if (!sessionId || state.isRunning || snapshotIds.length === 0) return null;
+      try {
+        const result = await api.workspaceReviewRollbackTurn({
+          sessionId,
+          snapshotIds,
+          mode,
+        });
+        const rolledBackMessageIds = new Set(
+          result.outcomes
+            .filter(
+              (outcome) =>
+                outcome.status === "rolledBack" ||
+                outcome.status === "alreadyRolledBack",
+            )
+            .map((outcome) => outcome.messageId)
+            .filter((id): id is string => Boolean(id)),
+        );
+        if (rolledBackMessageIds.size > 0) {
+          set((current) =>
+            current.activeSessionId === sessionId
+              ? {
+                  messages: current.messages.map((message) =>
+                    rolledBackMessageIds.has(message.id)
+                      ? withReviewChangeState(message, "rolledBack")
+                      : message,
+                  ),
+                }
+              : {},
+          );
+        }
+        const notice = buildRollbackNotice({ mode, outcomes: result.outcomes });
+        if (notice) {
+          set((current) => ({
+            pendingRollbackNotices: {
+              ...current.pendingRollbackNotices,
+              [sessionId]: appendRollbackNotice(
+                current.pendingRollbackNotices[sessionId],
+                notice,
+              ),
+            },
+          }));
+          // Renderer-local system row: the durable evidence is the review
+          // state above; this row just narrates the rollback in the live
+          // transcript and is gone after a reload.
+          const rolledCount = new Set(
+            result.outcomes
+              .filter((outcome) => outcome.status === "rolledBack")
+              .map((outcome) => outcome.path)
+              .filter(Boolean),
+          ).size;
+          const conflictCount = new Set(
+            result.outcomes
+              .filter((outcome) => outcome.status === "conflict")
+              .map((outcome) => outcome.path)
+              .filter(Boolean),
+          ).size;
+          const systemRow: UiMessage = {
+            id: `local-rollback-${crypto.randomUUID()}`,
+            role: "system",
+            content:
+              conflictCount > 0
+                ? i18n.t("panel.review.rollbackNoticePartial", {
+                    rolled: rolledCount,
+                    conflicts: conflictCount,
+                  })
+                : mode === "rewind"
+                  ? i18n.t("panel.review.rollbackNoticeRewind", {
+                      count: rolledCount,
+                    })
+                  : i18n.t("panel.review.rollbackNoticeTurn", {
+                      count: rolledCount,
+                    }),
+            createdAt: new Date().toISOString(),
+          };
+          set((current) =>
+            current.activeSessionId === sessionId
+              ? { messages: [...current.messages, systemRow] }
+              : {},
+          );
+        }
+        const conflicts = result.outcomes.filter(
+          (outcome) => outcome.status === "conflict",
+        ).length;
+        if (conflicts > 0) {
+          get().showToast(i18n.t("panel.review.rollbackTurnPartial"), {
+            variant: "warning",
+          });
+        }
+        return result;
+      } catch (error) {
+        const code = (error as { code?: string })?.code;
+        if (code === "CONFLICT") {
+          get().showToast(i18n.t("panel.review.rollbackTurnBusy"), {
+            variant: "warning",
+          });
+        } else {
+          get().showToast(i18n.t("panel.review.rollbackError"), {
+            variant: "error",
+          });
+          set({
+            error: error instanceof Error ? error.message : String(error),
+            errorCode: code ?? null,
+          });
+        }
         return null;
       }
     },

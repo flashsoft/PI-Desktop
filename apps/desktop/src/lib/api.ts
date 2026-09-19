@@ -96,7 +96,10 @@ import type {
   AppNotification,
   NativeMenuAction,
   NotificationListResult,
+  ReviewCheckTurnResult,
   ReviewRollbackResult,
+  ReviewRollbackTurnMode,
+  ReviewRollbackTurnResult,
   PlanProposal,
   PlanResolveRequest,
   PlanResolutionResult,
@@ -1187,6 +1190,19 @@ export const api = {
     sessionId: string;
     snapshotId: string;
   }) => invoke<ReviewRollbackResult>(IPC.invoke.workspaceReviewRollback, input),
+  workspaceReviewCheckTurn: (input: {
+    sessionId: string;
+    snapshotIds: string[];
+  }) => invoke<ReviewCheckTurnResult>(IPC.invoke.workspaceReviewCheckTurn, input),
+  workspaceReviewRollbackTurn: (input: {
+    sessionId: string;
+    snapshotIds: string[];
+    mode: ReviewRollbackTurnMode;
+  }) =>
+    invoke<ReviewRollbackTurnResult>(
+      IPC.invoke.workspaceReviewRollbackTurn,
+      input,
+    ),
   browserNavigate: (url: string, sessionId?: string) =>
     invoke<BrowserState>(IPC.invoke.browserNavigate, { url, sessionId }),
   browserAction: (action: BrowserAction) =>

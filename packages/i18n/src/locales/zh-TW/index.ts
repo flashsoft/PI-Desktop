@@ -1448,6 +1448,23 @@ sklm: {
       rollbackUnavailable: "無法回退",
       rollbackConflict: "該檔案在此訊息之後又發生了變化，已跳過回退。",
       rollbackError: "這項改動回退失敗。",
+      rollbackTurn: "復原這一輪",
+      rollbackToBeforeTurn: "復原到這一輪之前",
+      rollbackTurnConfirmTitle: "復原到這一輪之前？",
+      rollbackTurnConfirmBody:
+        "這將復原 {{turns}} 輪對話、{{files}} 處已記錄的檔案改動。期間被 Bash 指令或外部工具修改過的檔案可能會維持原樣。完成後請重新建置並測試。",
+      rollbackTurnConfirmAction: "復原",
+      rollbackTurnBusy: "工作階段執行中，無法復原。",
+      rollbackTurnPartial: "部分檔案在之後被修改過，已維持原樣。",
+      rollbackTurnUnavailable: "本輪存在沒有可用快照的檔案。",
+      rollbackTurnBlockedBy: "之後在另一個工作階段中被修改",
+      rollbackNoticeTurn_one: "已復原這一輪（恢復 {{count}} 個檔案）",
+      rollbackNoticeTurn_other: "已復原這一輪（恢復 {{count}} 個檔案）",
+      rollbackNoticeRewind_one: "已復原到這一輪之前（恢復 {{count}} 個檔案）",
+      rollbackNoticeRewind_other: "已復原到這一輪之前（恢復 {{count}} 個檔案）",
+      rollbackNoticePartial:
+        "復原：恢復 {{rolled}} 個檔案，{{conflicts}} 個因之後被修改而維持原樣",
+      turnLabel: "第 {{index}} 輪",
       status: {
         added: "新增",
         modified: "修改",

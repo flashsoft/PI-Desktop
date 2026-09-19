@@ -1763,6 +1763,133 @@ async fn handle_request(
             Ok(serde_json::to_value(outcome)
                 .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?)
         }
+        "review.checkTurn" => {
+            let session_id = params
+                .get("sessionId")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| rpc_err(1002, "sessionId required", "INVALID_PARAMS"))?;
+            let raw_ids = params
+                .get("snapshotIds")
+                .and_then(|value| value.as_array())
+                .ok_or_else(|| rpc_err(1002, "snapshotIds required", "INVALID_PARAMS"))?;
+            let mut snapshot_ids = Vec::with_capacity(raw_ids.len());
+            for value in raw_ids {
+                let Some(id) = value.as_str() else {
+                    return Err(rpc_err(
+                        1002,
+                        "snapshotIds must be an array of strings",
+                        "INVALID_PARAMS",
+                    ));
+                };
+                snapshot_ids.push(id.to_string());
+            }
+            if snapshot_ids.is_empty() {
+                return Err(rpc_err(
+                    1002,
+                    "snapshotIds must not be empty",
+                    "INVALID_PARAMS",
+                ));
+            }
+            let st = state.lock().await;
+            let workspace_root = resolve_tool_workspace(&st, session_id)?;
+            let result = review::check_snapshots_clean(
+                &st.data_dir,
+                session_id,
+                &snapshot_ids,
+                workspace_root.as_deref().map(std::path::Path::new),
+            )
+            .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?;
+            Ok(serde_json::to_value(result)
+                .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?)
+        }
+        "review.rollbackTurn" => {
+            let session_id = params
+                .get("sessionId")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| rpc_err(1002, "sessionId required", "INVALID_PARAMS"))?;
+            let raw_ids = params
+                .get("snapshotIds")
+                .and_then(|value| value.as_array())
+                .ok_or_else(|| rpc_err(1002, "snapshotIds required", "INVALID_PARAMS"))?;
+            let mut snapshot_ids = Vec::with_capacity(raw_ids.len());
+            for value in raw_ids {
+                let Some(id) = value.as_str() else {
+                    return Err(rpc_err(
+                        1002,
+                        "snapshotIds must be an array of strings",
+                        "INVALID_PARAMS",
+                    ));
+                };
+                snapshot_ids.push(id.to_string());
+            }
+            if snapshot_ids.is_empty() {
+                return Err(rpc_err(
+                    1002,
+                    "snapshotIds must not be empty",
+                    "INVALID_PARAMS",
+                ));
+            }
+            let mode = params
+                .get("mode")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| rpc_err(1002, "mode required", "INVALID_PARAMS"))?;
+            if mode != "turn" && mode != "rewind" {
+                return Err(rpc_err(
+                    1002,
+                    "mode must be \"turn\" or \"rewind\"",
+                    "INVALID_PARAMS",
+                ));
+            }
+            let st = state.lock().await;
+            // Never mutate files underneath a running or queued turn.
+            let running = sessions::session_has_running_turn(&st.db, session_id)
+                .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?;
+            let queued = turn_queue::list(&st.db, Some(session_id))
+                .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?;
+            if running || !queued.is_empty() {
+                return Err(rpc_err(1008, "session is running", "CONFLICT"));
+            }
+            let workspace_root = resolve_tool_workspace(&st, session_id)?;
+            let outcomes = review::rollback_batch(
+                &st.data_dir,
+                session_id,
+                &snapshot_ids,
+                workspace_root.as_deref().map(std::path::Path::new),
+            )
+            .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?;
+            let mut invalidated: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            for outcome in &outcomes {
+                if !matches!(outcome.status, "rolledBack" | "alreadyRolledBack") {
+                    continue;
+                }
+                if let Some(root) = workspace_root.as_deref() {
+                    if !outcome.path.is_empty() && invalidated.insert(outcome.path.as_str()) {
+                        let resolved = std::path::Path::new(root).join(&outcome.path);
+                        st.hashline.invalidate_path(
+                            session_id,
+                            &crate::tools::hashline::canonical_key(&resolved),
+                        );
+                    }
+                }
+                // Message-state drift is a documented boundary: a failed
+                // update must not abort the remaining bookkeeping.
+                if let Err(error) = sessions::update_tool_review_state(
+                    &st.db,
+                    session_id,
+                    &outcome.message_id,
+                    &outcome.snapshot_id,
+                    "rolledBack",
+                ) {
+                    tracing::warn!(
+                        %error,
+                        session_id,
+                        snapshot_id = %outcome.snapshot_id,
+                        "failed to persist review rollback state"
+                    );
+                }
+            }
+            Ok(json!({ "mode": mode, "outcomes": outcomes }))
+        }
 
         "settings.get" => {
             let st = state.lock().await;
@@ -5936,6 +6063,55 @@ mod tests {
         assert_eq!(
             crate::workspace::simple_canonicalize(&resolved).unwrap(),
             crate::workspace::simple_canonicalize(&project_a).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn review_rollback_turn_rejects_a_busy_session() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let mut app_state = AppState::open(data_dir.path()).unwrap();
+        app_state.handshook = true;
+        let session = sessions::create_session(
+            &app_state.db,
+            Some("Busy".into()),
+            Some("agent".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        crate::turn_queue::push(
+            &app_state.db,
+            crate::turn_queue::QueuedTurnInput {
+                id: None,
+                session_id: session.id.clone(),
+                principal: "user".into(),
+                idempotency_key: None,
+                input_hash: "hash".into(),
+                content: "queued".into(),
+                session_message_id: None,
+                attachments: None,
+                permission_mode: "default".into(),
+            },
+        )
+        .unwrap();
+        let state = Arc::new(Mutex::new(app_state));
+        let error = handle_request(
+            state,
+            "review.rollbackTurn",
+            json!({
+                "sessionId": session.id,
+                "snapshotIds": ["snap-1"],
+                "mode": "turn",
+            }),
+            mpsc::unbounded_channel().0,
+        )
+        .await
+        .expect_err("a queued turn blocks turn rollback");
+        assert_eq!(error.code, 1008);
+        assert_eq!(
+            error.data.as_ref().and_then(|data| data.get("errorCode")),
+            Some(&json!("CONFLICT"))
         );
     }
 

@@ -611,6 +611,26 @@ export function registerWorkspaceIpc({
   );
 
   handle(
+    IPC.invoke.workspaceReviewCheckTurn,
+    async (input: { sessionId: string; snapshotIds: string[] }) => {
+      if (!host) throw new Error("host unavailable");
+      return host.call("review.checkTurn", input);
+    },
+  );
+
+  handle(
+    IPC.invoke.workspaceReviewRollbackTurn,
+    async (input: {
+      sessionId: string;
+      snapshotIds: string[];
+      mode: "turn" | "rewind";
+    }) => {
+      if (!host) throw new Error("host unavailable");
+      return host.call("review.rollbackTurn", input);
+    },
+  );
+
+  handle(
     IPC.invoke.statsGetTokenUsageHistory,
     async (input?: { startDate?: number; endDate?: number; bucket?: string }) => {
       if (!host) throw new Error("host unavailable");

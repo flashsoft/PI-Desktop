@@ -291,7 +291,7 @@ test("mode slash prefixes send the trailing prompt and retain failed drafts", ()
   assert.match(
     sendPrompt,
     // The prompt call carries the submitted content and attachment mapping.
-    /await api\.prompt\(\{[\s\S]*?sessionId,[\s\S]*?content,[\s\S]*?attachments:[\s\S]*?promptAttachmentsFromDraft\(draft\.fileReferences\)[\s\S]*?\}\);[\s\S]*?return true/,
+    /await api\.prompt\(\{[\s\S]*?sessionId,[\s\S]*?content: contentForPrompt,[\s\S]*?attachments:[\s\S]*?promptAttachmentsFromDraft\(draft\.fileReferences\)[\s\S]*?\}\);[\s\S]*?return true/,
   );
 });
 

@@ -520,6 +520,24 @@ may be retained while exactly one workspace supplies the visible shell context.
   after that session is selected; its event never renders in the currently
   visible session. A successful workspace artifact cannot create or activate
   the singleton Review tab; it appears only after the user opens it.
+- The Review tab groups the flat snapshot history by conversation turn
+  (D-turn-review). Turns are cut at user-message anchors; steering messages
+  stay in the current turn, subagent rows belong to their parent turn, and
+  changes before the first user message join the first group. Each collapsible
+  group header shows the turn index, an excerpt of the anchoring user message,
+  the changed-file count, and aggregated +/- counts. Every group is preflighted
+  through `review.checkTurn`: when every file still matches the batch's newest
+  hashes, the group offers "Roll back this turn" (surgical undo); otherwise the
+  primary action is "Roll back to before this turn", whose confirmation names
+  the consequence (how many turns and file changes revert), flags files without
+  a usable snapshot, and attributes files re-written by another session. All
+  rollback actions are disabled while the session runs. After a rollback, the
+  renderer records an English context block — mode, restored files, files left
+  as-is, "do not re-apply unless the user asks", and the warning that external
+  side effects were not reverted — and prepends it to the next real user input,
+  so the agent's context stays consistent with the workspace without spending
+  a turn on a notice; a renderer-local system row narrates the rollback in the
+  live transcript.
 - Each session retains `{open, tabs, activeTabId, browserResource}` in renderer
   memory. Selecting another session swaps the visible context atomically and
   switching back restores it; selecting a workspace without an active

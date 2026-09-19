@@ -32,6 +32,7 @@
 | [04-ux/07-ui-design-system.md](/zh-CN/spec/04-ux/07-ui-design-system) | 设计系统（令牌、运动、密度） |
 | [04-ux/01-ui-ia.md](/zh-CN/spec/04-ux/01-ui-ia) | 已发货的外壳和目的地地图 |
 | [../project/plan-mode-implementation-plan.md](/project/plan-mode-implementation-plan) | Plan 运行状态实施计划 |
+| [../project/turn-scoped-review-plan.md](/project/turn-scoped-review-plan) | 按轮次的审阅分组、回滚与 agent 通知计划 |
 | [07-plugins/01-plugin-system.md](/zh-CN/spec/07-plugins/01-plugin-system) | 插件系统 |
 | [06-delivery/03-ai-development-workflow.md](/zh-CN/spec/06-delivery/03-ai-development-workflow) | AI开发工作流程规则 |
 | [06-delivery/04-e2e-test-plan.md](/zh-CN/spec/06-delivery/04-e2e-test-plan) | E2E 测试计划和场景 |

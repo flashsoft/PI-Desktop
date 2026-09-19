@@ -90,6 +90,13 @@ snapshot directory with `session.delete` and sweeps directories whose session
 no longer exists at startup. A snapshot is never inferred from Git, so a later
 commit does not remove historical review evidence.
 
+Turn-scoped rollback (D-turn-review) reuses these per-tool snapshots as-is:
+a batch rollback restores, per file, the earliest active snapshot's `before`
+bytes under the newest active `after_hash` guard. No new storage, directory
+layout, or schema is introduced, and snapshots captured before the feature
+remain valid rollback material. Session archival is a renderer-only flag and
+never touches the snapshot directory; deletion keeps the existing cleanup.
+
 ### 2.1 Transcript files (D119)
 
 `sessions/<sessionId>.jsonl` — first line is a session header, then one line

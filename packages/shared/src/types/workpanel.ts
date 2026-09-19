@@ -51,6 +51,34 @@ export type ReviewRollbackResult = {
   path?: string;
 };
 
+/** Per-file verdict of a `review.checkTurn` preflight. */
+export type ReviewCheckTurnFile = {
+  path: string;
+  /** Current bytes still match the batch's newest after-hash for this file. */
+  clean: boolean;
+  /** The batch's earliest active snapshot for this file can be restored. */
+  reversible: boolean;
+  /**
+   * Another session's active snapshot whose after-hash matches the current
+   * bytes — the strongest available attribution for a conflict. Absent when
+   * the mismatch came from an external (non-snapshot) modification.
+   */
+  blockedBy?: { sessionId: string; messageId: string };
+};
+
+export type ReviewCheckTurnResult = {
+  clean: boolean;
+  files: ReviewCheckTurnFile[];
+};
+
+/** "turn" reverts one turn; "rewind" reverts that turn and every later turn. */
+export type ReviewRollbackTurnMode = "turn" | "rewind";
+
+export type ReviewRollbackTurnResult = {
+  mode: ReviewRollbackTurnMode;
+  outcomes: ReviewRollbackResult[];
+};
+
 export type DiffFileStatus =
   | "added"
   | "modified"

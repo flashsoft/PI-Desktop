@@ -1445,6 +1445,27 @@ sklm: {
       "rollbackUnavailable": "Revertir no disponible",
       "rollbackConflict": "El archivo cambió después de este mensaje; se omitió la reversión.",
       "rollbackError": "No se pudo revertir este cambio.",
+      "rollbackTurn": "Revertir este turno",
+      "rollbackToBeforeTurn": "Revertir hasta antes de este turno",
+      "rollbackTurnConfirmTitle": "¿Revertir hasta antes de este turno?",
+      "rollbackTurnConfirmBody":
+        "Esto revierte {{turns}} turnos y {{files}} cambios de archivos registrados. Los archivos modificados desde entonces por comandos Bash o herramientas externas pueden quedar como están. Vuelve a compilar y probar después.",
+      "rollbackTurnConfirmAction": "Revertir",
+      "rollbackTurnBusy": "No se puede revertir mientras la sesión está en ejecución.",
+      "rollbackTurnPartial":
+        "Algunos archivos cambiaron después y se dejaron como están.",
+      "rollbackTurnUnavailable": "Este turno tiene archivos sin una instantánea utilizable.",
+      "rollbackTurnBlockedBy": "Modificado después en otra sesión",
+      "rollbackNoticeTurn_one": "Turno revertido ({{count}} archivo restaurado)",
+      "rollbackNoticeTurn_other":
+        "Turno revertido ({{count}} archivos restaurados)",
+      "rollbackNoticeRewind_one":
+        "Revertido hasta antes de este turno ({{count}} archivo restaurado)",
+      "rollbackNoticeRewind_other":
+        "Revertido hasta antes de este turno ({{count}} archivos restaurados)",
+      "rollbackNoticePartial":
+        "Reversión: {{rolled}} archivos restaurados, {{conflicts}} dejados como están (modificados después)",
+      "turnLabel": "Turno {{index}}",
       "status": {
         "added": "Agregado",
         "modified": "Modificado",
