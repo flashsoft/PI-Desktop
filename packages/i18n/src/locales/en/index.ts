@@ -1466,6 +1466,27 @@ sklm: {
       rollbackUnavailable: "Rollback unavailable",
       rollbackConflict: "The file changed after this message; rollback was skipped.",
       rollbackError: "Couldn't roll back this change.",
+      rollbackTurn: "Roll back this turn",
+      rollbackToBeforeTurn: "Roll back to before this turn",
+      rollbackTurnConfirmTitle: "Roll back to before this turn?",
+      rollbackTurnConfirmBody:
+        "This reverts {{turns}} turns and {{files}} recorded file changes. Files touched by Bash commands or external tools since then may be left as-is. Re-run your build and tests afterwards.",
+      rollbackTurnConfirmAction: "Roll back",
+      rollbackTurnBusy: "Rollback is unavailable while the session is running.",
+      rollbackTurnPartial:
+        "Some files changed afterwards and were left as-is.",
+      rollbackTurnUnavailable: "This turn has files without a usable snapshot.",
+      rollbackTurnBlockedBy: "Changed afterwards in another session",
+      rollbackNoticeTurn_one: "Rolled back this turn ({{count}} file restored)",
+      rollbackNoticeTurn_other:
+        "Rolled back this turn ({{count}} files restored)",
+      rollbackNoticeRewind_one:
+        "Rolled back to before this turn ({{count}} file restored)",
+      rollbackNoticeRewind_other:
+        "Rolled back to before this turn ({{count}} files restored)",
+      rollbackNoticePartial:
+        "Rollback: {{rolled}} files restored, {{conflicts}} left as-is (changed afterwards)",
+      turnLabel: "Turn {{index}}",
       status: {
         added: "Added",
         modified: "Modified",

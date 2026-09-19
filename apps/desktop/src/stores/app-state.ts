@@ -21,7 +21,10 @@ import type {
   PluginViewMeta,
   ProjectWorkspace,
   ProviderPublic,
+  ReviewCheckTurnResult,
   ReviewRollbackResult,
+  ReviewRollbackTurnMode,
+  ReviewRollbackTurnResult,
   SessionSummary,
   SessionThinkingLevel,
   UiMessage,
@@ -143,6 +146,11 @@ export type AppState = {
   latestTurnResults: Record<string, AgentTurnResult>;
   /** Latest terminal outcome per session for compact sidebar feedback. */
   sessionOutcomes: Record<string, SidebarSessionOutcome>;
+  /**
+   * English rollback context blocks awaiting the next real user input, per
+   * session. The composer send path prepends and clears them (D-turn-review).
+   */
+  pendingRollbackNotices: Record<string, string>;
   /** Every checkpoint a session has installed, oldest first. */
   sessionCompactions: Record<string, ContextCompactionMark[]>;
   providers: ProviderPublic[];
@@ -240,6 +248,13 @@ export type AppState = {
     messageId: string,
     snapshotId: string,
   ) => Promise<ReviewRollbackResult | null>;
+  checkWorkspaceTurn: (input: {
+    snapshotIds: string[];
+  }) => Promise<ReviewCheckTurnResult | null>;
+  rollbackWorkspaceTurn: (input: {
+    snapshotIds: string[];
+    mode: ReviewRollbackTurnMode;
+  }) => Promise<ReviewRollbackTurnResult | null>;
   abort: () => Promise<void>;
   openProject: () => Promise<void>;
   closeProjectDialog: () => void;

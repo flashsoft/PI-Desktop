@@ -278,6 +278,8 @@ export const IPC = {
     composerCommands: "pi-desktop/composer/commands",
     workspaceDiff: "pi-desktop/workspace/diff",
     workspaceReviewRollback: "pi-desktop/workspace/review/rollback",
+    workspaceReviewCheckTurn: "pi-desktop/workspace/review/checkTurn",
+    workspaceReviewRollbackTurn: "pi-desktop/workspace/review/rollbackTurn",
     browserNavigate: "pi-desktop/browser/navigate",
     browserAction: "pi-desktop/browser/action",
     browserSetBounds: "pi-desktop/browser/setBounds",

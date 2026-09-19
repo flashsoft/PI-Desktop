@@ -107,8 +107,9 @@ test("reject or interruption returns editable planning without changing durable 
     queueSource.slice(queueSource.indexOf("sendPrompt: async"));
   assert.match(sendPromptBlock, /get\(\)\.pendingPlans\[sessionId\]\?\.status === "pending"/);
   assert.match(sendPromptBlock, /await api\.prompt\(\{/);
-  // The send ships the submitted content through the prompt call.
-  assert.match(sendPromptBlock, /sessionId,\s*content,/);
+  // The send ships the submitted content through the prompt call (prefixed
+  // with a pending rollback notice when one exists, D-turn-review).
+  assert.match(sendPromptBlock, /sessionId,\s*content: contentForPrompt,/);
   assert.match(
     sendPromptBlock,
     /attachments: draft[\s\S]*promptAttachmentsFromDraft\(draft\.fileReferences\)/,

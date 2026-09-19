@@ -1465,6 +1465,23 @@ sklm: {
       rollbackUnavailable: "Geri alma yok",
       rollbackConflict: "Bu iletiden sonra dosya değişti; geri alma atlandı.",
       rollbackError: "Bu değişiklik geri alınamadı.",
+      rollbackTurn: "Bu turu geri al",
+      rollbackToBeforeTurn: "Bu turdan öncesine geri al",
+      rollbackTurnConfirmTitle: "Bu turdan öncesine geri alınsın mı?",
+      rollbackTurnConfirmBody:
+        "Bu, {{turns}} turu ve {{files}} kayıtlı dosya değişikliğini geri alır. O zamandan beri Bash komutları veya harici araçlarla değiştirilen dosyalar olduğu gibi kalabilir. Ardından derlemeyi ve testleri yeniden çalıştırın.",
+      rollbackTurnConfirmAction: "Geri al",
+      rollbackTurnBusy: "Oturum çalışırken geri alma kullanılamaz.",
+      rollbackTurnPartial: "Bazı dosyalar sonra değiştirildi ve olduğu gibi bırakıldı.",
+      rollbackTurnUnavailable: "Bu turda kullanılabilir anlık görüntüsü olmayan dosyalar var.",
+      rollbackTurnBlockedBy: "Sonra başka bir oturumda değiştirildi",
+      rollbackNoticeTurn_one: "Bu tur geri alındı ({{count}} dosya geri yüklendi)",
+      rollbackNoticeTurn_other: "Bu tur geri alındı ({{count}} dosya geri yüklendi)",
+      rollbackNoticeRewind_one: "Bu turdan öncesine geri alındı ({{count}} dosya geri yüklendi)",
+      rollbackNoticeRewind_other: "Bu turdan öncesine geri alındı ({{count}} dosya geri yüklendi)",
+      rollbackNoticePartial:
+        "Geri alma: {{rolled}} dosya geri yüklendi, {{conflicts}} olduğu gibi bırakıldı (sonra değiştirildi)",
+      turnLabel: "Tur {{index}}",
       status: {
         added: "Eklendi",
         modified: "Değiştirildi",

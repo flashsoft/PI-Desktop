@@ -1465,6 +1465,23 @@ sklm: {
       rollbackUnavailable: "되돌릴 수 없음",
       rollbackConflict: "이 메시지 후 파일이 변경되어 되돌리기를 건너뛰었습니다.",
       rollbackError: "이 변경을 되돌릴 수 없습니다.",
+      rollbackTurn: "이 턴 롤백",
+      rollbackToBeforeTurn: "이 턴 이전으로 롤백",
+      rollbackTurnConfirmTitle: "이 턴 이전으로 롤백할까요?",
+      rollbackTurnConfirmBody:
+        "{{turns}}개 턴과 {{files}}개의 기록된 파일 변경을 되돌립니다. 이후 Bash 명령이나 외부 도구로 수정된 파일은 그대로 남을 수 있습니다. 완료 후 빌드와 테스트를 다시 실행하세요.",
+      rollbackTurnConfirmAction: "롤백",
+      rollbackTurnBusy: "세션이 실행 중일 때는 롤백할 수 없습니다.",
+      rollbackTurnPartial: "일부 파일이 이후에 변경되어 그대로 남겨졌습니다.",
+      rollbackTurnUnavailable: "이 턴에 사용 가능한 스냅샷이 없는 파일이 있습니다.",
+      rollbackTurnBlockedBy: "이후 다른 세션에서 변경됨",
+      rollbackNoticeTurn_one: "이 턴을 롤백했습니다 ({{count}}개 파일 복원)",
+      rollbackNoticeTurn_other: "이 턴을 롤백했습니다 ({{count}}개 파일 복원)",
+      rollbackNoticeRewind_one: "이 턴 이전으로 롤백했습니다 ({{count}}개 파일 복원)",
+      rollbackNoticeRewind_other: "이 턴 이전으로 롤백했습니다 ({{count}}개 파일 복원)",
+      rollbackNoticePartial:
+        "롤백: {{rolled}}개 파일 복원, {{conflicts}}개는 이후 변경으로 그대로 유지",
+      turnLabel: "{{index}}번째 턴",
       status: {
         added: "추가됨",
         modified: "수정됨",

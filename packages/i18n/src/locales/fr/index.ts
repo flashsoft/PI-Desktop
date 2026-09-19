@@ -1445,6 +1445,27 @@ sklm: {
       "rollbackUnavailable": "Restauration indisponible",
       "rollbackConflict": "Le fichier a changé après ce message ; la restauration a été ignorée.",
       "rollbackError": "Impossible d'annuler cette modification.",
+      "rollbackTurn": "Annuler ce tour",
+      "rollbackToBeforeTurn": "Revenir avant ce tour",
+      "rollbackTurnConfirmTitle": "Revenir avant ce tour ?",
+      "rollbackTurnConfirmBody":
+        "Cela annule {{turns}} tours et {{files}} modifications de fichiers enregistrées. Les fichiers modifiés depuis par des commandes Bash ou des outils externes peuvent rester en l'état. Relancez la compilation et les tests ensuite.",
+      "rollbackTurnConfirmAction": "Annuler",
+      "rollbackTurnBusy": "Annulation impossible pendant l'exécution de la session.",
+      "rollbackTurnPartial":
+        "Certains fichiers ont été modifiés depuis et sont restés en l'état.",
+      "rollbackTurnUnavailable": "Ce tour contient des fichiers sans instantané exploitable.",
+      "rollbackTurnBlockedBy": "Modifié ensuite dans une autre session",
+      "rollbackNoticeTurn_one": "Tour annulé ({{count}} fichier restauré)",
+      "rollbackNoticeTurn_other":
+        "Tour annulé ({{count}} fichiers restaurés)",
+      "rollbackNoticeRewind_one":
+        "Retour avant ce tour ({{count}} fichier restauré)",
+      "rollbackNoticeRewind_other":
+        "Retour avant ce tour ({{count}} fichiers restaurés)",
+      "rollbackNoticePartial":
+        "Annulation : {{rolled}} fichiers restaurés, {{conflicts}} laissés en l'état (modifiés ensuite)",
+      "turnLabel": "Tour {{index}}",
       "status": {
         "added": "Ajouté",
         "modified": "Modifié",

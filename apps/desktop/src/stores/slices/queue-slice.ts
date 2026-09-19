@@ -430,13 +430,28 @@ export function createQueueSlice({
             runtime.submittedComposerDrafts.delete(startedIn);
             return false;
           }
+          // A turn-scoped rollback recorded while idle rides the next real
+          // user input as an English context prefix (D-turn-review); the
+          // optimistic row keeps only what the user typed.
+          const rollbackNotice = get().pendingRollbackNotices[startedIn];
+          const contentForPrompt = rollbackNotice
+            ? `${rollbackNotice}\n\n${content}`
+            : content;
           await api.prompt({
             sessionId,
-            content,
+            content: contentForPrompt,
             messageId: optimisticMessage.id,
             viewingSessionId: viewingSessionIdForPrompt(get(), sessionId),
             attachments: draft ? promptAttachmentsFromDraft(draft.fileReferences) : [],
           });
+          if (rollbackNotice) {
+            set((state) => ({
+              pendingRollbackNotices: withoutRecordKey(
+                state.pendingRollbackNotices,
+                startedIn,
+              ),
+            }));
+          }
           const submitted = runtime.submittedComposerDrafts.get(startedIn);
           if (submitted?.abortResolution && (await submitted.abortResolution)) {
             return false;

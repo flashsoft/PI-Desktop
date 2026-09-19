@@ -60,6 +60,7 @@ export function createInitialState(): AppStateData {
     agentStatuses: {},
     latestTurnResults: {},
     sessionOutcomes: {},
+    pendingRollbackNotices: {},
     sessionCompactions: {},
     providers: [],
     providerModels: {},

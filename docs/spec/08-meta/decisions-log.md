@@ -6302,3 +6302,31 @@ that was sitting at the bottom — including after the turn had finished.
   Presentation only: no IPC, storage, host-protocol, or
   activation-semantics change. See `04-ux/06-settings-ia.md`,
   `04-ux/07-ui-design-system.md`, and ADR 0294.
+## 2026-09-19 — Turn-scoped review grouping and rollback (D-turn-review)
+
+- The Review tab groups the flat snapshot history by conversation turn, cut at
+  user-message anchors in the renderer (steering stays in the current turn,
+  subagent rows belong to their parent turn). No `turn_id` is plumbed into
+  `UiMessage` or the snapshot capture path: grouping is a presentation concern
+  and stays consistent with the transcript's own turn boundaries.
+- Rewind is the primary operation for older turns, and it is NOT a chained
+  replay of per-tool snapshots: per file, the batch restores the earliest
+  active snapshot's `before` bytes once, guarded by the newest active
+  `after_hash`. The state a turn started from is exactly the before-bytes of
+  that turn's first touch of each file, so one write per file lands the target
+  state with no order-sensitive intermediate steps. Surgical rollback of a
+  single turn is offered only when every file still matches the batch's newest
+  hashes.
+- Cross-session conflicts are attributed, not merged: when the guard fails and
+  another session's active snapshot explains the current bytes, the preflight
+  names that session (`blockedBy`). There is no three-way merge, no forced
+  overwrite, and no cross-session rewind in this change.
+- The agent is told about a rollback through the next real user input, not a
+  queued turn: the renderer records an English context block and prepends it on
+  the composer send path. This keeps the agent's context consistent with the
+  workspace without spending a turn, without impersonating a queued user
+  message in the durable turn queue, and without a schema change.
+- Stated blind spots, surfaced in copy rather than solved: Bash-driven external
+  side effects are not reverted; a rollback can leave the project in an
+  intermediate state that needs a fresh build/test pass; message-level review
+  state updates that fail mid-batch are logged and left for the next reload.

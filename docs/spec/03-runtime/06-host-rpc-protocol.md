@@ -207,6 +207,23 @@ type ToolBudgetHealth = {
 - `review.rollback({sessionId, snapshotId})` — verify the current post-tool
   hash, restore the session-owned previous bytes, and return one of
   `rolledBack`, `alreadyRolledBack`, `conflict`, or `unavailable`.
+- `review.checkTurn({sessionId, snapshotIds})` — read-only preflight for a
+  turn-scoped rollback. Snapshots are grouped by file in the given
+  (chronological) order; per file the current bytes are compared with the
+  batch's newest active `after_hash`, and the batch's earliest active snapshot
+  must be reversible. Returns `{clean, files}` where each file entry carries
+  `clean`, `reversible`, and, when the bytes were re-written by another
+  session's snapshot, a `blockedBy` attribution. A missing snapshot meta
+  reports `clean: false, reversible: false` for its file instead of failing.
+- `review.rollbackTurn({sessionId, snapshotIds, mode})` — batch rollback over
+  caller-ordered snapshot ids; `mode` is `"turn"` (one turn) or `"rewind"`
+  (that turn and every later turn, newest-first by file). Rejected with
+  `CONFLICT` while the session has a running turn or queued inputs. Per file
+  the earliest active `before` bytes are restored once (no chained replay);
+  one file's `conflict`/`unavailable` does not abort the batch. Every
+  snapshot reports its own outcome (`rolledBack`, `alreadyRolledBack`,
+  `conflict`, `unavailable`), and restored snapshots flip their owning
+  messages' review state. Returns `{mode, outcomes}`.
 
 ### Projects
 - `projects.list` — returns durable project records ordered pinned-first, then

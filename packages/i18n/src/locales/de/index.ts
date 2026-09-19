@@ -1445,6 +1445,27 @@ sklm: {
       "rollbackUnavailable": "Rollback nicht verfügbar",
       "rollbackConflict": "Die Datei wurde nach dieser Meldung geändert; Rollback wurde übersprungen.",
       "rollbackError": "Diese Änderung konnte nicht rückgängig gemacht werden.",
+      "rollbackTurn": "Diesen Zug zurücksetzen",
+      "rollbackToBeforeTurn": "Auf vor diesen Zug zurücksetzen",
+      "rollbackTurnConfirmTitle": "Auf vor diesen Zug zurücksetzen?",
+      "rollbackTurnConfirmBody":
+        "Dies macht {{turns}} Züge und {{files}} aufgezeichnete Dateiänderungen rückgängig. Dateien, die seitdem durch Bash-Befehle oder externe Werkzeuge geändert wurden, bleiben möglicherweise unverändert. Führen Sie danach Build und Tests erneut aus.",
+      "rollbackTurnConfirmAction": "Zurücksetzen",
+      "rollbackTurnBusy": "Zurücksetzen ist nicht möglich, solange die Sitzung läuft.",
+      "rollbackTurnPartial":
+        "Einige Dateien wurden nachträglich geändert und blieben unverändert.",
+      "rollbackTurnUnavailable": "Dieser Zug enthält Dateien ohne verwendbaren Snapshot.",
+      "rollbackTurnBlockedBy": "Nachträglich in einer anderen Sitzung geändert",
+      "rollbackNoticeTurn_one": "Dieser Zug zurückgesetzt ({{count}} Datei wiederhergestellt)",
+      "rollbackNoticeTurn_other":
+        "Dieser Zug zurückgesetzt ({{count}} Dateien wiederhergestellt)",
+      "rollbackNoticeRewind_one":
+        "Auf vor diesen Zug zurückgesetzt ({{count}} Datei wiederhergestellt)",
+      "rollbackNoticeRewind_other":
+        "Auf vor diesen Zug zurückgesetzt ({{count}} Dateien wiederhergestellt)",
+      "rollbackNoticePartial":
+        "Zurücksetzen: {{rolled}} Dateien wiederhergestellt, {{conflicts}} unverändert belassen (nachträglich geändert)",
+      "turnLabel": "Zug {{index}}",
       "status": {
         "added": "Hinzugefügt",
         "modified": "Geändert",
