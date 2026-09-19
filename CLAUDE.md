@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Policy-Sync: 2026-09-18.1
+Policy-Sync: 2026-09-19.1
 
 Instructions for Claude Code CLI and Claude Cowork on PI-Desktop.
 
@@ -24,7 +24,7 @@ Optimize for changing the system safely, not merely changing it quickly.
 
 ## Interaction language
 
-Reply to the user in the language they used (Chinese request → Chinese answer, kept terse). Keep code, identifiers, comments, commit messages, specs, ADRs, log strings, and repository docs in English. GitHub issue / PR discussion follows the original author's language.
+Reply to the user in the language they used (Chinese request → Chinese answer, kept terse). Keep code, identifiers, comments, commit messages, log strings, and protocol field names in English. Repository documentation — specs, ADRs, and READMEs — is written in Chinese (zh-CN); write and update documentation in Chinese. GitHub issue / PR discussion follows the original author's language.
 
 ---
 
@@ -211,7 +211,7 @@ Also useful:
 - [`docs/spec/02-architecture/03-repo-structure.md`](docs/spec/02-architecture/03-repo-structure.md) — layout
 - [`SECURITY.md`](SECURITY.md) — private vulnerability reporting
 
-Use **English** for code, identifiers, comments, commits, specs, ADRs, and repository docs. GitHub issue/PR discussion may match the original author's language.
+Use **English** for code, identifiers, comments, commits, log strings, and protocol field names. Repository documentation (specs, ADRs, READMEs) is written in **Chinese (zh-CN)**. GitHub issue/PR discussion may match the original author's language.
 
 Observable behavior changes must update the relevant spec. User-visible or protocol-visible changes must update the corresponding E2E scenario docs. New E2E scenario IDs are semantic, e.g. `E2E-SESSION-switch-does-not-show-stale-transcript`.
 
