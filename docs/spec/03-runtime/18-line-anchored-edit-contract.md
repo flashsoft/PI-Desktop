@@ -1,92 +1,80 @@
-# 18. Line-Anchored Edit Contract
+# 18. 行锚定编辑契约
 
-> Decisions applied: ADR 0087. Amends D186, ADR 0069 §2, ADR 0043 §1.
-> Source of truth for implementation: `crates/host-core/src/tools/hashline/`
-> (new), `crates/host-core/src/tools/mod.rs`,
-> `packages/agent-runtime/src/runtime.ts`.
+> 应用的决定：ADR 0087。修订 D186、ADR 0069 §2、ADR 0043 §1。
+> 实现的事实来源：`crates/host-core/src/tools/hashline/`（新增）、
+> `crates/host-core/src/tools/mod.rs`、`packages/agent-runtime/src/runtime.ts`。
 
-## 1. Purpose
+## 1. 目的
 
-`Edit` names **positions** in a file and supplies **new content only**. It never
-asks the model to reproduce existing bytes. Version correctness and read
-provenance are proven by the host, not asserted by the model.
+`Edit` 命名文件中的**位置**，并且只提供**新内容**。它从不要求模型复述已有字节。
+版本正确性与读取来源由主机证明，而不是由模型断言。
 
-Three properties are enforced, in this order, before any byte is written:
+在写入任何字节之前，按以下顺序强制三条性质：
 
-1. **Version.** The `tag` the model supplies must hash the live file.
-2. **Provenance.** Every line the edit anchors on must have been displayed to
-   this session.
-3. **Determinism.** The op must resolve to exactly one span. Ambiguity fails;
-   it is never resolved by preference.
+1. **版本。** 模型提供的 `tag` 必须能哈希出实时文件。
+2. **来源。** 编辑所锚定的每一行都必须曾向本会话显示过。
+3. **确定性。** 操作必须解析为恰好一个跨度。有歧义即失败；绝不按偏好消解歧义。
 
-## 2. Frozen policy summary
+## 2. 冻结政策总结
 
-| Topic | Decision |
+| 主题 | 决定 |
 |---|---|
-| `Edit` parameters | `path`, `tag`, `ops` |
-| Removed | `old_string`, `new_string`, and any mode switch between contracts |
-| Tag | 4 uppercase hex, derived from the whole normalized file |
-| Tag minted by | `Read`, `Grep`, `Write`, and every successful `Edit` |
-| Anchor unit | 1-indexed original line numbers of the tagged snapshot |
-| Body rows | `+`-prefixed final content only; no `-old`, no context rows |
-| Sections per call | exactly one (`path` in args) |
-| Named registers | session-scoped, survive across `Edit` calls |
-| Anonymous register | call-local |
-| Block ops | tree-sitter; decline when unresolvable, never approximate |
-| Stale tag | recover only when provably unique and safe; otherwise reject |
-| No-op apply | error |
-| Snapshot store | in-memory, per session, bounded, dropped with the session |
+| `Edit` 参数 | `path`、`tag`、`ops` |
+| 已移除 | `old_string`、`new_string`，以及两种契约之间的任何模式开关 |
+| Tag | 4 位大写十六进制，由整个规范化文件导出 |
+| Tag 的生成者 | `Read`、`Grep`、`Write`，以及每一次成功的 `Edit` |
+| 锚定单位 | 被 tag 命名快照的 1 起始原始行号 |
+| 正文行 | 仅 `+` 前缀的最终内容；没有 `-old`，没有上下文行 |
+| 每次调用的 section 数 | 恰好一个（args 中的 `path`） |
+| 命名寄存器 | 会话作用域，跨 `Edit` 调用存活 |
+| 匿名寄存器 | 调用内局部 |
+| 块操作 | tree-sitter；无法解析时拒绝，绝不近似 |
+| 过时 tag | 仅在可证明唯一且安全时恢复；否则拒绝 |
+| 空操作应用 | 错误 |
+| 快照存储 | 内存中、按会话、有界、随会话一起丢弃 |
 
-## 3. Snapshot tags
+## 3. 快照 tag
 
-### 3.1 Normalization
+### 3.1 规范化
 
-Before hashing, and before any line is addressed, file text is normalized:
+在哈希之前、以及在寻址任何行之前，文件文本会被规范化：
 
-1. A leading UTF-8 BOM is stripped and retained for restoration on write.
-2. Line endings are detected and normalized to `LF`; the dominant original
-   ending is retained for restoration on write.
-3. Trailing `[ \t\r]` is removed from every line, including the last.
+1. 去掉开头的 UTF-8 BOM，并保留它以便写入时恢复。
+2. 检测行尾并规范化为 `LF`；保留原本占主导的行尾以便写入时恢复。
+3. 去掉每一行末尾的 `[ \t\r]`，包括最后一行。
 
-Step 3 applies to the **hash input only**, never to the content the file keeps.
-It exists so that a `CRLF` file and a display that trimmed trailing whitespace
-still mint the same tag as the bytes on disk.
+第 3 步**只**作用于哈希输入，绝不作用于文件所保留的内容。它的存在是为了让一个
+`CRLF` 文件、以及一次去掉了行尾空白的显示，仍然生成与磁盘字节相同的 tag。
 
-Line addressing splits normalized text on `LF`. A terminal newline terminates
-the preceding line and is not itself addressable content; a trailing empty
-element produced by the split is dropped.
+行寻址按 `LF` 切分规范化文本。末尾换行终结它前面的一行，本身不是可寻址内容；切分
+产生的尾部空元素会被丢弃。
 
-### 3.2 Computation
+### 3.2 计算
 
 ```text
 tag(text) = uppercase_hex_4( low_16_bits( digest( normalize_for_hash(text) ) ) )
 ```
 
-`digest` is the SHA-256 primitive already used by
-`crates/host-core/src/review.rs`; the tag takes its low 16 bits. Reusing the
-existing primitive keeps one hashing story in host-core and avoids a new
-dependency. The cost is one whole-file digest per read and per write, which is
-bounded by file size and measured in single-digit milliseconds for the file sizes
-`Read` serves.
+`digest` 是 `crates/host-core/src/review.rs` 已在使用的 SHA-256 原语；tag 取其低 16
+位。复用已有原语让 host-core 只有一套哈希叙事，也避免新增依赖。代价是每次读取与每次
+写入各做一次整文件摘要，其上界由文件大小决定，对 `Read` 所服务的文件规模而言是个位数
+毫秒。
 
-### 3.3 Collision policy
+### 3.3 碰撞政策
 
-The tag has 65 536 values. Collisions are expected, not exceptional. The tag is
-an **index, never an identity**:
+tag 有 65 536 个取值。碰撞是预期之内的，而不是例外。tag 是**索引，绝不是身份**：
 
-- Snapshot deduplication requires **full-text equality**, not tag equality. Two
-  distinct texts sharing a tag are two snapshots.
-- Lookup by tag returns the most recently recorded matching version.
-- Every decision that could corrupt a file — provenance validation, drift
-  recovery, path recovery — additionally compares full text or validates
-  surrounding context. A tag match alone never authorizes a write.
+- 快照去重要求**全文相等**，而不是 tag 相等。共享同一个 tag 的两段不同文本就是两个快照。
+- 按 tag 查找返回最近记录的匹配版本。
+- 每一个可能损坏文件的决定——来源校验、漂移恢复、路径恢复——都额外比较全文或校验周围
+  上下文。仅 tag 匹配从不授权写入。
 
-Fusing two texts under one tag would attach one text's displayed lines to the
-other's content, which is the one way a 16-bit tag can cause real damage.
+把两段文本融合到一个 tag 之下，会把其中一段显示过的行挂到另一段的内容上，而这正是
+16 位 tag 唯一能造成真实损害的方式。
 
-## 4. Session snapshot store
+## 4. 会话快照存储
 
-### 4.1 Shape
+### 4.1 形状
 
 ```text
 session_id → canonical_path → [Snapshot]   (newest first)
@@ -99,69 +87,60 @@ Snapshot {
 }
 ```
 
-`canonical_path` is the resolved path already produced by
-`workspace::resolve_tool_path`, so workspace, scratch, and approved external
-roots share one keyspace and a path spelled two ways resolves to one entry.
+`canonical_path` 是 `workspace::resolve_tool_path` 已经产出的解析后路径，因此工作区、
+scratch 与被批准的外部根共享一个键空间，同一路径的两种写法解析到同一条目。
 
-`seen_lines == None` means "no provenance recorded" — the provenance gate is then
-skipped rather than failing closed, so an externally minted or aged-out tag
-degrades to version checking only.
+`seen_lines == None` 意味着“没有记录来源”——此时跳过来源闸门而不是失败关闭，因此一个
+外部生成或已被淘汰的 tag 会降级为只做版本校验。
 
-### 4.2 Recording and read fusion
+### 4.2 记录与读取融合
 
-`record(path, text, seen_lines)` returns the tag and:
+`record(path, text, seen_lines)` 返回 tag，并且：
 
-- If a retained version has the same tag **and** the same full text, that
-  version is promoted to head, its recency refreshed, and `seen_lines` unioned
-  in. The tag is reused.
-- Otherwise a new version is unshifted onto the front of the path's history.
+- 如果某个保留版本的 tag 相同**且**全文相同，该版本被提升到头部、刷新其最近使用时间，
+  并把 `seen_lines` 并入。tag 被复用。
+- 否则把一个新版本插到该路径历史的最前面。
 
-Read fusion is what makes paginated reading work: reading lines 1–2000 and then
-1800–3600 of an unchanged file produces one tag whose `seen_lines` covers
-1–3600, so a later `Edit` anywhere in that range validates without a third read.
+读取融合正是分页阅读能够工作的原因：读取一个未变文件的第 1–2000 行，再读取第 1800–3600
+行，会产生一个 `seen_lines` 覆盖 1–3600 的 tag，因此之后落在该范围内任何位置的 `Edit`
+都无需第三次读取即可校验通过。
 
-### 4.3 Which lines count as seen
+### 4.3 哪些行算作已显示
 
-A line joins `seen_lines` only when the producer emitted it **in full**:
+一行只有在生产者**完整**输出它时才加入 `seen_lines`：
 
-- `Read` records every line it returned, **excluding** lines clipped at
-  `MAX_LINE_CHARS` (16,384). A clipped line was not displayed; its tail is exactly
-  where a blind edit does damage.
-- `Grep` in `content` mode records only its matched lines. `filesWithMatches`
-  and `count` modes record nothing and mint a tag with `seen_lines` empty, which
-  is not the same as `None`: the tag is usable for version checking, and every
-  anchor will be rejected until something displays the lines.
-- `Write` and a successful `Edit` record the post-write content with **all**
-  lines seen: the session authored them.
+- `Read` 记录它返回的每一行，但**排除**在 `MAX_LINE_CHARS`（16,384）处被剪辑的行。被剪辑
+  的行没有被显示；它的尾部恰恰是盲写造成损害的地方。
+- `content` 模式下的 `Grep` 只记录其命中行。`filesWithMatches` 与 `count` 模式什么都不
+  记录，并生成一个 `seen_lines` 为空的 tag——这与 `None` 不同：该 tag 可用于版本校验，
+  而在有东西显示这些行之前，每个锚点都会被拒绝。
+- `Write` 与成功的 `Edit` 记录写入后的内容，并把**所有**行标记为已显示：是会话写出了它们。
 
-An empty `seen_lines` set is treated as "nothing seen", so every anchor is
-rejected. `None` is treated as "unknown", so no anchor is rejected. The
-distinction is deliberate and must not be collapsed.
+空的 `seen_lines` 集被当作“什么都没显示过”，因此每个锚点都被拒绝。`None` 被当作“未知”，
+因此没有锚点会被拒绝。这一区分是刻意的，不得被合并。
 
-### 4.4 Bounds and lifecycle
+### 4.4 界限与生命周期
 
-| Bound | Value | Behavior at the limit |
+| 界限 | 取值 | 达到上限时的行为 |
 |---|---|---|
-| Paths per session | 64 | LRU eviction of the coldest path history |
-| Versions per path | 4 | oldest dropped first |
-| Retained text per session | 8 MiB | LRU path eviction until under the ceiling |
-| Single-file retention | 2 MiB | file is hashed and tagged but its text is not retained; recovery is unavailable for it |
+| 每会话路径数 | 64 | LRU 淘汰最冷的路径历史 |
+| 每路径版本数 | 4 | 先丢弃最旧的 |
+| 每会话保留文本 | 8 MiB | LRU 淘汰路径直到低于上限 |
+| 单文件保留 | 2 MiB | 该文件仍被哈希并生成 tag，但不保留其文本；该文件不可用恢复 |
 
-The store lives in host-core process memory under the existing session state
-lock. It is dropped when the session is deleted, when the workspace is switched,
-and at process exit. It is never persisted: a tag from a previous run is
-unrecognized, which correctly forces a fresh `Read`.
+该存储位于 host-core 进程内存中，处于已有的会话状态锁之下。它在会话被删除、工作区被
+切换以及进程退出时被丢弃。它从不持久化：来自上一次运行的 tag 无法被识别，这会正确地
+强制一次新的 `Read`。
 
-Eviction is safe by construction. Losing a snapshot loses the ability to
-*recover* from drift and the ability to *validate* provenance; both degrade to a
-rejection or a warning, never to a wrong write.
+淘汰在构造上是安全的。丢失一个快照会丢失从漂移中*恢复*的能力，以及*校验*来源的能力；
+两者都降级为一次拒绝或一次警告，而绝不会降级为一次错误写入。
 
-## 5. Producer output shapes
+## 5. 生产者输出形状
 
 ### 5.1 `Read`
 
-`content` becomes line-numbered and carries a section header. This reverses ADR
-0069 §2's byte-faithful `content`, whose only purpose was `old_string` matching.
+`content` 变为带行号并携带 section 头。这反转了 ADR 0069 §2 的字节忠实 `content`，其
+唯一目的曾是 `old_string` 匹配。
 
 ```text
 [src/main.rs#A1B2]
@@ -170,57 +149,49 @@ rejection or a warning, never to a wrong write.
 43:}
 ```
 
-- The header is the tag of the **whole file**, not of the returned window.
-- Line numbers are absolute file lines, so `offset` does not shift them.
-- The `N:` prefix is not counted against `MAX_LINE_CHARS`; clipping still applies
-  to the line text and still excludes that line from `seen_lines`.
-- Existing sibling fields (`path`, `root`, `offset`, `lineCount`, `totalLines`,
-  `truncated`, `fileBytes`, `notice`) are unchanged. `tag` is added as a
-  first-class field so consumers need not parse the header.
+- 该头是**整个文件**的 tag，不是所返回窗口的 tag。
+- 行号是绝对文件行号，因此 `offset` 不会移动它们。
+- `N:` 前缀不计入 `MAX_LINE_CHARS`；剪辑仍然作用于行文本，并且仍然把该行排除在
+  `seen_lines` 之外。
+- 已有的兄弟字段（`path`、`root`、`offset`、`lineCount`、`totalLines`、`truncated`、
+  `fileBytes`、`notice`）保持不变。`tag` 作为一等字段新增，因此消费者无需解析该头。
 
 ### 5.2 `Grep`
 
-Each `matches[]` entry keeps `{path, line, text}` and the result gains a
-`tags: { <path>: <tag> }` map plus a header line per file in the rendered form.
-A grep hit is therefore a usable edit anchor for the matched line only.
+每个 `matches[]` 条目保持 `{path, line, text}`，结果新增一个 `tags: { <path>: <tag> }`
+映射，并在渲染形式中为每个文件加一行头。因此一个 grep 命中只能作为其命中行的可用编辑锚点。
 
 ### 5.3 `Write`
 
-Returns `tag` and the `[path#TAG]` header of the content that actually landed,
-so an immediately following `Edit` needs no `Read`.
+返回 `tag` 以及实际落盘内容的 `[path#TAG]` 头，因此紧随其后的 `Edit` 无需 `Read`。
 
-`Write` continues to strip pasted `[path#TAG]` headers and `N:` line prefixes
-from incoming `content`; with line-numbered `Read` output this stops being a
-convenience and becomes required.
+`Write` 继续从传入 `content` 中剥离被粘贴的 `[path#TAG]` 头与 `N:` 行前缀；在 `Read`
+输出带行号之后，这不再只是便利，而是必需。
 
-### 5.4 Post-write drift
+### 5.4 写入后漂移
 
-The tag recorded after a write is computed from the bytes the write path reports
-as landed, not from the bytes the tool intended. When a formatter or an external
-writethrough transforms content on save, recording the intended text would
-publish a tag for content that does not exist, and the next `Edit` would resolve
-against a baseline the file has already left.
+写入之后记录的 tag 由写入路径报告为已落盘的字节计算，而不是由工具本意的字节计算。当
+格式化器或外部写穿在保存时改变内容时，记录本意文本会为并不存在的内容发布一个 tag，而
+下一次 `Edit` 会针对文件已经离开的基线解析。
 
-The intended text is still what the review record and the model-visible summary
-describe, so a drifted write reports a one-line warning rather than a whole-file
-diff.
+本意文本仍然是审核记录与模型可见摘要所描述的内容，因此一次漂移写入报告一行警告，而不是
+整文件差异。
 
-## 6. `Edit` request shape
+## 6. `Edit` 请求形状
 
-| Field | Type | Required | Description |
+| 字段 | 类型 | 必填 | 描述 |
 |---|---|---|---|
-| `path` | string | yes | Existing regular file, workspace-relative or an approved absolute path. `Edit` never creates files; use `Write`. |
-| `tag` | string | yes | 4 uppercase hex from the most recent `Read` / `Grep` / `Write` / `Edit` result for this path. |
-| `ops` | string | yes | One or more operation headers with their body rows, newline separated. |
+| `path` | string | 是 | 已存在的常规文件，工作区相对路径或被批准的绝对路径。`Edit` 从不创建文件；请用 `Write`。 |
+| `tag` | string | 是 | 该路径最近一次 `Read` / `Grep` / `Write` / `Edit` 结果中的 4 位大写十六进制。 |
+| `ops` | string | 是 | 一个或多个操作头及其正文行，以换行分隔。 |
 
-`ops` may optionally begin with a `[path#TAG]` header line. When present it must
-agree with `path` and `tag`; a disagreement is `INVALID_ARGUMENT` rather than a
-silent preference, because the two spellings disagreeing means the model has lost
-track of which file it is editing.
+`ops` 可以以一行 `[path#TAG]` 头开始。存在时它必须与 `path` 和 `tag` 一致；不一致返回
+`INVALID_ARGUMENT` 而不是静默偏向其中之一，因为两种写法不一致意味着模型已经不知道自己
+在编辑哪个文件。
 
-## 7. Patch language
+## 7. 补丁语言
 
-### 7.1 Grammar
+### 7.1 语法
 
 ```text
 ops        := header_block+
@@ -243,397 +214,335 @@ body_row   := "+" TEXT
 dest       := path | quoted_path
 ```
 
-### 7.2 Operations
+### 7.2 操作
 
-| Header | Body | Meaning |
+| 头 | 正文 | 含义 |
 |---|---|---|
-| `PUT N.=M:` | required | Replace original inclusive lines `N`–`M` with the body. `N.=N` for one line. |
-| `PUT N*:` | required | Replace the syntactic block opening at line `N`. |
-| `PUT <N:` | required | Insert the body before line `N`. `PUT <1:` is the file head. |
-| `PUT >N:` | required | Insert the body after line `N`. |
-| `PUT >$:` | required | Append at end of file. |
-| `PUT >N*:` | required | Insert after the end of the block opening at `N`, at sibling depth. |
-| `CUT N.=M` | none | Delete lines `N`–`M` and capture them. |
-| `CUT N*` | none | Delete the block opening at `N` and capture it. |
-| `CUT … @name` | none | Capture into the named register instead of the anonymous one. |
-| `PUT <N @name` / `PUT >N @name` | none | Paste a register at the gap. |
-| `PUT N.=M @name` / `PUT N* @name` | none | Paste a register over the range or resolved block. `@name` is mandatory in the span form. |
-| `REM` | none | Delete the file named by `path`. |
-| `MV DEST` | none | Move/rename to `DEST` after applying every other op to the source. |
+| `PUT N.=M:` | 必需 | 用正文替换原始的闭区间行 `N`–`M`。单行用 `N.=N`。 |
+| `PUT N*:` | 必需 | 替换在第 `N` 行开启的语法块。 |
+| `PUT <N:` | 必需 | 在第 `N` 行之前插入正文。`PUT <1:` 是文件头。 |
+| `PUT >N:` | 必需 | 在第 `N` 行之后插入正文。 |
+| `PUT >$:` | 必需 | 在文件末尾追加。 |
+| `PUT >N*:` | 必需 | 在第 `N` 行开启的块结束之后、以兄弟深度插入。 |
+| `CUT N.=M` | 无 | 删除第 `N`–`M` 行并捕获它们。 |
+| `CUT N*` | 无 | 删除在第 `N` 行开启的块并捕获它。 |
+| `CUT … @name` | 无 | 捕获到命名寄存器而不是匿名寄存器。 |
+| `PUT <N @name` / `PUT >N @name` | 无 | 在间隙处粘贴一个寄存器。 |
+| `PUT N.=M @name` / `PUT N* @name` | 无 | 用寄存器覆盖该范围或已解析的块。在跨度形式中 `@name` 是必需的。 |
+| `REM` | 无 | 删除由 `path` 命名的文件。 |
+| `MV DEST` | 无 | 在把其他所有操作应用到源之后，移动/重命名到 `DEST`。 |
 
-### 7.3 Anchoring rules
+### 7.3 锚定规则
 
-1. All line numbers refer to the **tagged snapshot**. They are never shifted by
-   earlier ops in the same call.
-2. Ranges are inclusive and ordered (`N <= M`).
-3. Ranges name only the lines being **changed**. A pure insertion uses a gap
-   locator; a widened `PUT` that restates surviving lines is the single most
-   damaging authoring mistake and is what §7.4's `+`-only body rules exist to
-   prevent.
-4. Two ops may not overlap, and two ops may not target the same original anchor.
-5. A range may not start or end inside a collapsed or clipped region. Lines
-   excluded from `seen_lines` are rejected by §9's provenance gate, which covers
-   this case mechanically rather than by convention.
+1. 所有行号都指**被 tag 命名的快照**。它们绝不会被同一次调用中较早的操作移动。
+2. 范围是闭区间且有序（`N <= M`）。
+3. 范围只命名**被改动的**行。纯插入使用间隙定位符；一个重述了幸存行的加宽 `PUT` 是最
+   具破坏性的单一写法错误，也正是 §7.4 的仅 `+` 正文规则要防止的对象。
+4. 两个操作不得重叠，两个操作也不得针对同一个原始锚点。
+5. 范围不得起止于折叠或被剪辑的区域内部。被排除在 `seen_lines` 之外的行会被 §9 的来源
+   闸门机械地拒绝，而不是靠约定。
 
-### 7.4 Body rows
+### 7.4 正文行
 
-A body row is `+` followed by the row's final text, with leading whitespace
-preserved. A bare `+` is an empty line.
+正文行是 `+` 后跟该行的最终文本，保留前导空白。单独的 `+` 是一个空行。
 
-There is no `-old` row and no context row. The range already expresses the
-deletion; the body is only what the file will contain. A literal leading `-` or
-`+` in the content is written as `+- item` and `++ item`.
+没有 `-old` 行，也没有上下文行。范围已经表达了删除；正文只是文件将要包含的内容。内容中
+字面的前导 `-` 与 `+` 分别写作 `+- item` 与 `++ item`。
 
-Colonless headers take **no** body rows. A body row under a register paste is
-`INVALID_ARGUMENT`, not a silent discard.
+无冒号的头**不**带正文行。寄存器粘贴之下的正文行返回 `INVALID_ARGUMENT`，而不是被静默
+丢弃。
 
-### 7.5 Registers
+### 7.5 寄存器
 
-| Register | Scope | Lifetime |
+| 寄存器 | 作用域 | 生命周期 |
 |---|---|---|
-| anonymous | one `Edit` call | cleared when the call returns |
-| `@name` | session | until overwritten, the session ends, or the store is dropped |
+| 匿名 | 一次 `Edit` 调用 | 调用返回时清除 |
+| `@name` | 会话 | 直到被覆盖、会话结束或存储被丢弃 |
 
-Cross-file moves use two calls: `CUT 1* @fn` on the source, then
-`PUT <1 @fn` on the destination. This is the sanctioned form; `Edit` is
-single-path by §13.2.
+跨文件搬移使用两次调用：先对源执行 `CUT 1* @fn`，再对目标执行 `PUT <1 @fn`。这是被认可
+的形式；根据 §13.2，`Edit` 是单路径的。
 
-Two or more un-pasted anonymous `CUT`s in one call make the next anonymous paste
-ambiguous. It fails with a message naming the register syntax rather than picking
-the most recent capture.
+同一次调用中出现两个或更多未被粘贴的匿名 `CUT`，会让下一次匿名粘贴产生歧义。它会失败并
+在消息中给出寄存器语法，而不是挑选最近一次捕获。
 
-A named register is captured content, not a live reference. Deleting or moving
-the source file afterwards does not invalidate it.
+命名寄存器持有的是被捕获的内容，而不是活引用。之后删除或移动源文件不会使它失效。
 
-## 8. Lowering and application
+## 8. 下降与应用
 
-### 8.1 Intermediate representation
+### 8.1 中间表示
 
-The parser lowers every op to a flat list of five edit kinds, all anchored on
-original line numbers:
+解析器把每个操作下降为一个由五种编辑种类组成的扁平列表，全部锚定在原始行号上：
 
-| Kind | Produced by |
+| 种类 | 由谁产生 |
 |---|---|
-| `insert{cursor, text, mode?}` | body rows of any `PUT` |
-| `delete{anchor}` | every line consumed by a range or block |
+| `insert{cursor, text, mode?}` | 任何 `PUT` 的正文行 |
+| `delete{anchor}` | 被范围或块消耗的每一行 |
 | `cut{range, register?}` | `CUT` |
-| `paste{target, register?}` | register `PUT` |
-| `block{anchor, payloads, mode?, register?}` | any `N*` locator, before resolution |
+| `paste{target, register?}` | 寄存器 `PUT` |
+| `block{anchor, payloads, mode?, register?}` | 任何 `N*` 定位符，在解析之前 |
 
-A multi-line replacement decomposes into one `insert` per body row plus one
-`delete` per consumed line. Because every anchor indexes the original snapshot,
-all positions are computed once; no op observes another op's effect.
+一次多行替换分解为每个正文行一个 `insert` 加每个被消耗行一个 `delete`。由于每个锚点都
+索引原始快照，所有位置只计算一次；没有操作会观察到另一个操作的效果。
 
-### 8.2 Block resolution
+### 8.2 块解析
 
-`block` edits carry no span at parse time. `resolve_blocks(text, path, line)`
-runs before validation and returns an inclusive `{start, end}` or `None`.
+`block` 编辑在解析时不带跨度。`resolve_blocks(text, path, line)` 在校验之前运行，返回
+一个闭区间 `{start, end}` 或 `None`。
 
-Resolution returns `None` — and the op is rejected with an actionable message —
-for any of:
+在以下任一情况下解析返回 `None`——并且该操作以一条可操作的消息被拒绝：
 
-- an extension outside the supported grammar set;
-- a line number outside the file;
-- a line that opens no multi-line construct (a bare statement, a closing
-  delimiter, or the construct's last line);
-- a file that does not parse cleanly.
+- 扩展名不在受支持的语法集合内；
+- 行号超出文件范围；
+- 该行没有开启任何多行构造（一条裸语句、一个闭合定界符，或该构造的最后一行）；
+- 文件无法干净解析。
 
-Supported grammars in the first implementation:
+首个实现中受支持的语法：
 
-`rust`, `typescript`, `tsx`, `javascript`, `jsx`, `json`, `markdown`, `css`,
-`python`, `toml`, `yaml`, `html`, `bash`.
+`rust`、`typescript`、`tsx`、`javascript`、`jsx`、`json`、`markdown`、`css`、
+`python`、`toml`、`yaml`、`html`、`bash`。
 
-Additional grammars are additive and require no contract change. An unsupported
-language loses block ops only; every range and gap op still works, and the
-rejection message says so explicitly.
+新增语法是增量的，不需要改动契约。不受支持的语言只失去块操作；每个范围与间隙操作仍然
+可用，而且拒绝消息会明确这样说。
 
-Two resolution rules are contract, not implementation detail:
+有两条解析规则属于契约，而不是实现细节：
 
-- **Leading attached nodes are separate.** A decorator, attribute, or doc comment
-  above a declaration is its own node. Anchoring the declaration line orphans
-  them; anchoring the first decorator includes both. Standalone line comments are
-  never swept into a block.
-- **Markdown headings are block openers.** A block op on `##` covers that
-  section through deeper headings up to the next same-or-higher heading.
+- **前置附着节点是独立的。** 声明上方的装饰器、属性或文档注释是它自己的节点。锚定声明行
+  会遗弃它们；锚定第一个装饰器则同时包含两者。独立的行注释绝不会被卷入某个块。
+- **Markdown 标题是块的开启者。** 对 `##` 的块操作覆盖该小节，直到下一个同级或更高级
+  标题之前的更深标题为止。
 
-Every resolution is echoed in the tool result as
-`{anchorLine, start, end, op}` so a wrong-opener anchor is visible rather than
-silently applied.
+每一次解析都在工具结果中以 `{anchorLine, start, end, op}` 回显，因此锚错开启行是可见的，
+而不是被静默应用。
 
-Block resolution runs against the text the tag names: the live file when the tag
-matches, and the tagged snapshot when the file has drifted (so §10 can remap the
-resulting span). When the tagged snapshot is needed and unavailable, the span
-cannot be placed and the call is rejected.
+块解析针对 tag 所命名的文本运行：tag 匹配时是实时文件，文件已漂移时是被 tag 命名的快照
+（以便 §10 重映射所得跨度）。当需要该快照而它不可用时，跨度无法定位，调用被拒绝。
 
-### 8.3 Clipboard pre-pass
+### 8.3 剪贴板前置处理
 
-Before ordinary application, `cut` and `paste` are expanded:
+在普通应用之前，`cut` 与 `paste` 被展开：
 
-1. `cut` captures the range's current lines into its register and lowers to one
-   `delete` per line.
-2. `paste` expands to one plain `insert` per captured line. A span target
-   additionally expands to per-line `delete`s — **only after the register read
-   succeeds**, so a paste from an empty register leaves no orphan deletes.
+1. `cut` 把该范围的当前行捕获到它的寄存器，并下降为每行一个 `delete`。
+2. `paste` 展开为每个被捕获行一个普通 `insert`。跨度目标额外展开为逐行 `delete`——**只在
+   寄存器读取成功之后**，因此从空寄存器粘贴不会留下孤立的删除。
 
-The pre-pass validates sequencing first and reports it with its own message:
-pasting before any capture, and capturing over un-pasted anonymous content, are
-distinct errors from a tag mismatch and must not be reported as one.
+前置处理先校验时序，并用它自己的消息报告：在任何捕获之前粘贴、以及覆盖未被粘贴的匿名
+内容，都是与 tag 不匹配不同的错误，不得被报告为同一件事。
 
-### 8.4 Replacement-boundary repair
+### 8.4 替换边界修复
 
-A range that swallows one unchanged boundary row, or a body that restates a row
-surviving just outside the range, is repaired by a bounded candidate search.
-The repair is deliberately conservative:
+一个吞掉了一行未改动边界的范围，或一个重述了刚好在范围之外幸存行的正文，会由一次有界的
+候选搜索修复。该修复刻意保守：
 
-- An exact restatement of a line immediately outside the range is normalized
-  away on line equality alone.
-- If the authored result still does not parse, the search may retain the range's
-  first or effective-last row, and may combine that retention with echo removal.
-- Retention never follows parse success alone: on a baseline that parsed,
-  deleting the row must itself break syntax, and the candidate must also satisfy
-  source-range structure and indentation evidence.
-- **Distinct candidate texts tied at the minimum repair cost are rejected, not
-  ranked.** A guess that is usually right is the failure mode this whole spec
-  exists to remove.
+- 对紧邻范围之外一行的精确重述，仅凭行相等即被规范化掉。
+- 如果写出的结果仍然无法解析，搜索可以保留该范围的第一行或有效最后一行，并且可以把这种
+  保留与回声移除结合起来。
+- 保留绝不仅凭解析成功：在一个原本可解析的基线上，删掉该行本身必须破坏语法，并且候选还
+  必须满足源范围结构与缩进证据。
+- **在最小修复代价上并列的不同候选文本被拒绝，而不是排序。** 一个通常正确的猜测正是整份
+  规格要消除的失败模式。
 
-Every repair emits a warning naming what it changed.
+每次修复都发出一条说明它改动了什么的警告。
 
-## 9. Validation gates
+## 9. 校验闸门
 
-`Edit` resolves to exactly one of four outcomes. Let `expected` be the supplied
-tag and `live` the tag of the current file.
+`Edit` 恰好解析为四种结果之一。设 `expected` 为提供的 tag，`live` 为当前文件的 tag。
 
-| Branch | Condition | Behavior |
+| 分支 | 条件 | 行为 |
 |---|---|---|
-| **A. Direct** | `live == expected` | Run the provenance gate, then apply. Anchor numbers index the live file 1:1, so resolved block spans are echoed back. |
-| **B. Position-stable** | `live != expected`, and every op targets only the file head or tail | Apply to live content with a drift warning. `>$` and `<1` cannot be moved by content drift, so a stale tag is not fatal here. |
-| **C. Recovery** | `live != expected`, anchored ops present | Attempt §10. On success, apply with a recovery warning; resolved spans are **not** echoed, because line numbers moved. |
-| **D. Reject** | recovery declined | `EDIT_TAG_MISMATCH` with the live tag, the anchor lines, and current content around them. |
+| **A. 直接** | `live == expected` | 运行来源闸门，然后应用。锚点行号与实时文件 1:1 对应，因此已解析的块跨度会被回显。 |
+| **B. 位置稳定** | `live != expected`，且每个操作只针对文件头或文件尾 | 带漂移警告应用到实时内容。`>$` 与 `<1` 不会被内容漂移移动，因此过时 tag 在此不是致命的。 |
+| **C. 恢复** | `live != expected`，且存在带锚点的操作 | 尝试 §10。成功则带恢复警告应用；已解析的跨度**不**回显，因为行号已经移动。 |
+| **D. 拒绝** | 恢复拒绝 | 带实时 tag、锚点行以及其附近当前内容的 `EDIT_TAG_MISMATCH`。 |
 
-### 9.1 Provenance gate
+### 9.1 来源闸门
 
-On branch A only, every anchor line is checked against the `seen_lines` of the
-snapshot whose text equals the live content:
+仅在分支 A 上，每个锚点行都会与其文本等于实时内容的那个快照的 `seen_lines` 比对：
 
-- `seen_lines` absent (`None`) → gate skipped.
-- All anchors seen → apply.
-- Otherwise → reject, and inline the real content of the unseen anchor lines.
+- `seen_lines` 缺失（`None`）→ 跳过闸门。
+- 所有锚点已显示 → 应用。
+- 否则 → 拒绝，并内联未显示锚点行的真实内容。
 
-The rejection is designed so an honest retry succeeds without another `Read`:
+该拒绝的设计使得一次诚实的重试无需再次 `Read` 就能成功：
 
-- At most **40** unseen lines are revealed, each clipped at **512** characters.
-- When the reveal covered **every** unseen anchor line at **full width**, those
-  lines are merged into `seen_lines`. The content in the error is itself the
-  proof that the model has now seen them, so retrying the same `tag` applies.
-- When the reveal was truncated by either cap, **no** line is merged and the
-  message keeps its "re-read the range" instruction.
+- 最多揭示 **40** 行未显示内容，每行在 **512** 个字符处剪辑。
+- 当揭示以**全宽**覆盖了**每一个**未显示锚点行时，这些行被并入 `seen_lines`。错误中的
+  内容本身就是模型现在已经看过它们的证明，因此重试同一个 `tag` 即可应用。
+- 当揭示被任一上限截断时，**不**并入任何行，消息保留其“重新读取该范围”的指示。
 
-The asymmetry is load-bearing. Merging a truncated reveal would let a blind wide
-edit be split into under-cap retries that each reveal a slice and eventually
-apply without any read, and would let a minified line be laundered into
-`seen_lines` while most of its width stayed unseen.
+这种不对称是承重的。并入被截断的揭示会让一次盲目的宽范围编辑被拆成若干低于上限的重试，
+每次揭示一个切片，最终在没有任何读取的情况下应用；也会让一行被压缩的内容在其大部分宽度
+仍未被显示的情况下被洗进 `seen_lines`。
 
-### 9.2 Path recovery
+### 9.2 路径恢复
 
-When `path` does not exist on disk but its **basename and tag** together match
-exactly one file the session recorded, the edit is rebound to that file and a
-warning is emitted. Requirements:
+当 `path` 在磁盘上不存在，但其**基名与 tag** 一起恰好匹配会话记录过的唯一一个文件时，
+编辑被重新绑定到该文件并发出一条警告。要求：
 
-- basename and tag must both match;
-- exactly one candidate — a tie declines;
-- the authored path's own recorded snapshot is excluded, so a deleted file cannot
-  recover onto its own history;
-- rebinding happens **before** the write-permission gate, so a mistyped path
-  resolves to its real, writable location instead of failing against a path the
-  model never meant.
+- 基名与 tag 都必须匹配；
+- 恰好一个候选——并列则拒绝；
+- 排除写出路径自身记录的快照，因此被删除的文件不能恢复到它自己的历史上；
+- 重新绑定发生在写权限闸门**之前**，因此拼错的路径会解析到它真实且可写的位置，而不是对着
+  模型从未指向的路径失败。
 
-### 9.3 No-op and the repeat guard
+### 9.3 空操作与重复保护
 
-An apply that produces text identical to the input is `EDIT_NO_CHANGE`, not
-success.
+一次产生与输入完全相同文本的应用返回 `EDIT_NO_CHANGE`，而不是成功。
 
-§4d's repeat guard still stops a prompt that keeps failing on one path, but it
-does not count every failure the same way. The three recoverable codes —
-`EDIT_TAG_MISMATCH`, `EDIT_TAG_UNKNOWN`, `EDIT_LINES_UNSEEN` — each hand back
-what the retry needs: the live tag, or the content of the lines the host refused
-to write blind (§9.1). One honest retry is the designed response to them, so
-each code gets **one free attempt per path** before it counts. Every other code
-— malformed ops, an invalid range, a no-op apply — counts on its first
-occurrence, because repeating one of those means the model is guessing.
+§4d 的重复保护仍然会终止一个在同一路径上反复失败的提示，但它不再对每种失败一视同仁。
+三个可恢复代码——`EDIT_TAG_MISMATCH`、`EDIT_TAG_UNKNOWN`、`EDIT_LINES_UNSEEN`——各自都
+交回了重试所需的东西：实时 tag，或主机拒绝盲写的那些行的内容（§9.1）。一次诚实的重试正是
+针对它们的设计中动作，因此**每个代码在每条路径上有一次免费尝试**，之后才开始计数。其他每
+一个代码——格式错误的操作、无效范围、空操作应用——在第一次出现时就计数，因为重复其中之一
+意味着模型在猜。
 
-| Sequence on one path within one prompt | Outcome |
+| 一个提示内同一路径上的序列 | 结果 |
 |---|---|
-| `EDIT_TAG_MISMATCH`, then `EDIT_LINES_UNSEEN` | Neither counts: two different honest failures, each with its own grace |
-| `EDIT_TAG_MISMATCH` twice | The second counts as attempt 1 |
-| `EDIT_PARSE_FAILED` three times | Attempt 3 — the turn stops |
-| A failure, then a successful `Edit`, then a failure | Attempt 1 — a write that landed clears that path's history |
+| `EDIT_TAG_MISMATCH`，然后 `EDIT_LINES_UNSEEN` | 两者都不计数：两次不同的诚实失败，各有自己的宽限 |
+| 两次 `EDIT_TAG_MISMATCH` | 第二次计为尝试 1 |
+| `EDIT_PARSE_FAILED` 三次 | 第 3 次尝试——本轮停止 |
+| 一次失败，然后一次成功 `Edit`，然后一次失败 | 尝试 1——落盘的写入清除该路径的历史 |
 
-Counting a grace is per code, not per call, so a stale tag followed by unseen
-lines is two distinct honest failures while the same code twice is not.
+宽限按代码计数，而不是按调用计数，因此过时 tag 后跟未显示行是两次不同的诚实失败，而同一个
+代码两次不是。
 
-When the count does reach the limit the tool result carries `terminate: true`
-and the agent loop stops after that batch. Stopping there must not leave a turn
-that merely ends: the runtime finalizes the assistant row with
-`MUTATION_RETRY_BUDGET_EXHAUSTED` — retriable, `details.kind` of `edit` or
-`patch-command`, plus the last error code and a class-specific `details.recovery`
-hint — and emits a matching error event, so the user sees that the agent stopped
-on purpose and keeps the continue affordance. For `EDIT_PARSE_FAILED`, the hint
-corrects the operation syntax without asking for another `Read`: a `PUT` with
-body rows must end its header with `:`, for example `PUT 48.=48:`. Stale-tag and
-unseen-line failures continue to direct the model to re-read or use the complete
-reveal. A terminated turn with no message is indistinguishable from a model that
-chose to say nothing.
+当计数确实达到上限时，工具结果携带 `terminate: true`，代理循环在该批次之后停止。停在那里
+不得留下一个只是结束了的 turn：runtime 用 `MUTATION_RETRY_BUDGET_EXHAUSTED` 敲定该 assistant
+行——可重试，`details.kind` 为 `edit` 或 `patch-command`，并带上最后一个错误代码——并发出一
+条对应的错误事件，因此用户看得到代理是有意停止的，并保留继续的入口。一个没有消息的被终止
+turn 与一个选择什么都不说的模型无法区分。
 
-## 10. Drift recovery
+## 10. 漂移恢复
 
-Recovery proves that every anchor still maps to one unchanged region, then
-replays the ops against live content. It never edits the tagged snapshot and
-writes that.
+恢复先证明每个锚点仍然映射到唯一一个未改动区域，然后针对实时内容重放操作。它绝不会编辑
+被 tag 命名的快照并把它写出去。
 
-1. Look up the snapshot whose tag equals `expected`. Absent → decline.
-2. Diff snapshot text against live text and build a map of **unchanged** lines
-   only: `old_line → new_line`.
-3. Every anchor must be present in the map. Missing → decline.
-   For `cut` and span `paste`, **every captured interior line** is an anchor:
-   changed interior content cannot be moved safely.
-4. Validate each anchor's surrounding context:
-   - if the anchor's text is unique in both the old and the new file, at least
-     one adjacent non-anchor line must map at the same offset;
-   - if the text is duplicated on either side, **both** adjacent non-anchor lines
-     must map at the same offset.
-5. All anchors must move by **one consistent offset**. Any divergence declines.
-6. Replay against live content. An apply failure, or a replay that changes
-   nothing, declines.
+1. 查找 tag 等于 `expected` 的快照。缺失 → 拒绝。
+2. 对快照文本与实时文本做差分，只用**未改动**的行构建映射：`old_line → new_line`。
+3. 每个锚点都必须存在于映射中。缺失 → 拒绝。
+   对 `cut` 与跨度 `paste`，**每一个被捕获的内部行**都是锚点：被改动的内部内容无法安全搬移。
+4. 校验每个锚点的周围上下文：
+   - 如果锚点文本在旧文件与新文件中都唯一，至少一个相邻的非锚点行必须以相同偏移量映射；
+   - 如果该文本在任一侧重复出现，**两个**相邻的非锚点行都必须以相同偏移量映射。
+5. 所有锚点必须移动**同一个一致的偏移量**。任何分歧都导致拒绝。
+6. 针对实时内容重放。应用失败，或重放什么都没改变，都导致拒绝。
 
-Recovery warnings distinguish cause, because the corrective action differs:
+恢复警告区分成因，因为纠正动作不同：
 
-| Warning | Condition |
+| 警告 | 条件 |
 |---|---|
-| external change | the tagged snapshot is still the head — something outside the session wrote the file |
-| session chain | the tag names an older version — the model reused a stale tag from earlier in the session |
-| line remap | anchors moved by a non-zero offset |
+| 外部变更 | 被 tag 命名的快照仍是头部——会话之外的东西写了该文件 |
+| 会话链 | tag 命名了一个更旧的版本——模型复用了会话中较早的过时 tag |
+| 行重映射 | 锚点以非零偏移量移动 |
 
-## 11. Errors
+## 11. 错误
 
-| code | retriable | meaning |
+| 代码 | 可重试 | 含义 |
 |---|---|---|
-| `EDIT_TAG_REQUIRED` | no | `tag` missing or not 4 hex |
-| `EDIT_TAG_MISMATCH` | yes after a `Read` | tag does not hash the live file and recovery declined; carries the live tag and current content at the anchors |
-| `EDIT_TAG_UNKNOWN` | yes after a `Read` | tag is well-formed but this session recorded no such content for the path |
-| `EDIT_LINES_UNSEEN` | yes | anchors reference lines never displayed; carries the revealed content |
-| `EDIT_PARSE_FAILED` | no | malformed header, body row under a colonless header, missing body, `-`/context row |
-| `EDIT_RANGE_INVALID` | no | reversed range, out-of-bounds line, overlapping ops, duplicate anchor |
-| `EDIT_BLOCK_UNRESOLVED` | no | `N*` could not resolve; names the plain-range alternative |
-| `EDIT_REGISTER_EMPTY` | no | paste from an unset register |
-| `EDIT_REGISTER_AMBIGUOUS` | no | anonymous paste with more than one pending anonymous capture |
-| `EDIT_REPAIR_AMBIGUOUS` | no | boundary repair candidates tied at minimum cost |
-| `EDIT_NO_CHANGE` | no | apply produced identical text |
-| `EDIT_AMPLIFICATION_LIMIT` | no | lowering exceeded the expansion cap |
+| `EDIT_TAG_REQUIRED` | 否 | `tag` 缺失或不是 4 位十六进制 |
+| `EDIT_TAG_MISMATCH` | `Read` 之后可以 | tag 无法哈希出实时文件且恢复拒绝；携带实时 tag 与锚点处的当前内容 |
+| `EDIT_TAG_UNKNOWN` | `Read` 之后可以 | tag 格式正确，但本会话没有为该路径记录过对应内容 |
+| `EDIT_LINES_UNSEEN` | 是 | 锚点引用了从未显示过的行；携带被揭示的内容 |
+| `EDIT_PARSE_FAILED` | 否 | 头格式错误、无冒号头下出现正文行、缺少正文、出现 `-`/上下文行 |
+| `EDIT_RANGE_INVALID` | 否 | 范围反向、行号越界、操作重叠、锚点重复 |
+| `EDIT_BLOCK_UNRESOLVED` | 否 | `N*` 无法解析；给出纯范围替代方案 |
+| `EDIT_REGISTER_EMPTY` | 否 | 从未设置的寄存器粘贴 |
+| `EDIT_REGISTER_AMBIGUOUS` | 否 | 存在多个待粘贴匿名捕获时进行匿名粘贴 |
+| `EDIT_REPAIR_AMBIGUOUS` | 否 | 边界修复候选在最小代价上并列 |
+| `EDIT_NO_CHANGE` | 否 | 应用产生了完全相同的文本 |
+| `EDIT_AMPLIFICATION_LIMIT` | 否 | 下降展开超过膨胀上限 |
 
-All of these are `Edit`-scoped and additive to
-[08-error-codes](08-error-codes.md) §3.4. Existing `INVALID_ARGUMENT`,
-`TOOL_DENIED`, `PATH_OUTSIDE_WORKSPACE`, and `TOOL_FAILED` semantics are
-unchanged; `Edit` no longer reports version or provenance problems as the generic
-`TOOL_FAILED`, because both are recoverable with a specific next action.
+这些全部属于 `Edit` 作用域，并且是对 [08-error-codes](/spec/03-runtime/08-error-codes)
+§3.4 的增量。已有的 `INVALID_ARGUMENT`、`TOOL_DENIED`、`PATH_OUTSIDE_WORKSPACE` 与
+`TOOL_FAILED` 语义不变；`Edit` 不再把版本或来源问题报告为通用的 `TOOL_FAILED`，因为两者
+都能以一个具体的下一步动作恢复。
 
-`MUTATION_RETRY_BUDGET_EXHAUSTED` is not in this table because it is not an
-`Edit` result: the tool call already failed with one of the codes above, and the
-runtime adds that code to the assistant row it writes when the repeat guard ends
-the turn (§9.3, [08-error-codes](08-error-codes.md) §3.3).
+`MUTATION_RETRY_BUDGET_EXHAUSTED` 不在这张表里，因为它不是一个 `Edit` 结果：工具调用已经
+以上面某个代码失败了，而 runtime 在重复保护终止本轮时，把该代码加到它写出的 assistant 行上
+（§9.3、[08-error-codes](/spec/03-runtime/08-error-codes) §3.3）。
 
-Every error message names one concrete next step. "Re-read and retry" without a
-range is not an acceptable message when the host knows the range.
+每条错误消息都给出一个具体的下一步。当主机已经知道范围时，只说“重新读取并重试”而不给出
+范围是不可接受的消息。
 
-## 12. Limits
+## 12. 限制
 
-| Limit | Value | Behavior at the limit |
+| 限制 | 取值 | 达到上限时的行为 |
 |---|---|---|
-| `ops` payload | 256 KB | `INVALID_ARGUMENT` |
-| Ops per call | 200 | `INVALID_ARGUMENT` |
-| Expanded IR lines | 100 000 | `EDIT_AMPLIFICATION_LIMIT` |
-| Unseen-line reveal | 40 lines | truncate the reveal, merge nothing |
-| Reveal line width | 512 chars | clip, mark truncated, merge nothing |
-| Register capture | 4096 lines / 1 MiB | `INVALID_ARGUMENT` on the `CUT` |
-| Named registers per session | 16 | LRU eviction of the coldest |
-| Block resolution parse | 4 MiB per file | decline the block op |
-| Snapshot store | §4.4 | LRU eviction |
+| `ops` 负载 | 256 KB | `INVALID_ARGUMENT` |
+| 每次调用操作数 | 200 | `INVALID_ARGUMENT` |
+| 展开后的 IR 行数 | 100 000 | `EDIT_AMPLIFICATION_LIMIT` |
+| 未显示行揭示 | 40 行 | 截断揭示，不并入任何行 |
+| 揭示行宽 | 512 字符 | 剪辑、标记为截断、不并入 |
+| 寄存器捕获 | 4096 行 / 1 MiB | 在该 `CUT` 上返回 `INVALID_ARGUMENT` |
+| 每会话命名寄存器数 | 16 | LRU 淘汰最冷的 |
+| 块解析文件上限 | 每文件 4 MiB | 拒绝该块操作 |
+| 快照存储 | §4.4 | LRU 淘汰 |
 
-## 13. Interaction with existing subsystems
+## 13. 与既有子系统的交互
 
-### 13.1 Review snapshots and rollback (ADR 0043)
+### 13.1 审核快照与回滚（ADR 0043）
 
-`review::prepare_change` keys on `tool_name` and `args.path` only, both of which
-survive unchanged, so pre-tool capture needs no modification for the common case.
-Two additions are required:
+`review::prepare_change` 只以 `tool_name` 与 `args.path` 为键，两者都保持不变，因此常见
+情形下的工具前捕获无需修改。需要两处新增：
 
-- `MV DEST` produces a source deletion and a destination creation. It records as
-  two review entries under one tool call, and rollback restores both or neither.
-- `REM` records as a deletion whose rollback restores the captured bytes.
+- `MV DEST` 产生一次源删除与一次目标创建。它在一次工具调用下记录为两条审核条目，回滚
+  要么同时恢复两者，要么都不恢复。
+- `REM` 记录为一次删除，其回滚恢复被捕获的字节。
 
-Rollback's post-tool hash check is unaffected: it uses the full digest, not the
-16-bit tag. After a rollback the session snapshot store must be invalidated for
-that path, or the model would hold a tag for content the rollback replaced.
+回滚的工具后哈希检查不受影响：它使用完整摘要，而不是 16 位 tag。回滚之后必须使该路径的
+会话快照存储失效，否则模型会持有一个描述被回滚替换内容的 tag。
 
-### 13.2 Single-path `Edit`
+### 13.2 单路径 `Edit`
 
-The permission gate, review snapshot, artifacts row
-(`crates/host-core/src/rpc/mod.rs:2550`), and per-session mutation permit are all
-keyed on one `args.path`. `Edit` therefore stays single-path, and cross-file
-moves use session-scoped named registers across two calls (§7.5).
+权限闸门、审核快照、工件行（`crates/host-core/src/rpc/mod.rs:2550`）与按会话的突变许可
+全部以单个 `args.path` 为键。因此 `Edit` 保持单路径，跨文件搬移使用跨两次调用的会话作用域
+命名寄存器（§7.5）。
 
-### 13.3 Mutation ordering
+### 13.3 突变排序
 
-§4d's serialization is unchanged and becomes more important: the snapshot store
-is mutated by both producers and `Edit`, and two concurrent mutations on one
-session could interleave a record between a validation and its write. The
-existing per-session mutation permit already excludes that.
+§4d 的序列化不变，并且变得更加重要：快照存储会被生产者与 `Edit` 同时修改，而同一会话上的
+两次并发突变可能把一次记录插到校验与写入之间。既有的按会话突变许可已经排除了这一点。
 
-### 13.4 Renderer
+### 13.4 渲染器
 
-The Edit row renders from the review record's hunks — which ADR 0043 already
-produces — and shows the op headers verbatim as the model's stated intent.
-Resolved block spans and every warning from §8.4, §9.2, and §10 are surfaced on
-the row, not swallowed.
+Edit 行改为从审核记录的 hunks 渲染——ADR 0043 已经在产出它们——并原样展示操作头作为
+模型陈述的意图。已解析的块跨度以及 §8.4、§9.2、§10 的每一条警告都在该行上呈现，而不是
+被吞掉。
 
-### 13.5 Subagents
+### 13.5 子代理
 
-Subagents are separate sessions and therefore have separate snapshot stores and
-separate registers. A parent cannot hand a subagent a tag, and a subagent must
-`Read` before it edits. This is the correct default: provenance is per reader.
+子代理是独立会话，因此拥有独立的快照存储与独立的寄存器。父代理不能把 tag 交给子代理，
+子代理在编辑之前必须 `Read`。这是正确的默认：来源按读取者隔离。
 
-### 13.6 Tool descriptions and prompts
+### 13.6 工具描述与提示词
 
-`builtin_tool_defs()` in host-core and `buildToolDefinitions()` in
-`packages/agent-runtime/src/runtime.ts` must carry the same operation table,
-body-row rules, and anti-patterns. The model-facing guidance is part of the
-contract: the ops table, the `+`-only body rule, "ranges name changed lines
-only", "re-ground after every edit", and the worked anti-patterns
-(empty `PUT` used as a delete, range sized to post-edit content, `-`/context
-rows, widened `PUT` for a pure insertion, `>N*` anchored on a closer, body rows
-under a register paste).
+host-core 中的 `builtin_tool_defs()` 与 `packages/agent-runtime/src/runtime.ts` 中的
+`buildToolDefinitions()` 必须携带同一张操作表、同一套正文行规则与同一批反模式。面向模型
+的指引是契约的一部分：操作表、仅 `+` 正文规则、“范围只命名被改动的行”、“每次编辑之后
+重新定位”，以及成文的反模式（把空 `PUT` 当作删除、按编辑后内容确定范围大小、`-`/上下文
+行、为纯插入使用加宽的 `PUT`、把 `>N*` 锚定在闭合行上、在寄存器粘贴之下写正文行）。
 
-## 14. Deliberate deviations from `oh-my-pi`'s `hashline`
+## 14. 与 `oh-my-pi` 的 `hashline` 的刻意偏离
 
-| Deviation | Reason |
+| 偏离 | 原因 |
 |---|---|
-| Single section per `Edit` call, not a multi-section patch | four PI-Desktop subsystems key on one `args.path` (§13.2); named registers already cover cross-file moves |
-| SHA-256 low 16 bits instead of `xxHash32` | reuses the primitive already in host-core; no new dependency |
-| Snapshot store in-memory only, never persisted | a tag surviving a restart would outlive the reads that justified it |
-| No `apply_patch` / `replace` fallback mode and no per-model exclusion list | ADR 0087 §1: one write contract |
-| No internal URL schemes (`artifact://`, `xd://`, …) as `Edit` targets | out of scope; PI-Desktop's path rules stay as specified in §4 of 03-tools-and-permissions |
-| 64 paths / 8 MiB store bounds instead of 30 / 64 MiB | host-core is a long-lived desktop process holding many sessions, not a per-invocation CLI |
+| 每次 `Edit` 调用一个 section，而不是多 section 补丁 | PI-Desktop 有四个子系统以单个 `args.path` 为键（§13.2）；命名寄存器已经覆盖跨文件搬移 |
+| 使用 SHA-256 低 16 位而不是 `xxHash32` | 复用 host-core 已有原语；不新增依赖 |
+| 快照存储仅在内存中，从不持久化 | 跨重启存活的 tag 会比证明它的那些读取活得更久 |
+| 没有 `apply_patch` / `replace` 回退模式，也没有按模型的排除名单 | ADR 0087 §1：只有一套写入契约 |
+| 内部 URL 方案（`artifact://`、`xd://`……）不作为 `Edit` 目标 | 超出范围；PI-Desktop 的路径规则仍按 03-tools-and-permissions §4 的规定 |
+| 存储界限为 64 路径 / 8 MiB，而不是 30 / 64 MiB | host-core 是持有许多会话的长生命周期桌面进程，而不是每次调用一个的 CLI |
 
-## 15. Phasing
+## 15. 分期
 
-Each phase is independently shippable and leaves the contract coherent.
+每一期都可独立发布，并让契约保持自洽。
 
-| Phase | Contents | Exit criterion |
+| 期 | 内容 | 退出标准 |
 |---|---|---|
-| 1 | Snapshot store, `session_id` threaded into `execute_tool_with_path_access`, tags on `Read`/`Grep`/`Write`, line-numbered `Read` | **Shipped.** tags round-trip |
-| 2 | Ranges and gaps (`PUT N.=M:`, `PUT <N:`, `PUT >N:`, `PUT >$:`, `CUT N.=M`), tag validation, provenance gate, `REM`/`MV` | **Shipped.** `old_string` removed; §9 branches A/B/D live |
-| 3 | Drift recovery (§10) and path recovery (§9.2) | branch C live |
-| 4 | tree-sitter block ops (`N*`, `>N*`) with resolution echo | block ops decline cleanly on unsupported languages (`EDIT_BLOCK_UNRESOLVED` today) |
-| 5 | Registers (§7.5) and boundary repair (§8.4) | named `CUT`/`PUT @name` capture; boundary-repair ties reject |
+| 1 | 快照存储、把 `session_id` 贯穿到 `execute_tool_with_path_access`、为 `Read`/`Grep`/`Write` 加 tag、带行号的 `Read` | **已上线。** tag 往返可用 |
+| 2 | 范围与间隙（`PUT N.=M:`、`PUT <N:`、`PUT >N:`、`PUT >$:`、`CUT N.=M`）、tag 校验、来源闸门、`REM`/`MV` | **已上线。** 移除 `old_string`；§9 的分支 A/B/D 上线 |
+| 3 | 漂移恢复（§10）与路径恢复（§9.2） | 分支 C 上线 |
+| 4 | tree-sitter 块操作（`N*`、`>N*`）及其解析回显 | 块操作在不受支持的语言上干净拒绝（今天是 `EDIT_BLOCK_UNRESOLVED`） |
+| 5 | 寄存器（§7.5）与边界修复（§8.4） | 命名 `CUT`/`PUT @name` 捕获；边界修复并列被拒绝 |
 
-Phase 2 is the point of no return for the old contract and must ship with the
-renderer change in §13.4 and the prompt change in §13.6 in the same release.
+第 2 期是旧契约的不可回头点，必须与 §13.4 的渲染器改动以及 §13.6 的提示词改动在同一个
+版本中发布。

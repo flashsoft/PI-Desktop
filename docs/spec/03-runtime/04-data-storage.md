@@ -1,51 +1,39 @@
-# 04. Data Storage (Schema v17)
+# 04. 数据存储（架构 v17）
 
-## 0. Ownership decision
+## 0. 所有权决定
 
-**Rust host-core owns SQLite exclusively (D002), and the transcript file
-store with it (D119). Plan/Goal artifacts and queue records are also host-owned
-(D189); shell defaults are host settings (D190).**
+**Rust host-core 独家拥有 SQLite (D002)，以及转录文件
+与它一起存储（D119）。 Plan/Goal 工件和队列记录也是主机拥有的
+（D189）； shell 默认值是主机设置 (D190)。**
 
-- Node pi sidecar does not open the DB or transcript files directly
-- Electron main does not write DB or transcript files directly
-- All persistent app data — sessions, settings, providers, scheduled tasks,
-  artifacts, notifications, audit — goes through host RPC. (v1 violation
-  fixed: scheduled tasks previously lived in an Electron-owned
+- Node pi sidecar 不直接打开数据库或转录文件
+- Electron main 不直接写入 DB 或转录文件
+- 所有持久应用程序数据 - 会话、设置、提供程序、计划任务、
+  工件、通知、审核 — 通过主机 RPC。 （v1 违规
+  已修复：以前位于 Electron 拥有的计划任务
   `scheduled-tasks.json`.)
 
-## 1. Goals
+## 1. 目标
 
-Local-first, recoverable after restart, sensitive data isolated — plus, for
-schema v7, v8, v11, and v14:
+本地优先、重启后可恢复、敏感数据隔离 — 另外，对于
+架构 v7、v8、v11 和 v14：
 
-1. **Lossless transcripts** — store the runtime message shape (content blocks),
-   not the UI projection; UI shapes are derived at the RPC boundary.
-2. **SQLite is an index, not a payload store (D119)** — message content lives
-   in one JSONL file per session (codex/claude-code style): human-readable,
-   greppable, copyable, and the database stays small no matter how much is
-   chatted.
-3. **High performance** — O(1) file appends, covering indexes for every hot
-   query, integer times, single-writer WAL, no JSON scans on hot paths, and
-   bounded renderer transcript reads even when a session contains very large
-   message content.
-4. **Extensible without migrations** where cheap (block vocabulary, JSONL line
-   types, kv namespaces, `config_json` columns), **with migrations** where
-   structural (new entities), versioned by `PRAGMA user_version`.
+1. **无损转录** — 存储运行时消息形状（内容块），
+   不是 UI 投影； UI 形状是在 RPC 边界处导出的。
+2. **SQLite 是一个索引，而不是有效负载存储 (D119)** — 消息内容有效
+   每个会话一个 JSONL 文件（codex/claude-code 样式）：人类可读，
+   可 grepable、可复制，并且无论数据库大小如何，数据库都保持很小
+   聊天。
+3. **高性能** — O(1) 文件追加，覆盖每个热点的索引
+   查询、整数倍、单写入器 WAL、热路径上没有 JSON 扫描。
+4. **可扩展，无需迁移**，成本低廉（块词汇、JSONL 行
+   类型、kv 命名空间、`config_json` 列），**带有迁移**，其中
+结构（新实体），由 `PRAGMA user_version` 版本化。
+5. **Plan/Goal 检查点是不可变的主机工件**，具有记录的路径，
+   哈希值和大小；现有的批准行还带有执行字段。
+   启动中断是进程纪元栅栏，并且不会重播任何工作。
 
-Project groups use the existing `kv` extension boundary rather than a new
-relational schema. The host stores one JSON record per group in the
-`projectGroups` namespace, shared memory in `projectGroupMemory`, and shared
-instructions in `projectGroupInstructions`. The record contains the stable group
-id, display name, ordered canonical roots, primary root, timestamps, and optional
-`detachedPaths`. Removed roots stay in `detachedPaths` so an old path project
-record is not recreated as a standalone legacy group; sessions and files are not
-deleted. Existing path projects are projected as legacy single-root groups at
-read time; their path-scoped memory and filesystem instructions remain readable.
-5. **Plan/Goal checkpoints are immutable host artifacts** with recorded path,
-   hash, and size; the existing approval row also carries execution fields.
-   Startup interruption is the process-epoch fence and no work is replayed.
-
-## 2. File layout
+## 2. 文件布局
 
 ```text
 ~/.pi-desktop/
@@ -67,40 +55,37 @@ read time; their path-scoped memory and filesystem instructions remain readable.
  │    ├── before          # bounded pre-tool bytes, when reversible
  │    └── meta.json       # path, hashes, diff state, and ownership
  └── scratch/<sessionId>/ # per-session agent temp files (D114), including
-                          # composer pasted files under pasted/ and replayed/
-                          # image fallbacks — deleted
+                          # composer pasted files under pasted/ — deleted
                           # with the session; startup sweep removes orphans
                           # and stale dirs
 ```
 
-One database file keeps cross-entity writes transactional (e.g. session +
-turn + artifact in one commit). The DB stores **no large payloads**: message
-content lives in `sessions/`, attachments and tool outputs beyond the limits
-of [16-tool-result-limits](16-tool-result-limits.md) live on disk, referenced
-by path/hash.
+一个数据库文件保持跨实体写入事务性（例如会话+
+一次提交中的转+工件）。数据库存储**没有大的有效负载**：消息
+内容存在于 `sessions/` 中，附件和工具输出超出限制
+[16-tool-result-limits](/spec/03-runtime/16-tool-result-limits) 存在于磁盘上，已引用
+由 path/hash 提供。
 
-### 2.0 Message-owned review snapshots (ADR 0043)
+### 2.0 消息拥有的评论快照 (ADR 0043)
 
-Successful workspace `Write`/`Edit` tool results carry the bounded
-`details.review` record described in [03-tools-and-permissions](03-tools-and-permissions.md).
-The transcript JSONL is the durable index for the visible card; the previous
-bytes and hashes live outside the workspace in
-`review-changes/<sessionId>/<snapshotId>/`. The host removes a session's
-snapshot directory with `session.delete` and sweeps directories whose session
-no longer exists at startup. A snapshot is never inferred from Git, so a later
-commit does not remove historical review evidence.
+成功的工作区 `PRAGMA user_version`/Plan/Goal 工具结果携带有界
+[03-工具和权限](/spec/03-runtime/03-tools-and-permissions) 中描述的 `details.review` 记录。
+转录本 JSONL 是可见卡片的持久索引；上一个
+字节和哈希位于工作区之外
+`review-changes/<sessionId>/<snapshotId>/`。主机删除会话的
+带有 `session.delete` 的快照目录并扫描其会话的目录
+启动时不再存在。快照永远不会从 Git 推断出来，所以稍后
+commit 不会删除历史审查证据。
 
-Turn-scoped rollback (D-turn-review) reuses these per-tool snapshots as-is:
-a batch rollback restores, per file, the earliest active snapshot's `before`
-bytes under the newest active `after_hash` guard. No new storage, directory
-layout, or schema is introduced, and snapshots captured before the feature
-remain valid rollback material. Session archival is a renderer-only flag and
-never touches the snapshot directory; deletion keeps the existing cleanup.
+轮次级回滚（D-turn-review）原样复用这些工具级快照：批量回滚逐文件在最新
+活跃 `after_hash` 守卫下恢复最早活跃快照的 `before` 字节。不引入新的存储、
+目录结构或 schema，功能之前捕获的快照仍是有效的回滚材料。会话归档只是渲染
+端的标志，从不触碰快照目录；删除沿用现有清理。
 
-### 2.1 Transcript files (D119)
+### 2.1 转录文件 (D119)
 
-`sessions/<sessionId>.jsonl` — first line is a session header, then one line
-per message; `seq` is implied by line order:
+`sessions/<sessionId>.jsonl` — 第一行是会话标头，然后是一行
+每条消息； `seq` 由行顺序隐含：
 
 ```jsonl
 {"type":"session","schema":1,"sessionId":"0b0e…","createdAt":"2026-07-26T09:00:00.000Z"}
@@ -110,76 +95,68 @@ per message; `seq` is implied by line order:
 {"type":"compaction","id":"cp1","summary":"…","firstKeptMessageId":"m2","throughMessageId":"m3","tokensBefore":917000,"retainedTail":[…],"providerId":"…","modelId":"…","createdAt":"…"}
 ```
 
-`sessions/<sessionId>.inflight.json` — the assistant reply currently
-streaming in the session, as one `{ schema, sessionId, turnId, savedAt,
-message }` object that host-core replaces atomically (temp + rename) on every
-`session.saveInflightMessage` (D299). Electron main sends a checkpoint at most
-every 1.5 s while `message_update` events carry visible text, so a quit or
-crash mid-reply loses at most the last interval of output instead of the whole
-reply. The file is transient: the final row's `session.appendMessage` with the
-same id removes it; a `completed`/`error` turn end removes it only when that
-id is already indexed (D327); and the boot sweep plus a sidecar-loss turn
-end (`recoverInflight`) promote a leftover whose final row never landed —
-as `complete` when the turn already completed, otherwise as an `aborted`
-assistant message under its turn. It is never appended to, never read by the sidecar, and never
-mirrored into SQLite; a late checkpoint for an id that is already indexed is
-dropped. Delegate replies are not checkpointed.
+`sessions/<sessionId>.inflight.json` — 会话中正在流式输出的助手回复，是一个
+`{ schema, sessionId, turnId, savedAt, message }` 对象，host-core 在每次
+`session.saveInflightMessage` 时原子替换（临时文件 + 重命名）（D299）。当
+`message_update` 事件携带可见文本时，Electron 主进程至多每 1.5 秒发送一次检查点，
+因此回复中途退出或崩溃最多丢失最后一个间隔的输出，而不是整条回复。该文件是临时的：
+同一 id 的最终行的 `session.appendMessage` 会移除它；`completed`/`error` 的回合
+结束仅在该 id 已索引时才移除它（D327）；启动扫描以及 sidecar 丢失时的回合结束
+（`recoverInflight`）会把最终行从未落盘的残留检查点提升写入转录——回合已
+`completed` 时为 `complete`，否则为该回合下的 `aborted` 助手消息。它从不追加、
+从不被 sidecar 读取、也从不镜像进 SQLite；针对已被索引的 id 的迟到检查点会被丢弃。
+子代理回复不做检查点。
 
-`sessions/<sessionId>.revisions.jsonl` — append-only, one line per archived
-regenerate branch; the *active* flag lives only in the DB index so switching
-revisions never rewrites this file:
+`sessions/<sessionId>.revisions.jsonl` — 仅附加，每个存档一行
+重新生成分支； *active* 标志仅存在于数据库索引中，因此切换
+修订版永远不会重写此文件：
 
 ```jsonl
 {"type":"revision","rootUserId":"u1","revisionIndex":1,"createdAt":"…","messages":[…message records…],"turns":{"<messageId>":"<turnId>"}}
 ```
 
-Rules:
+规则：
 
-- `blocks` is the canonical block vocabulary (§4.7) — not the UiMessage
-  projection. `meta` is the parsed metadata object (usage / modelId /
-  providerId / status / error / revision fields).
-- Timestamps in files are RFC3339 wire spellings (readability); the DB index
-  keeps integer ms.
-- Readers skip unknown `type` lines and a torn trailing line: new line kinds
-  need no migration, and a crash mid-append cannot poison the file.
-- `compaction` is a model-context checkpoint, not a message — but it is
-  rendered, as a divider row rather than a chat bubble (D203). Readers return
-  every message unchanged and separately return **every** still-valid
-  checkpoint, oldest first; the newest is the active one and the whole chain is
-  what the transcript draws its rows from, so a checkpoint outlives the
-  compaction that produced it. A record whose `throughMessageId` anchor no
-  longer exists is dropped, per record, on read and on fork.
-  `throughMessageId` is the durable transcript boundary;
-  `firstKeptMessageId` and `retainedTail` reproduce the summary + applicable
-  context after restart. `retainedTail` holds at most the latest user message
-  for an active turn; a completed-turn checkpoint has an empty tail. The
-  `details.retainedTailMode` value (`active_turn` or `completed_turn`) preserves
-  that boundary, while legacy records are normalized to their latest user
-  message. When the bound model requires DeepSeek-style reasoning replay,
-  `details.retainedReasoning` may hold a bounded list of prior thinking turns
-  (text + thinking only) so post-compaction Completions requests can echo
-  usable reasoning without restoring tool-call pairs (ADR 0256 / #296). If the active message crossed the retention limit it is stored in
-  marked, truncated form; the original message lines stay complete and
-  authoritative for UI/diagnostics. An automatic compaction failure may store
-  `details.fallback = "retained_tail"` and a short recovery summary instead of
-  an LLM-generated summary; the complete transcript remains authoritative and
-  the fallback tail is only a model-context recovery view. `details` also
-  carries the checkpoint generation and the compaction family, both opaque to
-  the host.
-- Writers append with flush + fsync (message durability ≈ WAL
-  `synchronous=NORMAL`); full transcript rewrites (regenerate/edit, revision
-  switch, import) go through a sibling temp file + atomic rename. A normal
-  context checkpoint is one appended line and never rewrites visible messages.
-  A rewrite carries forward every checkpoint that is still valid against the
-  rewritten messages, not just the newest one.
-- Ordering: the file is written **before** the DB index transaction. A crash
-  between the two costs one derived index row — never content — and the next
-  full rewrite self-heals; transcript reads dedupe repeated message ids
-  keep-last.
-- Transcript files are user data: removed only when their session is deleted,
-  never by an age or orphan sweep (unlike `scratch/`).
+- `blocks` 是规范的块词汇表 (§4.7) — 不是 UiMessage
+  投影。 `meta` 是解析后的元数据对象（usage/modelId/
+  提供商 ID / 状态 / 错误 / 修订字段）。
+- 文件中的时间戳是 RFC3339 有线拼写（可读性）；数据库索引
+  保持整数毫秒。
+- 读者跳过未知的 `type` 行和撕裂的尾行：新的行类型
+  不需要迁移，并且附加过程中的崩溃不会毒害文件。
+- `compaction` 是模型上下文检查点，不是消息；它会以分隔行而不是聊天气泡
+  呈现（D203）。读取时，每条消息都会原样返回，同时单独返回所有仍然有效的
+  检查点，并按从旧到新的顺序排列。最新检查点是活动检查点，整条检查点链会
+  参与转录本行的渲染，因此某个检查点的生命周期可以长于创建它的那次压缩。
+  如果某条记录的 `throughMessageId` 锚点已不存在，则在读取和分叉时按记录丢弃。
+  `throughMessageId` 是持久转录本边界；
+  `firstKeptMessageId` 和 `retainedTail` 重现摘要+适用的
+  重启后的上下文。活动回合的 `retainedTail` 最多保存最新的用户消息；
+  已完成回合的检查点尾部为空。`details.retainedTailMode`（`active_turn` 或
+  `completed_turn`）持久化该边界；没有该字段的旧记录归一化为最新的用户消息。
+  当绑定模型需要 DeepSeek 风格推理回放时，`details.retainedReasoning` 可保存有界的
+  先前思考回合（仅 text + thinking），以便压缩后的 Completions 请求能回传可用推理
+  而不恢复 tool-call 对（ADR 0256 / #296）。
+  活动消息超过保留限制时，将以标记、截断的形式存储；UI/diagnostics 的原始消息行
+  保持完整和权威。
+  自动压缩失败可能会存储 `details.fallback = "retained_tail"`
+  以及简短的恢复摘要，而不是 LLM 生成的摘要；完整的
+  转录本仍然具有权威性，后备尾部只是模型上下文
+恢复视图。 `details` 还携带检查点生成和
+  压缩族，两者对主机都是不透明的。
+- 写入者使用flush + fsync追加（消息持久性≈WAL
+  `synchronous=NORMAL`);完整的转录本重写（regenerate/edit，修订
+  切换、导入）执行同级临时文件 + 原子重命名。一个正常的
+  上下文检查点是一个附加行，并且永远不会重写可见消息。
+  重写会延续每个仍然有效的检查点
+  重写的消息，而不仅仅是最新的消息。
+- 排序：文件在数据库索引事务**之前**写入。两者之间发生崩溃时，最多只会丢失
+  一个派生索引行，不会丢失内容；下一次完整重写会自行修复。读取转录本时，
+  对重复的消息 ID 去重并保留最后一条。
+- 转录本文件是用户数据：仅在删除其会话时删除，
+  绝不会被年龄或孤儿横扫（与 `scratch/` 不同）。
 
-## 3. Connection bootstrap
+## 3. 连接引导
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -194,23 +171,23 @@ PRAGMA trusted_schema = ON;       -- required by the FTS triggers (§4.8); the D
 PRAGMA auto_vacuum = INCREMENTAL; -- set at creation, before any table
 ```
 
-- Schema version lives in `PRAGMA user_version` (v15 = `15`). The v1 `meta`
-  table is gone.
-- host-core is the **single writer**; statements use `prepare_cached`; every
-  multi-row write runs in one transaction.
-- Boot maintenance runs before RPC service: one transaction marks every
-  `plan_approvals` row with `status='pending'` as `interrupted` and every row
-  with `execution_state IN ('queued', 'running')` as `interrupted`; it also
-  aborts running turns and appends the recovery audit records. No process epoch
-is serialized. An already-approved queued/running Plan/Goal interruption leaves
-  `sessions.mode = 'agent'`. The transaction then proceeds to the normal
-  `PRAGMA incremental_vacuum` and audit retention pruning (§9).
+- 架构版本位于 `PRAGMA user_version` (v15 = `15`) 中。 v1 `meta`
+  桌子不见了。
+- host-core 是**单一作者**；语句使用 `prepare_cached`；每个
+  多行写入在一个事务中运行。
+- 启动维护在 RPC 服务之前运行：一个事务标记每个
+  `plan_approvals` 行，其中 `status='pending'` 为 `interrupted` 以及每一行
+  将 `execution_state IN ('queued', 'running')` 设为 `interrupted`；它也
+  中止正在运行的轮次并附加恢复审核记录。无进程纪元
+已连载。已批准的 queued/running Plan/Goal 中断离开
+`sessions.mode = 'agent'`。然后交易就进入正常状态
+  `PRAGMA incremental_vacuum` 和审计保留修剪 (§9)。
 
-## 4. Schema
+## 4. 架构
 
-### 4.1 kv — namespaced configuration
+### 4.1 kv — 命名空间配置
 
-Replaces v1 `settings` + `meta`, and hosts plugin settings (spec 07-11 §5).
+替换 v1 `settings` + `meta`，并托管插件设置（规范 07-11 §5）。
 
 ```sql
 CREATE TABLE kv (
@@ -222,37 +199,22 @@ CREATE TABLE kv (
 ) WITHOUT ROWID;
 ```
 
-| ns | contents |
+| 纳秒 | 内容 |
 |---|---|
-| `app` | the settings blob (`settings.get/set`), `currentProjectId`. Optional `networkProxy` (`mode`/`url`/`bypass`) is a JSON field in that blob; no schema version bump (D340) |
-| `ui` | non-critical UI state the renderer asks the host to keep |
-| `cache` | model-refresh stamps, recent model refs (spec 13 §3) |
-| `plugin:<id>` | per-plugin settings; uninstall = `DELETE WHERE ns = ?` |
-| `projectMemory` | durable user-authored context keyed by canonical project path; structured values contain `format: "entries-v1"`, visual `entries`, derived `content`, and `updatedAt` |
+| `app` | 设置 blob (`settings.get/set`)、`currentProjectId` |
+| `ui` | 渲染器要求主机保留的非关键 UI 状态 |
+| `cache` | 模型刷新标记，最近的模型参考（规范 13 §3） |
+| `plugin:<id>` | 每个插件的设置；卸载=`DELETE WHERE ns = ?` |
+| `projectMemory` | 按规范项目路径键控的持久用户创作上下文；结构化值包含 `format: "entries-v1"`、视觉 `entries`、派生 `content` 与 `updatedAt` |
 
-The app settings JSON optionally stores `thinkingDisplayMode` (`detailed` or
-`compact`). Missing values retain detailed presentation. This additive display
-preference neither rewrites stored reasoning nor changes the database schema.
+新的配置域（例如 MCP 服务器）作为命名空间启动；他们毕业到
+仅当表需要关系或索引时才使用它们。
 
-The same blob optionally stores the prompt-enhancement overrides
-`promptEnhancementCustomTemplate` (the switch that decides whether a stored
-template applies), `promptEnhancementUserTemplate`,
-`promptEnhancementProviderId`, `promptEnhancementModelId`, and
-`promptEnhancementThinkingLevel` (ADR 0121). An absent or blank user template means the
-built-in default applies, so clearing the field stores no key rather than an
-empty string. A non-blank user template must contain the draft variable and stay
-within `PROMPT_ENHANCEMENT_TEMPLATE_MAX_LENGTH`; host-core rejects a write that
-breaks either rule and drops any stored `promptEnhancementSystemPrompt`, which is
-no longer read. No schema version bump is required.
+#### Renderer 侧边栏首选项 (D093)
 
-New config domains (e.g. MCP servers) start as a namespace; they graduate to
-tables only when they need relations or indexes.
-
-#### Renderer sidebar preferences (D093)
-
-Sidebar organization is non-authoritative presentation state stored
-best-effort under renderer localStorage key
-`pi.desktop.sidebarPreferences`:
+侧边栏组织是非权威的呈现状态存储
+渲染器 localStorage 键下的尽力而为
+`pi.desktop.sidebarPreferences`：
 
 ```ts
 type SidebarPreferences = {
@@ -276,28 +238,26 @@ type SidebarPreferences = {
 };
 ```
 
-- Project keys and retained paths use normalized full paths; session keys use
-  durable session ids. Duplicate/slash-variant paths are discarded on load.
-- `projectSort: "manual"` and `projectMeta[*].order` store renderer-local
-  project presentation order. Dragging a project title or using ArrowUp
-  and ArrowDown on that title writes contiguous order values for the visible normalized paths.
-  Missing or invalid values fall back to stable path order; pinned and archived
-  priority remains applied before manual order. Session `manual`/`order` remain
-  compatibility fields and are not exposed by the sidebar.
-- Missing, malformed, or unwritable preferences fall back to empty metadata,
-  `recent`, archived hidden, and the host-selected project. Preference failure
-  never blocks a host operation.
-- The record never contains transcript content, tool arguments, provider
-  configuration, or secrets. Clearing it changes presentation only.
-- `openProjectPaths` retains sidebar tabs. The selected workspace remains
-  host-owned `kv(app, currentProjectId)` and is restored through
-  `workspace.get`; the renderer does not persist a competing active path.
+- 项目密钥和保留路径使用规范化的完整路径；会话密钥使用
+  持久会话 ID。 Duplicate/slash-variant 路径在加载时被丢弃。
+- `projectSort: "manual"` 和 `projectMeta[*].order` 保存渲染器本地的项目显示顺序。
+  拖动项目标题或在该标题上使用键盘箭头会为可见的规范化路径写入连续顺序值。
+  缺失或无效值回落到稳定路径顺序；置顶和归档优先级仍在手动顺序之前应用。
+  会话 `manual`/`order` 仍是兼容性字段，侧边栏不会公开会话手动重排。
+- 缺失、格式错误或不可写的首选项回退到空元数据，
+  `recent`，存档隐藏，以及主机选择的项目。偏好失败
+  永远不会阻止主机操作。
+- 记录从不包含转录内容、工具参数、提供商
+  配置或秘密。清除它仅更改显示。
+- `openProjectPaths` 保留侧边栏选项卡。选定的工作空间仍然存在
+  主机拥有的 `kv(app, currentProjectId)` 并通过以下方式恢复
+  `workspace.get`；渲染器不会保留竞争的活动路径。
 
-### 4.2 projects — places work happens
+### 4.2 projects — 工作发生的地方
 
-Replaces the v1 `workspace` singleton. Feeds the Settings Project archive index
-(D066/D133), sidebar group-by-project (benchmark §3.8), and future per-project
-defaults.
+替换 v1 `workspace` 单例。提供设置项目存档索引
+(D066/D133)、侧边栏按项目分组（基准§3.8）以及未来的每个项目
+默认值。
 
 ```sql
 CREATE TABLE projects (
@@ -310,32 +270,24 @@ CREATE TABLE projects (
 );
 ```
 
-- Rows are auto-upserted by path whenever a workspace is opened, a session is
-  created with a project path, or an import references one.
-- Project paths are trimmed, separators are normalized to `/`, and trailing
-  separators are removed before the unique-path upsert. Imports therefore
-  materialize one durable logical project directory per distinct path.
-- `projects.list` is the Project archive index source of truth. Renderer
-  preferences may hide an archived project from the default sidebar, but cannot
-  remove or hide its durable Projects-index row.
-- A project row is a logical index entry. Import never creates an operating
-  system directory: historical paths may be missing, remote, or read-only.
-- The *current* visible workspace is `kv(app, currentProjectId)` — no singleton
-  table, no partial-unique flag. Retained tabs do not add more current-project
-  fields.
-- Project memory is host-owned in `kv(ns='projectMemory', key=<canonical path>)`
-  rather than renderer preferences. It is independent for every project path,
-  capped at 32 KiB, and is loaded by Electron main when a project session
-  starts. Visual entries are normalized and rendered to plain `content` for
-  the runtime; legacy plain-text values remain readable and are shown as one
-  untitled entry when opened in the editor. The runtime labels it as
-  user-provided context so it cannot become a replacement for safety, tool, or
-  collaboration rules.
+- 每当打开工作区、会话时，行都会按路径自动插入
+  使用项目路径或导入引用创建。
+- 项目路径被修剪，分隔符标准化为 `/`，并且尾随
+  在唯一路径更新插入之前删除分隔符。因此进口
+  为每个不同的路径实现一个持久的逻辑项目目录。
+- `projects.list` 是项目存档索引的真实来源。 Renderer
+  首选项可能会从默认侧边栏隐藏已存档的项目，但不能
+  删除或隐藏其持久的项目索引行。
+- 项目行是逻辑索引条目。导入永远不会创建操作
+  系统目录：历史路径可能丢失、远程或只读。
+- *当前*可见工作空间是 `kv(app, currentProjectId)` — 无单例
+  表，没有部分唯一标志。保留的选项卡不会添加更多当前项目
+  字段。
 
 ### 4.3 providers
 
-Same role as v1; `headers_json` + `compatibility_json` collapse into one
-extensible `config_json` (shape per [12-provider-config-schema](12-provider-config-schema.md)).
+与v1作用相同； `headers_json` + `compatibility_json` 合二为一
+可扩展的 `config_json`（形状符合 [12-provider-config-schema](/spec/03-runtime/12-provider-config-schema)）。
 
 ```sql
 CREATE TABLE providers (
@@ -353,20 +305,19 @@ CREATE TABLE providers (
   config_json      TEXT NOT NULL DEFAULT '{}',
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL,
-  -- Owning plugin id for a row a plugin declared in `contributes.providers`
-  -- (schema v17, ADR 0259). NULL is a user-owned row: the plugin refreshes its
-  -- own fields on every load, while the user path may edit or delete only the
-  -- rows it owns.
+  -- 插件在 `contributes.providers` 中声明该行时的所属插件 id
+  --（架构 v17，ADR 0259）。NULL 表示用户自有的行：插件每次加载都会刷新
+  -- 自己的字段，而用户路径只能编辑或删除自己拥有的行。
   owner_plugin_id  TEXT
 );
 CREATE INDEX idx_providers_owner ON providers(owner_plugin_id)
   WHERE owner_plugin_id IS NOT NULL;
 ```
 
-### 4.4 models — catalog cache
+### 4.4 models — 目录缓存
 
-Implements [13-model-catalog-and-selection](13-model-catalog-and-selection.md)
-(v1's dead `provider_models` never did).
+实现 [13 模型目录和选择](/spec/03-runtime/13-model-catalog-and-selection)
+（v1 已死，`provider_models` 从未死过）。
 
 ```sql
 CREATE TABLE models (
@@ -383,9 +334,9 @@ CREATE TABLE models (
 ) WITHOUT ROWID;
 ```
 
-Refresh (spec 13 §6/§9) upserts `discovered` rows and **never overwrites
-`source='user'`** rows. Recent-model MRU stays in `kv(cache)` — it is a
-bounded display list, not relational data.
+刷新（规范 13 §6/§9）更新插入 `discovered` 行并且**从不覆盖
+`source='user'`** 行。最新模型的 MRU 保留在 `kv(cache)` — 这是一个
+有界显示列表，而不是关系数据。
 
 ### 4.5 sessions
 
@@ -405,7 +356,7 @@ CREATE TABLE sessions (
   source      TEXT,                            -- import origin: claude-code | codex | opencode | pi
   deleted_at  INTEGER,                         -- plugin trash marker; null means active
   pinned      INTEGER NOT NULL DEFAULT 0,
-  last_seq    INTEGER NOT NULL DEFAULT 0,      -- current message count / ordinal allocator
+  last_seq    INTEGER NOT NULL DEFAULT 0,      -- message ordinal allocator
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
@@ -414,9 +365,8 @@ CREATE INDEX idx_sessions_project ON sessions(project_id) WHERE project_id IS NO
 CREATE INDEX idx_sessions_deleted ON sessions(deleted_at) WHERE deleted_at IS NOT NULL;
 ```
 
-Plugin imports add a host-owned origin sidecar. It is deliberately separate
-from the core session identity and scopes every plugin read/write to the
-`plugin_id` that created the row:
+插件导入增加一个由主机拥有的来源 sidecar。它与核心会话身份分离，
+每次插件读写都必须匹配创建该行的 `plugin_id`：
 
 ```sql
 CREATE TABLE session_import_origins (
@@ -433,76 +383,64 @@ CREATE INDEX idx_session_import_origins_plugin
   ON session_import_origins(plugin_id, source_id, created_at DESC);
 ```
 
-- `provider_id`/`model_id` are **loose references** (no FK), like on `turns`:
-  selection is `(providerId, modelId)` per spec 13 with custom ids always
-  allowed, and built-in runtimes (e.g. `pi`) never exist in `providers`.
-- `thinking_level` is the durable session selector. New and v2-migrated
-  sessions default to `off`; capability resolution may clamp the effective
-  request without rewriting the stored preference. Schema v19 adds `omit`
-  (ADR 0295): send no thinking override. Existing rows keep their stored
-  canonical values.
+- `source='user'`/`kv(cache)` 是**松散引用**（无 FK），就像 `turns` 一样：
+  根据规范 13 选择 `(providerId, modelId)`，始终带有自定义 ID
+  允许，并且内置运行时（例如 `pi`）永远不会存在于 `providers` 中。
+- `thinking_level` 是持久会话选择器。新的和 v2 迁移的
+  会话默认为 `off`；能力分辨率可能会限制有效
+  请求而不重写存储的首选项。
 
-- `project_id` normalizes v1's free-text `project_path` (grouping, badges,
-  hover-`+` new-session-in-project all become indexed lookups).
-- `last_seq` is exposed as `SessionSummary.messageCount`. Appends allocate the
-  next ordinal and full transcript rewrites reseat it to the current message
-  count, so zero is the durable empty-session predicate.
-- `title` is user-visible session metadata. The `session.rename` boundary trims
-  and validates it to 1–80 Unicode code points before persisting it. A manual
-  rename does not update `updated_at`, so changing a label cannot reorder
-  recent activity; transcript rows, message count, and session state remain
-  unchanged.
-- Import binds every non-empty normalized `projectPath` to `project_id`;
-  path-less imports remain `NULL`. Re-importing a deterministic session id
-  creates neither another session nor another project row.
-- The schema `pinned` column is retained for project-index ordering and
-  migration compatibility. D093 sidebar pin/archive/collapse state is the
-  renderer preference overlay and does not require a schema migration. No
-  `status` column: live running/waiting state is runtime truth, not durable
-  truth; badge data comes from the latest `turns` row (§4.6) plus in-memory
-  state.
-- `source` + deterministic imported ids keep re-imports idempotent and let the
-  UI badge imported sessions.
-- `deleted_at` is a host timestamp used by the plugin `trash` operation. A
-  trashed plugin session is hidden from normal session lists and plugin reads,
-  but its transcript and origin remain until the owning plugin purges it. Core
-  session deletion cascades the sidecar; purging also removes transcript files.
-- `session_import_origins` stores the plugin/source/external idempotency key and
-  the original `projectPath`, `modelId`, and `providerId` as history JSON. Those
-  values never become active session bindings for plugin imports. A plugin may
-  explicitly supply a host-created `projectId`; only that id becomes the active
-  `project_id`, while the historical fields remain unchanged.
-- `project_id` is also the tool-root authority for that session. Switching the
-  visible workspace cannot redirect an in-flight or later tool call belonging
-  to a different session.
-- Forking a session copies its current active transcript into a new session
-  row while retaining the exact `project_id`, provider/model, mode, thinking,
-  and permission configuration. No parent/child column is stored: the result
-  is an independent session, not a durable navigation tree.
-- `mode` is the authoritative operating mode. `plan` and `goal` mean the same pi
-  Agent is negotiating a contract of that kind; neither ever selects another
-  runtime. A live `pending` row
-  in `plan_approvals` projects `awaiting_approval`; `execution_state` values
-  `queued`/`running` project post-approval execution. Otherwise a Plan or Goal
-  session is `planning` when its
-  Agent is active or ready. The row's `kind` is what tells the two apart, since
-  the projected state is shared. Terminal approval rows are historical
-  durable records, not renderer gates; reject, expiry, or pending interruption
-  returns live planning to editable state. The renderer may retain the latest
-  proposal/execution snapshot per session only for its current lifetime from
-  live Host events; `plans.pending` rehydrates only pending rows.
-- New sessions default to `agent`. Imported legacy `chat` values are normalized
-  to `plan`; forked sessions copy the durable mode but never copy pending,
-  queued, or running approval rows.
-- A message-scoped fork copies only the canonical prefix through the selected
-  message. Assistant Edit uses that child and records the original/edited
-  response tails in the child's existing `message_revisions` store; the source
-  transcript and source revisions are never rewritten.
+- `project_id` 规范化 v1 的自由文本 `project_path`（分组、徽章、
+  将hover-`+` new-session-in-project全部变为索引查找）。
+- 导入将每个非空标准化 `projectPath` 绑定到 `project_id`；
+  无路径导入仍为 `NULL`。重新导入确定性会话 ID
+  既不创建另一个会话，也不创建另一个项目行。
+- 保留模式 `pinned` 列用于项目索引排序和
+  迁移兼容性。 D093 侧边栏 pin/archive/collapse 状态为
+  渲染器首选项覆盖，不需要架构迁移。否
+  `status` 列：实时 running/waiting 状态是运行时真相，不持久
+  真相；徽章数据来自最新的 `turns` 行 (§4.6) 以及内存中
+  状态。
+- `source` + 确定性导入 id 保持重新导入幂等性并让
+  UI 徽章导入会话。
+- `deleted_at` 是插件 `trash` 操作使用的主机时间戳。软删除的插件会话
+  从普通列表和插件读取中隐藏，但其转录本和来源会一直保留到归属插件
+  执行 purge。核心会话删除会级联清理 sidecar；purge 也会移除转录文件。
+- `session_import_origins` 保存插件/来源/外部 id 幂等键，以及原始
+  `projectPath`、`modelId`、`providerId` 历史 JSON；这些值不会成为插件
+  导入会话的活动绑定。插件可以显式提供宿主创建的 `projectId`；只有该 id
+  会成为活动 `project_id`，历史字段保持不变。
+- `project_id` 也是该会话的工具根权限。切换
+  可见工作区无法重定向正在进行或稍后的工具调用
+到另一个会话。
+- 分叉会话将其当前活动记录复制到新会话中
+  行，同时保留精确的 `project_id`、provider/model、模式、思维、
+  和权限配置。未存储 parent/child 列：结果
+  是一个独立的会话，不是持久的导航树。
+- `mode` 是权威的操作模式。 `plan` 和 `goal` 表示相同的 pi
+  Agent 正在谈判此类合同；双方都没有选择另一个
+  运行时。实时 `pending` 行
+  在 `plan_approvals` 项目 `awaiting_approval` 中； `execution_state` 值
+  `project_id`/provider/model 项目审批后执行。否则为 Plan 或 Goal
+  会话为 `planning` 时
+  Agent 处于活动状态或准备就绪。该行的 `kind` 可以区分两者，因为
+  预测状态是共享的。终端审批行已成为历史
+  持久记录，而不是渲染器门；拒绝、过期或待中断
+  将实时计划返回到可编辑状态。渲染器可能会保留最新的
+  proposal/execution 每个会话的快照仅适用于其当前生命周期
+  现场主持活动； `plans.pending` 仅重新水化挂起的行。
+- 新会话默认为 `agent`。导入的旧 `chat` 值已标准化
+  至 `plan`；分叉会话复制持久模式，但从不复制挂起模式，
+  已排队或正在运行批准行。
+- 消息范围的分叉仅复制所选内容的规范前缀
+  消息。 Assistant Edit 使用该子项并记录 original/edited
+  子级现有 `message_revisions` 存储中的响应尾部；来源
+  抄本和源版本的修订永远不会被重写。
 
-### 4.6 turns — one row per agent run
+### 4.6 turns — 每次 agent 运行一行
 
-The persistence half of [10-session-state-machine](10-session-state-machine.md)
-(`turn_runs` in the old logical model), and the rollup point for usage/cost.
+[10-session-state-machine](/spec/03-runtime/10-session-state-machine) 的持久性一半
+（旧逻辑模型中的 `turn_runs`）以及 usage/cost 的汇总点。
 
 ```sql
 CREATE TABLE turns (
@@ -519,19 +457,18 @@ CREATE TABLE turns (
   ended_at      INTEGER
 );
 CREATE INDEX idx_turns_session ON turns(session_id, started_at DESC);
-CREATE INDEX idx_turns_ended_at ON turns(ended_at DESC);
 ```
 
-### 4.6a plan_approvals — immutable checkpoint and execution fields (schema v11)
+### 4.6a plan_approvals — 不可变的检查点和执行字段（模式 v11）
 
-The host writes each submitted Markdown snapshot to a new unique file under the
-proposal kind's directory: `<workspaceRoot>/.pi/plan/` for a plan and
-`<workspaceRoot>/.pi/goal/` for a goal. The existing `plan_approvals` row stores
-the kind, the structured title/question, artifact metadata, and post-approval
-execution descriptor. The file path is relative to the session workspace and
-always has the form `.pi/<kind>/<unique-name>.md`. One table serves both kinds
-(D198), so the single-pending-approval invariant, the execution queue, and every
-index are shared rather than duplicated.
+主机将每个提交的 Markdown 快照写入到一个新的唯一文件中
+提案类型的目录：`<workspaceRoot>/.pi/plan/` 用于计划和
+`<workspaceRoot>/.pi/goal/` 实现目标。现有 `plan_approvals` 行存储
+种类、结构化 title/question、工件元数据和批准后
+执行描述符。文件路径是相对于会话工作空间的
+始终采用 `.pi/<kind>/<unique-name>.md` 形式。一张桌子提供两种服务
+(D198)，所以单待批准不变量、执行队列和每个
+索引是共享的而不是重复的。
 
 ```sql
 CREATE TABLE plan_approvals (
@@ -578,35 +515,35 @@ CREATE INDEX idx_plan_approvals_execution_id
   ON plan_approvals(execution_id) WHERE execution_id IS NOT NULL;
 ```
 
-`plan_json` is the exact Markdown snapshot kept for the approval/execution
-record; it is not a canonical wrapper. `title` and `question` are separate
-structured fields. Each artifact file is immutable and unique, so a later
-Plan/Goal turn creates a new complete snapshot/approval row and never replaces an
-earlier file. Hash and byte size authenticate the file before approval, but the
-approval UI may simply open the relative path.
+`plan_json` 是为 approval/execution 保留的确切 Markdown 快照
+记录；它不是规范的包装器。 `title` 和 `question` 是分开的
+结构化字段。每个工件文件都是不可变且唯一的，因此稍后
+Plan/Goal 又创建一个新的完整 snapshot/approval 行，并且永远不会替换
+较早的文件。哈希值和字节大小在批准之前对文件进行身份验证，但是
+审批UI可以简单地打开相对路径。
 
-Approval changes `status` to `approved`, sets `execution_id` and
-`execution_state = 'queued'`, updates `sessions.mode` to `agent`, and stores
-the explicit permission mode in one transaction. Reject/expiry leave the
-session in its contract mode — Plan stays Plan and Goal stays Goal — and close
-the active gate; a later prompt can create a new pending row. The new protocol
-has no request-changes action; compatibility columns remain for older records.
+批准将 `status` 更改为 `approved`，设置 `execution_id` 并
+`execution_state = 'queued'`，将 `sessions.mode` 更新为 `agent`，并存储
+一笔交易中的显式许可模式。 Reject/expiry 离开
+会话处于合约模式 — Plan 保持 Plan，Goal 保持 Goal — 并关闭
+主动门；稍后的提示可以创建新的待处理行。新协议
+没有请求更改操作；兼容性列保留用于旧记录。
 
-At startup, before serving RPC, one transaction changes every `pending` row to
-`interrupted` and every `queued` or `running` execution state to `interrupted`.
-The associated running turn is aborted. There is no serialized process-epoch
-column and no replay. A pending interruption leaves the session in its contract
-mode, while an already-approved queued/running interruption leaves it Agent.
-Renderer reload
-within the same host can list the pending row and its original `expires_at`;
-`plans.pending` returns no terminal rows, so rejected, expired, approved,
-completed, and interrupted cards are not rehydrated.
+启动时，在提供 RPC 之前，一个事务将每个 `pending` 行更改为
+`interrupted` 和每个 `queued` 或 `running` 的执行状态为 `interrupted`。
+相关的运行回合被中止。没有序列化的进程纪元
+专栏并且没有重播。待处理的中断使会话保留在其合同中
+模式，而已批准的 queued/running 中断则将其保留为 Agent。
+Renderer 重新加载
+在同一主机内可以列出挂起的行及其原始`expires_at`；
+`plans.pending` 不返回任何终端行，因此被拒绝、过期、批准，
+已完成且中断的卡片不会再水化。
 
-Serves: mid-session model switches ("next turn only", spec 13 §4), the
-per-message cost chip's session rollup (benchmark §3.2), failed/aborted badges
-(§3.8), and retry lineage.
+服务：中间会话模型开关（“仅下一回合”，规范 13 §4），
+每条消息成本芯片的会话汇总（基准§3.2），failed/aborted 徽章
+（§3.8），并重试谱系。
 
-### 4.6b turn_queue — Host-owned turn queue (schema v15)
+### 4.6b turn_queue —— Host 拥有的回合队列（架构 v15）
 
 ```sql
 CREATE TABLE turn_queue (
@@ -628,27 +565,21 @@ CREATE UNIQUE INDEX idx_turn_queue_idempotency
   WHERE idempotency_key IS NOT NULL;
 ```
 
-- One row per prompt admitted behind an active turn (D375 / ADR 0213). The
-  headless Agent Host module is the only writer through `session.queuePush`,
-  `session.queueList`, `session.queueRemove`, `session.queuePrioritize`, and
-  `session.queueReorder`; the store never starts a turn.
-- `position` is per session and only grows, so a removed entry never
-  reorders the rest. `principal` plus `idempotency_key` make a retried push
-  return the same row; a reused key with a different `input_hash` fails with
-  `IDEMPOTENCY_CONFLICT`. A session holds at most eight entries.
-- `priority` (schema v18, ADR 0265) is `NULL` until the entry is promoted with
-  "send now"; a promotion writes `MAX(priority) + 1` inside the session, so
-  promoted entries are delivered first in click order and the remaining entries
-  keep their `position` order. `queueReorder` swaps two adjacent non-promoted
-  `position` values and refuses a promoted entry.
-  `IDEMPOTENCY_CONFLICT`. A session holds at most eight entries.
-- `attachments_json` keeps the prompt's attachment references; bytes stay in
-  the session scratch or project root like any other prompt attachment.
-- After a restart the module lists every entry, holds each session's queue
-  until a controller attaches, and drains one entry after the active turn's
-  terminal event. Deleting the session cascades to its entries.
+- 每条在活动回合之后准入的 prompt 一行（D375 / ADR 0213）。无头 Agent Host 模块是唯一
+  写入方，经 `session.queuePush`、`session.queueList`、`session.queueRemove`、
+  `session.queuePrioritize`、`session.queueReorder` 操作；存储本身绝不启动回合。
+- `position` 按会话只增不减，删除一条不会重排其余条目。`principal` 加 `idempotency_key`
+  使重试的 push 返回同一行；同一 key 配不同 `input_hash` 则以 `IDEMPOTENCY_CONFLICT`
+  失败。每个会话最多八条。
+- `priority`（架构 v18，ADR 0265）在被“立即发送”提升之前为 `NULL`；提升写入会话内的
+  `MAX(priority) + 1`，因此已优先条目按点击顺序最先投递，其余条目保持 `position` 顺序。
+  `queueReorder` 交换两个相邻的未优先条目的 `position`，并拒绝已优先条目。
+- `attachments_json` 保存 prompt 的附件引用；字节和其他 prompt 附件一样留在会话 scratch
+  或项目根下。
+- 重启后模块列出全部条目，把每个会话的队列挂起到 controller 接入，并在活动回合终止事件
+  之后释放一条。删除会话会级联删除其条目。
 
-### 4.6c session collaboration ledger — Host-owned delivery state (schema v16)
+### 4.6c 会话协作 ledger —— 宿主拥有的投递状态（架构 v16）
 
 ```sql
 CREATE TABLE session_collaboration_links (
@@ -690,48 +621,37 @@ CREATE UNIQUE INDEX idx_session_collaboration_receipt
   WHERE kind = 'completion';
 ```
 
-- The ledger is the authoritative identity and lifecycle record for a
-  plugin-mediated delivery. `source_session_id` and `target_session_id` are
-  real durable Session IDs; titles are display snapshots only. `turn_id` is
-  assigned when the target actually begins the delivery, not when a plugin
-  creates the record.
-  `source_session_id` deliberately has no foreign key, unlike
-  `target_session_id`, which cascades, so a delivery record and its completion
-  receipt outlive a deleted sender. Read projections therefore report such
-  references with `available: false` instead of dropping the row.
-- `turn_queue.session_message_id` binds a queued Agent Host admission to its
-  ledger row. A retry with the same `(plugin_id, source_session_id,
-  idempotency_key)` returns the original delivery; changing its target, body,
-  kind, or callback flag fails with `IDEMPOTENCY_CONFLICT`.
-- A callback is a `kind = 'completion'` row with
-  `reply_to_message_id` pointing at the original delivery. The partial unique
-  index and the host settlement transaction make callback creation
-  at-most-once. Callback bodies contain a bounded result/error projection; the
-  original target transcript remains the full source of truth.
-- The host snapshots the sender's effective permission ceiling and rejects a
-  target whose current effective mode exceeds it. Autonomous chains decrement
-  `remaining_hops`; completion rows cannot create another automatic callback.
-- On startup, queued work that still has a `turn_queue` row remains held for
-  the Agent Host controller. Running work and queued deliveries without a
-  queue admission are marked `interrupted`; the startup fence never replays a
-  turn without a new controller admission.
-- Collaboration provenance is stored in the transcript line's `meta` as
-  `sessionMessage` and is projected to the UI as `UiMessage.sessionMessage`.
-  Host validation prevents forged, stripped, edited, or regenerated
-  collaboration input from becoming ordinary human input. This metadata is
-  additive and does not require a column in `messages`.
+- ledger 是插件协作投递的权威身份与生命周期记录。`source_session_id` 和
+  `target_session_id` 是真实的持久 Session ID；标题只是显示快照。目标真正开始投递时
+  才分配 `turn_id`，插件创建记录时不会提前分配。
+  `source_session_id` 有意不设外键，而 `target_session_id` 会级联删除，因此投递记录及其完成回执
+  在发送者被删除后仍然保留。读取投影因此把此类引用报告为 `available: false`，而不是丢弃该行。
+- `turn_queue.session_message_id` 将排队的 Agent Host 准入绑定到 ledger 行。使用相同
+  `(plugin_id, source_session_id, idempotency_key)` 重试会返回原投递；改变目标、正文、
+  类型或回调标志则以 `IDEMPOTENCY_CONFLICT` 失败。
+- 回调是 `kind = 'completion'` 的行，通过 `reply_to_message_id` 指向原投递。部分唯一
+  索引和宿主结算事务使回调最多创建一次。回调正文只含有界的结果/错误投影；目标转录本
+  仍是完整事实来源。
+- 宿主保存发送者的有效权限上限，并拒绝当前有效模式超过该上限的目标。自主链路每跳递减
+  `remaining_hops`；完成行不能再创建自动回调。
+- 启动时，仍有 `turn_queue` 行的排队工作会继续由 Agent Host controller 接管但保持挂起。
+  运行中工作和没有队列准入的排队投递会标记为 `interrupted`；启动栅栏不会在新的
+  controller 准入前重放回合。
+- 协作来源存储在转录行 `meta` 的 `sessionMessage` 中，并以
+  `UiMessage.sessionMessage` 投影到 UI。宿主校验阻止伪造、剥离、编辑或重新生成协作输入
+  变成人类输入。该元数据是增量字段，不需要给 `messages` 增加列。
 
-### 4.7 messages — transcript index
+### 4.7 messages — 转录索引
 
-The transcript itself is the per-session JSONL file (§2.1); this table is its
-derived index: one row per message carrying ordering, promoted filter columns,
-and the extracted plain text that feeds FTS. Tool calls are rows in the
-stream (as today) with `text = NULL`.
+脚本本身是每个会话的 JSONL 文件（第 2.1 节）；这张表是它的
+派生索引：每条消息一行携带排序、提升的过滤列，
+以及提取的提供给 FTS 的纯文本。工具调用是
+使用 `text = NULL` 进行流式传输（与今天一样）。
 
 ```sql
 CREATE TABLE messages (
   mid          INTEGER PRIMARY KEY,             -- stable rowid: FTS anchor, VACUUM-safe
-  id           TEXT NOT NULL UNIQUE,            -- caller-facing uuid (optimistic UI); colliding provider toolCallIds remap to {sessionId}:{id} (D444)
+  id           TEXT NOT NULL UNIQUE,            -- 调用方 uuid（乐观 UI）；撞车的供应商 toolCallId 改写为 {sessionId}:{id}（D444）
   session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   turn_id      TEXT REFERENCES turns(id) ON DELETE SET NULL,
   seq          INTEGER NOT NULL,                -- per-session ordinal
@@ -744,8 +664,8 @@ CREATE TABLE messages (
 );
 ```
 
-**Block vocabulary** (open set — new types need no migration; stored in the
-transcript file's `blocks` array):
+**块词汇**（开放集——新类型不需要迁移；存储在
+转录文件的 `blocks` 数组）：
 
 ```ts
 type Block =
@@ -756,87 +676,63 @@ type Block =
       completedAt?: string; durationMs?: number;
       toolUsage?: ToolTokenUsage }
   | { type: "attachment"; kind: "image" | "file"; name: string;
-      ref: string /* attachments/<sha256> or absolute path */;
-      mimeType?: string; size?: number };
+      ref: string /* attachments/<sha256> or absolute path */ };
 ```
 
-- Tool results are stored **post-truncation** (16-tool-result-limits); full
-  raw output is not a storage concern.
-- A user attachment block stores only kind, display name, MIME/size metadata,
-  and a ref. Image bytes are content-addressed under `attachments/` before the
-  turn is dispatched; transient base64 used to build a pi-ai
-  image block never enters the transcript, database, or renderer message.
-  Non-vision and oversized-image turns retain a safe scratch/project `@path`
-  fallback for the model. Replayed content-store images use
-  `scratch/<sessionId>/replayed/` when a path fallback is required. Images
-  above the inline bound are hashed and copied with streaming file operations;
-  startup and history hydration must not load the whole image into memory.
-- Assistant thinking is stored only in `thinking` blocks inside the file. The
-  derived `text` column contains final answer text, so transcript search and
-  answer previews do not expose or mix reasoning.
-- Per-response usage/model metadata rides in the file line's `meta` object;
-  `turns` holds the summable rollup — no `json_each` at query time. Optional
-  response stream duration and estimated tool token footprints are preserved
-  with the message metadata so the context inspector survives reload.
-- Ordering: `seq` is allocated O(1) inside the index transaction via
-  `UPDATE sessions SET last_seq = last_seq + 1 … RETURNING last_seq`; the
-  file's line order is the same ordering. `UNIQUE(session_id, seq)` doubles
-  as the covering index for index scans; transcript *content* loads from the
-  file, not this table.
-- The index is derived state: losing a row (crash between file append and
-  index commit) degrades search for that message until the next full rewrite,
-  but never loses content.
-- `mid` (explicit INTEGER PRIMARY KEY) pins rowids across `VACUUM`, which the
-  FTS external-content mapping depends on; `id` stays the wire-format uuid.
+- 工具结果存储**截断后**（16 个工具结果限制）；满
+  原始输出不是存储问题。
+- 辅助思维仅存储在文件内的 `thinking` 块中。的
+  派生的 `text` 列包含最终答案文本，因此转录搜索和
+  答案预览不会暴露或混合推理。
+- 每个响应 usage/model 元数据位于文件行的 `meta` 对象中；
+  `turns` 保存可求和汇总 — 查询时没有 `json_each`。可选
+  保留响应流持续时间和估计的工具令牌足迹
+  与消息元数据一起使用，以便上下文检查器能够重新加载。
+- 排序：`seq` 在索引事务内通过以下方式分配 O(1)
+  `UPDATE sessions SET last_seq = last_seq + 1 … RETURNING last_seq`；的
+  文件的行顺序是相同的顺序。 `UNIQUE(session_id, seq)` 双打
+  作为索引扫描的覆盖索引；转录*内容*加载自
+  文件，而不是这个表。
+- 索引是派生状态：丢失一行（文件追加和文件之间崩溃
+  索引提交）会降低对该消息的搜索，直到下一次完全重写，
+  但永远不会丢失内容。
+- `mid`（显式整数主键）在 `VACUUM` 上引脚 rowid，其中
+  FTS 外部内容映射取决于； `id` 保留有线格式 uuid。
 
-### 4.7a Subagent attribution (D201, ADR 0062)
+### 4.7a 子代理归属（D201、ADR 0062）
 
-Rows a subagent produced are stored in the same transcript file and the same
-index as the parent's; what marks them is two fields in the file line's `meta`
-object, written by host-core when the sidecar sends them:
+子代理生成的行存储在相同的转录文件和相同的记录文件中
+作为父级的索引；标记它们的是文件行 `meta` 中的两个字段
+对象，当 sidecar 发送它们时由 host-core 写入：
 
 ```ts
 meta.parentToolCallId?: string  // the `Task` call that spawned the delegate
 meta.agentName?: string         // the definition name, e.g. "code-reviewer"
 ```
 
-No column, no table, no migration: attribution is metadata about a message, and
-promoting it would buy a query nobody makes.
+无列、无表、无迁移：属性是有关消息的元数据，并且
+推广它会引起没人提出的疑问。
 
-Both fields survive reload, which is what makes a restored session nest exactly
-like a live one (`04-ux/08-component-spec.md` §9.9). Two consumers read them:
+这两个字段都可以在重新加载后保存下来，这就是恢复会话嵌套的原因
+就像现场一样（`04-ux/08-component-spec.md` §9.9）。两位消费者阅读了它们：
 
-- The renderer groups attributed rows under their `Task` row and renders them
-  one level in; the turn stream and the minimap never see them.
-- The session runtime **excludes** attributed rows when it rebuilds model
-  context on restore. The parent only ever saw the delegate's report, which is
-  the `Task` tool result and is stored as such; replaying the delegate's own
-  rows would both misrepresent the conversation and reintroduce the context cost
-  delegation exists to avoid.
+- 渲染器将属性行分组到其 `Task` 行下并渲染它们
+  一级；回合流和小地图永远看不到它们。
+- 会话运行时在重建模型时**排除**属性行
+  恢复时的上下文。家长只看过代表的报告，即
+  `Task` 工具结果并按原样存储；重播代表自己的
+  rows 会歪曲对话并重新引入上下文成本
+  委托的存在是为了避免。
 
-Retention and deletion treat them as ordinary rows: a deleted session takes its
-delegate rows with it, and regenerate archives them with the branch they belong
-to.
+保留和删除将它们视为普通行：已删除的会话将其
+用它委托行，并使用它们所属的分支重新生成存档
+到。
 
-### 4.8 messages_fts — full-text search
+### 4.8 messages_fts — 全文搜索
 
-The legacy `search.query` message search uses a trigram tokenizer for CJK and
-substring matches; queries shorter than 3 chars fall back to `LIKE` on
-`messages.text`. The desktop session search below reuses this index with a
-Unicode-aware literal verification step.
-
-Desktop session discovery (`search.sessions`) counts every matching indexed
-user/assistant message before paginating by session. It excludes sessions with
-`deleted_at` set and treats title/project matches separately from body counts.
-FTS queries are quoted literals and all candidates are verified with a
-host-owned Unicode lowercase literal predicate. Short queries and non-ASCII
-case mappings use that predicate directly, preserving title search behavior
-and keeping message retrieval consistent with renderer highlighting. `%`, `_`, quotes, and
-backslashes are literal text. Snippets surround the match, including short CJK
-queries, rather than always taking the start of the message. Context navigation
-resolves stable IDs against physical JSONL positions, and displays canonical
-JSONL text without modifying SQLite or the live transcript cache. See
-[ADR session-content-search](../../adr/session-content-search.md).
+跨记录的全局搜索（WorkBuddy-基准搜索、命令
+调色板）。 Trigram 分词器涵盖 CJK 和子字符串匹配；查询更短
+超过 3 个字符在 `messages.text` 上回退到 `LIKE`。
 
 ```sql
 CREATE VIRTUAL TABLE messages_fts USING fts5(
@@ -858,20 +754,20 @@ CREATE TRIGGER messages_au AFTER UPDATE OF text ON messages
   END;
 ```
 
-Session titles are searched with a plain scan (sessions number in the
-hundreds; no second FTS table). Index maintenance uses triggers rather than
-application code so that **cascade deletes** (session → messages) clean the
-index too; this is why `trusted_schema = ON` is part of the bootstrap. DDL
-validated end-to-end (insert/update/delete/cascade + CJK trigram match) with
-`sqlite3` 3.43+.
+通过普通扫描搜索会话标题（会话编号在
+数百；没有第二个 FTS 表）。索引维护使用触发器而不是
+应用程序代码，以便**级联删除**（会话→消息）清理
+也有索引；这就是为什么 `trusted_schema = ON` 是引导程序的一部分。数据定义语言
+经过验证的端到端（insert/update/delete/cascade + CJK trigram match）
+`sqlite3` 3.43+。
 
-### 4.9 message_revisions — regenerate history index
+### 4.9 message_revisions — 重新生成历史索引
 
-Archives discarded regenerate branches so users can page previous variants
-without stacking them in the live transcript (D105/D109). One row is one
-linear branch rooted at a user turn; the branch **payload** lives in the
-append-only `sessions/<id>.revisions.jsonl` (§2.1), keyed by
-`(rootUserId, revisionIndex)`.
+归档丢弃的重新生成分支，以便用户可以分页以前的变体
+而不将它们堆叠在实时转录中（D105/D109）。一排就是一排
+以用户回合为根的线性分支；分支**有效负载**位于
+仅附加 `sessions/<id>.revisions.jsonl` (§2.1)，由
+`(rootUserId, revisionIndex)`。
 
 ```sql
 CREATE TABLE message_revisions (
@@ -888,45 +784,41 @@ CREATE INDEX idx_message_revisions_root
   ON message_revisions(session_id, root_user_id, revision_index);
 ```
 
-- Live transcript remains the active branch only (transcript file + index).
-- Switching a pager entry reads the branch from the revisions file, rewrites
-  the live transcript file, rebuilds index rows, and flips `is_active` —
-  the revisions file itself is never rewritten.
-- Cascade on `session_id` clears index rows; file deletion rides on session
-  deletion.
-- `root_user_id` is the stable regenerate-family key. Live rewritten user
-  prompts may carry a new message `id`, but `meta.revisionRootId` keeps
-  pointing at the original family so later regenerates append to one set.
-- Root user `meta` also stores `revisionCount` / `activeRevision` for the
-  transcript pager; those fields are presentation metadata, not a second source
-  of truth for branch payloads.
-- The branch that finished a turn is archived by `session.saveActiveRevision`,
-  which reads the transcript, appends the revision line, and stamps the root's
-  pager metadata inside one host call. The stamp rewrites only the root's own
-  transcript line, and the file is re-read at write time, so an assistant or
-  tool line appended by the persistence outbox in the meantime survives. A
-  whole-transcript rewrite from a snapshot taken outside the host lock would
-  delete it (ADR 0060).
-- A branch keeps growing after its archive: later prompts append to it and an
-  error-ended turn never reaches `agent_end`. So every operation that discards
-  the live branch first writes it back over the revision it belongs to (D307):
-  `session.activateRevision` re-archives the live branch of the family from
-  the durable transcript before the switch, `session.truncateFrom` archives the
-  discarded tail on regenerate/retry (refreshing the stamped variant, or
-  minting an inactive one), and `session.saveActiveRevision` refreshes an
-  already-archived index instead of skipping it. The refresh is one more line
-  in the append-only file (last record for `(rootUserId, revisionIndex)` wins)
-  plus a `message_count` update. The variant named by the live root's
-  `activeRevision` stamp is the one refreshed; a stamped variant with no index
-  row yet (its turn failed before archive) is stored as its own new variant,
-  never over a previous one.
+- 实时转录本仅保留活动分支（转录本文件+索引）。
+- 切换分页器条目从修订文件中读取分支，重写
+  实时转录文件，重建索引行，并翻转 `is_active` —
+  修订文件本身永远不会被重写。
+- `session_id` 上的级联清除索引行；文件删除取决于会话
+  删除。
+- `root_user_id` 是稳定的重新生成系列密钥。实时重写用户
+  提示可能会携带新消息 `id`，但 `meta.revisionRootId` 会保留
+  指向原始系列，以便稍后重新生成附加到一组。
+- Root 用户 `meta` 还存储 `revisionCount` / `activeRevision`
+  转录本寻呼机；这些字段是表示元数据，而不是第二源
+  分支有效负载的真实性。
+- 完成一回合的分支由 `session.saveActiveRevision` 存档，
+  它读取转录本，附加修订行，并标记根的
+  一次主机调用内的寻呼机元数据。标记仅重写根自己的标记
+  转录行，并且文件在写入时被重新读取，因此助手或
+  同时持久性发件箱附加的工具行仍然存在。一个
+  从主机锁之外拍摄的快照重写整个转录本将
+  删除它（ADR 0060）。
+- 分支在归档之后仍会继续生长：之后的提示都追加在它上面，而以错误结束的
+  回合永远到不了 `agent_end`。因此每个会丢弃实时分支的操作都先把它写回
+  所属的修订（D307）：`session.activateRevision` 在切换前从持久转录本重新
+  归档该系列的实时分支；重新生成路径向 `session.saveRevision` 传入
+  `revisionIndex` 刷新被标记的变体；`session.saveActiveRevision` 对已归档
+  的索引做刷新而不是跳过。刷新只是在追加式文件里多写一行（同一
+  `(rootUserId, revisionIndex)` 以最后一条为准）并更新 `message_count`。
+  被刷新的是实时根消息 `activeRevision` 标记所指的变体；已标记但还没有
+  索引行的变体（其回合在归档前失败）作为新变体单独存储，绝不覆盖之前的
+  变体。
 
+### 4.10 artifacts — 会话生成的文件
 
-### 4.10 artifacts — files a session produced
-
-Backs the Artifacts surface (benchmark §3.7). v1 planned to derive this from
-`audit_log`, but audit payloads never recorded file paths; an explicit
-projection is precise, indexed, and survives audit pruning.
+支持工件表面（基准§3.7）。 v1 计划从中得出这个
+`audit_log`，但审计有效负载从未记录文件路径；明确的
+预测是精确的、有索引的，并且能够经受审计修剪。
 
 ```sql
 CREATE TABLE artifacts (
@@ -940,16 +832,16 @@ CREATE TABLE artifacts (
 CREATE INDEX idx_artifacts_time ON artifacts(updated_at DESC);
 ```
 
-Upserted by host-core in the same transaction as the `tool_execute` audit row
-whenever Write/Edit (or a plugin tool declaring file effects) succeeds —
-repeat edits update `op`/`updated_at`, keeping one row per file per session.
-Writes into the session scratch directory (D114) are excluded: artifacts list
-workspace deliverables only.
+由 host-core 在与 `tool_execute` 审计行相同的事务中更新插入
+每当 Write/Edit（或声明文件效果的插件工具）成功时 -
+重复编辑更新 Write/Edit/`op`，每个会话每个文件保留一行。
+写入会话暂存目录 (D114) 被排除：工件列表
+仅工作区可交付成果。
 
-### 4.11 scheduled_tasks + task_runs — automations
+### 4.11 scheduled_tasks + task_runs — 自动化
 
-Moves scheduled tasks out of Electron's `scheduled-tasks.json` (D002 fix) and
-adds the run-history the Automations page needs (定时任务 / 运行记录 tabs).
+将计划任务移出 Electron 的 `scheduled-tasks.json`（D002 修复）并
+添加自动化页面所需的运行历史记录（定时任务/运行记录选项卡）。
 
 ```sql
 CREATE TABLE scheduled_tasks (
@@ -977,27 +869,27 @@ CREATE TABLE task_runs (
 CREATE INDEX idx_task_runs ON task_runs(task_id, started_at DESC);
 ```
 
-A run that spawns a session gets its transcript for free via `session_id`.
-Finer schedules (cron) land in `config_json` without a migration.
+生成会话的运行通过 `session_id` 免费获取其转录本。
+更精细的计划 (cron) 无需迁移即可登陆 `config_json`。
 
-Scheduled task `config_json.mode` is a durable operating-mode value. There is
-intentionally no physical `scheduled_tasks.mode` column. The v7→v8
-and v9/v10→v11 migration paths map legacy `chat` values to `plan`; new scheduled
-tasks default to `agent`, and create/update/import normalize the same values.
-The top-level wire `ScheduledTask.mode` is only a normalized projection of this
-JSON value.
-A scheduled or unattended run whose mode is a contract mode (Plan or Goal) is
-explicitly rejected before provider work, `.pi/<kind>/*.md` creation, approval,
-or queue insertion with `PLAN_REQUIRES_INTERACTIVE_SESSION` — one shared code
-for both kinds. It cannot display an approval card or auto-approve a proposal in
-the background. The user must explicitly switch the task/session to Agent before
-an unattended run can execute.
+计划任务 `config_json.mode` 是持久操作模式值。有
+故意没有物理 `scheduled_tasks.mode` 列。 v7→v8
+v9/v10→v11 迁移路径将旧版 `chat` 值映射到 `plan`；新预定的
+任务默认为 `agent`，并且 create/update/import 标准化相同的值。
+顶级线 `ScheduledTask.mode` 只是该线的标准化投影
+JSON 值。
+模式为合同模式（Plan 或 Goal）的计划或无人值守运行是
+在提供商工作、`.pi/<kind>/*.md` 创建、批准之前明确拒绝，
+或使用 `PLAN_REQUIRES_INTERACTIVE_SESSION` 进行队列插入 — 一个共享代码
+对于这两种。它无法显示批准卡或自动批准提案
+背景。用户必须先将 task/session 显式切换为 Agent
+可以执行无人值守的运行。
 
 ### 4.12 secrets_meta
 
-Registry of which secrets exist (blob files are sha256-named and otherwise
-unenumerable). `owner_kind/owner_id` generalizes v1's provider-only column for
-future plugin/MCP secrets.
+存在秘密的注册表（blob 文件以 sha256 命名，否则
+不可数）。 `owner_kind/owner_id` 将 v1 的仅提供商列概括为
+未来的 plugin/MCP 秘密。
 
 ```sql
 CREATE TABLE secrets_meta (
@@ -1010,19 +902,16 @@ CREATE TABLE secrets_meta (
 ) WITHOUT ROWID;
 ```
 
-Secret *values* never enter the DB (D028/D031). The shipped backend is the
-host-core file store: AES-256-GCM ciphertexts under `secrets/`, keyed by a
-machine key that host-core generates once and keeps beside them as
-`secrets/.machine-key` (owner-only file mode). host-core records
-`file_fallback` for every write; the `safe_storage` value is reserved for an
-OS keychain backend that neither host-core nor Electron main implements today,
-so a same-user process that can read the data directory can also decrypt the
-secrets.
+秘密*值*永远不会进入数据库（D028/D031）。实际交付的后端是 host-core 的文件存储：
+`secrets/` 下的 AES-256-GCM 密文，密钥是 host-core 一次性生成并与密文放在一起的
+机器密钥 `secrets/.machine-key`（仅属主可读写的文件模式）。host-core 对每次写入都记录
+`file_fallback`；`safe_storage` 值为尚未实现的操作系统钥匙串后端保留，host-core 与
+Electron main 目前都没有实现它，因此能读取数据目录的同用户进程也能解密这些秘密。
 
 ### 4.13 audit_log
 
-Append-only; now indexed and prunable. Integer autoincrement PK replaces v1's
-random uuids (cheaper inserts, natural order).
+仅追加；现在已编入索引并可修剪。整数自动增量 PK 取代 v1 的
+随机 uuid（更便宜的插入，自然顺序）。
 
 ```sql
 CREATE TABLE audit_log (
@@ -1037,11 +926,11 @@ CREATE INDEX idx_audit_session ON audit_log(session_id, ts)
   WHERE session_id IS NOT NULL;
 ```
 
-### 4.14 notifications — durable local inbox (D117)
+### 4.14 notifications — 持久本地收件箱 (D117)
 
-One row records one terminal agent-turn outcome that was not already visible in
-the focused current chat. It stores structured source data only; renderer and
-Electron derive localized title/body strings at the presentation boundary.
+一行记录了一个终端代理轮转结果，该结果在
+当前聊天的焦点。它仅存储结构化源数据；渲染器和
+Electron 在表示边界处派生本地化的 title/body 字符串。
 
 ```sql
 CREATE TABLE notifications (
@@ -1061,435 +950,344 @@ CREATE INDEX idx_notifications_unread
   ON notifications(created_at DESC) WHERE read_at IS NULL;
 ```
 
-- `session.endTurn` always updates the turn and, when `createNotification` is
-  true, inserts `task.completed` for `completed` or `task.failed` for `error`
-  in the **same transaction**. Electron passes false only when the main window
-  is visible/focused and that exact session is the current chat. `aborted`
-  never inserts a row.
-- Repeating a terminal update cannot duplicate a notification because
-  `turn_id` is unique. The RPC result includes the record only when this call
-  inserted it; otherwise the `notification` field is omitted.
-- `session_title` is the stable session-name snapshot at notification creation,
-  not a localized notification title/body. An empty title remains valid and
-  receives a localized “Untitled task” fallback only at presentation time.
-- No title/body prose is stored. Permission requests, scheduled reminders,
-  plugin notices, and aborted turns are not notification sources.
-- After an insert, the same transaction prunes all but the newest 200 rows by
-  `(created_at DESC, id DESC)`. This is a global cap; session deletion also
-  cascades its rows.
-- Mark-read updates are idempotent (`read_at` changes only from null), mark all
-  read is one indexed update, and clear deletes notification rows only. None of
-  these operations changes sessions, turns, or transcripts.
+- `session.endTurn` 始终更新回合，并且当 `createNotification` 为
+  true，为 `completed` 插入 `task.completed` 或为 `error` 插入 `task.failed`
+  在**同一笔交易**中。仅当主窗口时 Electron 才会传递 false
+  是 visible/focused 并且该确切会话是当前聊天。 `aborted`
+  从不插入行。
+- 重复终端更新无法复制通知，因为
+  `turn_id` 是独一无二的。仅当此调用时，RPC 结果才包含记录
+  插入它；否则，`notification` 字段将被省略。
+- `session_title` 是通知创建时的稳定会话名称快照，
+  不是本地化通知 title/body。空标题仍然有效，并且
+  仅在演示时接收本地化的“无标题任务”回退。
+- 不存储 title/body 散文。权限请求、预定提醒、
+  插件通知和中止的回合不是通知源。
+- 插入后，同一事务将除最新的 200 行之外的所有行删减
+`(created_at DESC, id DESC)`。这是全球上限；会话删除也
+  级联其行。
+- 标记读取更新是幂等的（`read_at` 仅从 null 更改），标记所有
+  read 是一项索引更新，而clear 仅删除通知行。没有一个
+  这些操作会更改会话、回合或记录。
 
-### Dropped from v1
+### 从 v1 中删除
 
-| v1 table | v2 home |
+| v1表 | v2首页 |
 |---|---|
 | `meta` | `PRAGMA user_version` |
 | `settings` | `kv(ns='app')` |
-| `workspace` (singleton) | `projects` + `kv(app, currentProjectId)` |
-| `plugins` (dead code) | `plugins/registry.json` stays authoritative (spec 07-11); plugin *settings* → `kv(ns='plugin:<id>')` |
-| `provider_models` (dead code) | `models` |
+| `workspace`（单例） | `projects` + `kv(app, currentProjectId)` |
+| `plugins`（死代码） | `plugins/registry.json` 保持权威（规范 07-11）；插件 *设置* → `kv(ns='plugin:<id>')` |
+| `provider_models`（死代码） | `models` |
 
-## 5. Write paths (consistency)
+## 5. 写入路径（一致性）
 
-Persistence points follow [10-session-state-machine](10-session-state-machine.md) §4;
-streaming deltas never touch storage. Message writes are two steps in a fixed
-order — **transcript file first, index transaction second** (§2.1): the file
-is the source of truth, the index is derived and self-healing.
+持久化点遵循 [10-session-state-machine](/spec/03-runtime/10-session-state-machine) §4；
+流增量永远不会接触存储。消息写入是固定的两个步骤
+顺序 — **首先是转录文件，其次是索引交易** (§2.1)：文件
+是真理之源，索引衍生且自愈。
 
-| event | file step | index/DB transaction |
+| 事件 | 文件步骤 | index/DB 交易 |
 |---|---|---|
-| prompt accepted | append user message line | `last_seq` alloc (RETURNING) + index row + touch `sessions.updated_at`; then insert `turns(running)` |
-| assistant/tool message end | append message line; remove the in-flight checkpoint when its id matches | index row + touch session |
-| streaming reply checkpoint (`session.saveInflightMessage`, D299) | atomically replace `<id>.inflight.json`; no-op for an empty message or an id already indexed | — |
-| context checkpoint (`session.appendCompaction`) | append typed checkpoint line after its referenced message boundary | — (checkpoint is not searchable transcript content) |
-| tool succeeded (Write/Edit) | — | upsert `artifacts` + `audit_log` row, same tx as result persistence |
-| turn terminal via `session.endTurn` | `completed`/`error`: remove the in-flight checkpoint only when its id is already indexed; otherwise leave it for the outbox or boot (D327). `recoverInflight`: append the leftover as `complete` when the turn is `completed`, otherwise as `aborted`, when its final row never landed | update `turns`; for completed/error insert one notification and prune to 200 in the same tx; aborted inserts none; a promoted checkpoint gets an index row under the turn |
-| plan/goal submission | host writes the exact Markdown bytes to a new unique `<workspaceRoot>/.pi/<kind>/*.md` file | insert one `plan_approvals(pending)` row with the kind, structured title/question, artifact path/hash/size, and expiry before emitting the approval request |
-| plan/goal approval | verify the immutable artifact path/hash/size | atomically resolve `plan_approvals`, update `sessions.mode` and explicit `permission_mode`, and set `execution_state = 'queued'`; reject/expiry stay in the contract mode |
-| transcript truncate / retry / edit (`session.truncateFrom`) | host-owned suffix cut: abort leftover running turn, archive discarded regenerate tail, atomic prefix rewrite (temp + rename); preserve only a checkpoint whose boundary remains | single tx via `replace_messages`: delete index rows, bulk reinsert carrying each surviving message's owning `turn_id`, reset `last_seq`; drop inflight checkpoint |
-| message delete / unanswered smart Stop (`session.replaceMessages`) | atomic transcript rewrite (temp + rename); preserve only a checkpoint whose boundary remains | single tx: delete index rows, bulk reinsert carrying each surviving message's owning `turn_id`, reset `last_seq`; smart Stop keeps its structured composer snapshot only in renderer memory |
+| 接受提示 | 附加用户消息行 | `last_seq` 分配（返回）+索引行+触摸 `sessions.updated_at`；然后插入 `turns(running)` |
+| assistant/tool 消息结束 | 附加消息行；id 匹配时移除进行中检查点 | 索引行+触摸会话 |
+| 流式回复检查点（`session.saveInflightMessage`，D299） | 原子替换 `<id>.inflight.json`；空消息或已索引的 id 为空操作 | — |
+| 上下文检查点（`session.appendCompaction`） | 在其引用的消息边界之后附加类型化检查点行 | —（检查点是不可搜索的转录本内容） |
+| 工具成功（Write/Edit） | — | upsert `artifacts` + `audit_log` 行，与结果持久化相同的 tx |
+| 通过 `session.endTurn` 打开终端 | `completed`/`error`：仅当该 id 已索引时才移除进行中检查点，否则留给 outbox 或启动恢复（D327）。`recoverInflight`：最终行从未落盘时，回合已 `completed` 则追加为 `complete`，否则为 `aborted` | 更新 `turns`；对于 completed/error，在同一交易中插入一个通知并修剪至 200 个；中止插入 无；被提升的检查点在该回合下获得一个索引行 |
+| plan/goal 提交 | 主机将准确的 Markdown 字节写入新的唯一 `<workspaceRoot>/.pi/<kind>/*.md` 文件 | 在发出批准请求之前插入一个 `plan_approvals(pending)` 行，其中包含类型、结构化 title/question、工件 path/hash/size 和到期时间 |
+| plan/goal 批准 | 验证不可变工件 path/hash/size | 原子地解析 `plan_approvals`，更新 `sessions.mode` 和显式 `permission_mode`，并设置 `execution_state = 'queued'`； reject/expiry 保持合约模式 |
+| 转录本截断/重试/编辑 (`session.truncateFrom`) | 主机拥有的后缀截断：中止残留 running 回合，归档被丢弃的重新生成尾巴，原子前缀重写（临时+重命名）；只保留边界仍然存在的检查点 | 经 `replace_messages` 的 single tx：删除索引行，批量重新插入携带每个幸存消息所属的 `turn_id`，重置 `last_seq`；删除进行中检查点 |
+| 删除消息/无应答智能停止 (`session.replaceMessages`) | 原子记录重写（临时+重命名）；只保留边界仍然存在的检查点 | single tx：删除索引行，批量重新插入携带每个幸存消息所属的 `turn_id`，重置 `last_seq`； smart Stop 仅将其结构化输入框快照保留在渲染器内存中 |
 
-| session fork (`session.fork`) | write a new transcript with remapped message/tool-call ids; copy/remap the checkpoint only when its boundary is included | single tx: clone session configuration, insert child index rows, set `last_seq`; remove child file on failure |
-| regenerate branch save | append revision line (with `revisionIndex`: a refresh line for that existing variant) | index row with `message_count` (+ `is_active` flip); a refresh only updates `message_count` |
-| turn-completion branch archive (`session.saveActiveRevision`) | append revision line (a refresh line when the active variant is already archived), then rewrite only the root user's transcript line for the pager stamp | index row with `message_count` (+ `is_active` flip); index rows for other messages untouched |
-| revision switch | append a refresh line for the live branch's own variant, read the target branch, atomic transcript rewrite keeping checkpoints whose anchors survive | flip `is_active`, rebuild index rows carrying each surviving message's owning `turn_id`, reset `last_seq` |
-| import | write transcript file | one tx per session: session row + index rows; on failure the file is removed |
-| session delete | remove both session files after row delete | `DELETE FROM sessions` (cascades); Electron main drops that session's outbox entries (D318) |
-| project delete (`projects.remove`) | remove each owned session's files after its row delete | one tx per session (`DELETE FROM sessions`, cascades) plus the project row and its `projectMemory` kv entry; the project folder on disk is never touched |
-| orphaned session restore (boot / `session.appendMessage`, D318) | leave the live JSONL in place | reinsert the missing `sessions` row and rebuild index rows from the file; if the file is also gone, append inserts a stub row under the existing id so the outbox can drain |
+| 会话分叉 (`session.fork`) | 使用重新映射的 message/tool-call id 编写新的转录本； copy/remap 仅当包含其边界时才为检查点 | single tx：克隆会话配置，插入子索引行，设置`last_seq`；失败时删除子文件 |
+| 重新生成分支保存 | 追加修订行（带 `revisionIndex` 时为该已有变体的刷新行） | 带有 `message_count` 的索引行（+ `is_active` 翻转）；刷新只更新 `message_count` |
+| 回合完成分支存档 (`session.saveActiveRevision`) | 附加修订行（活动变体已归档时为刷新行），然后仅重写寻呼机标记的根用户的转录行 | 带有 `message_count` 的索引行（+ `is_active` 翻转）；其他消息的索引行未受影响 |
+| 修订版开关 | 先为实时分支自身的变体追加刷新行，读取目标分支，原子转录重写并保留锚点仍存在的检查点 | 翻转 `is_active`，重建索引行并带上每条幸存消息所属的 `turn_id`，重置 `last_seq` |
+| 导入 | 写入转录文件 | 每个会话一笔交易：会话行 + 索引行；失败时文件将被删除 |
+| 会话删除 | 行删除后删除两个会话文件 | `DELETE FROM sessions`（级联）；Electron 主进程会丢弃该会话的 outbox 条目（D318） |
+| 删除项目（`projects.remove`） | 在删除各自的行之后移除每个所属会话的文件 | 每个会话一笔交易（`DELETE FROM sessions`，级联），外加项目行及其 `projectMemory` kv 条目；磁盘上的项目文件夹从不被触碰 |
+| 孤立会话恢复（启动 / `session.appendMessage`，D318） | 保留现有的 JSONL 文件 | 重新插入缺失的 `sessions` 行，并依据该文件重建索引行；若文件也已不存在，追加操作会在现有 id 下插入一个占位行，使 outbox 能够排空 |
 
-Rules: user message durable (fsync'd file line) before the turn starts;
-assistant/tool lines durable at their end events; the streaming assistant
-reply is additionally checkpointed at most every 1.5 s (D299), and the
-finished `message_end` snapshot is checkpointed before the outbox append
-(D327), so a quit or crash mid-turn loses at most the last checkpoint
-interval of the in-flight reply plus any tool rows still running. The boot
-sweep promotes a leftover checkpoint whose final row never landed: as
-`complete` when the turn already completed, otherwise as `aborted` under an
-`aborted` turn. `completed`/`error` endTurn does not delete an unindexed
-checkpoint. A user Stop does not touch the checkpoint, because the runtime's
-own aborted final row is still on its way and removes it on arrival.
-Electron handshake awaits the outbox drain before a cold `session.get`.
-Renderer-side Stop never rewrites a transcript that has a
-started reply (spec 01 §5.3); its only rewrite is the undo of an unanswered
-prompt, computed from the full durable transcript merged with the live rows.
-A checkpoint is installed into the live runtime only after its append succeeds;
-therefore a failed/crashed checkpoint write leaves the previous full context or
-previous checkpoint authoritative rather than creating a memory-only state.
-A crash between file append and index commit leaves the message readable
-(transcript loads from the file) with only its search row missing until the
-next rewrite; transcript reads dedupe repeated ids keep-last.
+规则：回合开始前用户消息持久（fsync'd 文件行）；
+assistant/tool 行在其结束事件时持久化；正在流式的助手回复另外至多每 1.5 秒
+做一次检查点（D299），并且 `message_end` 的完成快照在 outbox 追加之前先做检查点
+（D327），因此回合中途退出或崩溃最多丢失进行中回复的最后一个检查点
+间隔，加上仍在运行的工具行。启动扫描把最终行从未落盘的残留检查点提升写入转录：
+回合已完成则为 `complete`，否则为 `aborted` 回合下的 `aborted` 助手行。
+`completed`/`error` 的 endTurn 不删除尚未索引的检查点。用户停止不动检查点，因为运行时自己的
+中止最终行仍在路上，到达时会移除它。Electron 握手在冷启动 `session.get` 之前等待
+outbox 排空。渲染器侧的停止绝不重写已有已开始回复的转录
+（规格 01 §5.3）；它唯一的重写是撤销未应答提示，且从完整持久转录与实时行的合并
+结果计算。
+只有在追加成功后，检查点才会安装到实时运行时中；
+因此 failed/crashed 检查点写入会留下先前的完整上下文或
+先前的检查点具有权威性，而不是创建仅内存状态。
+文件追加和索引提交之间的崩溃使消息可读
+（从文件加载脚本）只有其搜索行丢失，直到
+下一步重写；转录读取重复数据删除重复的 id keep-last。
 
-The renderer never needs the whole JSONL file to open a session. Its
-`session.get` request may specify a zero-based exclusive `messageBefore`, a
-positive `messageLimit`, and a positive `contentLimit`. Host-core returns only
-that message window and applies the content cap only to the derived `UiMessage`
-projection. The full transcript remains lossless on disk and the sidecar's
-uncapped `session.get` path is unchanged for model context, edits, revisions,
-and other host-owned mutations. The renderer opens with the newest window and
-requests older windows on demand; the response's `messageStart` and
-`hasMoreBefore` fields support backward paging. Search navigation additionally
-uses `messageAround` to center a bounded original-message window on a stable ID,
-plus exclusive physical `messageEnd` and `hasMoreAfter` for forward paging. Only
-the explicitly selected user/assistant text bypasses the display cap. The
-retained pane owns that reading window separately from live/model caches;
-missing targets never fall back to a different message (ADR session-content-search).
-A nested target additionally resolves its owning Task by tool-call ID and returns
-that latest capped projection as `navigationParent`, without adding a physical
-line to the bounded page. This is derived read-only context, not a new persisted
-relationship or index. The renderer's unified reading view is shared by ordinary
-history and search; it never becomes canonical mutation or model input.
+渲染器打开一个会话时并不需要整个 JSONL 文件。它的 `session.get` 请求可以
+指定一个从零开始、不含上界的 `messageBefore`，一个正数 `messageLimit`，以及
+一个正数 `contentLimit`。host-core 只返回该消息窗口，并且只对派生出的
+`UiMessage` 投影施加内容上限。完整转录在磁盘上仍然无损，sidecar 那条不设上限
+的 `session.get` 路径保持不变，用于模型上下文、编辑、修订以及其他由主机拥有的
+变更。渲染器以最新的窗口打开，并按需请求更旧的窗口；响应中的 `messageStart`
+与 `hasMoreBefore` 字段就是它需要的全部分页状态。
 
-A bounded window is served through a per-session **transcript layout**: the byte
-offset of every message and compaction line, plus the file length those offsets
-were recorded against. Serving a window then seeks to its first selected line
-instead of parsing the history in front of it, so the cost of opening a session
-is proportional to the window rather than to the conversation. Consequences:
+有界窗口通过每个会话的**转录布局**提供：其中记录每条消息行与压缩行的字节
+偏移量，以及记录这些偏移量时所对应的文件长度。提供窗口时直接定位到它的第一条
+被选中的行，而不是解析它之前的全部历史，因此打开一个会话的开销与窗口大小成
+正比，而不是与整段对话成正比。由此带来的影响：
 
-- The layout is derived data, cached in memory and rebuilt by scanning the file.
-  `file_len` is its validity token: the transcript is append-only between atomic
-  rewrites, so a longer file is scanned from the previous end and a shorter or
-  replaced file is rescanned in full. Every rewrite and delete path also drops
-  the cached entry, because a rewrite can land on an identical length.
-- A torn trailing line (crash mid-append) is excluded from both the offsets and
-  `file_len`, so a later refresh picks it up once the writer completes it.
-- Line classification reads the `type` discriminator with a single depth-aware
-  scan, never by parsing the line into a value. Only a **top-level** `type` key
-  decides the kind: tool results and checkpoint details are open-ended JSON and
-  may nest an object whose own `type` names a line kind. `type` is written
-  **first** on every new line so the scan usually stops at the first key, and
-  lines written before that ordering carry it after their payload and are read
-  by the same scan.
-- Window offsets are **physical message-line positions**, the same space the
-  layout counts in. They are never clamped against the session index counter
-  (`last_seq`), which is a deduplicated logical count: a file line whose index
-  commit never landed leaves the counter permanently behind the file, and
-  clamping to it cut the newest messages out of the tail.
-- The compaction chain is always returned whole with any window, because the
-  newest checkpoint drives model context regardless of which messages are
-  visible.
+- 该布局是派生数据，缓存在内存中，并通过扫描文件重建。`file_len` 是它的有效性
+  凭据：转录在两次原子重写之间是只追加的，因此更长的文件从上一次的末尾继续
+  扫描，而更短或被替换的文件则整体重新扫描。每条重写与删除路径也会丢弃缓存
+  条目，因为一次重写可能落在完全相同的长度上。
+- 撕裂的尾行（追加过程中崩溃）会同时被排除在偏移量和 `file_len` 之外，因此在
+  写入方补全它之后，后续刷新会重新收录它。
+- 行分类通过一次感知深度的扫描读取 `type` 判别字段，绝不把整行解析成值。只有
+  **顶层**的 `type` 键决定行的种类：工具结果与检查点详情是开放式 JSON，可能
+  嵌套一个自身带 `type` 的对象，而该 `type` 恰好是某个行种类的名字。每条新行都
+  把 `type` 写在**最前面**，因此扫描通常在第一个键处就停止；在该顺序约定之前
+  写入的行把它放在负载之后，由同一次扫描读取。
+- 窗口偏移量是**物理消息行位置**，与布局所计数的是同一套空间。它们绝不会被
+  钳制到会话索引计数器（`last_seq`）上，后者是去重后的逻辑计数：某条文件行的
+  索引提交若从未落盘，会让该计数器永久落后于文件，而钳制到它会把最新的消息从
+  尾部切掉。
+- 无论取哪个窗口，压缩链始终整体返回，因为无论哪些消息可见，最新的检查点都
+  决定着模型上下文。
 
-A regenerate or edit-resend names its cut by **message identity**, not by a
-count. The renderer holds a bounded, deduplicated, display-filtered view, so an
-index into it is not a transcript position; the host resolves the named message
-against its own transcript and rejects a boundary it cannot find rather than
-truncating at a guessed position.
+重新生成或编辑重发通过**消息身份**而非计数来指明它的切点。渲染器持有的是一份
+有界、去重、经过显示过滤的视图，因此其中的下标并不是转录中的位置；主机会用
+自己的转录去解析被指名的消息，并在找不到该边界时拒绝，而不是在猜测的位置上
+截断。
 
-## 6. Performance notes
+## 6. 性能说明
 
-- Single writer + WAL: readers never block; no lock contention by design.
-- All timestamps INTEGER Unix ms — smaller rows, integer compares, index-friendly.
-- Hot queries and their indexes:
-  - renderer transcript open → one sequential streaming read of the JSONL file
-    for the requested window; only the bounded page and capped display values
-    cross the host/Electron/renderer boundary
-  - full transcript consumers → one sequential read of
-    `sessions/<id>.jsonl` (no DB), retained for sidecar context and mutations
-  - session list → `idx_sessions_updated`
-  - group-by-project → `idx_sessions_project`
-  - badges/cost rollup → `idx_turns_session` (latest turn per session)
-  - global token history → `idx_turns_ended_at` (completed turns by end time)
-  - artifacts by session → PK; global recent artifacts → `idx_artifacts_time`
-  - run history → `idx_task_runs`
-  - audit forensics/pruning → `idx_audit_session` / `idx_audit_ts`
-  - notification inbox → `idx_notifications_created`; unread filter/count →
+- 单写入者+WAL：读者永远不会阻塞；设计上没有锁争用。
+- 所有时间戳 INTEGER Unix ms — 较小的行、整数比较、索引友好。
+- 热门查询及其索引：
+- 转录本加载 → `sessions/<id>.jsonl` 的一次连续读取（无 DB）
+  - 会话列表 → `idx_sessions_updated`
+  - 按项目分组 → `idx_sessions_project`
+  - badges/cost 汇总 → `idx_turns_session`（每个会话的最新回合）
+  - 按会话分类的工件 → PK；全球最近的工件 → `idx_artifacts_time`
+  - 运行历史记录 → `idx_task_runs`
+  - 审核 forensics/pruning → `idx_audit_session` / `idx_audit_ts`
+  - 通知收件箱 → `idx_notifications_created`；未读 filter/count →
     `idx_notifications_unread`
-- O(1) `seq` allocation; no `MAX()+1` scans anywhere.
-- `prepare_cached` on all statements; batch inserts inside one tx (import,
-  replace).
-- JSON columns are read blind on hot paths (shipped to the renderer as-is);
-  anything filtered or summed is a promoted column by rule.
+- O(1) `seq` 分配；任何地方都没有 `MAX()+1` 扫描。
+- 所有语句上的 `prepare_cached`；批量插入到一个 tx 中（导入，
+  更换）。
+- JSON 列在热路径上盲读（按原样发送到渲染器）；
+  任何过滤或求和的内容都是按规则提升的列。
 
-## 7. Versioning, v7 reset, and v8-to-v15 migration
+## 7. 版本控制、v7 重置和 v8 到 v16 迁移
 
-- `PRAGMA user_version` stays the schema authority; future structural changes
-  add ordered Rust migration fns again, each in one transaction, with a
-  `pi.sqlite.v<n>.bak` copy before destructive steps.
-- **v7 is a breaking reset (D119), not a migration.** Opening a database with
-  `user_version` 1–6 WAL-checkpoints it, renames it to `pi.sqlite.v6.bak`
-  (removing stale `-wal`/`-shm` siblings), and bootstraps a fresh v7 file.
-  Sessions, providers, and settings from the old file are not carried over;
-  the archive remains for manual recovery. All pre-v7 migration code
-  (v1 `settings.sqlite` import, v2→v6 chain) is deleted.
-- Fresh installs run the full v15 DDL directly.
-- **Schema v7 first reaches v8, then uses the guarded path.** The v7→v8
-  migration is followed by the same guarded v8→v15 migration; schema-v9 and
-  schema-v10 databases take the same guarded path and receive an exact readable
-  `pi.sqlite.v9.bak` / `pi.sqlite.v10.bak` before destructive work.
-- **The historical v8-to-v11 core migration is in-place and transactional.** Before migration,
-  host-core checkpoints the WAL, then creates the exact readable
-  `pi.sqlite.v8.bak`; both happen before destructive work. Within one atomic
-  transaction it:
-  1. validates every `sessions.mode` value and maps `chat` to `plan`;
-  2. parses the structured app settings value and maps its top-level
-     `defaultMode: "chat"` to `"plan"`;
-  3. parses each scheduled task's `config_json` and maps its top-level stored
-     `mode: "chat"` to `"plan"`, leaving nested extension modes untouched;
-  4. preserves/migrates the existing `plan_approvals` table and adds its
-     artifact and execution fields/indexes;
-  5. preserves transcripts, turns, revisions, projects, permissions, grants,
-     providers, and scheduled task history;
-  6. validates all new mode values as `plan | goal | agent`; and
-  7. validates `defaultCommandShell` as a known current-platform catalog ID,
-     retaining a valid ID that is temporarily unavailable so normal runtime
-     fallback can select the first available shell; and
-  8. adds `plan_approvals.kind` (`NOT NULL DEFAULT 'plan'`, checked against
-     `plan | goal`) when the column is absent, probing `pragma_table_info`
-     first so a v8 database that already created the table from the current DDL
-     is not altered twice; existing rows are Plan contracts by definition, which
-     is exactly the column default; and
-  9. sets `PRAGMA user_version = 11` only after every change succeeds; the
-     subsequent v14 migration adds the plugin-session ownership sidecar.
-  A malformed app-settings value, malformed scheduled-task `config_json`,
-  invalid session or top-level scheduled mode, unknown or wrong-platform
-  `defaultCommandShell`, parse, constraint, or write failure fails closed,
-  rolls back the transaction, and leaves the pre-migration schema
-  authoritative; the backup
-  remains available for recovery.
-  Legacy `planApprovalPermissionMode` is removed from the app settings JSON
-  during migration; all unrelated settings remain intact.
+- `PRAGMA user_version` 保留模式权限；未来的结构性变化
+  再次添加有序的 Rust 迁移 fns，每个都在一个事务中，并带有一个
+  `pi.sqlite.v<n>.bak` 在破坏性步骤之前进行复制。
+- **v7 是一个中断重置 (D119)，而不是迁移。** 使用以下命令打开数据库
+  `user_version` 1–6 WAL 检查点，将其重命名为 `pi.sqlite.v6.bak`
+  （删除过时的 `sessions/<id>.jsonl`/`idx_sessions_updated` 同级文件），并引导一个新的 v7 文件。
+  旧文件中的会话、提供程序和设置不会保留；
+  存档仍保留以供手动恢复。所有 v7 之前的迁移代码
+  （v1 `settings.sqlite` 导入，v2→v6 链）被删除。
+- 全新安装直接运行完整的 v16 DDL。
+- **架构 v15 是增量的。** 它增加 `turn_queue` 表及其两个索引（D386 / ADR 0213），使 Host
+  拥有的回合队列在重启后存活；不改动任何已有行，迁移前保留 `pi.sqlite.v14.bak`。
+- **架构 v16 是增量的。** 它增加会话协作 link 和投递表、生命周期索引，以及可为空的
+  `turn_queue.session_message_id` 绑定（D409 / ADR 0239）。既有会话、回合、队列条目和
+  插件数据保持有效。迁移前保留 `pi.sqlite.v15.bak`；启动恢复保留持久排队投递，但不会
+- **架构 v17 是增量的。** 它增加可为空的 `providers.owner_plugin_id` 归属列及其部分索引
+  （ADR 0259），从而把插件在 `contributes.providers` 中声明的 provider 行与用户创建的行区分开
+  —— 所有 v17 之前的行保持 NULL 归属。该步骤之前保留 `pi.sqlite.v16.bak` 副本。
+  v15→v16 会话协作步骤现在写入 `16`（它自己的版本）而不是最新的架构常量，
+  因此 v15 文件可以在一次启动中走完两个步骤。
+- **架构 v7 首先到达 v8，然后使用受保护的路径。** v7→v8
+  迁移之后是相同的受保护的 v8→v15 迁移；架构-v9 和
+  schema-v10 数据库采用相同的受保护路径并接收精确的可读数据
+  破坏性工作之前的 `pi.sqlite.v9.bak` / `pi.sqlite.v10.bak`。
+- **v8-to-v11 是就地事务迁移。** 在迁移之前，
+  host-core 检查 WAL，然后创建精确的可读文件
+  `pi.sqlite.v8.bak`；两者都发生在破坏性工作之前。一个原子内
+  交易它：
+  1. 验证每个 `sessions.mode` 值并将 `chat` 映射到 `plan`；
+  2. 解析结构化应用程序设置值并映射其顶层
+     `defaultMode: "chat"` 至 `"plan"`；
+  3.解析每个定时任务的`config_json`并映射其顶层存储
+     `mode: "chat"` 到 `"plan"`，保持嵌套扩展模式不变；
+  4. preserves/migrates 现有 `plan_approvals` 表并添加其
+     工件和执行 fields/indexes；
+  5. 保留转录本、轮次、修订、项目、许可、赠款、
+     提供商和计划任务历史记录；
+  6. 将所有新模式值验证为 `plan | goal | agent`；和
+  7. 验证 `defaultCommandShell` 作为已知的当前平台目录 ID，
+     保留暂时不可用的有效ID以便正常运行
+     Fallback可以选择第一个可用的shell；和
+  8.添加`plan_approvals.kind`（`NOT NULL DEFAULT 'plan'`，对照
+     `plan | goal`) 当该列不存在时，探测 `pragma_table_info`
+首先是一个已经从当前 DDL 创建表的 v8 数据库
+     没有被改变两次；根据定义，现有行是 Plan 合约，其中
+     正是列默认值；和
+  9. 仅在每次更改成功后才设置 `PRAGMA user_version = 11`。
+  格式错误的应用程序设置值、格式错误的计划任务 `config_json`、
+  会话或顶级计划模式无效、平台未知或错误
+  `defaultCommandShell`、解析、约束或写入失败关闭失败，
+  回滚事务，并保留迁移前架构
+  权威；备份
+  仍然可以恢复。
+  旧版 `planApprovalPermissionMode` 已从应用设置 JSON 中删除
+  迁移期间；所有不相关的设置保持不变。
 
-- **Schema v15 is additive.** It adds the `turn_queue` table and its two
-  indexes (D386 / ADR 0213) so the Host-owned turn queue survives a restart;
-  no existing row changes, and a `pi.sqlite.v14.bak` copy precedes the step.
-- **Schema v16 is additive.** It adds the session collaboration link and
-  delivery tables, their lifecycle indexes, and the nullable
-  `turn_queue.session_message_id` binding (D409 / ADR 0239). Existing
-  conversations, turns, queue entries, and plugin data remain valid. A
-  `pi.sqlite.v15.bak` copy precedes the migration; boot recovery retains
-  durable queued deliveries but never replays interrupted work automatically.
-- **Schema v17 is additive.** It adds the nullable `providers.owner_plugin_id`
-  ownership column and its partial index (ADR 0259), so a provider row a plugin
-  declares in `contributes.providers` is distinguishable from a user-created one
-  — every pre-v17 row keeps a NULL owner. A `pi.sqlite.v16.bak` copy precedes the
-  step. The v15→v16 session-collaboration step now stamps `16` (its own version)
-  instead of the latest schema constant, so a v15 file can walk both steps in one
-  launch.
-- **Schema v14 is additive.** It adds nullable `sessions.deleted_at`, the
-  partial deletion index, and `session_import_origins`. Existing sessions stay
-  active and have no origin rows. The migration runs in the same guarded
-  transaction and leaves the pre-v14 backup until the new schema passes its
-  integrity checks.
+- **架构 v14 是新增迁移。** 它增加可为空的 `sessions.deleted_at`、部分
+  删除索引和 `session_import_origins`。现有会话保持活动状态且没有来源行。
+  迁移使用同一个受保护事务，并在完整性检查通过前保留 v14 之前的备份。
 
-The `largePasteThreshold` app setting is additive JSON rather than a database
-schema field. Host settings reads normalize a missing, malformed, or
-out-of-range value to 600, and settings writes validate the integer range of
-1–1,000,000. Existing databases therefore gain the default lazily without a
-destructive migration or a second settings store.
-- Plan and Goal artifacts are never reconstructed from transcript content. On
-  startup,
-  one transaction marks every `pending` approval and every `queued` or
-  `running` execution state in `plan_approvals` as `interrupted`; associated
-  running turns are marked `aborted` before RPC service begins. Pending
-  sessions remain in their contract mode and already-approved queued/running
-  sessions remain Agent. No approval response or execution from before the
-  restart is accepted.
-- The transcript file format carries its own `schema` field in the session
-  header line; unknown line types are skipped, so additive file-format growth
-  needs no reset.
+`largePasteThreshold` 是应用设置 JSON 中的新增字段，而不是数据库 schema 字段。
+主机读取设置时会将缺失、格式错误或超出范围的值规范化为 600，设置写入则验证
+1–1,000,000 的整数范围。因此现有数据库会在读取时延迟获得默认值，不需要破坏性
+迁移或第二个设置存储。
 
-## 8. Retention & maintenance
+同一个应用设置 JSON 还可选存储提示词增强的覆盖值
+`promptEnhancementCustomTemplate`（决定已存模板是否生效的开关）、
+`promptEnhancementUserTemplate`、`promptEnhancementProviderId`、
+`promptEnhancementModelId` 与 `promptEnhancementThinkingLevel`（ADR 0121）。用户模板缺失或为空表示使用内置默认值，
+因此清空字段不会写入空字符串而是不写该键。非空的用户模板必须包含草稿变量，且
+不得超过 `PROMPT_ENHANCEMENT_TEMPLATE_MAX_LENGTH`；host-core 会拒绝违反任一规则的
+写入，并丢弃已不再读取的 `promptEnhancementSystemPrompt`。无需提升 schema 版本。
+- Plan 和 Goal 工件永远不会根据转录内容重建。开
+  启动,
+  一笔交易标志着每笔 `pending` 批准和每笔 `queued` 或
+  `running` `plan_approvals` 中的执行状态为 `interrupted`；关联的
+  在 RPC 服务开始之前，运行回合标记为 `aborted`。待定
+  会话仍处于合同模式并且已批准 queued/running
+  会话仍为 Agent。之前没有批准回复或执行
+  接受重新启动。
+- 转录文件格式在会话中携带自己的 `schema` 字段
+  标题行；未知的行类型会被跳过，因此文件格式会增加
+  无需重置。
 
-- audit_log: prune rows older than 90 days (configurable) at boot;
-  `incremental_vacuum` afterwards.
-- task_runs: keep last 100 per task (prune with the same boot pass).
-- notifications: enforce the newest-200 global cap after every insert and at
-  boot as a defensive repair; rows otherwise survive restart until cleared,
-  pruned, or cascade-deleted with their session.
-- transcript files: user data, never pruned or swept — removed only with
-  their session (delete or scheduled-run cleanup). Orphan files (session row
-  gone, file present) are preserved, not garbage-collected: the file is the
-  source of truth and a future re-index can recover it.
-- logs rotate at the file layer (D082); sessions are never auto-deleted.
-- Attachment GC (later): sweep `attachments/` for hashes unreferenced by any
-  transcript file.
+## 8. 保留和维护
 
-## 9. Extensibility playbook
+-audit_log：在启动时修剪超过 90 天（可配置）的行；
+  之后是 `incremental_vacuum`。
+- task_runs：保留每个任务的最后 100 个（使用相同的引导通道进行修剪）。
+- 通知：在每次插入后强制执行最新的 200 个全局上限
+  引导作为防御性修复；否则，行将在重新启动后继续存在，直到清除，
+  与会话一起修剪或级联删除。
+- 转录文件：用户数据，从未修剪或清除 - 仅删除
+  他们的会话（删除或计划运行的清理）。孤立文件（会话行
+  消失，文件存在）被保留，而不是被垃圾收集：该文件是
+  事实来源和未来的重新索引可以恢复它。
+- 日志在文件层轮转（D082）；会话永远不会自动删除。
+- 附件 GC（稍后）：扫描 `attachments/` 中未被任何引用的哈希值
+  转录文件。
 
-| need | mechanism | migration? |
+## 9. 可扩展性手册
+
+| 需要 | 机制 | 迁移？ |
 |---|---|---|
-| new message content kind (citations, diffs, voice) | new block `type` in the transcript file | no |
-| new per-response metadata | `meta` key in the message line | no |
-| new transcript line kind | new JSONL `type` (readers skip unknown) | no |
-| new config domain (MCP servers, memories) | `kv` namespace | no |
-| new provider/task knob | `config_json` key | no |
-| new model capability | value in `capabilities_json` | no |
-| new queryable/filterable field | promoted column | yes (additive) |
-| new entity with relations (knowledge base, connectors) | new table | yes |
+| 新的消息内容类型（引用、差异、语音） | 转录文件中的新块 `type` | 不 |
+| 新的每个响应元数据 | 消息行中的 `meta` 键 | 不 |
+| 新转录系类型 | 新的 JSONL `type`（读者跳过未知） | 不 |
+| 新的配置域（MCP 服务器、内存） | `kv` 命名空间 | 不 |
+| 新 provider/task 旋钮 | `config_json` 密钥 | 不 |
+| 新模型能力 | `capabilities_json` 中的值 | 不 |
+| 新 queryable/filterable 字段 | 晋升专栏 | 是（附加） |
+| 具有关系的新实体（知识库、连接器） | 新表 | 是的 |
 
-Rule of thumb: files/JSON for payloads the host merely stores and ships;
-columns for anything the host filters, joins, sums, or indexes.
+经验法则：files/JSON 适用于主机仅存储和发送的有效负载；
+主机过滤、连接、求和或索引的任何内容的列。
 
-## 10. Secrets rules (unchanged)
+## 10. 秘密规则（不变）
 
-1. The renderer never persists secrets
-2. OS safeStorage remains the target primary backend; the shipped store is the
-   encrypted-file backend (`file_fallback`) with its machine key beside the
-   ciphertexts, and Settings must state that risk
-3. Secret values never in SQLite; only `secrets_meta` bookkeeping
-4. Exported sessions exclude secrets by default
+1.渲染器从不保守秘密
+2. 操作系统 safeStorage 仍是目标主后端；实际交付的是加密文件后端（`file_fallback`），机器密钥与密文放在一起，设置中必须说明这一风险
+3. SQLite 中不存在秘密值；仅 `secrets_meta` 记账
+4. 导出的会话默认排除机密
 
-## 11. Acceptance
+## 11. 验收
 
-1. Sessions and transcripts survive restart byte-identically (blocks, usage,
-   tool results) — content reloads from `sessions/<id>.jsonl` with no
-   UI-projection loss
-2. Transcript load for a 5k-message session is one sequential file read; no
-   message-content SQL on the hot path
-3. Kill -9 during a running turn: boot marks the turn `aborted`, transcript
-   intact up to the last fsync'd message line; a torn trailing line is
-   skipped on read
-4. Kill -9 between file append and index commit: the message still renders
-   after restart; search misses it only until the next transcript rewrite
-5. Opening a pre-v7 database archives it as `pi.sqlite.v6.bak` and starts a
-   fresh v7 file; reopening the fresh file is a plain open
-6. Scheduled tasks CRUD + run history round-trip through host RPC only
-7. FTS finds CJK and ASCII substrings across sessions; deleting a session
-   removes its index entries and both session files
-8. Plugin uninstall clears `kv(plugin:<id>)` in one statement
-9. Resetting sidebar preferences changes no `projects`, `sessions`, or
-   transcript data; retained paths and organization choices survive a normal
-   renderer restart when preferences are available
-10. A tool call for session A resolves A's persisted project root even after
-    the visible workspace switches to project B
-11. A session's thinking level survives restart
-12. Assistant thinking blocks round-trip independently from final answer text;
-    the derived search text excludes thinking content
-13. Regenerated assistant variants survive restart in
-    `sessions/<id>.revisions.jsonl`; the live root user turn reloads with
-    `revisionCount` / `activeRevision`, the pager can restore any archived
-    branch, and switching branches never rewrites the revisions file
-14. Completed and failed turns atomically create one durable notification;
-    repeated terminal updates do not duplicate it, aborted turns create none,
-    and the newest-200 cap survives restart
-15. Notification list/unread, mark-read, mark-all-read, clear, and session
-    cascade deletion use the documented indexes/transactions without changing
-    turn or transcript data
-16. Schema v7 first reaches v8 and then uses the guarded v8→v11 path. The
-    v8→v11 migration is one atomic transaction with a WAL checkpoint and exact
-    readable `pi.sqlite.v8.bak` before destructive work; schema v9 and v10
-    receive `pi.sqlite.v9.bak` / `pi.sqlite.v10.bak`. Persisted session,
-    app-default, and scheduled `chat`
-    values map to `plan`, sessions/transcripts and `plan_approvals` artifact/
-    execution fields survive, `plan_approvals.kind` is added with existing rows
-    defaulting to `plan`, and malformed app settings/scheduled config,
-    invalid modes, or invalid default shells fail closed with the pre-migration
-    schema intact
-17. SubmitPlan and SubmitGoal write exact Markdown bytes to a unique
-    `.pi/plan/*.md` or `.pi/goal/*.md` file
-    with SHA-256 and size; title/question stay structured and renderer reload
-    retains only the pending row and original absolute deadline
-18. Full process restart marks pending/queued/running approval rows interrupted,
-    aborts associated turns, performs no replay, keeps pending sessions in their
-    contract mode,
-    keeps already-approved interrupted sessions Agent, and rejects stale responses
-19. A scheduled or unattended Plan **or Goal** run fails before provider/artifact/
-    queue work with `PLAN_REQUIRES_INTERACTIVE_SESSION`; no background path
-    auto-approves either kind
-20. Schema v14 plugin imports have host-generated session ids, one origin row per
-    session, `(pluginId, source, externalId)` idempotency, no project or model
-    binding unless an explicit host-created `projectId` is supplied,
-    ownership-scoped reads/mutations, and recoverable trash before purge.
-21. Schema v16 collaboration rows preserve source/target Session IDs and
-    idempotency across retries, bind deliveries to their actual target turns,
-    persist transcript provenance, create no duplicate completion callback,
-    enforce permission ceilings and hop limits, retain queued work across a
-    restart without replay, and cancel without deleting the target session.
+1. 会话和转录本以相同的字节方式重新启动（块、用法、
+   工具结果） — 内容从 `sessions/<id>.jsonl` 重新加载，没有
+UI投影损失
+2. 5k 消息会话的转录加载是一个连续的文件读取；不
+   热路径上的消息内容 SQL
+3.在运行回合中杀死-9：启动标记回合`aborted`，转录
+   直到最后一个 fsync 消息行都完好无损；撕裂的尾线是
+   读取时跳过
+4. 在文件追加和索引提交之间杀死-9：消息仍然呈现
+   重启后；搜索只会错过它，直到下一次抄本重写为止
+5. 打开 v7 之前的数据库将其存档为 `pi.sqlite.v6.bak` 并启动
+   新鲜的 v7 文件；重新打开新文件就是简单的打开
+6. 计划任务 CRUD + 运行历史记录仅通过主机 RPC 往返
+7. FTS跨会话查找CJK和ASCII子串；删除会话
+   删除其索引条目和两个会话文件
+8. 插件卸载在一条语句中清除 `kv(plugin:<id>)`
+9. 重置侧边栏首选项不会更改 `projects`、`sessions` 或
+   转录本数据；保留的路径和组织选择在正常情况下生存
+   当首选项可用时渲染器重新启动
+10. 会话 A 的工具调用会解析 A 的持久项目根，即使在
+    可见工作区切换到项目 B
+11.会话的思维水平在重新启动后仍然存在
+12.辅助思维阻止往返，独立于最终答案文本；
+    派生搜索文本排除思考内容
+13. 重新生成的助手变体在重新启动后仍然有效
+    `sessions/<id>.revisions.jsonl`；实时 root 用户会重新加载
+`revisionCount` / `activeRevision`，寻呼机可以恢复任何存档
+    分支，并且切换分支永远不会重写修订文件
+14. 完成和失败的回合自动创建一个持久通知；
+    重复的终端更新不会重复它，中止的轮次不会创建任何内容，
+    最新的 200 上限在重启后仍然存在
+15.通知list/unread、标记已读、标记所有读、清除和会话
+    级联删除使用记录的 indexes/transactions 而不进行更改
+    转动或转录数据
+16. Schema v7 首先到达 v8，然后使用受保护的 v8→v11 路径。的
+    v8→v11 迁移是一个带有 WAL 检查点和精确的原子事务
+    在进行破坏性工作之前可读 `pi.sqlite.v8.bak`；架构 v9 和 v10
+    接收 `pi.sqlite.v9.bak` / `pi.sqlite.v10.bak`。持续会话，
+    应用程序默认值和预定的 `chat`
+    值映射到 `plan`、sessions/transcripts 和 `plan_approvals` 工件/
+    执行字段保留，`plan_approvals.kind` 添加到现有行
+    默认为 `plan`，并且应用程序 settings/scheduled 配置格式错误，
+    无效的模式或无效的默认 shell 无法通过预迁移关闭
+    模式完好无损
+17. SubmitPlan 和 SubmitGoal 将精确的 Markdown 字节写入唯一的
+    `.pi/plan/*.md` 或 `.pi/goal/*.md` 文件
+    具有 SHA-256 和大小； title/question 保持结构化并重新加载渲染器
+    仅保留待处理行和原始绝对截止日期
+18.全流程重启标志着pending/queued/running审批行中断，
+    中止关联的回合，不执行重播，将待处理的会话保留在其
+合约模式，
+    保留已批准的中断会话 Agent，并拒绝过时的响应
+19. 计划的或无人值守的 Plan **或 Goal** 运行在 provider/artifact/ 之前失败
+    使用 `PLAN_REQUIRES_INTERACTIVE_SESSION` 进行队列工作；无背景路径
+    自动批准任一类型
+20. 架构 v14 插件导入使用主机生成的会话 id；每个会话一个来源行；以
+    `(pluginId, source, externalId)` 幂等；除非显式提供宿主创建的
+    `projectId`，否则不绑定项目或模型；读取和变更按所有权限制，并支持先
+    trash、后 purge。
+21. 架构 v16 协作行在重试时保留源/目标 Session ID 和幂等性，将投递绑定到
+    实际目标回合，持久化转录来源，不创建重复完成回调，执行权限上限和跳数限制，
+    在重启后保留排队工作但不重放，并在取消时保留目标会话。
+## 当前回合补充指令的转录位置预留
 
+已接收的补充输入通过 Electron 现有消息 outbox 写入，带有 `meta.steering: true`，
+并以 `UiMessage.steering` 往返传递。即使渲染器重载丢失提交状态，Smart Stop 仍保留
+该输入。如果助手仍在流式回复，先加入其临时快照，为回复预留位于新用户行之前的位置。
+主机保存临时行和进行中检查点，也保存空预留行，以便崩溃恢复将其落定。
+只要索引中的助手仍为 `status: streaming`，后续流式检查点就仍然有效。
 
-
-## Active-turn steering transcript reservations
-
-An accepted steering input is journaled through Electron's existing message
-outbox with `meta.steering: true`, round-tripped as `UiMessage.steering`. Smart
-Stop preserves that input even after renderer reload loses submission state.
-If an assistant is still streaming, its provisional snapshot is queued
-first to reserve its transcript position before the new user row. The host
-stores the provisional row and an in-flight checkpoint, including an empty
-reservation so crash recovery can settle it. Further stream checkpoints remain
-valid while the indexed assistant has `status: streaming`.
-
-`session.appendMessage` retains idempotent replay for completed messages. Its
-narrow exception lets a terminal assistant replace an indexed streaming
-assistant with the same session/message id. It updates exactly that transcript
-line and search text, retaining sequence, owning turn and every other row.
-Late partial snapshots and duplicate terminal snapshots cannot overwrite the
-settled result. Recovery promotes the latest checkpoint in that same position.
-The outbox likewise keeps a newer snapshot that replaces an append while its
-host call is still pending. If `messages.id` already belongs to another
-session, the host remaps to `{sessionId}:{id}` before any JSONL write; a
-replay of the original id is a no-op against that remapped row. The outbox
-treats `UNIQUE constraint failed: messages.id` as an ack and keeps draining
-(D444). A permanently rejected append whose host error carries a
-`PERMISSION_DENIED:` prefix is likewise dropped so the FIFO can continue;
-`PLUGIN_PERMISSION_DENIED` and other host failures still pause (D597).
-Steering into a claimed collaboration delivery turn is extra human input: it
-must target that delivery's session, is exempt from the delivery
-content/attachment contract, does not inherit the delivery origin, and has
-any client-supplied `session_message` stripped. No schema migration is
-required.
-
-## 12. Native Pi session authority (ADR 0254)
-
-Native Pi v3 sessions under the Pi agent session root are a second, explicitly
-source-discriminated transcript authority owned by the Node agent sidecar. They
-are never inserted into SQLite and never copied to the Desktop transcript
-directory. `session.list` merges their projections with Rust-owned
-Desktop summaries, and `session.get` routes by the opaque `native-pi:` id.
-
-Detail reads take an immutable byte snapshot, parse it into an in-memory
-`SessionManager`, and follow the current native branch. They must not call
-persistent `SessionManager.open`, because that API may repair a missing newline
-or rewrite an older format. Unknown/custom entries and unknown fields remain in
-the source bytes; context-bearing custom messages and native compaction/tree
-semantics are resolved by the pinned coding-agent SDK.
-
-A native prompt opens the original file only after exact-v3, newline, cwd,
-trust, saved-provider/auth, canonical-path, identity, and lease checks pass.
-`AgentSession` and `SessionManager` append the native entries. Desktop host turn
-and transcript append APIs are not invoked. Rename, delete, project move,
-revision, Plan/Goal, collaboration, and queue operations remain unsupported
-for native sessions in this slice. Forking is supported as described here and in
-the runtime spec.
-
-A native fork writes exactly one new v3 JSONL child in the parent's session
-directory. Branch extraction runs against an in-memory manager over the parent
-snapshot, then child title/parent saved model/thinking fallbacks are appended in
-memory. Publication is a full write to an exclusive non-jsonl temporary file in
-the same directory, followed by a same-directory hardlink to the final
-`<timestamp>_<session-id>.jsonl` name. The staged file must still match the
-captured device/inode/size/hash before the link, and the published child must
-match that same identity and hash before the child detail is projected or
-registered; a mismatch fails closed without returning a child. Cleanup removes
-only files whose device/inode and content still match what this fork wrote
-(complete files by size+hash, partial staging writes by byte prefix); foreign
-files after a failed no-clobber link are never removed. The
-parent file, its leaf, and any live runtime are never modified. The child header
-carries `parentSession` with the canonical source path; that path stays inside
-the sidecar.
-
-The first slice has no projection cache or async scan bound; every list still
-reads/parses complete files. Caching by canonical path/file identity/size/mtime
-and bounded asynchronous scanning remain deferred performance work.
+`session.appendMessage` 对已完成消息保持幂等重放，仅允许同一会话和消息 id 的
+终态助手替换索引中的流式助手。更新仅涉及该转录行和搜索文本，保留顺序、所属回合及
+其他所有行。迟到的部分快照和重复终态快照不能覆盖已落定结果。恢复时在原位置应用
+最新检查点。如果主机调用尚未完成时出现更新的追加快照，outbox 同样保留该快照。
+若 `messages.id` 已属于另一会话，主机在写 JSONL 之前改写为 `{sessionId}:{id}`；
+重放原始 id 对该改写行无操作。outbox 把 `UNIQUE constraint failed: messages.id`
+当作确认并继续排空（D444）。带 `PERMISSION_DENIED:` 前缀的永久拒绝同样丢弃该行
+以便 FIFO 继续；`PLUGIN_PERMISSION_DENIED` 和其他宿主失败仍暂停（D597）。
+向已认领的协作投递回合做 steering 是额外的人类输入：必须指向该投递的会话，
+不受投递内容/附件契约约束，不继承投递来源，并清掉客户端带来的
+`session_message`。无需存储架构迁移。

@@ -1,182 +1,142 @@
-# 09. Interaction Patterns
+# 09. 交互模式
 
-> Design system tokens: [07-ui-design-system.md](07-ui-design-system.md)  
-> Component anatomy: [08-component-spec.md](08-component-spec.md)  
-> Permission UX: [03-permission-ux.md](03-permission-ux.md)  
-> Command palette: [04-builtin-commands.md](04-builtin-commands.md)
+> 设计系统令牌：[07-ui-design-system.md](/spec/04-ux/07-ui-design-system)
+> 组件剖析：[08-component-spec.md](/spec/04-ux/08-component-spec)
+> 权限UX：[03-permission-ux.md](/spec/04-ux/03-permission-ux)
+> 命令面板：[04-builtin-commands.md](/spec/04-ux/04-builtin-commands)
 
-## 1. Keyboard shortcuts baseline
+## 1. 键盘快捷键基线
 
-### 1.1 Global shortcuts
+### 1. 1 全局快捷键
 
-| Shortcut | Action | Context |
+| 快捷方式 | 行动 | 背景 |
 |---|---|---|
-| `Option + Space` (macOS) / `Alt + Space` (Windows/Linux) | Open plugin launcher | OS-global after application boot; customizable |
-| `Cmd/Ctrl + Shift + P` | Open command palette | Global (D014) |
-| `Cmd/Ctrl + N` | New chat/session | Global |
-| `Cmd/Ctrl + O` | Open project | Global |
-| `Alt + Shift + W` | Show or hide the window (toggle) | OS-global (D439); hides to the tray, never quits |
-| `Cmd/Ctrl + ,` | Open settings | Global |
-| `Cmd/Ctrl + B` | Toggle sidebar | Global |
-| `Cmd/Ctrl + J` | Toggle work panel | Global; active session |
-| `Cmd/Ctrl + [` | Previous destination | Global |
-| `Cmd/Ctrl + ]` | Next destination | Global |
-| `Cmd/Ctrl + .` | Abort active turn | Global (same as abort button) |
-| `Cmd/Ctrl + K` | Open command palette | Global |
+| `Option + Space` (macOS) / `Alt + Space` (Windows/Linux) | 打开插件启动器 | 应用程序启动后操作系统全局；可定制 |
+| `Cmd/Ctrl + Shift + P` | 打开命令面板 | 全球 (D014) |
+| `Cmd/Ctrl + N` | 新 chat/session | 全球 |
+| `Cmd/Ctrl + O` | 打开项目 | 全球 |
+| `Alt + Shift + W` | 呼出或隐藏窗口（切换） | 系统级全局（D439）；隐藏到托盘，绝不退出 |
+| `Cmd/Ctrl + ,` | 打开设置 | 全球 |
+| `Cmd/Ctrl + B` | 切换侧边栏 | 全球 |
+| `Cmd/Ctrl + J` | 打开工作面板 | 全球；活动会话 |
+| `Cmd/Ctrl + [` | 之前的目的地 | 全球 |
+| `Cmd/Ctrl + ]` | 下一个目的地 | 全球 |
+| `Cmd/Ctrl + .` | 中止主动回合 | 全局（与中止按钮相同） |
+| `Cmd/Ctrl + K` | 打开命令面板 | 全球 |
 
-### 1.2 Conversation context shortcuts
+### 1. 2 对话上下文快捷方式
 
-| Shortcut | Action | Context |
+| 快捷方式 | 行动 | 背景 |
 |---|---|---|
-| `Enter` | Send message when Enter-to-send is on; newline when it is off | Composer focused |
-| `Cmd/Ctrl + Enter` | Send message when Enter-to-send is off | Composer focused |
-| `Shift + Enter` | Newline | Composer focused |
-| `Alt + Enter` (`Option + Enter` on macOS) | Steer the current turn; send normally when idle | Composer focused, outside IME composition |
-| `Escape` | Clear input / blur composer | Composer focused |
-| `Cmd/Ctrl + ↑` | Scroll to top of transcript | Transcript focused |
-| `Cmd/Ctrl + ↓` | Scroll to bottom of transcript | Transcript focused |
+| `Enter` | 开启回车发送时发送；关闭后换行 | 以输入框为中心 |
+| `Cmd/Ctrl + Enter` | 关闭回车发送时发送 | 以输入框为中心 |
+| `Shift + Enter` | 换行符 | 以输入框为中心 |
+| `Alt + Enter`（macOS 为 `Option + Enter`） | 向当前回合补充指令；空闲时正常发送 | 输入框聚焦，且不在输入法组词过程中 |
+| `Escape` | 清晰输入/模糊编辑器 | 以输入框为中心 |
+| `Cmd/Ctrl + ↑` | 滚动到文字记录顶部 | 注重成绩单 |
+| `Cmd/Ctrl + ↓` | 滚动到文字记录底部 | 注重成绩单 |
 
-### 1.3 Command palette shortcuts (within palette)
+### 1. 3 命令面板快捷键（面板内）
 
-| Shortcut | Action | Context |
+| 快捷方式 | 行动 | 背景 |
 |---|---|---|
-| `↑ / ↓` | Navigate results | Palette open |
-| `Enter` | Execute selected command | Palette open |
-| `Escape` | Close palette | Palette open |
+| `↑ / ↓` | 导航结果 | 调色板打开 |
+| `Enter` | 执行选定的命令 | 调色板打开 |
+| `Escape` | 关闭调色板 | 调色板打开 |
 
-### 1.4 Shortcut rules
+### 1. 4 快捷键规则
 
-- macOS application-menu shortcuts are discoverable through system-menu
-  accelerators. Windows/Linux shortcuts remain available without rendering an
-  application menubar; command-only shortcuts are discoverable via command
-  palette search (keyword "shortcut" or "keybinding").
-- Shortcuts must not conflict with macOS system shortcuts or common browser shortcuts
-- Never override `Cmd/Ctrl + C`, `Cmd/Ctrl + V`, `Cmd/Ctrl + A`, `Cmd/Ctrl + S`
-- Shortcuts are consistent across macOS (Cmd) and Windows/Linux (Ctrl)
-- A missing shortcut override uses the shared platform default; a valid
-  string uses the custom binding; an explicit `null` means `Unbound` and never
-  dispatches. Unbound actions do not conflict with other bindings.
-- A modifier-only keydown and an IME composition/229 keydown never dispatch a
-  command. Repeated keydown events do not repeatedly traverse destination
-  history; each back/forward chord advances at most once per physical press.
-- Command-only shortcut changes require updating the command palette metadata;
-  native roles and visible application-menu accelerators remain menu-owned
-- The plugin launcher is registered through Electron's native global shortcut
-  API. Windows' reserved default `Alt + Space` additionally uses a host-core
-  low-level keyboard hook that consumes the system-menu chord and emits an
-  Electron host notification, so it works while another application is
-  focused. A focused-window fallback remains available if the hook cannot be
-  installed. An unbound launcher disables both the hook and focused-window
-  fallback. Custom bindings continue to use Electron's global shortcut API.
-  Electron starts warming the launcher in a hidden window as soon as Electron
-  is ready, in parallel with backend and main-window boot; shortcut delivery
-  during warm-up joins the same in-flight load. The macOS show path relies on
-  the panel's normal activation instead of issuing a second application
-  activation or window-stack move. The launcher always opens on the display
-  nearest the pointer.
-- The window visibility key is one toggle (`Alt + Shift + W`): a visible,
-  focused window hides to the tray, and anything else — hidden, minimized, or
-  behind another application — is shown and focused. Hiding never enters the
-  close path, so it raises no close-behaviour prompt, destroys nothing, and
-  never quits the app. The key is globally registered, so it deliberately
-  avoids `Cmd/Ctrl + W`, which macOS spends on its own close-window command and
-  which would be taken from every application if the app claimed it. The
-  retired `Cmd/Ctrl + Shift + W` summon chord is not registered either, and
-  stored `closeWindow`/`summonWindow` overrides are folded into the toggle when
-  the map is read (D438, D439).
+- macOS 应用程序菜单快捷方式可通过系统菜单发现
+  加速器。 Windows/Linux 快捷方式仍然可用，无需渲染
+  应用程序菜单栏；仅命令快捷方式可通过命令发现
+  调色板搜索（关键字“快捷方式”或“键绑定”）。
+- 快捷方式不得与 macOS 系统快捷方式或常见浏览器快捷方式冲突
+- 切勿覆盖 `Cmd/Ctrl + C`、`Cmd/Ctrl + V`、`Cmd/Ctrl + A`、`Cmd/Ctrl + S`
+- macOS (Cmd) 和 Windows/Linux (Ctrl) 之间的快捷键是一致的
+- 缺少快捷键覆盖时使用共享的平台默认值；合法字符串使用自定义绑定；明确的
+  `null` 表示“未绑定”，不会触发命令，也不与其他绑定冲突。
+- 仅修饰符按键和 IME composition/229 按键永远不会调度
+  命令。重复的按键事件不会重复遍历目的地历史；每个 back/forward 和弦每次
+  物理按下最多前进一次。
+- 仅命令快捷方式更改需要更新命令面板元数据；
+  本机角色和可见的应用程序菜单加速器仍然由菜单拥有
+- 插件启动器通过 Electron 的本机全局快捷方式注册
+  API。 Windows' 保留的默认值 `Alt + Space` 另外使用 host-core
+低级键盘钩子，消耗系统菜单和弦并发出
+  Electron 主机通知，因此它可以在另一个应用程序运行时工作
+  专注。如果钩子无法被安装，聚焦窗口后备仍然可用。未绑定时会同时关闭钩子和
+  聚焦窗口后备。自定义绑定继续使用 Electron 的全局快捷方式 API。
+  启动器始终在最靠近指针的显示屏上打开。
+- 窗口可见性只有一个开关键（`Alt + Shift + W`）：可见且在前台的窗口隐藏到托盘，
+  其余情况 —— 已隐藏、已最小化或被其它应用挡在后面 —— 显示并获得焦点。隐藏
+  不走关闭路径，因此不会弹出关闭行为询问、不会销毁窗口，也绝不会退出应用。
+  该键是系统级全局注册，因此刻意避开 `Cmd/Ctrl + W` —— macOS 把它用于自己的
+  关闭窗口命令，应用一旦占用就会从所有应用程序手里把它抢走。已弃用的
+  `Cmd/Ctrl + Shift + W` 呼出组合键同样不再注册；读取配置映射时，已存储的
+  `closeWindow` / `summonWindow` 覆盖项会并入该开关键（D438、D439）。
 
-### 1.5 Plugin launcher shortcuts
+### 1. 5 插件启动器快捷方式
 
-| Shortcut | Action | Context |
+| 快捷方式 | 行动 | 背景 |
 |---|---|---|
-| `↑ / ↓` | Cycle matching plugins | Launcher focused |
-| `Enter` | Open selected plugin panel | Launcher focused, not composing IME text |
-| `Escape` | Dismiss launcher | Launcher focused |
+| `↑ / ↓` | 循环匹配插件 | 专注于启动器 |
+| `Enter` | 打开选定的插件面板 | 专注于启动器，而不是撰写 IME 文本 |
+| `Escape` | 关闭启动器 | 专注于启动器 |
 
-The launcher opens with an empty query and shows enabled, ready panel plugins
-in most-recently-used order from renderer-local device history, so the last
-opened plugin stays one Enter away. Typing still ranks search relevance first;
-recency only breaks ties between equally relevant matches.
+### 1. 5 平台应用菜单
 
-### 1.5 Platform application menus
+- macOS 应用程序菜单加速器调度相同的白名单 shell
+  作为渲染器控件的命令。保留本机 Edit/View/Window 角色
+  平台文本编辑、缩放、全屏、隐藏和退出行为。
+- Windows/Linux 在窗口中不呈现应用程序菜单。他们的无框
+  标题栏将侧边栏操作保留在左边缘，将本机窗口控件保留在
+  右边缘。当工作面板打开时，其唯一的折叠控制位于
+  在会话窗格右上角这些窗口控件之前，而不是在
+  工作面板内容标题。目的地历史记录没有可见的 back/forward
+  控制并通过渲染器快捷方式保持可用。第一个
+  转录行从 46px 标题栏控制带下方开始，因此用户和
+  助理内容不能与最小化、maximize/restore 或关闭重叠
+  目标。目标页面和插件详细信息表的开头相同
+  带，因此页眉操作和工作表关闭控件永远不会堆叠在
+  这些目标。 F10 和 Shift+F10 不会被 shell chrome 消耗。
+- Windows/Linux 保留新任务、打开项目、设置、关闭窗口、
+  缩放、全屏、搜索、命令面板、侧边栏和工作面板快捷方式
+  通过渲染器键处理。标准编辑快捷方式仍然是原生的
+网络内容行为。
+- 开发者工具是可选的。启用开发者模式后，Main 会处理 F12
+  每个平台以及 Windows/Linux 上的 Ctrl+Shift+I； macOS 暴露其原生
+  View 中的开发人员工具角色。禁用该模式后，这些产品条目
+  点仍然不可用，禁用它会关闭打开的控制台。
+- 主队列本机命令，直到渲染器确认其菜单
+  事件订阅在 macOS 上处于活动状态。关闭并重新创建窗口
+  重置本次握手。
+- 无框最小化、maximize/restore 和关闭控件保留在范围之外
+  拖动区域。最大化状态在挂载时查询并从本机更新
+  窗口事件，因此恢复可供性永远不仅仅取决于乐观
+  渲染器状态。
+- 最小化在每个平台上都把窗口隐藏进常驻托盘（D216，§1.5.1）。
+  Windows/Linux 的关闭行为由用户配置（ADR 0090）：尚未设置的偏好通过原生
+  提示只问一次（取消 / 关闭到托盘 / 退出）；`tray` 把窗口隐藏到同一个托盘
+  图标之下，点击它即可恢复窗口；`quit` 退出应用。关闭行为从不创建或销毁
+  托盘 —— 图标归 D216 所有，两种选择下都常驻。这个选择会被持久化、可在
+  设置 → 通用中回访，并且关闭按钮和关闭快捷键都遵循它。macOS 保持原生
+  Dock 生命周期（关闭后应用留在 Dock 中，激活时重建窗口）。边界看门狗
+  永远不会恢复一个最小化或隐藏到托盘的窗口。
 
-- macOS application-menu accelerators dispatch the same allowlisted shell
-  commands as renderer controls. Native Edit/View/Window roles retain
-  platform text-editing, zoom, fullscreen, hide, and quit behavior.
-- Windows/Linux render no application menu in the window. Their frameless
-  titlebar keeps sidebar actions at the left edge and native window controls at
-  the conversation pane's right edge while the work panel is closed. While the
-  work panel is open, those controls stay viewport-fixed at the window's right
-  edge over the panel header, which reserves the control band plus the
-  work-panel toggle so resource close remains reachable. The sole panel
-  collapse control is that viewport-fixed toggle. Destination history has no visible back/forward
-  controls and remains available through the renderer shortcuts. The first
-  transcript row starts below the 46px titlebar control band so user and
-  assistant content cannot overlap the minimize, maximize/restore, or close
-  targets. Destination pages and the plugin detail sheet start below the same
-  band, so page header actions and the sheet close control never stack under
-  those targets. F10 and Shift+F10 are not consumed by shell chrome.
-- Windows/Linux keep New Task, Open Project, Settings, close-window,
-  zoom, fullscreen, search, command-palette, sidebar, and work-panel shortcuts
-  through renderer key handling. Standard editing shortcuts remain native
-  web-content behavior.
-- Developer tools are opt-in. With developer mode enabled, Main handles F12 on
-  every platform and Ctrl+Shift+I on Windows/Linux; macOS exposes its native
-  developer-tools role in View; the conversation overflow menu adds Copy
-  conversation ID and Open session path. With the mode disabled these product
-  entry points remain unavailable, and disabling it closes an open console.
-- Main queues native commands until the renderer acknowledges that its menu
-  event subscription is active on macOS. Closing and recreating a window
-  resets this handshake.
-- Frameless minimize, maximize/restore, and close controls remain outside the
-  drag region. Maximize state is queried on mount and updated from native
-  window events, so the restore affordance never depends only on optimistic
-  renderer state.
-- Windows/Linux explicit minimize actions use native minimize and keep the
-  taskbar entry. On Windows, clicking the focused window's taskbar button also
-  uses native minimize and keeps the taskbar entry; clicking it again
-  restores/focuses the same window, while clicking the entry for a merely
-  covered window keeps the normal bring-to-front behavior (D252 / ADR 0117).
-  macOS native minimize remains tray-resident. Windows/Linux close behavior is user-configurable
-  (ADR 0090): an unset preference asks once via a native prompt (Cancel / Close
-  to tray / Quit); `tray` hides the window under that same tray icon, whose
-  click restores the window; `quit` exits the app. Close behavior never creates
-  or destroys the tray — D216 owns it, so the icon is resident under either
-  choice. The choice is persisted, revisitable in Settings → General, and
-  applied by both the close button and the close shortcut. Explicit quit
-  (Cmd+Q, application-menu Quit, tray Quit) is a separate confirm step
-  (D363): Cancel leaves the app running; Confirm runs the ordered shutdown.
-  A D230 window-close Quit does not ask again. Automated boot, supervision,
-  and capture probes skip the dialog, as does the restart that installs an
-  already-downloaded update — its installer is already running and gives up
-  when the app stays alive. macOS keeps the
-  native Dock lifecycle (close keeps the app in the Dock; activating recreates
-  the window). The bounds watchdog never restores a minimized or tray-hidden
-  window.
+### 1. 5.1 托盘驻留最小化
 
-### 1.5.1 Tray-resident and taskbar minimize
-
-- Explicit application minimize means **native taskbar minimize** on Windows
-  and Linux: the renderer's window-control button and native-menu minimize
-  action use the normal OS transition. macOS traffic-light minimize and the
-  macOS Window → Minimize role remain **hide to tray**.
-- On Windows, clicking the taskbar button of the focused visible main window
-  means **native minimize**. The window stays represented by its taskbar entry;
-  the next click restores and focuses it. A taskbar click while the window is
-  merely covered brings it to the front and does not hide it to the tray.
-- Tray hiding, including a Windows/Linux close with `tray`, removes the main
-  window from the taskbar/dock window list while the Electron process and
-  background work remain alive. It does not persist a minimized geometry or
-  dispose the host/sidecar.
-- Double-clicking the PI-Desktop tray icon (or single-clicking on Windows/Linux),
-  choosing Open, or activating the app from the macOS dock restores and focuses the
-  existing window. If the window was closed, the same action creates a fresh
-  window.
-- The tray menu is localized with the active shipped shell locale and
-  exposes Open, bounded session groups, and an explicit Quit action. Quit uses
-  the existing ordered shutdown path. What closing the window does is the
-  user's own choice on Windows/Linux (ADR 0090) and a Dock-lifecycle close on
-  macOS; the tray icon itself is created once at startup either way.
+- 最小化意味着 macOS、Windows 和 Linux 上**隐藏到托盘**。渲染器的
+  Windows/Linux 最小化按钮、macOS 交通灯最小化按钮，以及
+  macOS 窗口 → 最小化角色共享此行为。
+- 隐藏将从 taskbar/dock 窗口列表中删除主窗口，而
+  Electron 进程和后台工作仍然有效。它不坚持
+  最小化几何形状或处置 host/sidecar。
+- Double-clicking the tray icon (or single-clicking on Windows/Linux), choosing
+  Open, or activating the macOS Dock restores/focuses the existing window or
+  creates a new one if it was closed. macOS single-click opens the menu.
+- The localized tray includes Open, bounded session groups, and Quit. Quit
+  keeps confirmation and ordered shutdown. Close behavior remains user-owned
+  on Windows/Linux (ADR 0090), and macOS retains its Dock lifecycle.
 
 ### 1.5.2 Tray session navigation (issue #293)
 
@@ -201,656 +161,537 @@ recency only breaks ties between equally relevant matches.
   the menu. The menu remains available when the main window is hidden or
   closed, without creating another window until an explicit activation.
 
-### 1.6 Sidebar project and conversation organization
+### 1. 6 侧边栏项目和对话组织
 
-The sidebar is a path-keyed presentation of host-owned projects and sessions.
-The `Sessions` heading appears first and contains path-less conversations plus
-their create and sort controls. Its bounded list keeps standalone work visible
-without consuming the full sidebar. The following `Projects` section heading
-exposes the project picker above retained project groups. Several project groups
-may be retained while exactly one workspace supplies the visible shell context.
+侧边栏是主持人拥有的项目和会话的路径键控演示。
+`Sessions` 标题首先出现，包含无路径对话以及
+他们的创建和排序控件。它的有界列表使独立工作保持可见
+而不消耗整个侧边栏。以下 `Projects` 部分标题
+在保留的项目组上方公开项目选择器。多个项目组
+当只有一个工作空间提供可见的 shell 上下文时，可能会被保留。
 
-#### Project tab lifecycle
+#### 项目选项卡生命周期
 
-1. **Open** — selecting a project from Settings → Project archive or the picker adds its
-   normalized path to the retained set and activates it. Existing tabs remain.
-2. **Activate** — selecting a different group calls the existing `project.set`
-   bridge. Its path then drives topbar identity, active workspace state, and
-   new-task scope.
-3. **Collapse** — disclosure state belongs to each project path. Collapsing
-   hides children only; it neither changes the selected session nor stops a
-   run. The directory row is one full-width disclosure target containing its
-   chevron, folder, and label: selecting an inactive directory activates it
-   first, and every directory-row click toggles that group's children without
-   changing any other group's state. Project actions are separate sibling
-   controls and never toggle the directory.
-4. **Close** — closing removes only the retained tab. If it was active, the
-   last remaining tab is selected or the visible workspace is cleared. Durable
-   projects, sessions, and transcripts remain.
+1. **打开** — 从“设置”→“项目存档”中选择一个项目，或者选择器添加其项目
+   保留集的标准化路径并激活它。现有选项卡保留。
+2. **激活** — 选择不同的组调用现有的 `project.set`
+   桥。然后，它的路径驱动顶栏标识、活动工作区状态，以及
+   新任务范围。
+3. **折叠** — 披露状态属于每个项目路径。崩溃
+   仅隐藏儿童；它既不更改选定的会话，也不停止
+   跑。目录行是一个全角公开目标，包含其
+   V 形、文件夹和标签：选择非活动目录将其激活
+   首先，每次目录行单击都会切换该组的子级，而无需
+   改变任何其他组的状态。项目操作是独立的兄弟项目
+   控制并且从不切换目录。
+4. **关闭** — 关闭仅删除保留的选项卡。如果它处于活动状态，则
+选择最后一个剩余选项卡或清除可见工作区。耐用
+   项目、会议和成绩单仍然保留。
 
-#### Organization actions
+#### 组织行动
 
-- **Rename** — the session row menu and Project archive task rows open the same
-  modal editor. Saving trims the title and persists 1–80 Unicode code points;
-  blank values are not submittable. The title is metadata only, so the task's
-  transcript, activity ordering, project binding, and empty-session state are
-  unchanged. Escape, Cancel, or clicking the scrim dismisses the editor.
-- **Edit project** — the project overflow menu in the sidebar and Project
-  archive opens the same editor for the selected logical project. The editor
-  trims and persists a 1–80 Unicode-code-point group name and lists every
-  registered folder. The Primary folder stays first and cannot be removed;
-  additional folders can be added through the native multi-selection picker or
-  removed individually. Saving updates the host-owned group while preserving
-  the normalized paths, workspace identity, sessions, transcripts, and on-disk
-  folders. A folder with existing chats cannot be removed.
-- **Pin** toggles presentation priority. Pinned projects/conversations appear
-  before unpinned rows within the selected secondary order. In the sidebar, a
-  pinned project replaces its Folder glyph with a filled accent Star so its
-  state remains recognizable without opening its overflow menu.
-- **Archive** is non-destructive. Archived rows are hidden by default,
-  available through Show archived, and restorable. Archiving does not cancel
-  a turn or delete a transcript.
-- **Delete** removes a session or a project permanently and takes two clicks:
-  the first arms the overflow item and relabels it (`nav.deleteTaskConfirm` /
-  `project.deleteMenuConfirm`), and only the second click removes the row. The
-  arm expires on its own, so a row never stays one stray click away from a
-  permanent delete, and the folder on disk is never touched. A project whose
-  turn is still live still opens the confirmation dialog that names those
-  sessions and stops them first; an idle project is removed on that second
-  click.
-- **Create branch** snapshots an idle conversation's complete active
-  transcript into an independent session in the same project/Temporary scope.
-  The command is disabled while the source runs. Success selects the child and
-  focuses the composer; failure leaves the source visible and unchanged.
-- Archiving the visible conversation/project first moves the visible context
-  to a non-archived sibling. With no sibling, a conversation receives a fresh
-  draft in the same scope and a project clears the visible workspace; the app
-  never leaves a hidden archived row as the active context.
-- **Sort** offers Recently updated (`recent`), Created date (`created`),
-  Oldest first (`oldest`), and Name (`name`). Missing/invalid values fall back
-  to `recent`. Pressing a project title and moving 8px, or ArrowUp/ArrowDown
-  on that focused title, switches project ordering to `manual` and persists a
-  contiguous order per normalized path. Archived and pinned priority remains
-  ahead of the manual order; projects without an assigned order fall back to
-  a stable path order until they are moved.
-- Each project group shows the ten most-recent rows in the active sort order
-  by default; the remaining sessions fold behind a **Load N more…** control
-  (the same affordance used for time-grouped overflow). Selecting it expands
-  the full time-grouped list, and the expanded state is per-group, for the
-  current session only, and not persisted.
-- Presentation changes are saved best-effort. Storage failure must not block
-  project activation, session selection, or agent execution.
+- **编辑项目** — 侧边栏和项目存档中的项目溢出菜单打开同一个项目编辑器。
+  编辑器可以调整项目名称和文件夹列表；Primary 文件夹保持在首位且不能移除，
+  其他文件夹可以通过原生多选文件夹选择器添加，也可以单独移除。保存时由
+  host 持久化逻辑项目组，同时保留规范化路径、工作区身份、会话、转录和磁盘文件夹。
+  已有聊天记录的文件夹不能直接移除。
+- **Pin** 切换演示优先级。出现固定的 projects/conversations
+  在所选二级订单中取消固定的行之前。
+- **存档**是非破坏性的。默认情况下，存档的行是隐藏的，
+  可通过显示已存档且可恢复。存档不会取消
+  转动或删除成绩单。
+- **删除**会永久移除会话或项目，并且需要点击两次：第一次点击武装该溢出菜单项并改写其
+  标签（`nav.deleteTaskConfirm` / `project.deleteMenuConfirm`），只有第二次点击才会移除
+  该行。武装会在几秒后自行失效，因此一行永远不会停留在“再点一次就永久删除”的状态，磁盘
+  上的文件夹也永远不会被触碰。仍有运行中轮次的项目依然会打开确认对话框，由它指明这些会话
+  并先将其停止；空闲的项目在第二次点击时即被移除。
+- **创建分支**快照空闲对话的完整活动状态
+  转录到同一 project/Temporary 范围内的独立会话中。
+  当源运行时该命令被禁用。成功选择了孩子
+  聚焦输入框；失败使源可见且未改变。
+- 归档可见的 conversation/project 首先移动可见上下文
+  给一个未存档的兄弟姐妹。没有兄弟姐妹，谈话就会变得新鲜
+  同一范围内的草稿和项目清除了可见的工作空间；该应用程序
+  永远不会将隐藏的归档行保留为活动上下文。
+- **排序**优惠最近更新 (`recent`)、创建日期 (`created`)、
+  最旧的在前 (`oldest`)，以及名称 (`name`)。 Missing/invalid 值回落
+  至 `recent`。按住项目标题并移动 8px，或聚焦标题后按
+  `ArrowUp`/`ArrowDown`，会切换到 `manual` 项目排序，并按规范化路径持久化连续顺序。
+  归档和置顶优先级仍高于手动顺序；尚未分配顺序的项目暂按稳定路径顺序排列。
+- 每个项目组显示活动排序顺序中最新的十行
+  默认情况下；剩余的会话折叠在 **加载 N 更多…** 控件后面
+  （与时间分组溢出相同的可供性）。选择它展开
+  完整的时间分组列表，并且扩展状态是每个组的，对于
+仅当前会话，不持久。
+- 尽力保存演示文稿更改。存储故障不得阻塞
+  项目激活、会话选择或代理执行。
 
-#### Session isolation across tabs
+#### 跨选项卡的会话隔离
 
-- Selecting a row immediately marks that destination as selected. A 120ms
-  pointer hover or keyboard focus may prefetch its transcript; duplicate reads
-  share one in-flight request and the renderer retains at most five recent
-  transcript snapshots.
-- Transcript loading starts without waiting for an older superseded selection.
-  When session summary metadata is available, project activation/clearing and
-  transcript IO run in parallel. A monotonic navigation generation permits only
-  the newest selection to project the visible workspace, transcript, run state,
-  navigation history, and work-panel context.
-- The chat surface retains one pane per session, keyed by session id and bounded
-  to three (the visible pane plus the two most recent). Hidden panes stay mounted
-  and inert — `visibility: hidden` plus `content-visibility: hidden`, never
-  `display: none`, which would discard their scroll offset — and each pane keeps
-  its own scroll position for its lifetime. Switching to a session that still has
-  a pane (warm) reveals it immediately with its retained content and position:
-  nothing is dimmed, no skeleton appears, and no transcript remounts. If the
-  destination is running or still holds a completed reply the durable page has
-  not caught up to, revalidation treats the durable read as a lower-water mark
-  and keeps its renderer-owned assistant/tool tail; completed durable rows may
-  be added, but the partial or just-finished reply cannot be rolled back. The
-  bounded durable page is stitched onto the live snapshot in chronological
-  order: live rows older than that page stay before it, and an optimistic,
-  streaming, or not-yet-flushed tail stays after it. Live-only rows are never
-  appended after the page, which would move the newest turn out of the mounted
-  trailing window (D317 / D261 / D324). Live provenance is cleared only once
-  that page already contains every live row.
-- Switching to a session with no retained pane (cold) leaves the visible pane on
-  its own session until the destination commits. Only a thin progress track and
-  `aria-busy` mark the wait, the composer stays non-interactive so a prompt cannot
-  reach the session being left, and the destination session id is never paired
-  with another session's messages. The destination is then revealed at its final
-  record without a top-of-history or empty-home flash. An evicted session is
-  indistinguishable from a first visit.
-- New Task is not a cold switch. Creating a session reveals the empty home on
-  the first frame (the previous conversation and retained panes clear before
-  `session.create`). Reusing the group's latest empty session commits that empty
-  transcript on the same frame rather than waiting for `session.get`. The
-  durable row is inserted from the `session.create` summary; send and paste wait
-  for that in-flight create instead of opening a second slot (ADR 0154).
-- A first-opened session settles at its newest turn. A revisited pane returns to
-  the offset the user left, and a pane still pinned re-anchors to the bottom;
-  activation no longer resets manual-scroll state for a revisit (ADR 0137).
-  History continuation (D269) does not page earlier rows from a collapsed
-  scroller or from a pinned overflowing transcript whose `scrollTop` has been
-  reset to 0; a real gesture in the near-top band still continues history. An
-  empty first paint does not spend the first-commit hydration gate, so a later
-  long page is still bounded and re-bottomed in the layout phase, before the
-  browser paints it.
-- Selecting a project-scoped conversation activates its project as part of the
-  store-owned selection transaction. Selecting a Temporary conversation clears
-  the visible workspace. Project-scoped new-session actions pass their target
-  path to that same store transaction; sidebar and project-index handlers do
-  not perform a second project navigation before session creation or selection.
-- Run state, permission grants, and streamed events are keyed by session id.
-  A project/tab switch does not abort a background turn or copy its events into
-  the visible transcript. Background message and tool events update that
-  session's renderer-owned live cache, so reopening a running session does not
-  lose the partial tail when its durable detail read completes. Transcript
-  revalidation and older-page prepends are idempotent by message id and keep the
-  last version at the first row position, so reopening or a stale page response
-  cannot add a second copy of a user message. These events never activate their
-  session, change the visible project/page, or move
-  focus. Creating a new session or switching to one that is not running returns
-  the composer to its idle Send state on that first frame: a turn still streaming in the
-  previously selected session never leaves the destination session's send button
-  stuck in the Abort/stop state, and that background turn's later completion
-  does not alter the destination composer. Their work-panel artifacts and
-  Browser resource update only the
-  originating session's retained renderer context and do not reveal or resize
-  the visible panel. Only an explicit session/notification activation navigates
-  and projects the destination session's retained panel context.
-- The composer draft is also session-scoped in renderer memory (D301): the
-  cache outlives any one Composer mount, so switching sessions, empty-home ↔
-  docked, chat ↔ other pages, or OS windows saves/restores the source text and
-  file references. An uncached destination starts empty, and the home composer
-  has its own draft slot. Creating a new session does not copy another slot. A
-  completed send clears only the draft belonging to the session that submitted
-  it, even if the user switches sessions while the request is in flight;
-  deleted sessions cannot retain drafts.
-- Every tool call resolves `workspaceRoot` from the originating durable
-  session, not from the currently selected project tab. Background completion
-  refreshes the matching row without redirecting the active conversation.
+- 选择一行会立即将该目的地标记为已选择。 120毫秒
+  指针悬停或键盘焦点可以预取其记录；重复读取
+  共享一个正在进行的请求，渲染器最多保留五个最近的请求
+  转录快照。
+- 脚本加载开始，无需等待旧的被取代的选择。
+  当会话摘要元数据可用时，项目 activation/clearing 和
+  转录IO并行运行。单调导航生成仅允许
+  用于投影可见工作区、脚本、运行状态的最新选择，
+  导航历史记录和工作面板上下文。
+- 聊天表面为每个会话保留一个面板，按会话 ID 键控，上限为三个
+  （可见面板加上最近的两个）。隐藏的面板保持挂载且惰性——
+  `visibility: hidden` 加 `content-visibility: hidden`，绝不用
+  `display: none`，那会丢弃它们的滚动偏移——并且每个面板在其整个
+  生命周期内保持自己的滚动位置。切换到仍然有面板的会话（热）会
+  立即以其保留的内容和位置揭示它：没有任何内容被调暗、不出现
+  骨架屏、没有转录重新挂载，重新验证的快照落回同一个面板，
+  没有可见变化。若目标仍在运行，或仍持有持久化页尚未赶上的已完成
+  回复，有界持久化页按时间顺序缝到实时快照上：早于该页的实时行留
+  在前面，乐观、流式或尚未刷入的尾巴留在后面；实时独有行不得追加
+  到该页之后，否则最新回合会掉出尾部挂载窗口（D317 / D261 / D324）。
+  只有当该页已包含每一条实时行时才清掉实时来源标记。
+- 切换到没有保留面板的会话（冷）会让可见面板停留在它自己的会话上，
+  直到目标提交。只有一条细进度轨道和 `aria-busy` 标记这段等待，
+  输入框保持非交互，因此提示无法发往正在离开的会话，并且目标会话
+  ID 永远不会与另一个会话的消息配对。随后目标在它最后的记录处
+  被揭示，没有历史顶部或空首页的闪光。被逐出的会话与首次访问
+  没有区别。
+- 新建任务不是冷切换。创建会话时第一帧就露出空首页（在
+  `session.create` 之前清掉上一场对话和保留面板）。复用该组最新空会话时，
+  同一帧提交空转录，不等待 `session.get`。持久行来自 `session.create`
+  摘要；发送和粘贴会等待这次进行中的创建，而不是再开一个槽位（ADR 0154）。
+- 首次打开的会话在其最新回合处落定。重新访问的面板回到用户离开的
+  偏移，而仍然固定在底部的面板重新锚定到底部；对于重新访问，激活
+  不再重置手动滚动状态（ADR 0137）。历史续接（D269）不会把塌缩的
+  滚动容器、或 `scrollTop` 被重置为 0 的已钉住溢出记录当成「在顶部」
+  去翻更早的页；落在近顶部带内的真实手势仍会继续载入历史。空的首帧
+  不会消耗首次提交的水合门闩，因此随后到达的长记录仍会被限制挂载，
+  并在布局阶段、浏览器绘制之前重新吸底。
+- 选择项目范围的对话会激活其项目作为
+  商店自有精选交易。选择临时对话将清除
+  可见的工作空间。项目范围内的新会话操作通过了目标
+  同一家商店交易的路径；侧边栏和项目索引处理程序执行以下操作
+  在会话创建或选择之前不执行第二个项目导航。
+- 运行状态、权限授予和流式事件由会话 ID 键入。
+  project/tab 开关不会中止后台轮次或将其事件复制到
+  可见的转录本。背景消息、工具、完成和权限
+  事件永远不会激活其会话、更改可见的 project/page 或移动
+  焦点。创建一个新会话或切换到未运行的会话返回
+  输入框立即进入空闲发送状态：轮流仍在
+  先前选择的会话永远不会离开目标会话的发送按钮
+  卡在 Abort/stop 状态，并且该后台回合稍后完成
+  不改变目标输入框。他们的工作面板工件和
+  浏览器资源仅更新
+  原始会话保留的渲染器上下文，并且不显示或调整大小
+  可见面板。仅显式 session/notification 激活才能导航
+  并投影目标会话的保留面板上下文。
+- 输入框草稿同样按会话保留在渲染器内存中（D301）：缓存比任意一次 Composer
+  挂载更长寿，因此切换会话、空首页 ↔ 停靠、聊天 ↔ 其他页面、或操作系统窗口时，
+  都会保存/恢复来源文本和文件引用。未缓存的目标从空开始，首页输入框有自己的
+  草稿槽位。创建新会话不会复制其他槽位。完成的发送只清除提交该请求的会话草稿，
+  即使请求进行中用户切换了会话；已删除的会话不能保留草稿。
+- 每个工具调用都会从原始持久性解析 `workspaceRoot`
+  会话，而不是来自当前选定的项目选项卡。后台完成
+  刷新匹配行而不重定向活动对话。
 
-#### Focus and semantics
+#### 焦点和语义
 
-- Project directory rows expose `aria-expanded` and `aria-controls`;
-  new-project/new-session controls have scope-specific accessible names, and
-  sort/archive menu choices expose their checked state. Active session rows
-  retain `aria-current`.
-- Toggling disclosure or a menu action keeps focus on its control. Selecting a
-  project/session returns focus to the composer after loading.
-- Sort, archive, restore, pin, Create branch, and close actions remain
-  keyboard-reachable;
-  they cannot exist only as pointer-hover affordances.
-- Sidebar body-level menus opened from toolbar or row triggers remain
-  content-sized and use the same fixed rule as right-click menus: open 4px to
-  the anchor's right without flipping to the left. Their surface width is
-  capped for narrow viewports. This includes the Sessions sort menu,
-  session/project overflow menus, and section create menus.
+- 项目目录行公开 `aria-expanded` 和 `aria-controls`；
+  new-project/new-session 控件具有特定于范围的可访问名称，并且
+  sort/archive 菜单选项公开其选中状态。活动会话行
+  保留 `aria-current`。
+- 切换披露或菜单操作可将焦点集中在其控制上。选择一个
+  加载后，project/session 将焦点返回给输入框。
+- 保留排序、存档、恢复、固定、创建分支和关闭操作
+可通过键盘操作；
+  它们不能仅仅作为指针悬停功能而存在。
+- 从工具栏或行触发器打开的侧边栏主体级菜单仍然存在
+  内容大小并使用与右键菜单相同的固定规则：打开4px
+  锚点在右侧而不向左翻转。它们的表面宽度为
+  为窄视口设置了上限。这包括会话排序菜单，
+  session/project 溢出菜单和部分创建菜单。
 
-#### Floating dropdown surfaces
+### 1. 6 本地个人资料页脚
 
-- Every renderer-owned custom dropdown/menu opens as a viewport-fixed floating
-  layer, outside its triggering row or card, so opening it never changes parent
-  height, width, or scroll allocation.
-- Shared anchored menus are measured before reveal, clamp to the viewport,
-  prefer the requested side, and recalculate on anchor movement, scroll, and
-  resize. Outside press and Escape close the surface and restore focus to its
-  trigger unless the pattern explicitly retains input focus.
-- Native `<select>` popups remain platform-owned; this rule covers custom
-  renderer surfaces only.
+- `44px` 配置文件触发器切换菜单；它的V字形和
+  `aria-expanded` 状态一起改变。
+- `280px` 菜单在透明页脚带上方打开 `8px`。打开它
+  将焦点移至非交互式标识之后的第一个可操作行
+  标头和分隔符。
+- `ArrowDown` / `ArrowUp` 包含在设置、日志和主题之间。 `Home` 和
+  `End` 移动到第一个和最后一个操作。
+- `Escape` 关闭菜单并将焦点恢复到配置文件触发器。一个指针
+  按外侧可将其关闭，而不会窃取指针目标的焦点。
+- 在执行操作之前选择“设置”、“日志”或“主题”会关闭菜单
+  行动。主题应用下一个主题值，无需重新打开菜单。
+- 单独的 `32px` 帮助按钮绕过配置文件菜单并导航
+  直接进入设置 → 信息。
+- 折叠侧边栏会关闭菜单并恢复折叠的栏杆
+  正常导航状态。
 
-### 1.6 Local profile footer
+### 1. 7 通知收件箱（D117/D350）
 
-- The `44px` profile trigger toggles the menu; its chevron and
-  `aria-expanded` state change together.
-- The `280px` menu opens `8px` above the transparent footer band. Opening it
-  moves focus to the first actionable row after the non-interactive identity
-  header and divider.
-- `ArrowDown` / `ArrowUp` wrap among Settings, Logs, and Theme. `Home` and
-  `End` move to the first and last action.
-- `Escape` closes the menu and restores focus to the profile trigger. A pointer
-  press outside closes it without stealing focus from the pointer target.
-- Selecting Settings, Logs, or Theme closes the menu before performing the
-  action. Theme applies the next theme value without reopening the menu.
-- The separate `32px` Help button bypasses the profile menu and navigates
-  directly to Settings → Info.
-- Collapsing the sidebar closes the menu and restores the collapsed rail's
-  normal navigation state.
+#### 事件到表面的流
 
-### 1.7 Notification inbox (D117)
+1. Renderer 将当前聊天的会话 ID 报告给 Electron Main；导航
+   离开清除它。 Main 将此提示与其自己的窗口可见性结合起来，
+   当转动达到 `completed` 或 `error` 时的焦点状态。
+2. 如果确切的整理会话已在焦点窗口中可见，
+   `session.endTurn` 关闭回合而不插入通知。任意
+   后台会话或 unfocused/hidden 窗口创建持久记录。
+   `aborted` 回合永远不会创建一个。
+3. Electron 向每个实时渲染器发出 `notification.changed`，以便响铃
+   徽章和当前打开的收件箱刷新。
+4. 对于终端任务结果，本机通知仅在主窗口未聚焦时出现。聚焦背景会话的完成
+   仍会创建持久行，但不会出现本机横幅。asktool、工具权限和 Plan 审批询问
+   使用带有 `kind: "interactive"` 的同一个 Electron 表面：确切的聚焦当前
+   会话保持静默，而聚焦于其他会话时可以收到横幅。在 Windows 上，每个横幅
+   都归因于与 NSIS 包和任务栏标识共享的规范 PI-Desktop AppUserModelID。
+5. 单击本机通知 shows/restores 并聚焦于主通知
+   窗口，然后发出 `notification.activated { sessionId }`。
+6. Renderer 激活选择绑定项目（如果存在），加载
+   会话，并使用与收件箱相同的路径聚焦 transcript/composer
+   行点击。本机激活和应用内激活不得不同。
 
-#### Event-to-surface flow
+交互询问横幅是仅本机的恢复表面，不会创建持久任务收件箱行；用户返回会话后，
+行内 ask、权限或 Plan 卡片仍是事实来源。
 
-1. Renderer reports the current chat's session id to Electron Main; navigating
-   away clears it. Main combines this hint with its own window visibility and
-   focus state when a turn reaches `completed` or `error`.
-2. If the exact finishing session is already visible in the focused window,
-   `session.endTurn` closes the turn without inserting a notification. Any
-   background session or unfocused/hidden window creates the durable record.
-   An `aborted` turn never creates one.
-3. Electron emits `notification.changed` to every live renderer so the bell
-   badge and currently open inbox refresh.
-4. For a task result, a focused main window produces no native banner. If
-   it is unfocused and native notifications are supported, Electron shows one
-   platform notification derived from the event kind and session title. The
-   separate interactive ask/permission/plan path may alert for a focused
-   background session while suppressing the exact visible session. On
-   Windows, the banner is attributed to the canonical PI-Desktop
-   AppUserModelID shared with the NSIS package and taskbar identity.
-5. Clicking the native notification shows/restores and focuses the main
-   window, then emits `notification.activated { sessionId }`.
-6. Renderer activation selects the bound project when present, loads the
-   session, and focuses the transcript/composer using the same path as an inbox
-   row click. Native and in-app activation must not diverge.
+#### 弹出窗口行为
 
-#### Popover behavior
+- 列表只显示 `task.failed` 行，铃铛徽章也只统计未读的失败。`task.completed`
+  记录仍会持久保存，并继续驱动侧边栏结果徽标和原生通知，但收件箱隐藏它们，
+  避免失败被例行的顺利完成淹没（D295）。
+- 单击铃声可切换非模式弹出窗口；第二次单击、Esc 键或外部
+  按将其关闭。 Escape 将焦点恢复到铃声上。
+- 打开时保留最近选择的 `All` / `Unread` 过滤器
+当前渲染器生命周期并且从不标记隐式读取的行。
+- 箭头键在禁用换行的情况下在行中移动； `Home` / `End` 跳转到
+  first/last 行； Enter/Space 标记该行已读取并激活其会话。
+- 标记一个主机事务中每个未读行的所有读取更新。清除
+  删除一个主机事务中的所有收件箱行。两个操作都是
+  幂等，刷新确切的未读计数，并保持 sessions/turns 不变。
+- 渲染器不会从流事件中合成通知记录。
+  Host-core 独特的 `turn_id` 是重复的一次边界
+  终端更新、渲染器重新加载和进程重新启动。
+- 所有可见事件标签和本机 title/body 字符串均在
+  结构化字段的表示边界；持久化的行从不包含
+  本地化的散文。
 
-- The list shows `task.failed` rows only and the bell badge counts only
-  unread failures. `task.completed` rows are still persisted and still drive
-  the sidebar outcome badge and the native notification, but the inbox hides
-  them so failures are not buried under routine completions (D295).
-- Bell click toggles the non-modal popover; a second click, Escape, or outside
-  press closes it. Escape restores focus to the bell.
-- Opening preserves the most recently selected `All` / `Unread` filter for the
-  current renderer lifetime and never marks rows read implicitly.
-- Arrow keys move through rows with wrap disabled; `Home` / `End` jump to the
-  first/last row; Enter/Space marks the row read and activates its session.
-- Mark all read updates every unread row in one host transaction. Clear
-  removes all inbox rows in one host transaction. Both operations are
-  idempotent, refresh the exact unread count, and leave sessions/turns intact.
-- The renderer does not synthesize notification records from stream events.
-  Host-core's unique `turn_id` is the exactly-once boundary across repeated
-  terminal updates, renderer reloads, and process restarts.
-- All visible event labels and native title/body strings are localized at the
-  presentation boundary from structured fields; persisted rows never contain
-  localized prose.
+### 1. 8 工作面板条目和资源（D128、D142、D154、D173、D179、D207）
 
-### 1.8 Work panel entry and resources (D128, D142, D154, D173, D179, D207, D221)
+- shell 启动时没有可见的工作面板。 `Cmd/Ctrl + J` 打开
+  活动会话的保留面板上下文，无需创建资源选项卡；它
+  当面板已经打开时是幂等的，并且是无操作的
+  活动会话或当“设置”是活动页面时。小组的背景
+  然后触发器可以创建浏览器或当前范围内的插件视图。
+- 工件触发器自动创建或重用其资源，激活它，
+  并打开面板。背景工件永远不会打开可见面板。
+- 文件资源使用规范化路径作为标识。浏览器和插件视图是单例的；重复
+  触发器保留资源顺序并激活现有资源。
+- 打开后，面板标题是可横向滚动的 `tablist`，紧邻固定的 `+` 入口。
+  每个标签拥有活动状态和关闭按钮，活动标签会滚动到可见范围。新建菜单只有
+  Tools & panels 分组，包含宿主 Review 以及当前范围内所有插件视图，Files
+  和 Browser 保持数据驱动（D173）。
+- 标签焦点使用 roving `tabIndex`：ArrowLeft/ArrowRight/Home/End 在标签间移动，
+  Delete/Backspace 关闭聚焦标签，中键关闭标签；关闭活动标签后按右邻居、左邻居
+  选择下一个。`+` 菜单使用 Arrow/Home/End、Escape 和 Tab，并在关闭时把焦点
+  返回 `+`。只有真实存在的绑定才显示快捷键标签。
+- 激活已打开的工具会激活其现有资源
+  替换它，因此浏览器保留其 URL 和文件的选择 (D173)。
+- 每个资源都可以从对应标签中关闭。关闭活动资源选择右邻居，再选择左邻居；关闭
+  最后一个选项卡会保持面板打开并显示 New 启动器。会话窗格右上角的面板折叠控件
+  只隐藏面板，不删除选项卡。
+- 在每个平台上，打开可见面板都要求本机宽度等于
+  它的承诺宽度。折叠并最终关闭回收预订，并且
+  提交的分隔符调整大小会更新它。本机窗口边缘拖动更改
+  仅 MainChat，从不面板宽度（D163，ADR 0032）。
+- 任何工具结果都不会创建或激活工作面板标签页。Review 只由用户的
+  主动操作打开——`+` 启动器的 Review 行，或视口固定开关与
+  `Cmd/Ctrl + J` 显示的会话保留上下文——因此成功的工作区 Write/Edit
+  永远不会抢走用户正在阅读的面板。失败和临时写入同样如此。后台会话
+  事件仅更新其保留的上下文，并且从不打开、激活、调整大小、聚焦，
+  或更改可见面板。
+- 每个成功的工作区 Write/Edit 工具结果都会进行一次持久审查
+  快照。其紧凑的 InlineReviewCard 在同一个 Activity 中呈现
+  披露，紧随其工具行之后；它永远不会移动到
+  转录底部并且从未与其他会话共享。它的状态徽章
+  涵盖添加、修改和删除的更改，同时计数和可扩展
+  hunk 来自该消息的结果，而不是当前的 Git diff。
+- 成绩单卡和复习会消耗活动会话的持续时间
+  消息历史记录。提交、工作区焦点更改或外部 Git 状态
+  更改无法删除或重写旧卡。评论是按时间顺序排列的
+  快照历史记录和每个可逆卡都会暴露主机保护的回滚；
+  报告冲突而不替换以后的编辑。划痕，失败，
+  被拒绝，非结构化结果不会呈现卡片。背景
+  会话的卡片保留其自己的成绩单并且仅变得可见
+  选择该会话后；它的事件永远不会呈现在当前
+  可见会话。成功的工作空间工件不会创建或激活单例“审阅”选项卡；
+  它只在用户打开后出现。
+- Review 页按对话轮次对扁平快照历史分组（D-turn-review）。轮次在用户消息
+  锚点处切分；steering 消息留在当前轮，子代理行归属其父轮，第一条用户消息
+  之前的变更并入第一组。每个可折叠组头显示轮次序号、锚定用户消息的摘要、
+  变更文件数与聚合 +/- 计数。每个组都经 `review.checkTurn` 预检：当所有文件
+  仍与该批次最新哈希一致时，组提供"回滚这一轮"（单点撤销）；否则主操作为
+  "回滚到这一轮之前"，其确认框说明后果（将撤销多少轮、多少处文件改动）、
+  标记没有可用快照的文件，并归因被其他会话改写的文件。会话运行中所有回滚
+  操作禁用。回滚后，渲染端记录一段英文上下文块——模式、恢复的文件、保持
+  原样的文件、"除非用户明确要求否则不要重新应用"，以及外部副作用未回滚的
+  警告——并把它拼接到下一条真实用户输入前，使 agent 的上下文与工作区保持
+  一致而不消耗一个轮次；一条渲染端本地的系统行会在实时记录中叙述这次回滚。
+- 每个会话在渲染器中保留 `{open, tabs, activeTabId, browserResource}`
+  记忆。选择另一个会话会自动交换可见上下文，
+切换回来可以恢复它；选择没有活动的工作区
+  对话隐藏面板。 Session/workspace 身份仍附加到
+  每个相关资源，防止跨上下文重新解释。
+- 重新启动会丢弃每个会话上下文，包括浏览器资源；仅
+  承诺的首选面板宽度仍然存在。存储本机窗口状态
+  独立于正常范围，包括当应用程序关闭时
+  最大化或在待处理的边界保存去抖完成之前。面板宽度
+  保持固定而不是被响应地夹紧。
 
-- The shell starts without a visible work panel. The viewport-fixed toggle and
-  `Cmd/Ctrl + J` both toggle the active session's panel: they reveal the
-  retained context without creating a resource tab, and collapse the visible
-  panel without deleting tabs, retaining tabs, active resource, and committed
-  width. They are a no-op without an active session or while Settings is the
-  active page. The panel's `+` trigger can then create a New launcher tab whose
-  body offers Browser or an in-scope plugin view.
-- An artifact trigger atomically creates or reuses its resource, activates it,
-  and opens the panel. Background artifacts never open the visible panel.
-- File resources use normalized paths as identity. Browser and plugin views
-  are singletons; repeated triggers preserve resource order and activate the
-  existing resource.
-- Once open, the panel header is a `tablist` that scrolls horizontally while a
-  tight `+` trigger stays fixed beside it. Each tab owns its active state and
-  close button; the active tab is scrolled into view. Clicking `+` creates a
-  unique New launcher tab; its data-driven Review, Files, Browser, and plugin
-  view rows are ordinary buttons in the page body.
-- Tab focus uses roving `tabIndex`: ArrowLeft/ArrowRight/Home/End move across
-  tabs and Delete/Backspace closes the focused tab. Middle-click closes a tab;
-  closing an active tab selects the right neighbor, then the left. Selecting a
-  launcher row replaces that New tab with the destination or activates its
-  existing singleton. Shortcut labels appear only for bindings that actually
-  exist.
-- Activating a tool that is already open activates its existing resource instead
-  of replacing it, so Browser keeps its URL and Files its selection (D173).
-- Every resource can be closed from its tab. Closing the active resource selects
-  the right neighbor, then the left; closing the final tab keeps the panel open
-  on the New launcher. The viewport-fixed panel toggle hides the panel without
-  deleting tabs.
-- On every platform, opening and collapsing the visible panel change only the
-  internal flex allocation; native window bounds remain unchanged. The inner
-  divider updates the renderer-owned panel target from 244px upward, capped by
-  the live three-column budget, while native window edges resize only the fixed
-  application window (ADR 0151).
-- No tool result creates or activates a work-panel tab. Review opens only from
-  an explicit user action — its `+` launcher row, or the retained context the
-  viewport-fixed toggle and `Cmd/Ctrl + J` reveal — so a successful workspace
-  Write/Edit never takes the panel away from what the user was reading. Failed
-  and scratch writes behave the same. Background-session events update only
-  their retained context and never open, activate, resize, focus, or change the
-  visible panel.
-- Each successful workspace Write/Edit tool result carries one durable review
-  snapshot. Its compact InlineReviewCard is rendered in the same activity
-  disclosure, immediately after its tool row; it is never moved to the
-  transcript bottom and never shared with another session. Its status badge
-  covers added, modified, and deleted changes, while counts and expandable
-  hunks come from that message's result, not a current Git diff.
-- The transcript cards and Review consume the active session's persisted
-  message history. A commit, workspace focus change, or external Git state
-  change cannot remove or rewrite an old card. Review is a chronological
-  snapshot history and each reversible card exposes host-guarded rollback;
-  conflicts are reported without replacing a later edit. Scratch, failed,
-  denied, and unstructured results do not render a card. A background
-  session's card remains with its own transcript and becomes visible only
-  after that session is selected; its event never renders in the currently
-  visible session. A successful workspace artifact cannot create or activate
-  the singleton Review tab; it appears only after the user opens it.
-- The Review tab groups the flat snapshot history by conversation turn
-  (D-turn-review). Turns are cut at user-message anchors; steering messages
-  stay in the current turn, subagent rows belong to their parent turn, and
-  changes before the first user message join the first group. Each collapsible
-  group header shows the turn index, an excerpt of the anchoring user message,
-  the changed-file count, and aggregated +/- counts. Every group is preflighted
-  through `review.checkTurn`: when every file still matches the batch's newest
-  hashes, the group offers "Roll back this turn" (surgical undo); otherwise the
-  primary action is "Roll back to before this turn", whose confirmation names
-  the consequence (how many turns and file changes revert), flags files without
-  a usable snapshot, and attributes files re-written by another session. All
-  rollback actions are disabled while the session runs. After a rollback, the
-  renderer records an English context block — mode, restored files, files left
-  as-is, "do not re-apply unless the user asks", and the warning that external
-  side effects were not reverted — and prepends it to the next real user input,
-  so the agent's context stays consistent with the workspace without spending
-  a turn on a notice; a renderer-local system row narrates the rollback in the
-  live transcript.
-- Each session retains `{open, tabs, activeTabId, browserResource}` in renderer
-  memory. Selecting another session swaps the visible context atomically and
-  switching back restores it; selecting a workspace without an active
-  conversation hides the panel. Session/workspace identity remains attached to
-  every relative resource, preventing cross-context reinterpretation.
-- Relaunch discards every session context, including Browser resources; only
-  the committed preferred panel width persists. Native window state is stored
-  independently from normal bounds, including when the app closes while
-  maximized or before a pending bounds-save debounce completes. Panel width
-  remains fixed rather than being responsively clamped.
+### 1. 9 应用程序更新 (D120)
 
-### 1.9 Application updates (D120)
+- Electron Main 在打包应用程序后 15 秒检查固定发布源
+  启动后以及之后每 6 小时一次。开发版本仍然被禁用。
+  检查器始终跟踪 GitHub 的最新稳定版本
+  (`allowPrerelease = false`)，因此安装仍带有预发行版
+  诸如 `0.2.0-rc.6` 之类的版本提供了较新的稳定标签，而不是
+  保持固定在同一个预发布频道上。
+- 设置 → 信息和应用程序菜单检查共享一种类型的更新状态。
+  手动检查公开最新或错误反馈；自动故障不会
+  打开 Toast 或环境横幅。
+- 手动交付（非 AppImage Linux，以及带有 `PORTABLE_EXECUTABLE_FILE` 的 Windows 便携版运行）在 `available` 停止，并提供固定的 GitHub 发布页面。应用内交付（打包的 macOS、Windows NSIS 和 Linux AppImage）自动推进 `downloading` 到稳定的 `downloaded` 状态。
+- `downloaded` 保持可操作状态，直至重新启动更新或正常应用退出；
+  稍后的 scheduled/manual 检查不会将其替换为 `checking`。
+- 紧凑的更新通知仅出现在主窗格的右上角安全区域中
+  适用于手动 `available`、应用内 `downloading` 或 `downloaded`。它保持清晰
+  每个受支持的窗口大小和草稿高度的底部编辑器。的
+  通知使用稳定的 icon/title/message 层次结构，显示确定的下载
+  可用时取得进展，并将相关操作保持在同一状态
+  表面。解雇会抑制当前版本和状态阶段；稍后
+  `downloaded` 等阶段再次出现。
+- 当 Main 附加发现版本的本地化产品说明时
+  （`UpdateState.releaseNotes`，D164），通知和设置→信息更新
+  行在状态消息下显示紧凑的“新增内容”列表。笔记来了
+  从产品 UI 选择的已发货语言变更日志目录中获取 — 绝不来自渲染器提供的
+  提要或远程 URL。缺少目录条目省略了该部分；区域设置更改重新解析注释，
+  无需新的检查。
+- 设置 → 信息在每个更新程序中保留可用的发行说明操作
+  状态。它在“设置”上打开一个模式，具有完整的本地稳定
+  变更日志按最新到先的顺序，从同一共享目录本地化。
+  当前版本和发现的可用版本标识为
+  紧凑的徽章。列表独立滚动，通过其关闭控制关闭，
+  转义或背景，并将焦点恢复到调用控件。
+- D126 标签版本发布所有平台清单和安装程序。打包的 macOS、Windows NSIS 和 Linux AppImage 使用应用内通道；Linux deb/rpm 和 Windows 便携版保持通知和链接传递模式。
 
-- Electron Main checks the fixed release feed 15 seconds after packaged app
-  startup and every 6 hours afterward. Development builds remain disabled.
-  The checker always tracks GitHub's latest stable release
-  (`allowPrerelease = false`), so installs that still carry a prerelease
-  version such as `0.2.0-rc.6` are offered the newer stable tag instead of
-  staying pinned to the same prerelease channel.
-- Settings → Info and application-menu checks share one typed update state.
-  Manual checks expose up-to-date or error feedback; automatic failures do not
-  open a toast or ambient banner.
-- Manual delivery (non-AppImage Linux and Windows portable runs
-  with `PORTABLE_EXECUTABLE_FILE`) stops at `available` and
-  offers the fixed GitHub Releases page. In-app delivery (packaged macOS,
-  Windows NSIS, and Linux AppImage) automatically advances through
-  `downloading` to the stable `downloaded` state.
-- `downloaded` remains actionable until Restart to update or normal app quit;
-  later scheduled/manual checks do not replace it with `checking`.
-- A compact update notice appears in the main pane's top-right safe area only
-  for manual `available`, in-app `downloading`, or `downloaded`. It stays clear
-  of the bottom composer at every supported window size and draft height. The
-  notice uses a stable icon/title/message hierarchy, shows determinate download
-  progress when available, and keeps the relevant action inside the same
-  surface. Dismissal suppresses the current version-and-status stage; a later
-  stage such as `downloaded` appears again.
-- When Main attaches localized product notes for the discovered version
-  (`UpdateState.releaseNotes`, D164), the notice and Settings → Info Updates
-  row show a compact "What's new" list under the status message. Notes come
-  from the shipped-locale changelog catalog selected by the product UI locale
-  — never from a renderer-supplied feed or remote URL. Missing catalog entries
-  omit the section; locale changes re-resolve notes without a new check.
-- Settings → Info keeps a Release notes action available in every updater
-  state. It opens a modal over Settings with the complete local stable
-  changelog in newest-first order, localized from the same shared catalog.
-  The current release and a discovered available release are identified with
-  compact badges. The list scrolls independently, closes by its close control,
-  Escape, or the backdrop, and restores focus to the invoking control.
-- D126 tag releases publish all platform manifests and installers. Packaged
-  macOS, Windows NSIS, and Linux AppImage use the in-app lane; Linux deb/rpm
-  and Windows portable remain notify-and-link delivery modes.
+## 2. 流消息行为
 
-## 2. Streaming message behavior
+### 2. 1 Token渲染
 
-### 2.1 Token rendering
+- 令牌在到达时附加到当前助手 MessageBubble 中
+- Renderer直接显示运行时流块；它不会排队
+  第二个 requestAnimationFrame 驱动的打字机状态循环
+- 渲染使用增量降价解析 - 不要在每个标记上重新渲染整个消息
+- 成绩单核对将完整的历史记录保留在记忆的历史边界中；
+  令牌更新不会协调 React 中的每个历史行，同时保留
+  选择、复制、小地图锚点和可访问性的完整历史记录。
+- 在当前助手回合内，不含 Task 委派且内容未变化的活动组，也应在文本更新时
+  保持其记忆化渲染边界。工具消息发生变化时仍须渲染；Task 组仍须接收同一
+  回合后续生命周期消息带来的状态和完成耗时更新。
+- 未完成的 `mermaid` 栅栏仍然是源代码块。其关闭后
+  栅栏到达，回答散文加载并仅在它出现时渲染图表
+  接近视口；思维披露总是保留美人鱼的来源。
+- 图表渲染失败或保持 20,000 个字符/500 个边的安全限制
+  源可见且可复制，而不是让助理轮不到。
+- 光标指示器：流内容末尾的微妙脉冲重音点或线
+- 在第一个助手或工具事件之前，活动回合显示一个紧凑的
+  具有经过时间的本地化 `Working…` 状态。当运行时报告一段安静
+  间隔时，同一行会标明：正在开始、等待模型、准备下一次请求、
+  压缩上下文、补救空回复、重试，或等待委托工作（并带上每个
+  仍在运行的 Subagent 的粗粒度动作）。一旦出现具体的思考/工具/
+  回答反馈或内联权限卡，该行就被替换。
+- 当流完成时：光标指示器被成功状态取代（2秒淡出）
 
-- Tokens append to the current assistant MessageBubble as they arrive
-- Renderer displays runtime stream chunks directly; it does not enqueue a
-  second requestAnimationFrame-driven typewriter state loop
-- Rendering uses incremental markdown parse — do not re-render the entire message on each token
-- Transcript reconciliation keeps completed history in a memoized history boundary;
-  token updates do not reconcile each historical row in React while preserving
-  the full history for selection, copying, minimap anchors, and accessibility.
-- Within the active assistant turn, unchanged activity groups without Task
-  delegations also keep their memoized boundary across text updates. Changed
-  tool messages still render, and Task groups still receive later lifecycle
-  status and completion timing updates from the same turn.
-- An unfinished `mermaid` fence remains a source code block. After its closing
-  fence arrives, answer prose loads and renders the diagram only when it
-  approaches the viewport; thinking disclosures always retain Mermaid source.
-- Diagram render failure or the 20,000-character / 500-edge safety limit keeps
-  the source visible and copyable instead of failing the assistant turn.
-- Cursor indicator: subtle pulsing accent dot or line at the end of streaming content
-- Before the first assistant or tool event, the active turn shows one compact
-  localized `Working…` status with elapsed time. When the runtime reports a
-  quiet interval, that same row names the wait: starting, waiting for the
-  model, preparing the next request, compacting context, recovering an empty
-  response, retrying a provider request, or waiting for delegated work (with
-  each running subagent's latest coarse action). It is replaced by concrete
-  thinking/tool/answer feedback or the inline permission card as soon as one of
-  those states exists.
-- When stream completes: cursor indicator replaced by success state (2s fade)
+### 2. 2 自动滚动
 
-### 2.2 Auto-scroll
+- 首次打开会话会重置跟随模式，并在浏览器绘制其面板之前把转录
+  放在它最后一条记录处。揭示一个被保留的面板则改为恢复该面板
+  自己的跟随状态和偏移：仍然固定的重新锚定到底部，向上滚动过的
+  回到同一个偏移。两条路径都不会通过历史记录动画，任何面板都
+  不得暴露转录顶部或另一个会话的滚动位置。
+- 首次打开的会话若历史超过初始挂载预算，会在一层不透明的骨架
+  遮罩下落定（D287）。遮罩与有界首次绘制处于同一次提交，覆盖滚动
+  区域但不覆盖输入框；只有当滚动区域的 `scrollHeight` 和
+  `clientHeight` 连续三帧读数相同，或达到 600ms 上限时才会揭开。
+  每个采样帧都会把仍然固定的转录重新贴底，因此遮罩揭开的那一帧
+  已经位于最新回合。小地图和跳转控件在遮罩揭开后才挂载。短转录
+  不会显示遮罩。
+- 自动滚动到每个新令牌组的底部（限制：每 100 毫秒检查一次，而不是每个令牌）
+- 第一次向上手动滚动运动会立即暂停自动滚动，并且
+  取消任何待处理的跟随帧；小触控板三角洲不得弹回
+  底部
+- 发送新提示、重试或重新生成始终会重新固定跟随模式并在继续转动之前跳转到底部，即使用户已向上滚动
+- 手动向上滚动时立即出现“滚动到底部”浮动按钮
+  释放跟随模式
+- 单击“滚动到底部”按钮：恢复自动滚动并捕捉到底部
+- 流完成：如果用户自动滚动，则保持在底部；如果是手动，则停留在该位置
+- 异步完成的图表高度更新遵循相同的规则：
+  ResizeObserver 在底部保留固定的记录，而拥有
+  向上滚动保持在其阅读位置。
 
-- Opening a session for the first time resets follow mode and positions the
-  transcript at its last record before the browser paints its pane. Revealing a
-  retained pane restores that pane's own follow state and offset instead: still
-  pinned re-anchors to the bottom, scrolled up returns to the same offset.
-  Neither path animates through history, and no pane may ever expose the
-  transcript top or another session's scroll position.
-- A first open whose history exceeds the initial mount budget settles under an
-  opaque skeleton veil (D287). The veil is in the same commit as the bounded
-  first paint, covers the scroller but not the composer, and lifts only once the
-  scroller's `scrollHeight` and `clientHeight` have read the same for three
-  consecutive frames, or after a 600ms cap. Every sampled frame re-pins a pinned
-  transcript, so the frame the veil reveals is already at the newest turn. The
-  minimap and the jump control mount after the veil lifts. Short transcripts
-  never show the veil.
-- Auto-scroll to bottom on each new token group (throttled: check every 100ms, not every token)
-- The first upward manual scroll movement pauses auto-scroll immediately and
-  cancels any pending follow frame; small trackpad deltas must not snap back to
-  the bottom
-- Sending a new prompt, retrying, or regenerating always re-pins follow mode and jumps to the bottom before the turn continues, even if the user had scrolled up
-- "Scroll to bottom" floating button appears as soon as manual upward scrolling
-  releases follow mode
-- Click "Scroll to bottom" button: resumes auto-scroll and snaps to bottom
-- Stream completion: if user was auto-scrolling, keep at bottom; if manual, stay at position
-- An asynchronously completed diagram height update follows the same rule:
-  ResizeObserver keeps a pinned transcript at the bottom, while a user who has
-  scrolled upward remains at their reading position.
+### 2. 4 主动回合表面
 
-### 2.4 Active turn surface
+- 主动转动可保持转录本下表面清晰。直播助手
+  工具行与记录保持一致；没有通用的理解，
+  工作卡或检查卡呈现在它们下方。
+- 仅当代理被阻止时，权限卡才保持可见
+  明确批准。这是可操作的中断，而不是进度状态
+  卡。
+- 后台会话继续，而不将进度镶边添加到可见内容中
+  会话或移动焦点。因此减少运动没有进度卡
+  过渡以保存。
 
-- An active turn keeps the lower transcript surface clear. Streamed assistant
-  and tool rows remain inline with the transcript; no generic understanding,
-  working, or checking card is rendered underneath them. A compact runtime
-  status row is the only exception, and appears only when it explains a quiet
-  interval that has no transcript row of its own: a provider wait or retry,
-  context compaction, silent-turn recovery, the gap before the next request,
-  or a delegated-work wait.
-- A permission card remains visible only when the agent is blocked on an
-  explicit approval. It is an actionable interruption, not a progress status
-  card.
-- Background sessions continue without adding progress chrome to the visible
-  session or moving focus. Reduced motion therefore has no progress-card
-  transitions to preserve.
+### 2. 5 回合结果结束
 
-### 2.5 Turn outcome closure
+- 失败的可见回合会在回合结束后呈现一张会话范围的恢复卡
+转录内容。它基于终端代理事件，而不是超时
+  或猜测的旋转器状态。完成回合不会添加成功卡；他们的
+  现有的成绩单和消息范围的审查卡仍待完成
+  证据。
+- 失败文案表明现有工作仍然可用。恢复卡只提供一个“继续”操作，
+  不提供“重新生成”。点击“继续”会把当前语言的继续指令
+  （`Continue the user's unfinished task.` / `继续用户未完成的任务`）
+  追加到同一会话并开始新一轮，不会截断失败轮次或已完成工作。
+- 中止的回合不会呈现失败卡。开始新的回合会清除
+  上一张卡和后台会话结果保持范围，直到该卡
+  会话已选择。
 
-- A failed visible turn without a structured assistant error renders one
-  session-scoped recovery card after the transcript content. It is based on the
-  terminal agent event, not a timeout or a guessed spinner state. If the failed
-  turn already contains a structured assistant error, that inline error card is
-  the only failure surface and the session-scoped recovery card is omitted;
-  users must not see duplicate failure summaries for one turn. Completed turns
-  do not add a success card; their existing transcript and message-scoped
-  review cards remain the completion evidence.
-- Failure copy states that the existing work remains available. The applicable
-  failure surface has exactly one **Continue** action and no **Regenerate**
-  action. Continue appends the current locale's continuation prompt (`Continue
-  the user's unfinished task.` / `继续用户未完成的任务`) to the same session and
-  starts a new turn without truncating the failed turn or its completed work.
-- Aborted turns do not render a failure card. Starting a new turn clears the
-  previous card, and background-session results remain scoped until that
-  session is selected.
+### 2. 3 流中断
 
-### 2.3 Stream interruption
+- 如果连接中途中断：在部分消息上显示错误状态
+- 保留部分消息 - 不删除
+- 用户看到“流中断”并带有重试选项
 
-- If connection drops mid-stream: show error state on partial message
-- Partial message is preserved — not deleted
-- User sees "Stream interrupted" with retry option
+## 3. 中止正在运行的代理
 
-## 3. Abort running agent
+### 3. 1 触发方法
 
-### 3.1 Trigger methods
+- 顶部栏中止按钮（在运行状态下可见）
+- 键盘快捷键：`Cmd/Ctrl + .`
 
-- Topbar abort button (visible during running state)
-- Keyboard shortcut: `Cmd/Ctrl + .`
+### 3. 2 中止行为
 
-### 3.2 Abort behavior
+1. 立即取消当前代理轮次
+2. 取消任何待处理的权限请求（根据 [03-permission-ux.md](/spec/04-ux/03-permission-ux) §7）
+3. 如果没有开始辅助文本、思考或工具行，则删除刚刚发送的
+   用户行并恢复其预序列化输入框草稿
+4. 恢复后的草稿将普通文本和文件参考芯片分开
+   状态；序列化的规范路径永远不会占用文本区域
+5. 如果回复已开始，则保留用户回合和部分 assistant/tool 行
+   处于中止状态并且不恢复任何草稿。保留测量的流
+   持续时间和使用提供商输出使用情况（如果可用）；否则存储一个
+   明显估计的输出计数，因此对话仍然显示吞吐量
+6. Composer重新激活（解锁）
+7. 中止是幂等的——当已经中止时按中止不会执行任何操作
 
-1. Cancel the current agent turn immediately
-2. Cancel any pending permission request (per [03-permission-ux.md](03-permission-ux.md) §7)
-3. If no assistant text, thinking, or tool row has begun, remove the just-sent
-   user row and restore its pre-serialization composer draft
-4. The restored draft keeps ordinary text and file-reference chips as separate
-   state; serialized canonical paths never occupy the textarea
-5. If a reply has begun, preserve the user turn and partial assistant/tool rows
-   with aborted status and restore no draft. Preserve the measured stream
-   duration and use provider output usage when available; otherwise store a
-   visibly estimated output count so the conversation still shows throughput
-6. Composer re-activates (unblocked)
-7. Abort is idempotent — pressing abort when already aborting does nothing
+### 3. 3 中止用户体验
 
-### 3.3 Abort UX
+- 中止按钮短暂更改为“正在中止...”（100 毫秒），然后消失
+- 没有中止确认对话框——它总是立即发生
+- 部分中止的消息会获得静音的“（中止）”后缀。只有
+  未应答的智能停止分支会删除其刚刚发送的用户行。
 
-- Abort button changes to "Aborting..." briefly (100ms), then disappears
-- No confirmation dialog for abort — it is always immediate
-- A partial aborted message gets a muted "(aborted)" suffix. Only the
-  unanswered smart-stop branch deletes its just-sent user row.
+### 3.5 向当前回合补充指令
 
-### 3.4 Queued send
+- 运行中普通发送和回车发送仍将 follow-up 加入 Host 持久 FIFO。`Alt+Enter` 将可见
+  草稿立即提交到当前回合，macOS 对应 `Option+Enter`。开启或关闭回车发送均可使用，
+  且优先于已打开的自动完成菜单；空闲时正常发送。
+- `Shift+Enter` 和 `Alt+Shift+Enter` 换行。用于确认输入法候选词的 Enter
+  （`isComposing` 或键码 229）从不发送或提交补充指令。
+- 补充指令作为用户消息出现在当前转录中，立即清空草稿，在当前回复和工具批次完成后
+  进入下一次模型请求。它不创建 FIFO 行，也不中断工具。
+- 提交时捕获会话和当前回合标识。如果目标结束、拒绝输入或正在等待审批，草稿恢复到
+  原会话并显示简短错误。提交后新输入的文本优先于草稿恢复；当前运行不会被标记失败。
+- 文件和图像芯片复用现有附件检查及当前模型能力。排队的配置变更只作用于下一次普通
+  回合；补充指令保留当前配置，斜杠文本按字面发送，不触发本地模式或扩展命令。
+- Stop 保留所有已接收的补充输入。Smart Stop 不移除最新 steering 行，也不会用最初
+  的提示覆盖它；渲染器重载后仍然如此。持久消息标记是判断依据，渲染器不另存一份
+  steering 登记状态。
+- 发送按钮提示区分 follow-up，并按平台显示补充指令快捷键（macOS 为 `⌥+Enter`）。
+  保留现有单个 Send/Stop 按钮位置及 Host 拥有的 follow-up 列表。
 
-- While a session is running, the composer shows Send when the draft has
-  content and Stop when it is empty. Normal Send and Enter-to-send are follow-up
-  actions. Accepted follow-ups clear the composer and
-  append to that session's Host-owned, persisted FIFO queue; session switching
-  never moves or clears another session's queue.
-- The queue renders above the composer. Each row has an independently
-  keyboard-reachable Remove action and a Send now action.
-- Send now moves its row to the head and requests the new `agent/stop` channel.
-  The current assistant response and completed tool batch finish normally;
-  after `agent_end` and durable turn finalization, the promoted row is
-  dispatched through the normal `agent/prompt` flow before the remaining rows.
-  An idle Send now dispatches immediately.
-- Without Send now, the next FIFO row starts automatically after the active
-  turn completes, fails, or is aborted. A terminal event can arrive before
-  persistence releases the session; finalization must wake the queue again
-  after releasing ownership. No additional send or session switch is required.
-- Abort remains immediate and never clears the queue. Queued prompts survive
-  application restart and remain held until a controller attaches (ADR 0213).
-  Finalization during application shutdown must not start another queued turn.
+## 3A。上下文检查点生命周期
 
-### 3.5 Steer the current turn
+- `turn_end` 标记一个已完成的 model/tool 回合，之后可能会进行另一回合
+  提供商请求。它永远不会重新启用输入框或会话配置。
+- 自动上下文保护在每个 `turn_end` 后进行评估并运行
+  inline：用户等待。该模型也可以通过提前要求
+  `new_context`，落在同一边界。
+- `compaction_start` 保持会话运行。阈值和溢出
+  `compaction_end` 事件保留在活动运行中；仅 `agent_end` 或
+  `error` 解决了这个问题。仅手动检查点位于 `compaction_end`。
+- 每次成功的压缩都会显示一个警告提示：早期的细节消失了，
+  开始新的会话是只有用户才能做出的决定。三个
+更具体的 toast 保留在其之上 - 成功的手册 `/compact`
+  结果、溢出重试之前的警告以及下面的回退警告。
+- 如果自动摘要生成失败，但保留尾部检查点
+  持续存在，`compaction_end.fallback = "retained_tail"` 显示一个警告
+  祝酒和积极的运行继续减少历史背景。
+- 手动失败显示一个错误 toast。自动 hard/overflow 失败不会
+  不要用祝酒词重复助理错误；终端错误仍然存在
+  附加到失败的回合。
+- 压缩永远不会删除可见的转录消息。检查点影响
+  仅未来模型上下文并在会话 switching/restart 中保留。
+- 每次压缩都会在记录中添加一个分隔行，紧接在
+  它涵盖的最后一条消息，读取会话已压缩的次数以及
+  摘要的估计代币成本（或者没有生成摘要）。行
+  没有任何操作且不可选择。
+- 上下文使用检查器为最新的检查点保留一条静音线，
+  在面板打开时显示；计数和摘要成本位于紧凑的模型/工具摘要下方，
+  不再添加解释性文案。
 
-- `Alt+Enter` submits the visible draft to the current turn immediately. On
-  macOS this is `Option+Enter`. It works with Enter-to-send on or off and takes
-  precedence over an open autocomplete menu. An idle composer sends normally.
-- `Shift+Enter` and `Alt+Shift+Enter` insert a newline. An Enter confirming an
-  IME candidate (`isComposing` or key code 229) never sends or steers.
-- Steering appears as a user message in the current transcript, clears the
-  draft immediately, and reaches the next model request after the current
-  response/tool batch. It creates no FIFO row and does not interrupt tools.
-- Submission captures the session and current turn identity. If that target
-  ends, rejects input, or is awaiting approval, the draft is restored in its
-  own session and a concise error is shown. New text typed after submission
-  takes precedence over restoration. The running turn is not marked failed.
-- File/image chips use the existing attachment checks and the active model's
-  capability. Queued configuration changes apply to the next ordinary turn;
-  steering keeps the current configuration and sends slash-prefixed text
-  literally, without dispatching local mode or extension commands.
-- Stop retains all accepted steering input as history. Smart Stop does not
-  remove the latest steering row or restore the original prompt over it,
-  including after renderer reload. The persisted message marker is the source
-  of truth; the renderer does not keep a separate steering registry.
-- The Send tooltip identifies follow-up and uses the platform's key labels
-  for the steering shortcut (`⌥+Enter` on macOS). The
-  existing single Send/Stop slot and Host-owned follow-up list are retained.
+## 4. 长内容折叠/展开
 
-## 3A. Context checkpoint lifecycle
+### 4. 1 崩溃阈值
 
-- `turn_end` marks one completed model/tool turn and may be followed by another
-  provider request. It never re-enables the composer or session configuration.
-- Automatic context protection evaluates after every `turn_end` and runs
-  inline: the user waits for it. The model can also ask for it early through
-  `new_context`, which lands at the same boundary.
-- `compaction_start` keeps the session running. Threshold and overflow
-  `compaction_end` events remain inside the active run; only `agent_end` or
-  `error` settles it. A manual-only checkpoint settles on `compaction_end`.
-- Every successful compaction shows one warning toast: earlier detail is gone,
-  and starting a fresh session is a decision only the user can make. The three
-  more specific toasts stay on top of it — a successful manual `/compact`
-  result, a warning before an overflow retry, and the fallback warning below.
-- If automatic summary generation fails but a retained-tail checkpoint is
-  persisted, `compaction_end.fallback = "retained_tail"` shows one warning
-  toast and the active run continues with reduced historical context.
-- Manual failure shows one error toast. Automatic hard/overflow failure does
-  not duplicate the assistant error with a toast; the terminal error remains
-  attached to the failed turn.
-- Compaction never removes visible transcript messages. The checkpoint affects
-  only future model context and survives session switching/restart.
-- Each compaction adds one divider row to the transcript, immediately after the
-  last message it covers, reading how many times the session has compacted and
-  the summary's estimated token cost (or that no summary was generated). The row
-  has no actions and is not selectable.
-- The context usage inspector keeps one muted line for the newest checkpoint,
-  shown while its panel is open — the count and summary cost sit below the
-  compact model/tool usage summaries without adding explanatory copy.
-
-## 4. Long content collapse / expand
-
-### 4.1 Collapse thresholds
-
-| Content type | Default state | Collapse threshold | Expand limit |
+| 内容类型 | 默认状态 | 崩溃阈值 | 扩大限制 |
 |---|---|---|---|
-| Assistant markdown message | Expanded | 50 lines → collapsed to 20 lines visible | Full |
-| Tool activity input | Row collapsed | Always behind disclosure | 220px scroll region |
-| Tool activity output | Row collapsed | Always behind disclosure | 220px scroll region (per D033 host cap) |
-| Bash output | Row collapsed | Always behind disclosure | 220px scroll region |
-| Error messages | Expanded | No collapse | — |
+| 助理降价消息 | 扩展 | 50 行 → 折叠至 20 行可见 | 满 |
+| 工具活动输入 | 行倒塌 | 始终落后于披露 | 220px 滚动区域 |
+| 工具活动输出 | 行倒塌 | 始终落后于披露 | 220px 滚动区域（根据 D033 主机上限） |
+| bash 输出 | 行倒塌 | 始终落后于披露 | 220px 滚动区域 |
+| 错误信息 | 扩展 | 不塌陷 | — |
 
-### 4.2 Collapse indicator
+### 4. 2 折叠指示器
 
-- Tool activity starts as a lightweight collapsed row; failed calls open
-  automatically so the error remains local to its invocation.
-- One assistant turn has one process disclosure containing thinking, tool calls
-  and intermediate progress text. The trailing answer streams outside it;
-  later activity moves that text into the process. The header updates elapsed
-  time once per second while active and shows the visible step count.
-- Detailed mode opens the active process and retains the latest thinking row's
-  automatic disclosure. Completed process areas collapse unless a click,
-  keyboard activation or search reveal has taken ownership. Tool details keep
-  their individual controls. Failed tool calls open an unclaimed active process so
-  their errors stay visible.
-- Compact thinking mode shows only a status indicator while reasoning streams;
-  when answer text starts or reasoning ends, the thought row disappears. Tools
-  and progress text remain accessible, and a completed thinking-only process
-  leaves no header. Neither mode changes stored reasoning.
-- A failed row is invocation-local truth and remains visible immediately. The
-  containing group reports processing duration only and settles as processed,
-  even when a later call recovers. Terminal turn failure is derived only from
-  the terminal agent event and appears through either the assistant error or
-  TurnOutcomeCard surface, plus sidebar state and notification surfaces.
-- Expanding the processing group reveals the ordered rows; each row retains its
-  own nested disclosure for output and input.
-- Activating the row reveals clamped output first and raw input second.
-- Each section scrolls internally and exposes its own copy action.
-- The disclosure chevron rotates on expansion. Reduced-motion disables
-  non-essential running-marker pulse and rotation animation.
+- 工具活动以轻量级折叠行开始；打开呼叫失败
+  自动，因此错误仍然是其调用的本地错误。
+- 连续的工具活动包含在一个折叠的处理组中。其
+  标头在活动时每秒更新一次经过时间，在
+下一条记录消息，并公开包含的步骤数。
+- 失败的行是调用局部事实并且立即保持可见。的
+  仅包含组报告处理持续时间并按处理结果结算，
+  即使稍后的呼叫恢复。终端转向故障仅源自
+  终端代理事件并通过助手错误出现，
+  TurnOutcomeCard、侧边栏状态和通知界面。
+- 展开处理组显示有序行；每行都保留其
+  自己的输出和输入的嵌套公开。
+- 激活该行首先显示钳位输出，然后显示原始输入。
+- 每个部分在内部滚动并公开其自己的复制操作。
+- 披露 V 形在扩展时旋转。减少运动禁用
+  非必要的 shimmer/rotation 动画。
 
-### 4.3 Tool result truncation
+### 4. 3 工具结果截断
 
-- Per D306 / D194: budgets are per tool class (see [16-tool-result-limits](../03-runtime/16-tool-result-limits.md)). Search/read results cap at 128KB / 4000 lines; Bash stdout/stderr cap at 96KB / 4000 lines with a spill file.
-- Read/Glob/Grep report `truncated: true` only when this result was cut short (budget, a clipped line, or remaining Grep/Glob hits). A filled Read window of a longer file is not truncated; `notice` names the next offset.
-- Bash markers name which end survived and the spill path, for example `[truncated: kept the first 4000 of 51234 lines; limit 4000 lines / 96KB. …]`.
-- Truncated content is never silently omitted — always marked
-- Disclosure expansion does not load content beyond the host-enforced cap
-- The collapsed-row `truncated` chip follows `details.truncated`
+- 根据 D306 / D194：预算按工具类别计算（见 [16-tool-result-limits](/spec/03-runtime/16-tool-result-limits)）。搜索/读取结果上限为 128KB / 4000 行；Bash stdout/stderr 上限为 96KB / 4000 行并带溢出文件。
+- Read/Glob/Grep 仅在本次结果被切断时报告 `truncated: true`（预算、被剪行，或 Grep/Glob 还有剩余命中）。填满的 Read 窗口即使文件更长也不算截断；`notice` 写出下一个偏移。
+- Bash 标记标明哪一端幸存以及溢出路径，例如 `[truncated: kept the first 4000 of 51234 lines; limit 4000 lines / 96KB. …]`。
+- 截断的内容永远不会被默默地省略——总是被标记
+- 披露扩展不会加载超出主机强制上限的内容
+- 折叠行的 `truncated` 芯片跟随 `details.truncated`
 
-## 5. Permission interrupt flow
+## 5. 权限中断流程
 
-### 5.1 Flow sequence
+### 5. 1 流程顺序
 
 ```text
 Agent calls a permission-gated tool (including Plan/Goal Bash under Ask or Accept edits)
@@ -863,599 +704,383 @@ Agent calls a permission-gated tool (including Plan/Goal Bash under Ask or Accep
   → Agent continues or receives denial result
 ```
 
-### 5.2 Multiple pending permissions
+### 5. 2 多个待处理权限
 
-- Each session has at most one active permission card because that agent loop
-  is paused; multiple sessions may wait independently.
-- Abort cancels only the active session's pending permission.
-- Timeout (120s from original receipt) auto-denies only the matching request;
-  switching sessions never resets the deadline.
+- 每个会话最多有一张活动权限卡，因为该代理会循环
+  已暂停；多个会话可以独立等待。
+- 中止仅取消活动会话的待处理权限。
+- 超时（从原始接收开始 120 秒）仅自动拒绝匹配的请求；
+切换会话永远不会重置截止日期。
 
-### 5.3 Focus management during permission
+### 5. 3 权限期间的焦点管理
 
-- A visible permission card is announced through `aria-live` without forcing
-  focus. A background session's card is not mounted and cannot move focus.
-- Action buttons are tab-reachable within the card
-- After resolution: focus returns to composer
-- Full spec: [03-permission-ux.md](03-permission-ux.md)
+- 通过 `aria-live` 公布可见的权限卡，无需强制
+  焦点。后台会话的卡未安装并且无法移动焦点。
+- 卡片内的操作按钮可通过选项卡访问
+- 解决后：焦点返回到输入框
+- 完整规范：[03-permission-ux.md](/spec/04-ux/03-permission-ux)
 
-## 5A. Plan and Goal workflow
+## 5A。 Plan 和 Goal 工作流程
 
-1. The user selects Plan or Goal while the session is idle, or the same Agent
-   calls `EnterPlanMode` / `EnterGoalMode`; the host persists/validates the
-   matching contract mode and the renderer projects `planning`.
-2. The Agent investigates with the selected contract tool set. Read/Glob/Grep and
-   BrowserPreview are allowed; Bash follows the visible permission mode. A
-   contract-mode Bash command may mutate under Auto, so the mode chip remains visible.
-   While that turn is live `planning`, the Composer mode chip pulses and a compact
-   Planning row occupies the same pre-stream slot as Working; tool or answer rows
-   replace that transcript row so it does not sit orphaned above the composer.
-3. The Agent calls `SubmitPlan` or `SubmitGoal` alone in its tool batch.
-   Host-core preserves the exact Markdown bytes in a new immutable
-   `.pi/plan/*.md` or `.pi/goal/*.md` artifact, records its path/hash/size and structured
-   title/question, and the renderer displays the shared contract approval card with
-   only the title and artifact opener; the question remains host-side contract data.
-4. Approve requires Ask / Accept edits / Auto selection. The renderer remembers
-   the last selected mode on this device and uses it as the next approval's
-   default. Host-core commits the approval, `mode = agent`, permission mode,
-   and `queued` state atomically; the same Agent continues on a fresh turn with
-   Agent tools.
-5. Reject stops the pending run and keeps the durable session in its contract
-   mode. The live state returns to editable planning; revisions are new-turn
-   `SubmitPlan`/`SubmitGoal` calls with a new complete Markdown snapshot and new artifact. Earlier snapshots
-   remain immutable; there is no request-changes action.
-6. Expiry, abort, persistence failure, renderer/host/sidecar crash, or stale
-   response renders a failed-closed state. A host restart interrupts pending,
-   queued, and running work without replay; an already-approved interruption
-   keeps the session in Agent.
+1. 用户在会话空闲时选择 Plan 或 Goal，或相同的 Agent
+   调用 `EnterPlanMode` / `EnterGoalMode`；主机 persists/validates
+   匹配合约模式和渲染器项目 `planning`。
+2. Agent 使用选定的合约工具集进行调查。 Read/Glob/Grep 和
+   允许使用 BrowserPreview； Bash 遵循可见权限模式。一个
+   Contract-mode Bash 命令可能会在 Auto 下发生变化，因此模式芯片仍然可见。
+   该回合处于实时 `planning` 时，Composer 模式芯片脉冲，紧凑的规划行占用与 Working 相同的流前位置；工具或回答行会替换该成绩单行，避免它单独停在输入框上方。
+3. Agent 在其工具批次中单独调用 `SubmitPlan` 或 `SubmitGoal`。
+   Host-core 将准确的 Markdown 字节保留在新的不可变中
+   `.pi/plan/*.md` 或 `.pi/goal/*.md` 工件，记录其 path/hash/size 并结构化
+   title/question，渲染器显示共享合同审批卡
+   只有标题和神器开启器；问题仍然是主机端合同数据。
+4. 批准需要询问/接受编辑/自动选择。渲染器会记住
+   该设备上最后选择的模式并将其用作下一个批准的模式
+   默认。 Host-core提交批准，`mode = agent`，权限模式，
+   和 `queued` 原子状态；同样的 Agent 继续新的回合
+   Agent 工具。
+5.拒绝停止挂起的运行并将持久会话保留在其合同中
+   模式。实时状态恢复为可编辑规划；修订是新的
+   `SubmitPlan`/`SubmitGoal` 使用新的完整 Markdown 快照和新工件进行调用。早期快照
+   保持不变；没有请求更改操作。
+6. 过期、中止、持久性失败、renderer/host/sidecar 崩溃或过时
+   响应呈现失败关闭状态。主机重启中断挂起，
+   排队、运行且无需重播的工作；已经批准的中断
+   将会话保留在 Agent 中。
 
-The approval card is session-scoped. Background sessions may retain a pending
-approval or queued/running execution state in `plan_approvals`, but opening
-another session never covers it or moves focus; returning to the originating
-  session restores the renderer-lifetime snapshot; while the host remains alive,
-  `plans.pending` can rehydrate a still-pending row. The approval card does not
-  expose a validity/deadline concept.
-Mode/provider/model/permission/shell configuration and new prompts remain
-disabled while an active `pending` approval or turn exists. During pending
-approval the existing draft remains in the textarea but is read-only; only
-Approve and Reject remain enabled on the approval surface. Reject, expiry, or
-interruption re-enables them; terminal proposal snapshots do not keep the gate
-closed. The renderer retains the latest checkpoint/execution status per session
-only for its current lifetime, so rejected, expired, interrupted, approved,
-queued, and running outcomes may remain visible across session switches. A
-renderer reload rehydrates only a pending row; terminal cards are dropped and
-are not restored. Host restart interrupts prior work without replay or stale
-action, and the UI is not required to present the interrupted terminal
-snapshot. The Composer-left Agent/Plan/Goal chip is the only active-session mode
-control.
+批准卡是会话范围的。后台会话可能会保留待处理的
+`plan_approvals` 中批准或 queued/running 执行状态，但打开
+另一场会议从未涵盖它或转移焦点；回到原点
+  会话恢复渲染器生命周期快照；当宿主还活着的时候，
+  `plans.pending` 可以对仍待处理的行进行补充。审批卡没有
+  公开 validity/deadline 概念。
+Mode/provider/model/permission/shell 配置和新提示仍然存在
+当存在有效的 `pending` 批准或轮次时禁用。待处理期间
+批准现有草案保留在文本区域中，但为只读；仅
+批准和拒绝在批准界面上保持启用状态。拒绝、过期或
+中断可以重新启用它们；终端提案快照不保留门
+关闭。渲染器保留每个会话的最新 checkpoint/execution 状态
+仅适用于其当前生命周期，因此被拒绝、过期、中断、批准，
+排队，并且运行结果可能在会话切换期间保持可见。一个
+渲染器重新加载仅重新水化挂起的行；终端卡掉落并且
+没有恢复。主机重启会中断之前的工作而不会重播或过时
+动作，并且UI不需要呈现被中断的终端
+快照。 Composer 左侧的 Agent/Plan/Goal 芯片是唯一的活动会话模式
+控制。
 
-During project or session initialization, the home composer can render before
-an `activeSessionId` is projected. Idle mode, Thinking, and permission
-controls remain usable in that interval; the durable empty session row is
-created or selected by the New Task action and the first configuration action
-applies to that session once it is projected. The startup-only home composer
-may still materialize a session when pasted input arrives before selection.
-Running turns and pending approvals continue to gate the controls.
+在项目或会话初始化期间，家庭输入框可以在之前渲染
+预计 `activeSessionId`。空闲模式、思考和许可
+控制装置在该时间间隔内仍然可用；他们的第一个配置操作
+保留在未持久化的草稿上，并在第一条消息创建会话时应用
+（D220）。因此，新任务在包含输入之前不会添加侧边栏历史记录行。跑步
+轮流和待批准继续限制控制。
 
-## 6. Toast vs inline error
+## 6. Toast 与内联错误
 
-### 6.1 Toast notifications (use for)
+### 6. 1 Toast 通知（用于）
 
-| Scenario | Toast type | Duration | Rationale |
+| 场景 | Toast类型 | 持续时间 | 基本原理 |
 |---|---|---|---|
-| Provider connection test result | Success/Error | 4s/8s | Transient feedback, not blocking workflow |
-| Plugin load/unload success | Success | 4s | Confirmation of background action |
-| Settings saved | Success | 4s | Quick confirmation |
-| Manual menu update check failure | Error | 8s | Direct feedback for an explicit command |
-| Context checkpoint completed | Info (Warning before overflow retry) | 4s/8s | Confirms a background context transition without altering transcript rows |
-| Manual context checkpoint failure | Error | 8s | Direct feedback for explicit `/compact`; automatic terminal failures stay inline |
+| 提供商连接测试结果 | Success/Error | 4s/8s | 瞬时反馈，不阻塞工作流程 |
+| 插件load/unload成功 | 成功 | 4秒 | 确认后台操作 |
+| 设置已保存 | 成功 | 4秒 | 快速确认 |
+| 手动菜单更新检查失败 | 错误 | 8秒 | 对明确命令的直接反馈 |
+| 上下文检查点已完成 | 信息（溢出重试前警告） | 4s/8s | 确认后台上下文转换而不更改转录本行 |
+| 手动上下文检查点失败 | 错误 | 8秒 | 直接反馈明确的 `/compact`；自动终端故障保持内联 |
 
-### 6.2 Inline errors (use for)
+### 6. 2 内联错误（用于）
 
-| Scenario | Inline placement | Rationale |
+| 场景 | 内联放置 | 基本原理 |
 |---|---|---|
-| Tool call failure | Error state on ToolCallCard | Context-dependent, user needs to see which tool failed |
-| Permission denial | Resolved state on PermissionCard | Already inline, part of conversation flow |
-| Stream interruption | Error state on MessageBubble | Belongs to the message that failed |
-| Provider/model turn failure | Assistant error message in transcript | Keeps summary, stable code, redacted detail, and recovery action attached to the failed turn |
-| Provider configuration validation error | Inline in settings form | User needs to see which field is wrong |
-| Application update status/error | Settings → Info Updates row | Preserves the latest Main-owned state without interrupting background checks |
-| Composer validation (no model) | Disabled state + tooltip on send button | Immediate context |
+| 工具调用失败 | ToolCallCard 上的错误状态 | 上下文相关，用户需要查看哪个工具失败了 |
+| 拒绝许可 | PermissionCard 上的已解决状态 | 已经内联，对话流程的一部分 |
+| 串流中断 | MessageBubble 上的错误状态 | 属于失败的消息 |
+| Provider/model 回合失败 | 抄本中的助理错误消息 | 保留失败回合的摘要、稳定代码、经过编辑的详细信息和恢复操作 |
+| 提供商配置验证错误 | 内联设置表单 | 用户需要查看哪个字段是错误的 |
+| 应用程序更新 status/error | 设置 → 信息更新行 | 保留最新的 Main-owned 状态而不中断背景检查 |
+| 输入框验证（无模型） | 禁用状态+发送按钮上的工具提示 | 直接上下文 |
 
-### 6.3 Rules
+### 6. 3 规则
 
-- Never use toast for errors that are tied to a specific message or tool call
-- Assistant error detail uses a keyboard-operable disclosure with
-  `aria-expanded` / `aria-controls`; it is open on first render so the provider
-  response is immediately discoverable, and supports copying the redacted text
-- Never use inline error for transient background operations (plugin load, connection test)
-- Toasts stack vertically, newest on top, at top-center
-- Error toasts require manual dismiss or timeout at 8s (longer than success)
-- Success toasts auto-dismiss at 4s
+- 切勿对与特定消息或工具调用相关的错误使用 toast
+- 助手错误详细信息使用键盘可操作的披露
+  `aria-expanded` / `aria-controls`；它在第一次渲染时打开，因此提供商
+  响应可立即发现，并支持复制编辑文本
+- 切勿将内联错误用于瞬态后台操作（插件加载、连接测试）
+- Toast 垂直堆叠，最新的位于顶部中央
+- 错误 toast 需要手动关闭或超时 8 秒（比成功长）
+- 成功祝酒在 4 秒后自动关闭
 
-### 6.4 Icon-only action labels
+## 7. 焦点管理
 
-- Every icon-only action exposes a localized purpose through both its accessible
-  name and its hover/focus tooltip.
-- Use the shared `TooltipButton` for interactive buttons and `Tooltip` for
-  non-button controls. Both render the themed tooltip in a body-level portal so
-  it is not clipped by pane overflow or hidden below a neighboring surface.
-  Native `title` remains for full-value metadata such as paths, IDs, and
-  descriptions; rich hover cards and popovers keep their specialized surfaces.
-- Decorative icons remain `aria-hidden` and do not need a tooltip.
-- Tooltip text must describe the action, not the icon shape, and must come from
-  the active i18n catalog.
-- Clicking an action dismisses its tooltip immediately and suppresses it until
-  the pointer leaves or focus moves away; keyboard focus still reveals the
-  tooltip before activation.
-- A tooltip is bound to one live trigger. It closes when that trigger unmounts
-  or is detached, when the window loses focus, when the document is hidden, and
-  on Escape; a trigger that moves in the DOM within a quarter second without
-  being replaced keeps the tooltip instead of blinking it. A tooltip revealed
-  by keyboard focus is not closed by unrelated pointer movement, and at most one
-  themed tooltip is ever painted, so a pointer crossing between two adjacent
-  buttons never shows both. The guard listeners behind this are shared by the
-  whole renderer, so a long transcript does not add one listener set per row.
+### 7. 1 将流程聚焦于页面加载
 
+1. Composer 文本区域在主聊天视图中获得初始焦点
+2. 设置页面：第一个交互元素获得焦点
+3.命令面板：搜索输入获得焦点打开
 
-## 7. Focus management
+### 7. 2 操作后的焦点流程
 
-### 7.1 Focus flow on page load
-
-1. Composer textarea receives initial focus in main chat view
-2. Settings pages: first interactive element receives focus
-3. Command palette: search input receives focus on open
-
-### 7.2 Focus flow after actions
-
-| Action | Focus target |
+| 行动 | 聚焦目标 |
 |---|---|
-| New session created | Composer textarea |
-| Session switched | Composer textarea |
-| Message sent | Composer textarea (cleared, ready for next) |
-| Stream completed | Composer textarea (re-enabled) |
-| Permission resolved | Composer textarea |
-| Abort completed | Composer textarea |
-| Command palette closed | Previously focused element |
-| Dialog closed | Previously focused element |
-| Notification popover closed with Escape | Notification bell |
-| Notification row/native notification activated | Activated session composer after transcript load |
+| 新会话已创建 | 输入框文本区域 |
+| 会话已切换 | 输入框文本区域 |
+| 消息已发送 | 输入框文本区域（已清除，准备下一步） |
+| 直播已完成 | Composer 文本区域（重新启用） |
+| 权限已解决 | 输入框文本区域 |
+| 中止完成 | 输入框文本区域 |
+| 命令面板关闭 | 先前聚焦的元素 |
+| 对话框关闭 | 先前聚焦的元素 |
+| 使用 Escape 关闭通知弹出窗口 | 通知铃声 |
+| 通知 row/native 通知已激活 | 加载脚本后激活会话编辑器 |
 
-### 7.3 Focus trap
+### 7. 3 焦点陷阱
 
-- Command palette: focus trapped within palette while open
-- Settings modals: focus trapped
-- Escape always closes the trapped surface and returns focus
+- 命令调色板：打开时焦点被困在调色板内
+- 设置模式：焦点被困
+- 逃脱总是关闭被困表面并返回焦点
 
-### 7.4 Focus ring rules
+### 7. 4 对焦环规则
 
-- Only show focus ring on `focus-visible` (keyboard focus), not on click/mouse focus
-- Focus ring: 2px accent color border, 2px offset from element edge
-- Per [07-ui-design-system.md](07-ui-design-system.md) §6.4
-- Never remove focus rings globally — accessibility requirement
+- 仅在 `focus-visible`（键盘焦点）上显示对焦环，在 click/mouse 焦点上不显示对焦环
+- 聚焦环：2px 强调色边框，距元素边缘 2px 偏移
+- 根据 [07-ui-design-system.md](/spec/04-ux/07-ui-design-system) §6.4
+- 切勿全局移除对焦环 - 可访问性要求
 
-### 7.5 Text selection
+### 7. 5 文本选择
 
-- Application chrome is non-selectable by default to prevent accidental
-  selection while clicking or dragging the shell.
-- Editable controls (`input`, `textarea`, `select`, and
-  `[contenteditable]`) preserve normal text editing and `Cmd/Ctrl+A/C/V`
-  behavior.
-- Transcript prose, rendered Markdown, code blocks, and tool input/output
-  remain text-selectable for inspection and copying.
-- Interactive controls nested inside selectable content remain
-  non-selectable and must keep their click and keyboard behavior.
-- Selection rules must not disable `focus-visible` feedback or native window
-  drag regions.
+- 默认情况下，应用程序镶边是不可选择的，以防止意外
+  单击或拖动外壳时进行选择。
+- 可编辑控件（`input`、`textarea`、`select` 和
+  `[contenteditable]`) 保留正常文本编辑和 `Cmd/Ctrl+A/C/V`
+  行为。
+- 转录散文、渲染的 Markdown、代码块和工具 input/output
+  保持文本可选择以供检查和复制。
+- 保留嵌套在可选内容内的交互式控件
+  不可选择，并且必须保持其单击和键盘行为。
+- 选择规则不得禁用 `focus-visible` 反馈或本机窗口
+  拖动区域。
 
-## 8. Drag / drop
+## 8. 拖/放
 
-### 8.1 MVP status
+### 8. 1 MVP 状态
 
-Work-panel and application-window resizing are implemented in MVP:
+工作面板宽度调整是在 MVP 中实现的：
 
-- The 10px inner left-edge separator anchors to the press position and
-  starting panel width, then follows pointer delta without jumping. Moving it
-  left grows the panel until the shared budget is exhausted; when MainChat
-  reaches its 450px minimum the expanded sidebar collapses immediately. Moving
-  it right gives space back to MainChat.
-- The inner divider's target clamps to the shared three-column budget
-  (`client width - 450px - expanded sidebar`, with no fixed pixel cap); pointer movement is
-  frame-coalesced and release commits the preferred width. Escape, pointer
-  cancellation, and lost capture restore the press-time panel width. A
-  double-click restores the default 360px width inside those same live bounds.
-- Opening and closing animate the dock's `width` and `flex-basis` together with
-  the bounded opacity/transform feedback, so MainChat reflows continuously
-  inside the existing client area without crossing its 450px minimum instead of
-  changing width before the first motion frame. While `sidebar-out` still
-  occupies flex space, the shared budget continues to count the sidebar.
-- Reopening a sidebar the layout collapsed spends work-panel width first: the
-  panel keeps its width while MainChat stays at or above 450px, and otherwise
-  the reopen targets 460px. Closing the panel restores only a sidebar the
-  layout collapsed; a manual collapse stays collapsed.
-- No panel action requests a positive native reservation: the preferred panel
-  width is renderer-local, the native seam stays at zero, and native window
-  edges resize only the fixed app window. Background-session artifacts never
-  update the visible panel or window geometry.
-- The native Browser view still follows the renderer-measured panel rectangle;
-  it is detached before collapse motion because it cannot participate in
-  renderer CSS animation. Native bounds recovery and persistence continue to
-  apply to ordinary window resize/move gestures without panel-specific deltas.
+- 10px 左边缘分隔符锚定到按下位置和起始宽度，然后跟随指针 delta 而不跳转。向左拖动会持续增长面板，直到共享预算耗尽；MainChat 到达 450px 下限时展开的左栏立即收起。向右拖动把空间还给 MainChat。
+- 分隔线目标钳制在三栏共享预算内（`客户端宽度 − 450px − 展开的左栏宽度`，无固定像素上限）。
+- 指针移动是帧合并的。指针释放持续一提交
+  首选宽度；转义、指针取消和丢失捕获都会回滚。
+- 打开和关闭码头的 `width` 和 `flex-basis` 以及
+  有界 opacity/transform 反馈，因此 MainChat 不断回流
+  而不是在第一个运动帧之前更改宽度。
+- 渲染器始终请求本机预留宽度为 0，因此操作系统窗口
+  永不扩展 (ADR 0033)。打开、折叠和最终关闭仅改变
+  承诺的首选宽度。重复目标是幂等的。
+- 当面板弹性分配打开时，MainChat 会持续回流或
+  关闭，然后保持在设定的客户端宽度；窗口没有变化。
+  在支持的固定窗口范围内，MainChat 保持 450px 硬下限；展开的左栏会在
+  阈值处让位，而不会把聊天压到该下限以下。
+- 本机窗口和侧边栏调整大小不会夹紧或重写面板。原生边缘和角落仅通过
+  回流调整 MainChat 的大小。操作系统保留原生命中区域所有权；恢复逻辑会
+  等待 300ms 的稳定边界窗口，状态持久化会在最后一次调整大小/移动事件
+  后等待 600ms，因此不会干扰慢速边缘拖动或保存中间矩形。
+- Maximized/fullscreen 不受影响； display/work-area 更改协调
+  窗口边界正常。在一个不变的工作区域内进行普通移动不会
+  不重新应用几何图形。持久的基边界是用户的窗口大小
+  （预订始终为 0）。
+- 后台会话工件永远不会更新可见面板。
 
-- Preview mode unmounts MainChat and lets the work panel fill the client area
-  beside the sidebar. A window-level 46px chrome row keeps New Task, sidebar,
-  and native window controls available through a pointer-transparent row that
-  declares neither drag nor no-drag across the panel. The panel header's drag
-  border box starts after the shell actions plus an 8px gap, including expanded
-  sidebar New Task. All platforms use an 8px left inset, except collapsed-sidebar
-  windowed macOS (88px). That reserve uses `--ds-window-lead-inset`: the
-  traffic-light cluster's 76px right edge (from `@pi-desktop/shared`) plus 12px.
-  Native pointer clicks must operate the controls and dragging empty header
-  space must move the window; DOM/CDP clicks alone do not establish native hit testing.
+- Preview mode unmounts MainChat and fills the client area beside the sidebar.
+  The 46px chrome row keeps shell/native controls but declares neither drag nor
+  no-drag across the panel and passes pointer events through outside controls.
+  The panel header alone owns dragging in the preview pane; its border box
+  excludes shell actions plus an 8px gap in both sidebar states on all platforms.
+  The left inset is 8px except collapsed-sidebar windowed macOS (88px through
+  `--ds-window-lead-inset`: the 76px native cluster edge from
+  `@pi-desktop/shared` plus a 12px gap).
+  Native clicks must operate controls and empty-header drags must move the
+  window; DOM/CDP clicks alone are not native hit-test proof.
 
-The expanded sidebar is user-resizable from 240px to 520px (default 275px) via
-the right-edge handle. Pointer motion below 160px collapses the sidebar and
-keeps the preferred expanded width. Keyboard Arrow/Home/End resize without collapsing.
-Double-clicking the handle restores the 275px default inside the live budget.
+展开侧边栏固定为 275px。折叠/展开只改变列是否存在；历史上的调整大小手柄
+会隐藏，旧的宽度偏好不会继续持久化。
 
-Project ordering is implemented for retained project groups. There is no
-reorder grip. Pressing the project title and moving 8px starts a project drag,
-so a click still activates and toggles collapse, and menus and nested
-session rows keep their existing click behavior. A drop inserts before or after
-the target group based on the pointer position and persists the result.
+保留的项目组支持项目排序。没有重排手柄。按住项目标题并移动 8px 开始拖动，因此单击仍会激活并切换折叠，菜单和嵌套会话行保持原有点击行为。根据指针位于目标上半部还是下半部，放置会插入目标之前或之后，并持久化结果。
+- 文件拖入输入框仍未处理；剪贴板 file/image 粘贴
+  使用下面的会话临时参考流程
 
-Sidebar drag/drop is implemented:
+### 8. 2 项目拖放合同
 
-- A session row is draggable while idle. Dropping it on another project group
-  moves that session to the project: the host updates only the session's
-  project association, and the transcript, attachments, tasks, revisions,
-  artifacts, notifications, and scratch data stay with the session.
-- A running session is not draggable, and the session menu's project targets
-  are not available. The host rejects the move as well, so a turn that starts
-  mid-drag cannot leave the agent bound to the previous project's instructions.
-- The dragged row paints at opacity 0.5 and the eligible project group
-  highlights with an accent outline. A session's own project group is not a
-  drop target, so a same-project drag never issues a request.
-- Project reassignment is available through the drag/drop interaction only;
-  the session context menu does not contain a project list.
-- Dropping a folder on the projects list adds it as a project, or switches to
-  it when it is already known; duplicate paths resolve to one project row. A
-  drop that carries no folder reports why nothing happened.
+项目拖放遵循以下模式：
 
-Native file-system drops into the composer are implemented. The target uses an
-accent outline without changing layout; regular files use the session-scratch
-reference flow below. A dropped folder is never attached: it raises an explicit
-choice between opening it as a project and inserting the literal directory path
-into the draft, so an unknown directory tree cannot enter the context.
+- 项目标题是重排控件：按住并移动 8px 开始拖动
+- 没有足够移动的单击仍会选中并切换折叠
+- 触摸不会开始重排，以便列表可以滚动
+- 强调色插入线标出前/后放置位置
+- 使用 Esc 键取消拖动
+- 拖动反馈：源上不透明度 0.5
+- 聚焦标题后按 `ArrowUp`/`ArrowDown` 可移动项目并持久化相同的手动顺序
 
-### 8.2 Project drag/drop contract
+## 8a。输入框自动完成和剪贴板文件（D123–D125、D197、D209、D262、D362、ADR 0131）
 
-Project drag/drop follows these patterns:
+### 8a.1 触发器
 
-- The project title is the reorder control: press and move 8px to arm a drag
-- A click with no qualifying movement still selects and toggles collapse
-- Touch does not start a reorder so the list can scroll
-- An accent insertion line shows before/after placement
-- Cancel drag with Escape
-- Drag feedback: opacity 0.5 on source
-- ArrowUp/ArrowDown on the focused title moves the project one row and
-  persists the same manual order without requiring a pointer
+- `/` 仅当它是输入的第一个字符时才打开命令模式
+  并且光标仍在第一个标记内（尚未输入空格）。
+  命令名称后的空格关闭菜单；参数是自由文本。
+- 当包含光标的标记以 `@` 开头时，`@` 打开文件模式
+  `@` 之前的字符是输入开始、空格或其中之一
+  pi 分隔符（`"`、`'`、`=`）。查询是 `@` 和
+  光标；包含 `/` 的查询跨路径段匹配。引用了一个
+  代币 (`@"…`) 在收盘报价之前被视为一种代币。
+- 粘贴文本永远不会打开菜单，除非插入符号落在有效的区域内
+  触发令牌。
+- 文件结果通过仅渲染叶名称（带有
+  目录尾随 `/`）。完整的相对路径仍然可用
+  行工具提示和可访问的名称。接受文件（Enter/Tab/点击）
+  会把 `@` 标记替换为光标处的行内哨兵叶名芯片，由完整的
+  `entry.path` 支持；该确认不会发送。接受目录保留
+  草稿中的完整文字路径，以便可以继续进行更深入的补全。
 
-## 8a. Composer autocomplete and clipboard files (D123–D125, D197, D209, D262, D362, D397, ADR 0131, ADR 0222)
+### 8a.2 参考芯片和剪贴板文件
 
-### 8a.1 Triggers
+- 仅当全部文件都是无原生路径的 `image/*` 副本时，非空白 `text/plain`
+  正文优先（Word 文本选择）。真实文件、任意非图片文件、纯图片及空白文字加
+  图片的粘贴仍走附件流程。只复用已有 preload 文件路径解析，不重新读取系统剪贴板。
+- 选中的正文不超过持久化的 `largePasteThreshold`（默认 600）时保持可编辑；
+  超过阈值时转为会话临时文件引用。短多行文本保留空行、末尾换行、前后正文、
+  光标及原生撤销；CRLF/CR 转为编辑器 LF。HTML 字面量仍为文本，只插入经过
+  转义的正文和生成的换行。
+- 传输字节时，文本区域是只读的并公开
+  `aria-busy="true"`；发送和自动完成控件被禁用。
+- Electron main 在原始会话的暂存下保存有界字节
+  root 并返回唯一的绝对路径以及经过清理的原始叶名称。
+  输入框保持可见文本不变，附加叶子名称参考
+  按剪贴板顺序排列，然后恢复文本区域选择和焦点。
+- 对于超过阈值的纯文本粘贴，渲染器通过相同的会话桥发送准确的 UTF-8
+  `text/plain` 字节，在原始选择处插入由哨兵支持的 `pasted-text-*.txt` 芯片，并在草稿中
+  保存标记到规范路径的映射。点击芯片或按 Enter/Space 会读取有界文本文件，在原位置
+  以可编辑文本替换哨兵、移除引用并将插入符号放在内容末尾；读取失败或不支持时保留
+  芯片。在草稿中间粘贴时，前缀和后缀都保持不变。
+- 如果家庭输入框没有活动会话，它会创建或重用之前的会话
+  写作。失败会使现有草稿保持不变并显示错误
+  正常的Toast表面。
+- 芯片删除按钮仅删除草稿参考并恢复文本区域
+  焦点；它不会急切地删除会话临时字节。退格键
+  空文本区域会删除最近的活动引用。
+- `text/plain` 或 `.txt` 芯片公开按钮语义，并在点击或按 Enter/Space 时展开。
+  读取遵循现有 `fsRead` 有界策略；二进制、图像、过大或读取失败时显示普通错误
+  提示并保留芯片。
+- 仅供参考的草稿启用发送。在发送之前，有效的参考文献是
+  附加在可见文本之后并使用规范相对或序列化
+  绝对路径和现有的空白引用。成功发送清除
+  两者；失败或拒绝的派送保留两者。内联大段粘贴引用会在可见草稿中解析，而不会
+  追加或作为重复附件发送。引用是会话范围的；只要所属会话仍可用，临时引用可以
+  跨工作区切换保留。工作区 `@` 芯片相对于产生它们的项目，切换工作区时会从草稿中移除（含哨兵）。
+- 接受的调度保留内存中的 session/turn-scoped 副本
+仅在未答复时显示可见文本和结构化参考 智能停止可以
+  撤消发送。该撤消操作将恢复原始芯片顺序和标签；它
+  从不解析序列化的 `@path` 文本。一旦回复内容开始，中止就会继续
+  部分抄本，不恢复草稿。
+- 发送成功后，用户气泡仅把这些序列化的 `@path` 标记解析回与输入框一致的叶子名芯片用于展示。持久化消息和模型上下文仍是规范 `@path` 文本。点击芯片先经 `pi-desktop/fs/resolveRef` 补全引用——该通道搜索整个打开的项目，按项目组自身的文件夹顺序、主文件夹优先（ADR 0263）——再按解析结果打开：项目文件在随应用打包的 `pi.file-manager` 工作面板视图中打开（该视图不可用时退回宿主 `file:` 选项卡），会话临时目录或附件文件在宿主 `file:` 选项卡中打开，项目主文件夹中的 `.html`/`.htm` 页面仍在侧边浏览器中打开，因为侧边浏览器本就以该文件夹为根。交给工作面板的地址跟随应答的文件夹：主文件夹中的文件按项目内相对路径传递，同一项目的同级文件夹中的文件按绝对路径传递，与会话临时目录或附件文件一致。什么都没匹配到的芯片不打开任何东西，而是自己报告出来；系统默认应用不再由这次点击触发，该动作仍可从文件视图自己的右键菜单使用。
 
-- `/` opens command mode only when it is the first character of the input
-  and the cursor is still inside that first token (no whitespace typed yet).
-  A space after the command name closes the menu; arguments are free text.
-- `@` opens file mode when the token containing the cursor starts with `@`
-  and the character before `@` is start-of-input, whitespace, or one of the
-  pi delimiters (`"`, `'`, `=`). The query is the text between `@` and the
-  cursor; a query containing `/` matches across path segments. A quoted
-  token (`@"…`) is treated as one token until the closing quote.
-- Pasting text never opens a menu unless the caret lands inside a valid
-  trigger token.
-- File results keep each row compact by rendering only the leaf name (with a
-  trailing `/` for directories). The full relative path remains available as
-  the row tooltip and accessible name. Accepting a file (Enter/Tab/click)
-  replaces the `@` token with an inline sentinel-backed leaf-name chip at the
-  caret, backed by the full `entry.path`; that confirmation does not send.
-  Accepting a directory keeps the full literal path in the draft so deeper
-  completion can continue.
+### 8a.3 打开时的键盘
 
-### 8a.2 Reference chips and clipboard files
+- ↑/↓ 以环绕方式移动突出显示； Home/End 留在文本区域。
+- Enter / Tab 接受突出显示的项目；Alt+Enter 提交当前回合补充指令。菜单有高亮项时 Enter 和 Cmd/Ctrl+Enter 都不发送
+  （该规则先于回车发送设置）。
+  否则保持其行为）。
+- Escape 仅关闭菜单 - 它优先于输入框的菜单
+  “清除输入或模糊”转义并且不得传播到覆盖处理程序。
+- 任何其他适当的打字重新过滤器；零匹配表现为闭合。
 
-- Select non-whitespace `text/plain` over accompanying generated `image/*`
-  copies only when every file lacks a native path (Word text selection).
-  Native files, any non-image file, and image-only/whitespace-plus-image paste
-  retain their attachment flow. This uses the existing preload file-path
-  resolver and does not reread the system clipboard.
-- Selected text stays editable when its character count is at or below the
-  persisted `largePasteThreshold` (default 600); larger text becomes a temporary
-  session file reference. Small multiline paste preserves blank/trailing lines,
-  surrounding text, caret, and native undo; CRLF/CR becomes editor LF. Literal
-  HTML remains text: only escaped text and generated line breaks are inserted.
-- While bytes are being transferred, the textarea is read-only and exposes
-  `aria-busy="true"`; the send and autocomplete controls are disabled.
-- Electron main saves bounded bytes under the originating session's scratch
-  root and returns unique absolute paths plus sanitized original leaf names.
-  The composer leaves visible text unchanged, appends leaf-name reference
-  chips in clipboard order, then restores the textarea selection and focus.
-- For an oversized text-only paste, the renderer sends the exact UTF-8
-  `text/plain` bytes through the same session bridge, inserts a
-  sentinel-backed `pasted-text-*.txt` chip at the original selection, and keeps
-  a token-to-canonical-path mapping in the draft. Clicking the chip or pressing
-  Enter/Space reads the bounded text file and replaces the sentinel in place
-  with editable text, removing the reference and placing the caret after the
-  inserted content. A failed or unsupported read leaves the chip intact.
-  Pasting in the middle of a draft keeps both the prefix and suffix intact.
-- If the home composer has no active session, it creates or reuses one before
-  writing. Failure leaves the existing draft unchanged and shows the error in
-  the normal toast surface.
-- A chip remove button removes only that draft reference and restores textarea
-  focus; it does not eagerly delete session scratch bytes. Backspace on an
-  empty textarea removes the most recent active reference.
-- A text/plain or `.txt` chip exposes button semantics and expands on click or
-  Enter/Space. The read is bounded by the existing `fsRead` policy; binary,
-  image, oversized, or failed reads show the normal error toast and preserve
-  the chip.
-- A reference-only draft enables Send. Before dispatch, active references are
-  appended after visible text and ordinary references are serialized with the
-  canonical relative or absolute paths and existing whitespace quoting.
-  Pasted references are submitted as structured attachments so the main
-  process can choose visual input or the same path fallback from the exact
-  model capability. Inline large-paste references are resolved in the visible
-  draft instead of being appended or sent as duplicate attachments.
-  Successful dispatch clears both; failed or rejected dispatch retains both.
-  References are session-scoped and scratch references survive a workspace
-  switch while their owning session remains available. Workspace `@` chips
-  are relative to the project that produced them and are removed from the
-  draft, sentinels included, when the workspace changes.
-- When an image reference is active, Composer shows one compact live status
-  line. It names visual transport for a model whose pi-ai `input` includes
-  `image`, and names the file-path fallback for unknown/non-vision models.
-  The status is informational, keyboard-safe, and never relies on color alone.
-- A native file-system drop over the Composer prevents the browser's default
-  file-open behavior and shows the same accent target outline for the whole
-  shell. Regular files are read through the existing bounded paste bridge and
-  become removable leaf-name chips in drop order. A dropped folder is not
-  traversed or copied; its complete native path is inserted at the caret using
-  the literal `@<path>/` directory form so the path remains visible; directory
-  tokens without spaces can continue into `@` completion. Mixed file/folder
-  drops preserve their order, and the draft/focus/caret are retained across the
-  asynchronous file save.
-- Accepted dispatch retains an in-memory, session/turn-scoped copy of the
-  visible text and structured references only while unanswered smart Stop can
-  undo the send. That undo restores the original chip order and labels; it
-  never parses serialized `@path` text. Once reply content begins, abort keeps
-  the partial transcript and restores no draft.
-- After a successful send, the user bubble parses those serialized `@path`
-  tokens back into composer-matching leaf-name chips for display only. The
-  persisted message and model context stay canonical `@path` text. Clicking a
-  chip completes the reference through `pi-desktop/fs/resolveRef`, which
-  searches the whole open project — its group's folders, primary first
-  (ADR 0263) — and then opens where it resolved: a project file in the bundled
-  `pi.file-manager` work-panel view (the host `file:` tab when that view is not
-  available), a session-scratch or attachment file in the host `file:` tab, and
-  a `.html`/`.htm` page of the project's primary folder in the side browser,
-  because the side browser is rooted at that folder. The address handed to
-  the work panel follows the folder that answered: a file of the primary folder
-  travels as a project-relative path, a file of a sibling folder of the same
-  project as an absolute one, exactly as a scratch or attachment file does. A
-  chip whose reference matches nothing opens nothing and reports itself; the OS
-  default application is no longer what this click does, though that action
-  stays reachable from the file view's own context menu.
-- The same destination rule governs every other surface of the transcript that
-  names a file, because one opener serves them all: clicking the file path in a
-  tool row's summary (Read, Write, Edit, fetch) and clicking a path in a tool
-  result's file or match list both complete the reference the same way and open
-  where it resolved (ADR 0262). A tool surface therefore picks no destination of
-  its own, and a reference it cannot resolve reports itself instead of opening a
-  panel.
+### 8a.4 IME（第一规范IME规则）
 
-### 8a.3 Keyboard while open
+- 所有自动完成按键处理均位于标准防护装置后面
+  （`isComposing || keyCode === 229`）。
+- 在主动合成期间，触发检测器既不打开、更新，
+  也不关闭菜单；状态重新评估 `compositionend`。
+- 输入确认 IME 候选者从不发送且从不接受菜单
+  项目；候选导航期间的 ↑/↓ 属于 IME。
 
-- ↑/↓ move the highlight with wraparound; Home/End are left to the textarea.
-- Enter / Tab accept the highlighted item; Alt+Enter uses active-turn steering
-  instead of accepting a suggestion. Enter and Cmd/Ctrl+Enter never send
-  while the menu has a highlighted item (this precedes the Enter-to-send setting).
-  otherwise keeps its behavior).
-- Escape closes only the menu — it takes precedence over the composer's
-  "clear input or blur" Escape and must not propagate to overlay handlers.
-- Any other typing re-filters in place; zero matches behaves as closed.
+### 8a.5 关闭和聚焦规则
 
-### 8a.4 IME (first normative IME rules)
+- 关闭：鼠标按下之外、文本区域模糊、删除过去的触发器
+  字符、会话或工作区切换，接受项目（`@dir/` 除外）
+  延续，这使菜单在更深层次的查询上保持打开状态）。
+- 在菜单的整个生命周期中焦点保持在文本区域（输入保留
+覆盖）;菜单永远不会成为焦点陷阱，也不会抢走插入符号。
 
-- All autocomplete key handling sits behind the standard guard
-  (`isComposing || keyCode === 229`).
-- During active composition the trigger detector neither opens, updates,
-  nor closes the menu; state re-evaluates on `compositionend`.
-- Enter that confirms an IME candidate never sends and never accepts a menu
-  item; ↑/↓ during candidate navigation belong to the IME.
+## 9. 滚动行为
 
-### 8a.5 Close and focus rules
+### 9. 1 脚本滚动
 
-- Close on: outside mousedown, textarea blur, deleting past the trigger
-  character, session or workspace switch, accepting an item (except `@dir/`
-  continuation, which keeps the menu open on the deeper query).
-- Focus stays in the textarea for the menu's whole lifecycle (input-retained
-  overlay); the menu is never a focus trap and never steals the caret.
+- 默认：固定时在流中自动滚动到新内容的底部
+- 第一次向上滚动会暂停自动滚动并显示
+  “↓滚动到底部”按钮；排队流或调整大小跟随工作不得
+  扭转该运动
+- 固定的转录在内容或视口尺寸变化的同一帧内重新贴底，绝不延后一帧。
+  这包括输入框因多行草稿而变高：底部预留是转录内容上的 padding，
+  因此按 border-box 观察内容，让最新回合随输入框一起上移，而不是
+  滑到输入框后面（D287）。
+- 用户发送/重试/重新生成：重新固定，隐藏跳转控件，并将最新内容放置在布局阶段，以便新的回合可见，而无需历史记录顶部的闪烁；后续的持久化行和流式传输行继续遵循底部
+- 滚动到底部按钮：位置固定在转录区域的右下角，偏移 12px
+- 向上滚动释放跟随模式后按钮立即出现
+- 单击按钮：滚动到底部，恢复自动滚动
+- 按钮在底部时消失
+- 展开后的委托运行过程的 `.subagent-run-rows` 滚动区独立使用同一契约（D302）：
+  展开时钉在最新输出，钉住时新的嵌套行把视口留在底部；第一次向上手势暂停跟随
+  并显示嵌套的「回到最新」控件；布局夹持或程序性的 follow `scrollTo` 不会解除
+  跟随。该滚动区关闭原生 overflow anchoring。
 
-## 9. Scroll behavior
+### 9. 1a 侧边栏项目路径和打开文件夹
 
-### 9.1 Transcript scrolling
+- 悬停或聚焦保留的项目标题会显示完整的绝对路径。
+- 截断的项目名称在行中仍然可见；完整路径是
+  仅 tooltip/accessible-description 并且从不强制水平滚动。
+- 右键单击项目行或打开其溢出菜单会显示 **Open
+  文件夹**作为项目操作。对话溢出不再带有该内容
+  行动。
+- 选择**打开文件夹**打开系统文件中的项目目录
+  管理器而不更改活动会话记录。
 
-- Default: auto-scroll to bottom on new content during stream while pinned
-- The first upward scroll **gesture** (wheel / trackpad / touch / scrollbar /
-  keyboard) pauses auto-scroll and shows the "↓ Scroll to bottom" button;
-  queued stream or resize follow work must not reverse that movement
-- Programmatic follow scrolling and layout-driven clamps never release follow:
-  a scroll event with no preceding user input (for example a scrollTop clamp
-  when the composer collapses after send or an indicator row unmounts) is
-  treated as layout noise and re-baselined instead of being mistaken for a
-  user scrolling up
-- A pinned transcript re-pins in the same frame the content or the viewport
-  changes size, never one frame later. That includes the composer growing under
-  a multi-line draft: the bottom reserve is padding on the transcript content, so
-  the content is observed on its border box and the newest turn moves up with
-  the composer instead of sliding behind it (D287).
-- A manual disclosure — a tool, thinking or activity title, a delegate's brief
-  toggle, or an error-detail toggle — holds the reading position of the scroller
-  that owns it (issue #324). The title is handed to that scroller before the
-  expansion state changes, follow mode is left, and the scroller restores the
-  title's viewport offset from its own resize observer for every frame of the
-  height change, so an animated activity group cannot drag the clicked title out
-  of view. A scroller nested inside another one (the delegate run dock, D302)
-  holds its own position and passes the hold outward, because growing it grows
-  the outer content too.
-- Leaving follow for a disclosure is not a re-pin: after a toggle the transcript
-  stays where the reader put it, with the jump-to-latest control visible, until
-  real scroll input, that control, a new turn or a navigation releases the hold.
-  There is no delayed "take the bottom back" correction (D430).
-- Scroll input is attributed to the scroller that can consume it. A press on a
-  row, a control or an editable field is an ordinary click rather than the start
-  of a scroll; a keystroke inside a text field belongs to that field; and input a
-  nested scroller consumes is not the outer scroller's gesture. Arrow keys still
-  scroll and Space still activates a focused title.
-- User send / retry / regenerate: re-pins, hides the jump control, and positions the latest content in the layout phase so the new turn is visible without a top-of-history flash; subsequent persisted and streamed rows continue to follow the bottom
-- Scroll-to-bottom button: position fixed at bottom-right of transcript area, offset 12px
-- Button appears as soon as upward scrolling releases follow mode
-- Click button: scrolls to bottom, resumes auto-scroll
-- Button disappears when at bottom
-- The subagent task dock uses the same single-body scroll owner as the work
-  panel. It renders the task description followed by the delegate's live
-  thinking, tool, and answer rows in normal content flow; it does not mount a
-  nested `.subagent-run-rows` workflow scrollbar. While the panel is pinned,
-  new process rows stay in view; a real upward gesture pauses follow and shows
-  the standard jump-to-latest control. This keeps the process readable without
-  a second scrollbar or an empty tail.
-- Clicking a delegation topology node toggles an inset grouped side sheet in the
-  right-side work-panel dock instead of expanding the transcript. Clicking the
-  selected node again closes the side sheet; selecting another node replaces
-  the current detail in place. The dock has
-  a sticky identity header (avatar, name, and model caption on the left; status
-  capsule and elapsed time trailing on the same row), the Task call's selectable description as a full-width grouped
-  card under a Task section label, capped at four lines with an inline Show
-  more / Show less control for longer tasks, and its live process under an
-  Activity section on one subtle vertical timeline; it does not render separate
-  details, output, or workflow tabs. At the minimum panel width, long commands,
-  paths, and tool summaries remain contained by the dock instead of expanding
-  the side sheet past the client area.
-  Selecting another node replaces the task in place, closing it restores the
-  prior resource view when present, and switching sessions or routes hides the
-  selection. `Cmd/Ctrl + J` hides the whole dock.
+### 9.1c 侧边栏行状态与操作
 
-### 9.1a Sidebar project path and open folder
+- 项目标题与项目、置顶、独立会话行共享整行悬停背景、圆角和过渡。
+  标题按钮透明，不叠加内层背景；已选中会话在悬停时保持选中背景。
+- 当前工作区仅通过项目圆点表达，不再使用另一份选中背景。折叠选中会话
+  的分组、离开聊天页或没有选中会话，都不会让项目标题成为选中导航项。
+- 键盘焦点保留独立轮廓；新建和更多操作按钮保留局部悬停反馈；拖拽目标
+  提示优先于普通悬停背景。
+- 窗口失焦时释放悬停背景和操作显露，不清除当前会话选中背景。
 
-- Hovering or focusing a retained project title shows the full absolute path.
-- The truncated project name remains visible in the row; the full path is
-  tooltip/accessible-description only and never forces horizontal scroll.
-- Right-clicking a project row or opening its overflow menu exposes **Open
-  folder** as a project action, along with the project management actions. It
-  does not expose project activation; click the directory row to activate it.
-  Conversation overflow no longer carries the folder action.
-- Choosing **Open folder** opens the project directory in the system file
-  manager without changing the active session transcript.
+### 9. 2 侧边栏滚动
 
-### 9.1b Sidebar session hover card
+- 独立的会话主体有五个紧凑的行和卷轴
+  当存在附加会话时在内部。
+- 保留的项目组占据剩余的侧边栏高度并滚动
+  单独的区域。这两个区域都独立于页脚和主要区域
+  导航。
+- 侧边栏没有水平滚动
+- 滚动指示器使用平台的微妙覆盖处理，无需
+  改变任一区域的宽度。
 
-- Hovering or focusing a session row reveals a multi-line hover card after
-  the same 500ms delay used by the project path tooltip; the card never
-  anchors to a torn-down row.
-- The card surfaces only key metadata, in this order, top to bottom: title;
-  a Session task chip when the session was created by another session; the
-  mode/permission chip; live status; collaboration details when present;
-  the readable model display name (falling back to the provider's readable
-  name); workspace name and branch on one row; and **Updated {{when}}**
-  without seconds. Temporary/scratch sessions show the localized
-  "Temporary" / "临时对话" placeholder instead of a workspace name. The
-  card does not show the session UUID, a Local task chip, a separate
-  Provider/Model label pair, or the collaboration poll timestamp.
-- For a session with host-owned collaboration activity, the card adds a
-  bounded collaboration section after the chips: creator/source session
-  when present (title, not UUID), current task preview, up to two recent
-  exchanges with direction, and terminal result. Created-session
-  references remain keyboard-navigable buttons (at most eight). It may
-  show a live `running` or `waiting_permission` state, but never loads the
-  complete transcript or exposes message content beyond the host's bounded
-  preview. Completion and failure results are derived from the durable target
-  turn and remain visible after reload.
-- Before showing a project session card, the renderer re-reads the active
-  workspace through the existing project-read operation. This keeps the Git
-  branch current after an external checkout without activating a project or
-  changing the selected conversation. If the read fails, the last cached
-  branch is used.
-- The card is rendered through a portal at `document.body`, never widens
-  beyond 320px, and never causes horizontal scroll on the underlying row. It is
-  interactive only through its own session links (real buttons with an
-  accessible open-session name); the rest of the card is not a control, so a
-  click on the card's background never leaks into the row behind it.
-- The session row does not set a native `title` attribute. The hover card is
-  the only full-title surface, so the browser tooltip never stacks on the
-  card.
-- The card cancels on pointer leave, focus blur, scroll (any scroll
-  container), resize, and the moment a context menu opens.
+### 9. 3 设置滚动
 
-### 9.1c Session row hover and row actions
+- 设置内容在主区域内独立滚动
+- 左侧导航（设置部分）是粘性的，不滚动
 
-- A session row and a project header are each one click target. Their
-  hover-revealed actions (the row overflow control, the header's add and menu
-  controls) are inert while hidden: the space they occupy before they appear
-  never swallows a click that belonged to the row. A click in that space opens
-  the conversation, or activates and toggles the project group, exactly as a
-  click on the title does; a no-hover pointer gets the controls revealed so it
-  never meets a hidden target.
-- Project headers and conversation rows (project, pinned and standalone) use
-  the same full-row hover surface, radius and transition. The title button is
-  transparent; hover never draws a nested title tile. The selected conversation
-  keeps its selected fill on hover. A current workspace uses only the project
-  dot, not another selected background; folding a selected child or leaving the
-  chat page never promotes its project to a selected navigation item.
-- Keyboard focus keeps its outline independently of selection. The add and
-  overflow buttons retain local hover feedback, and drag-target paint takes
-  precedence over ordinary header hover.
-- Hover paint belongs to the pointer that caused it. When the window loses
-  focus the row and the project header drop their hover background and their
-  revealed actions hide, so nothing is left lit or armed after the window
-  returns; moving the pointer over the row again re-arms it.
-- Revealed actions become clickable the moment the row is hovered or focused,
-  and remain reachable through keyboard focus (`:focus-within` /
-  `:focus-visible`) without a pointer. A spelled-out control never triggers the
-  row or header underneath it as well.
-- The hover card's own navigation controls are the only interactive surfaces
-  inside the card; the row keeps receiving pointer events everywhere else on
-  it.
+## 10. 减少运动
 
+### 10. 1 政策
 
-### 9.2 Sidebar scrolling
+所有动画都必须遵循 `prefers-reduced-motion: reduce`：
 
-- The standalone Sessions body is capped at five compact rows and scrolls
-  internally when additional sessions exist.
-- Retained project groups occupy the remaining sidebar height and scroll in a
-  separate region. Both regions stay independent from the footer and primary
-  navigation.
-- No horizontal scroll in sidebar
-- Scroll indicators use the platform's subtle overlay treatment without
-  changing either region's width. The 6px thumb is transparent at rest and
-  appears when the owning list is hovered or focused; dragging keeps it
-  visible until the interaction ends.
+1. **抑制：**流脉冲、expand/collapse 转换、下拉幻灯片、悬停颜色转换
+2. **保持（即时）：**状态变化仍然发生（卡状态变化，加载→完成）但没有过渡持续时间
+3. **切勿移除：** 对焦环、状态颜色、布局定位 - 这些是结构性的，而不是装饰性的
 
-### 9.3 Settings scrolling
-
-- Settings content scrolls independently within main area
-- Left nav (settings sections) is sticky, does not scroll
-
-## 10. Reduced motion
-
-### 10.1 Policy
-
-All animations must respect `prefers-reduced-motion: reduce`:
-
-1. **Suppress:** streaming pulse, expand/collapse transitions, dropdown slide, hover color transitions
-2. **Keep (instant):** state changes still occur (card status changes, loading → complete) but with no transition duration
-3. **Never remove:** focus rings, status colors, layout positioning — these are structural, not decorative
-
-### 10.2 Implementation
+### 10. 2 实施
 
 ```css
 @media (prefers-reduced-motion: reduce) {
@@ -1467,94 +1092,79 @@ All animations must respect `prefers-reduced-motion: reduce`:
 }
 ```
 
-This does not prevent state changes — it makes them instant.
+这并不能阻止状态改变——它使状态改变变得即时。
 
-### 10.3 Affected patterns from this doc
+### 10. 3 本文档中受影响的模式
 
-| Pattern | Normal | Reduced motion |
+| 图案 | 正常 | 减少运动 |
 |---|---|---|
-| Streaming pulse | accent pulse on left border | static accent border (no pulse) |
-| Tool card expand/collapse | 200ms transition | instant toggle |
-| Hover state transition | 150ms background change | instant color change |
-| Startup splash | Brand splash + progress, min dwell then fade out | Instant static splash, no bar motion, instant reveal |
-| Dialog / search enter | overlay-in + surface-in via motion tokens | Near-zero duration enter |
-| Scroll-to-bottom button fade-in | 150ms opacity | instant appear |
-| Toast slide-in | 200ms slide | instant appear |
-| Modal/dialog enter | 300ms fade+scale | instant appear |
-| Notification popover enter | menu-scale/fade token | instant appear |
+| 流脉冲 | 左边框上的重音脉冲 | 静态重音边框（无脉冲） |
+| 工具卡 expand/collapse | 200ms 过渡 | 即时切换 |
+| 悬停状态转换 | 150ms背景变化 | 瞬间变色 |
+| 启动水花 | 品牌启动 + 进度，最短停留时间然后淡出 | 即时静态飞溅，无条形运动，即时显示 |
+| 对话框/搜索输入 | 通过运动令牌覆盖-in + 表面-in | 接近零持续时间输入 |
+| 滚动到底部按钮淡入 | 150ms 不透明度 | 即时出现 |
+| Toast滑入式 | 200毫秒幻灯片 | 即时出现 |
+| Modal/dialog 输入 | 300ms 淡入淡出+缩放 | 即时出现 |
+| 通知弹出框输入 | menu-scale/fade 代币 | 即时出现 |
 
-### 10.4 Programmatic scrolling
+### 10. 4 编程滚动
 
-- Session activation uses an immediate layout-phase bottom position so the
-  first visible frame is already stable at the latest record.
-- Jump-to-latest and minimap navigation use smooth scrolling only when the OS
-  has not requested reduced motion.
-- Turn-start following uses an immediate layout-phase update and then a
-  frame-coalesced instant follow; it does not start overlapping smooth-scroll
-  animations for token groups.
-- Manual upward movement cancels a queued pinned-follow frame before it can
-  restore the previous bottom position. Follow remains released across content
-  growth until the viewport is scrolled down within 48px of the bottom or an
-  explicit turn-start / jump-to-latest action re-pins it.
-- Released-follow detection is gated on a recent user scroll input. Native
-  scroll events from a follow `scrollTo` whose position was later clamped by
-  layout changes (composer height, indicator rows) arrive after the fact and
-  look like an upward gesture; because they have no preceding input they are
-  ignored and follow mode is preserved.
-- Resize observers never synchronously measure every transcript row from their
-  callback. The one synchronous action they may take is the bottom re-pin of a
-  pinned, visible transcript (a single `scrollTo`), because a frame requested
-  from inside the callback lands after the current frame has already painted
-  the grown content unpinned (D287).
+- 会话激活使用立即布局阶段底部位置，因此
+  第一个可见帧已经稳定在最新记录。
+- 跳转到最新和小地图导航仅在操作系统时才使用平滑滚动
+  没有请求减少运动。
+- 启动跟随使用立即布局阶段更新，然后
+帧合并即时跟随；它不会开始重叠平滑滚动
+  令牌组的动画。
+- 手动向上移动会先取消排队的固定跟随帧
+  恢复之前的底部位置。关注跨内容发布的内容
+  增长，直到视口向下滚动到底部或底部 48px 以内
+  显式的启动/跳转到最新操作会重新固定它。
+- Resize 观察者绝不在回调中同步测量每一行转录。回调里唯一允许的
+  同步动作是对固定且可见的转录做一次贴底（单个 `scrollTo`），因为
+  在回调中申请的帧会落在当前帧之后，而当前帧已经把变高的内容以未
+  贴底的状态绘制出来了（D287）。
 
-## 11. Acceptance criteria
+## 11. 验收标准
 
-1. All keyboard shortcuts in §1 are functional and do not conflict with system shortcuts
-2. Enter sends when Enter-to-send is on; when it is off, Cmd/Ctrl+Enter sends and Enter/Shift+Enter insert a newline
-3. Abort immediately cancels running turn and pending permissions without confirmation dialog
-3a. Send stays enabled while running, queues prompts per session, and Send now
-    finishes the current boundary before releasing its prioritized prompt
-4. Long content (>50 lines for messages, >10 for args, >20 for results) is collapsed by default with expand link
-5. Tool results that were cut short show a truncation marker or chip per D306; a filled Read window of a longer file does not
-6. Permission interrupt inserts inline card, disables composer, shows countdown, and re-enables after resolution
-7. Toasts used for transient background operations; inline errors used for context-specific failures
-8. Focus returns to composer after session switch, message send, permission resolution, and abort
-9. Background message, tool, completion, and permission events never change
-   the active session/project/page or keyboard focus; concurrent permission
-   requests remain independently actionable in their originating transcripts,
-   and background artifacts update only their session's retained work-panel
-   context
-9a. Creating a new session or switching to a non-running session returns the
-    composer to its idle Send state even while another session is still
-    streaming; the destination session's own run state alone decides the
-    send/abort button. New Task reveals the empty destination on the first
-    frame rather than leaving the previous transcript visible until host IO
-    completes.
-10. Focus rings visible on `focus-visible` only, 2px accent offset 2px
-11. Command palette traps focus; Escape returns to previous focus
-12. All animations respect `prefers-reduced-motion: reduce` — state changes are instant, no decorative motion
-13. Project/session rows support non-destructive pin/archive, independent
-    project collapse, project drag/manual reorder, and the documented
-    user-facing sort modes
-14. Shell chrome does not create accidental text selections, while editable
-    controls and transcript/code/tool content remain selectable and copyable
-15. Retained project tabs survive restart; activating one changes the selected
-    shell workspace without redirecting background session tool roots
-16. Project groups can be reordered by dragging the title or with
-    ArrowUp/ArrowDown on that title; the normalized-path order survives a
-    renderer restart and does not change the host workspace identity
-17. Completed and failed turns appear exactly once in the durable inbox;
-    aborted turns never appear
-18. All/Unread, mark-all-read, clear, row activation, Escape/focus restore, and
-    arrow/Home/End keyboard navigation behave as documented in §1.7
-19. Native task notifications appear only while the main window is unfocused;
-    interactive prompt notifications may alert for a focused background session.
-    Activation focuses the window and opens the corresponding session
-20. Streamed message updates stay within the chat render boundary; shell
-    navigation, composer, completed rows, and work-panel content do not rerender
-    solely because the current assistant message appended content
-21. The work panel opens and collapses inside the fixed client area; the inner
-    divider follows the shared budget while MainChat keeps its 450px minimum,
-    the expanded sidebar yields at the threshold and returns when the panel
-    closes, and divider cancellation restores the prior panel width
-    (ADR 0033 / ADR 0151 / ADR 0238)
+1. §1中的所有键盘快捷键均有效且不与系统快捷键冲突
+2. 开启回车发送时 Enter 发送；关闭后 Cmd/Ctrl+Enter 发送，Enter/Shift+Enter 在输入框中插入换行符
+3. Abort 立即取消正在运行的回合和挂起的权限，无需确认对话框
+4.长内容（>50行消息，>10行参数，>20行结果）默认通过展开链接折叠
+5. 被切断的工具结果按 D306 显示截断标记或芯片；更长文件上已填满的 Read 窗口不显示
+6.权限中断插入内联卡，禁用composer，显示倒计时，解决后重新启用
+7. 用于短暂后台操作的Toast；用于特定于上下文的失败的内联错误
+8. 会话切换、消息发送、权限解析、中止后焦点返回到composer
+9.后台消息、工具、完成、权限事件永不改变
+   活动的 session/project/page 或键盘焦点；并发许可
+   请求在其原始记录中保持独立可操作性，
+   和后台工件仅更新其会话保留的工作面板
+   上下文
+9a.创建新会话或切换到非运行会话返回
+    即使另一个会话仍然处于空闲状态，composer 也会恢复到其空闲发送状态
+流式传输；目标会话自己的运行状态单独决定
+    send/abort 按钮
+10. 聚焦环仅在 `focus-visible` 上可见，2px 重音偏移 2px
+11.命令面板捕获焦点；逃脱回到之前的焦点
+12. 所有动画均遵循 `prefers-reduced-motion: reduce` — 状态变化是即时的，没有装饰性动作
+13.Project/session行支持无损pin/archive，独立
+    项目折叠、项目拖动/手动重排，以及记录的面向用户的排序模式
+14. Shell chrome 不会创建意外的文本选择，同时可编辑
+    控件和 transcript/code/tool 内容保持可选择和可复制
+15. 保留的项目选项卡在重启后仍然有效；激活其中一项会更改所选内容
+    不重定向后台会话工具根的 shell 工作区
+16. 项目组可通过拖动标题或标题上的 `ArrowUp`/`ArrowDown` 重排；
+    规范化路径顺序会跨渲染器重启保留，且不会改变主机工作区身份
+17. 已完成和失败的回合在持久收件箱中仅出现一次；
+    中止的回合永远不会出现
+18. All/Unread、标记为全读、清除、行激活、Escape/focus 恢复以及
+    arrow/Home/End 键盘导航的行为如 §1.7 中所述
+19. 本机任务通知仅在主窗口未聚焦。交互询问通知只抑制聚焦的当前会话，
+    可以为聚焦的其他会话出现；激活通知会聚焦窗口并打开相应的会话
+20. 流式消息更新保持在聊天渲染边界内；外壳
+    导航、编辑器、已完成的行和工作面板内容不会重新呈现
+    仅仅因为当前助手消息附加了内容
+21. 本机窗口边缘调整大小通过回流更改 MainChat，而不压缩
+    固定工作面板；分隔符提交更新提交的首选宽度，
+而分隔线取消恢复之前的宽度（ADR 0033）

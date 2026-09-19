@@ -1,53 +1,53 @@
-# Open Questions
+# 开放式问题
 
-> Updated for baseline `0.4.16` (custom global UI font).
-> Frozen decisions live in [decisions-log.md](decisions-log.md); resolved
-> items move there instead of lingering here.
+> 已按基线 `0.4.16`（自定义全局界面字体）更新。
+> 冻结的决策位于 [decisions-log.md](/spec/08-meta/decisions-log) 中；已解决
+> 物品会移动到那里而不是停留在这里。
 
-## Recently resolved (see decisions-log)
+## 最近解决（参见决策日志）
 
-- Sidecar packaging format → `ELECTRON_RUN_AS_NODE` on the Electron binary (D008)
-- Code signing / notarization operational setup → dual lanes + release runbook (D072)
-- App icon / brand mark v1 → canonical `build/icon_1024.png` with derived ICNS
-  (D079); renderer identity and shared `BrandLogo` usage → D094
-- zh-CN locale timeline → zh-CN strings ship alongside English and are
-  asserted by UI e2e scenarios (English remains the source language)
-- Application update ownership and delivery modes → D120 / ADR 0022
+- Sidecar 打包格式 → Electron 二进制文件上的 `ELECTRON_RUN_AS_NODE` (D008)
+- 代码签名/公证操作设置 → 双通道 + 发布运行手册 (D072)
+- 应用程序图标/品牌标记 v1 → 具有派生 ICNS 的规范 `build/icon_1024.png`
+  （D079）；渲染器身份和共享 `BrandLogo` 用法 → D094
+- zh-CN 语言环境时间轴 → zh-CN 字符串与英语一起提供，并且是
+  由 UI e2e 场景断言（英语仍然是源语言）
+- 应用程序更新所有权和交付模式 → D120 / ADR 0022
 
-## Still open
+## 仍然开放
 
-### Release / distribution (post-first-release)
-1. When to make the release feed public or replace it with an authenticated
-   endpoint without shipping a client credential
-2. Distribution beyond DMG (Homebrew cask? direct download page?)
-3. Signed Windows/macOS in-app installation, Linux publishing, rollback, and
-   stable/prerelease rollout policy
+### 发布/分发（首次发布后）
+1. 何时公开发布源或将其替换为经过身份验证的
+   端点无需传送客户端凭证
+2. DMG之外的分发（Homebrew cask？直接下载页面？）
+3. 签名Windows/macOS应用内安装、Linux发布、回滚和
+   stable/prerelease 推出政策
 
-### Marketplace (post-MVP)
-1. Official marketplace domain and provider IDs
-2. Whether third-party sources are enabled by default
-3. Private source auth: token header vs mTLS
-4. Whether `.zip` remains accepted beside `.piplug`
+### 市场（后 MVP）
+1. 官方市场域名和提供商 ID
+2. 是否默认启用第三方源
+3. 私有源身份验证：令牌标头与 mTLS
+4. `.zip` 是否与 `.piplug` 一起仍然被接受
 
-### Plugin advanced policy
-1. When to enforce strict separate-process plugin runtime (ADR 0008 target)
-2. Whether future plugin settings may include secret fields under special storage
-3. Optional “keep data on uninstall” UX copy/defaults beyond hard default delete
-4. Whether `ui.panel` contribution implies the panel permission or must declare it
-   (tracked from 07-plugins/02-plugin-manifest-schema)
+### 插件高级策略
+1. 何时强制执行严格的独立进程插件运行时（ADR 0008 目标）
+2. 未来的插件设置是否可能包含特殊存储下的秘密字段
+3. 除了硬默认删除之外，可选的“卸载时保留数据”UX copy/defaults
+4. `ui.panel` 贡献是否暗示获得小组许可还是必须声明
+   （从 07-plugins/02-plugin-manifest-schema 追踪）
 
-### Provider / model
-1. Remote catalog distribution channel (signed app update vs dedicated catalog feed)
-2. Whether to ship large multi-vendor bundled catalog or slim + refresh-on-demand
-3. Azure deployment-name UX details vs raw model id
-4. Bedrock region/profile advanced UI beyond aws_sdk_default in MVP
+### 提供商/模型
+1. 远程目录分发渠道（签名应用程序更新与专用目录源）
+2. 是否发布大型多供应商捆绑目录或精简 + 按需刷新
+3. Azure 部署名称 UX 详细信息与原始模型 ID
+4. MVP 中超越 aws_sdk_default 的基础 region/profile 高级 UI
 
-### Tooling
-1. JS linter choice (biome vs oxlint) — style tokens are already enforced by
-   `scripts/check-style-tokens.mjs`; a general linter remains unpicked
+### 工具
+1. JS linter 选择（biome vs oxlint）——样式标记已经由
+   `scripts/check-style-tokens.mjs`；一般的 linter 仍未被挑选
 
-## Decision rules
+## 决策规则
 
-- Frozen decisions go to `decisions-log.md` (D-entries)
-- Architecture boundary changes require an ADR
-- Non-blocking polish stays here until implementation nears
+- 冻结的决定转到 `decisions-log.md`（D 条目）
+- 架构边界更改需要 ADR
+- 非阻塞抛光保留在这里，直到实施临近

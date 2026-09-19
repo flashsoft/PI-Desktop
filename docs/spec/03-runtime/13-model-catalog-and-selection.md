@@ -1,172 +1,89 @@
-# 13. Model Catalog & Selection
+# 13. 模型目录及选择
 
-## 1. Product rule
+## 1. 产品规则
 
-Users must be able to use **market-available models broadly**, not only a curated demo subset.
+用户必须能够广泛使用**市场上可用的模型**，而不仅仅是精选的演示子集。
 
-Therefore:
+因此：
 
-1. Catalog is refreshable
-2. Custom model IDs are always allowed
-3. OpenAI-compatible gateways are first-class
-4. Search is global across enabled providers
+1.目录可刷新
+2. 始终允许自定义模型 ID
+3.兼容OpenAI的网关是一流的
+4. 搜索是跨启用的提供商的全局搜索
 
-## 2. Selection UX
+## 2. 选择用户体验
 
-Model configuration is **discovery-first**: the AI service is the authority on
-which models it serves, so the service's own endpoint is asked first and
-models.dev is used only to enrich what came back. The bundled catalog is never
-presented as a browsable list of every published model — a deployment does not
-necessarily host everything its vendor publishes, and a key is not necessarily
-entitled to it.
+### 模型选择器字段
+- 搜索框
+- 提供商过滤器
+- 能力过滤器：工具/愿景/推理
+- 排序：最近/提供商/名称
 
-### Settings: one provider form
+### 设置：一个提供商表单
 
-`ProviderSetupDialog` is a single form, not a wizard:
+`ProviderSetupDialog` 是单页表单，不是向导。模型区列出服务返回的结果：
 
-- **Name**, **Base URL** and **API Key** are all on screen at once. An empty key
-  when editing means “keep the stored one”; `secretValue` is only sent when the
-  user typed something.
-- The models section lists what the service returned. `useProviderModels`
-  debounces edits by 600 ms, guards against out-of-order replies with a
-  monotonic request sequence, and needs no API key so local and no-auth
-  gateways still resolve. A saved provider paints its cached list immediately
-  and then replaces it with the live answer.
-- Filtering that list is client-side: it is a short live list, not a catalog, so
-  no host search is involved.
-- The list header has a checkbox that selects or clears every currently visible
-  row in one step, so a long service list does not have to be ticked one by one.
-  While a search filter is active, "all" means the matching rows only; models
-  already chosen outside the filter stay chosen. Newly added rows adopt
-  `bindingFromModelInfo` (or the custom-model defaults); existing bindings keep
-  their advanced overrides. The checkbox is checked when every visible row is
-  chosen, unchecked when none are, and indeterminate when the visible set is
-  mixed.
-- The same header has a Fetch list action that probes the service immediately,
-  skipping the 600 ms edit debounce and the cache-first paint. Existing rows
-  stay visible while it loads. Automatic discovery on credential edits is
-  unchanged. The control is disabled when no discoverable endpoint is ready,
-  while a probe is in flight, or while the form is saving. Idle-with-a-valid-URL
-  (the edit debounce) stays enabled so Fetch list can skip that window.
-- Context window, output limit and initial thinking levels come from
-  `bindingFromModelInfo` over the enriched record; per-model overrides live
-  behind a per-row **Advanced** disclosure. `publishedThinkingLevels` describes
-  the catalog baseline and seeds known-model bindings. The dialog always offers
-  the seven canonical levels, including for unknown or non-reasoning records,
-  and the runtime uses the binding's explicit set. A model that publishes no
-  level list and no level map but does claim reasoning still seeds
-  `low`/`medium`/`high`.
-- Limit values render through one shared compact formatter
-  (`formatCompactTokenCount`): up to two decimals at the `M` scale and one at
-  the `K` scale, trailing zeros dropped, and a `K` mantissa that would round up
-  to 1000 promoted to the `M` scale. Published windows on the 1M line therefore
-  stay distinguishable — 1000000 reads `1M`, 1048576 and 1050000 read `1.05M`,
-  1100000 reads `1.1M` — instead of collapsing into one rounded `1M`/`1.1M`, and
-  a limit the service never published reads as an em dash. The settings rows,
-  the Composer picker, the context inspector and the transcript all call this
-  one implementation, while usage counters keep a real `0` instead of the dash.
-- When an explicit binding enables `xhigh` or `max` without a catalog wire
-  mapping, the runtime sends that canonical value through to the adapter rather
-  than letting the adapter clamp it to `high`. Existing non-null catalog
-  mappings remain authoritative for providers that translate the level.
-- The wire API is derived from the provider's published `npm` adapter
-  (`apiStyleForAdapter`) and is only editable inside **Advanced**.
-- A custom model ID is always accepted, so a gateway without a `/models` route
-  stays usable.
+- 列表标题旁的全选复选框一次勾选或取消当前可见行。搜索过滤时，“全部”只作用于匹配行；过滤外已选模型保持不变。已选绑定保留高级覆盖；新勾选的行采用 `bindingFromModelInfo` 或自定义模型默认值。可见行全部选中时为勾选，全部未选时为空，部分选中时为不确定态。
+- 同一标题旁的「获取列表」会立刻向服务探测，跳过 600 ms 编辑防抖和先画缓存。没有可探测端点、正在探测或表单保存时不可用；空闲但端点已有效（防抖等待）时仍可点，以便跳过该窗口。加载期间保留现有行。凭据变更触发的自动发现不变。
 
-### Settings: selected model order
+### 设置：已选模型顺序
 
-The AI service and OAuth vendor-account editors share the selected-model pane.
-Each selected row has a dedicated reorder handle: drag it before or after
-another visible row, or focus it and press the Up or Down arrow key to move it
-past the neighboring visible row. Reordering is disabled while the form is
-busy or fewer than two selected rows are visible. Dragging text still selects
-it for copying; checkbox, Advanced, and Remove actions keep their existing
-behavior and do not start a reorder.
+AI 服务和 OAuth 厂商账户编辑器共用已选模型面板。每个已选行都有独立的排序手柄：
+可拖到另一个可见行之前或之后，也可让手柄获得焦点，按上、下方向键越过相邻的可见行。
+表单忙碌或可见已选行不足两个时禁用排序。拖选文本仍用于复制；复选框、高级和移除操作
+保持原有行为，不会开始排序。
 
-The complete `models` binding array owns the order. Filtering only hides rows:
-a move inserts the existing binding before or after the visible target in that
-complete array, preserving hidden bindings and their relative order. Model IDs,
-aliases, and advanced overrides travel with their bindings. A canceled drag or
-a drop outside a selected row does not change the draft.
+完整的 `models` 绑定数组决定顺序。过滤只隐藏行：移动时在完整数组中，将原绑定插入
+可见目标之前或之后，保留隐藏绑定及其相对顺序。模型 ID、别名和高级覆盖设置随绑定
+一起移动。取消拖动或在已选行之外释放，不会更改草稿。
 
-Saving persists the new order through the existing provider update flow, and
-reopening either editor displays it again. Canceling the editor discards its
-unsaved order. The provider's compatibility `defaultModelId` still mirrors the
-first binding on save, so moving a model to the head changes that provider
-default. When the edited service or account is the app's default provider,
-saving also synchronizes the app-level default model to that first binding,
-as the existing save flow does. The app default is unchanged when editing
-another provider, and an explicitly bound session keeps its stored model
-choice. No storage schema or IPC contract changes are required.
+保存通过现有提供商更新流程持久化新顺序，重新打开任一编辑器时会再次显示该顺序。
+取消编辑器会丢弃未保存的排序。提供商的兼容字段 `defaultModelId` 仍在保存时反映
+首个绑定，因此将模型移至首位会改变该提供商的默认模型。编辑的服务或账户是应用
+默认提供商时，保存还会按现有流程将应用级默认模型同步为首个绑定。编辑其他提供商
+不会改变应用默认值，明确绑定模型的会话也会保留其已存储的模型选择。无需修改存储
+结构或 IPC 合约。
 
-### Discovery precedence
+### 物品显示
+- 模型显示名称
+- 模型 ID
+- 提供商名称
+- 能力徽章
+- 可选的上下文窗口
+- 上限值与用量计数经同一个紧凑格式化函数（`formatCompactTokenCount`）渲染：
+  `M` 量级最多两位小数、`K` 量级一位小数，去掉末尾零；`K` 尾数若进位到 1000
+  则提升到 `M` 量级。1M 附近的已发布窗口因此保持可区分（1000000 显示 `1M`，
+  1048576 与 1050000 显示 `1.05M`，1100000 显示 `1.1M`），不会塌缩成同一个
+  `1M`/`1.1M`；服务未发布的上限显示为破折号，用量计数则保留真实的 `0`。
+  设置行、Composer 选择器、上下文检查器和聊天记录共用这一份实现。
 
-`providers.listModels` resolves in this order, and the order is load-bearing:
+### 子智能体编辑器
 
-1. The stored secret is resolved, so an edit needs no retyped key.
-2. `discoverProviderModels` asks the service (`/models` or the per-style
-   equivalent). A non-empty answer wins, is enriched per model through
-   `modelsDevCatalog.findModel`, is written back to the model cache, and is
-   reported as `source: "remote"`.
-3. Only if the endpoint published nothing usable —no route, an auth error, or an
-   empty list— does `modelsForProvider` supply the vendor's published models,
-   reported as `source: "catalog"` together with any discovery error so the UI
-   can say the service did not answer. This result is **not** cached, so a
-   catalog guess never becomes indistinguishable from a real probe.
-4. Last resort: the provider's configured model, `source: "fallback"`.
+子智能体新建/编辑表单复用 Composer 已提供的已配置、可运行模型（已启用且持有凭据，
+或 `authKind: none` 的提供商）。
+控件是锚定在触发器上的可搜索、按提供商分组的菜单，而不是原生 `<select>`：
+定义可以钉住任意已配置模型，列表因此可能长达数十行，
+只有锚定浮层能在自身内部滚动并接受过滤。沿用会话为空值，
+选项为按提供商显示名分组的 `vendorKey-or-name/modelId`，
+不再配置中的固定值仍作为额外行保留，以免编辑时被悄悄丢掉。
+每个选项都来自已配置的提供商目录，因此保存的值总能被解析；
+表单不提供手填模型 ID 的入口，当没有任何提供商提供可运行模型时，
+改为显示带操作按钮的空态（直接打开模型设置），而不是手填输入框。
+pin 中只有斜杠是结构性字符：提供商部分按归一化别名匹配，
+自定义端点的显示名可以包含空格，因此选择器与草稿校验共用同一个拆分函数，
+不会出现「选得到却存不下」的分歧。
+多个提供商使用通用或重复的厂商标识时，选项会改用唯一的提供商显示名；如果显示名也重复，
+则使用已存储的提供商 ID，确保每个已配置提供商都不会从选择器中消失。
+思考选择器提供沿用会话（空值）、不发送（do-not-send）以及七个规范档位；
+沿用会话保持会话级别，不发送持久化为 `thinkingLevel: omit`，不改写提供商适配器自己的默认值。
 
-An OAuth vendor account skips step 2 — it has no key to probe with, and pi-ai
-already knows which models the subscription allows.
+### 高级
+- “使用自定义模型 ID”
+- “刷新目录”
 
-The picker never dumps the raw host error into the model list. A failed probe
-with no rows shows a classified one-line summary (auth, missing list, rate
-limit, timeout, network, invalid response, or HTTP status) plus a short hint
-to add an ID manually. A failed probe that still has cached rows keeps those
-rows and shows the same summary as a compact banner.
+## 3. 最新模型
 
-### Subagent editor
-
-The Subagents create/edit sheet reuses the configured, runnable models the
-Composer already offers (enabled providers with a credential or `authKind:
-none`). The control is a searchable, provider-grouped menu anchored to its
-trigger rather than a native `<select>`: a definition may pin any configured
-model, so the list can run to dozens of rows, and only an anchored surface
-scrolls inside itself and accepts a filter. Inherit-session is the empty value,
-options are `vendorKey-or-name/modelId` grouped by provider display name, and a
-pin that is no longer configured stays as an extra row so an edit cannot
-silently drop it. Every option comes from the configured provider catalog, so a
-saved pin is always resolvable; the sheet deliberately offers no free-text
-model id, and when no provider has a runnable model it shows an empty state with
-an action that opens Models instead of a hand-typed field. Only the slash in a
-pin is structural: the provider half is matched by a normalized alias, and a
-custom endpoint's display name may contain spaces, so the picker and the draft
-check share one splitter and can never disagree about what is saveable. The
-thinking selector offers inherit-session (empty), do-not-send, and the
-seven canonical levels; inherit keeps the session level, while do-not-send
-leaves the provider adapter's own default untouched. When a generic or duplicate
-vendor key would be ambiguous, the option uses a unique provider display name;
-if the names also collide, it uses the stored provider id so no configured
-provider disappears from the picker.
-
-The sheet also offers an ordered **Fallback models** list using that same
-configured-model picker. Users can add, move up/down, or remove alternatives.
-Already-selected models are excluded from the add menu. Saved pins that become
-unavailable stay visible and removable; reopening or editing another field
-must not drop them. Clearing the list saves `fallbackModels: []`. Inherit-session
-remains a primary-only choice. The hint explains that alternatives run after
-model retries fail, completed tool results are kept, and Stop cancels the whole
-task. See runtime §5f and ADR subagent-model-fallback.
-
-### Advanced
-- “Use custom model ID”
-- “Refresh catalog”
-- per-provider wire API override
-- per-model context window, output limit and thinking-level overrides
-
-## 3. Recent models
-
-Persist recent selected model refs:
+保留最近选择的模型参考：
 
 ```ts
 type RecentModelRef = {
@@ -176,94 +93,77 @@ type RecentModelRef = {
 }
 ```
 
-Show top N in picker.
+在选择器中显示前 N 个。
 
-## 4. Session model binding
+## 4. 会话模型绑定
 
-Each session stores:
+每个会话存储：
 
 - `providerId`
 - `modelId`
-- `thinkingLevel` (`off|minimal|low|medium|high|xhigh|max|omit`)
+- `thinkingLevel`（`off|minimal|low|medium|high|xhigh|max|omit`）
 
-Changing model or thinking level mid-session affects subsequent turns only.
-The stored thinking preference survives restart; the effective request level
-is clamped against the selected model binding's enabled levels at execution
-time, except `omit`, which is preserved on a reasoning model and sends no
-thinking override. An empty binding or a binding containing only `off`
-resolves to `off`.
+在会话中改变模型或思维水平只会影响后续回合。
+存储的思维偏好在重启后仍然存在；有效请求级别
+在执行时对所选模型绑定的已启用档位钳位，但 `omit` 在推理模型上保留，
+且不发送思考覆盖。
 
-For a newly created session, the renderer resolves the selected (or app-default)
-model's `ModelBinding`. A reasoning model starts at that binding's
-`defaultThinkingLevel`, clamped onto the enabled levels. When the default is
-unset it falls back to the highest enabled level seeded from published
-`supportedThinkingLevels`. A non-reasoning or unknown model starts at `off`
-until the user enables a non-`off` level. This is a creation default only and
-never rewrites an existing session's stored choice.
+对于新创建的会话，渲染器会解析所选（或应用默认）模型的 `ModelBinding`。
+具有推理能力的模型始于该绑定的 `defaultThinkingLevel`，并钳位到已启用档位；
+当默认值未设置时，才回落到已发布 `supportedThinkingLevels` 中的最高已启用档。
+非推理模型或缺失的能力元数据从 `off` 开始。这是一个仅创建时的默认值，绝不会
+重写现有会话的存储选择。
 
-Unpinned sessions still advertise that inherited default model's reasoning
-capability on session list/get/create/fork/configure. Enrichment does not pin
-`providerId`/`modelId`. The Composer never treats a `supportsReasoning: false`
-or empty thinking-level snapshot as authoritative when the selected
-catalog/binding model exposes levels, so a mid-turn thinking or model pick
-cannot collapse the menu to Off-only.
+未固定的会话仍在 list/get/create/fork/configure 上展示该继承默认模型的
+推理能力；丰富步骤不会写入 `providerId`/`modelId`。当所选目录/绑定模型
+暴露了思考等级时，Composer 不得把 `supportsReasoning: false` 或空等级列表
+当作权威快照，因此回合中改档不会把菜单塌缩成只剩关闭思考。
 
-## 5. Capability warnings
+## 5. 能力警告
 
-If user selects model tagged without tools while in Agent mode:
+如果用户在 Agent 模式下选择不带工具标记的模型：
 
-- show non-blocking warning
-- do not hard-block (vendor tags may be incomplete)
+- 显示非阻塞警告
+- 不要硬阻止（供应商标签可能不完整）
 
-## 6. Refresh behavior
+## 6. 刷新行为
 
-The bundled `apps/desktop/resources/models.dev/api.json` snapshot is the
-startup baseline. It is refreshed by `scripts/release.mjs` before a release tag
-is created; application startup does not fetch or write a catalog. Settings
-invokes the Electron-only `providers.refreshModelCatalog` channel to refetch
-`https://models.dev/api.json`; a successful response replaces only the
-current process's in-memory models.dev catalog and never writes user data.
+随应用打包的 `apps/desktop/resources/models.dev/api.json` 快照是启动基线。
+`scripts/release.mjs` 在创建发布标签前更新该快照；应用启动不会请求或写入目录。
+设置页通过 Electron 专用的 `providers.refreshModelCatalog` 通道重新获取
+`https://models.dev/api.json`；成功响应只替换当前进程内存中的 models.dev
+目录，不会写入用户数据。
 
-Repeated metadata lookups use a bounded process-local cache keyed by the
-configured vendor key, base URL, and case-insensitive, trimmed model ID. Both
-matches and misses are cached; the original provider preference, alias
-matching, and candidate ranking remain unchanged. Replacing the catalog after
-a successful bundled load or Settings refresh invalidates the cache. A failed
-refresh preserves the previous catalog and its results. Session capability
-enrichment resolves a matching catalog record once per session and then applies
-the current provider/model binding and session defaults, so user overrides are
-never retained as stale cached capabilities. Refreshing a large session list
-must not repeat a full catalog scan for every occurrence of the same lookup.
+重复的元数据查询使用容量有界的进程内缓存，键由配置的厂商键、基础 URL 和
+去除首尾空白且不区分大小写的模型 ID 组成。匹配和未匹配结果都会缓存，原有的
+提供商偏好、别名匹配和候选排序保持不变。成功加载打包快照或在设置中刷新并
+替换目录后，缓存失效；刷新失败则保留之前的目录及查询结果。补全会话能力时，
+每个会话只解析一次匹配的目录记录，再应用当前提供商/模型绑定和会话默认值，
+因此用户覆盖值不会作为过期能力留在缓存中。刷新大型会话列表时，同样的查询
+不能在每次出现时都重新扫描完整目录。
 
-Provider model loading remains stale-while-revalidate:
+提供商模型加载仍采用 stale-while-revalidate：
 
-1. `source: "cache"` hydrates a saved provider's normalized discovery rows from
-   Rust-owned SQLite without provider network access.
-2. The renderer can show those rows immediately in the Composer and provider
-   dialog.
-3. `source: "refresh"` uses the bundled/in-memory models.dev catalog first and
-   probes a provider endpoint only to discover IDs that models.dev does not
-   expose.
-4. Successful provider discovery may update the Rust-owned normalized cache;
-   it cannot replace a matching models.dev record or its metadata.
-5. Configured `ModelBinding` IDs are retained when discovery is partial or
-   unavailable, and an ID absent from models.dev receives generic metadata.
+1. `source: "cache"` 从 Rust 拥有的 SQLite 读取已保存提供商的规范化发现记录，
+   不访问提供商网络。
+2. 渲染器可以立即在 Composer 和提供商对话框中显示这些记录。
+3. `source: "refresh"` 优先使用打包或内存中的 models.dev 目录，只有需要发现
+   models.dev 未提供的模型 ID 时才探测提供商端点。
+4. 成功的提供商发现可以更新 Rust 拥有的规范化缓存，但不能替换匹配的
+   models.dev 记录或其元数据。
+5. 发现结果不完整或不可用时，保留已配置的 `ModelBinding` ID；models.dev
+   中不存在的 ID 使用通用元数据。
 
-## 7. Offline behavior
+## 7. 线下行为
 
-If refresh fails / offline:
+如果刷新失败/离线：
 
-- use cached catalog
-- never clear an already-rendered cached list or flash an empty picker
-- allow custom model id
-- still allow providers with known model ids
-- when a saved provider cache is empty or partial, append every configured
-  model binding before applying models.dev metadata decoration, so multi-model
-  settings remain editable and per-model capability state stays aligned
-- if the bundled release snapshot is absent or invalid during an offline
-  release, keep the configured IDs visible with generic text-only metadata
+- 使用缓存目录
+- 永远不要清除已渲染的缓存列表或闪烁空选择器
+- 允许自定义模型ID
+- 仍然允许具有已知模型 ID 的提供商
 
-## 8. Catalog item schema
+## 8. 目录项架构
 
 ```ts
 type ModelCatalogItem = {
@@ -287,240 +187,138 @@ type ModelCatalogItem = {
   supportedThinkingLevels?: Array<
     "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
   >
-  /** Which known catalog supplied metadata for this row. */
-  catalogSource?: "models.dev"
 }
 ```
 
-## 9. Selection resolution order
+## 9. 选择解析顺序
 
-When UI/search requests models for picker:
+当 UI/search 请求选取器模型时：
 
-1. recent models for enabled providers
-2. user-defined models
-3. models.dev records for the matching provider/API URL
-4. provider discovery/cache for custom or account-specific models
-5. always include "custom model id" entry action
+1. 启用提供商的最新模型
+2. 用户自定义模型
+3.discovered/refreshed缓存
+4. 捆绑快照
+5. 始终包含“自定义模型 ID”输入操作
 
-Deduplicate by `(providerId, modelId)` with priority:
-`user > models.dev > provider-discovered > recent-only`. The `catalogSource`
-field records a models.dev match; a provider cache stores only normalized
-selection fields and is re-decorated from the local raw catalog on the next
-read.
+通过 `(providerId, modelId)` 优先进行重复数据删除：
+`user > discovered > bundled > recent-only`。
 
-### 9.1 Effective context window
+### 9.1 对话 Composer 范围
 
-The runtime, the context inspector and the settings surface resolve one effective
-model window. Every binding records where its `contextWindow` came from
-(`contextWindowSource`):
+对话 Composer 是已配置模型选择器，而不是原始发现目录。对于每个已启用且
+可运行的提供商，它只渲染该提供商持久化 `models` 绑定中的模型 ID（或旧版
+`defaultModelId` 回退值）。缓存或实时发现的记录可以为这些行补充显示名称和
+元数据，但未配置的发现模型不会出现在对话区列表中。发现不可用时，已配置的
+模型 ID 仍会单独显示。
 
-- `catalog` — the number is a models.dev snapshot, so a later correction to the
-  published `limit.context` replaces it. A refreshed record such as
-  `gpt-5.6-luna` (`1,050,000` tokens) stops appearing as a 128k model, and a limit
-  that models.dev corrects reaches the binding without deleting and re-adding the
-  model.
-- `user` — the number was entered through the per-model Advanced control (or the
-  preset ladder in it) and is never replaced by the catalog, including the
-  `128,000` value that is otherwise the generic seed.
+设置中的提供商对话框仍使用发现结果添加和配置模型；保存模型绑定后，该模型才
+有资格出现在 Composer 中。
 
-Bindings written before the marker name no source. They keep the historical rule,
-deterministically: a published `limit.context` replaces exactly the generic
-`128,000` seed, and every other stored value stays the explicit value. Unknown
-models still use the conservative 128k generic window and are never promoted from
-an ID pattern alone. The marker is optional in the persisted record, so a config
-written by an older version stays readable and a downgrade ignores it.
+组合 Composer 菜单打开时，渲染器会在进入“模型”子菜单前开始加载提供商模型。
+因此首个可见行优先来自缓存目录或已配置绑定，实时发现仍在后台更新。非空的已配置
+别名会根据等价模型 ID 从绑定中解析，并在目录刷新期间保持为唯一可见的模型名称。
 
-### 9.2 Conversation Composer scope
+## 10. 默认模型策略
 
-The conversation Composer is a configured-model picker, not a raw discovery
-catalog. For each enabled, runnable provider it renders only the model IDs in
-that provider's persisted `models` bindings (or the legacy
-`defaultModelId` fallback). Cached or freshly discovered records may enrich
-those rows with display names and metadata, but a discovered model that is not
-configured is not shown in the conversation list. When discovery is missing,
-the configured IDs remain visible by themselves.
+应用级默认模型选择器按已配置模型列出厂商下的每个模型；选择条目会同时保存所属厂商和准确的模型 ID。
+选择器支持按厂商名称和模型 ID 本地搜索；结果列表在浮层内滚动，没有匹配项时显示明确的空状态。
+选择器使用简洁的设置专用搜索文案；每项优先显示模型 ID，厂商名称作为次要信息。
+结果按厂商分组，每组只显示一次厂商名称，不在每个模型行重复。
 
-The Settings provider dialog continues to use discovery to add and configure
-models; saving a model binding is what makes it eligible for the Composer.
+应用程序级默认值：
+- 第一个成功测试的提供商 + 其 default/recommended 模型
+- 如果未配置，则新手引导清单需要在第一个代理运行之前设置提供商
 
-When the combined Composer menu opens, the renderer starts provider-model
-hydration before the Model submenu is entered. The first visible rows therefore
-come from the cached catalog or configured bindings; live discovery remains a
-background update. A configured non-empty alias is resolved from the binding
-for every equivalent model ID and remains the sole visible model name while
-the catalog is refreshed.
+会话级别：
+- 继承应用程序创建时的默认设置
+- 将思维初始化到所选模型绑定的默认思考等级（钳位到已启用档；
+  未设置时才回落最高已启用档），当它支持推理时，否则 `off`
+- 可以独立覆盖
 
-Vision badges in the Composer use the effective image-input capability for the
-exact provider/model binding. An explicit `supportsImages: true` or `false`
-wins over the published record; an absent or `null` value follows it. This lets
-a configured custom or proxied model show the capability the endpoint was
-explicitly configured to use without shaping the published `ModelInfo`.
-An OAuth provider heading uses its non-secret account label when present, so
-duplicate accounts from one vendor remain distinguishable; model rows still
-use the configured model alias or published model name.
+## 11. 能力门控
 
-## 10. Default model policy
-
-App-level default:
-- first successfully tested provider + its default/recommended model
-- the Settings default-model picker lists every configured model under its provider; selecting an entry persists both the owning provider and that exact model ID
-- the picker supports local search across provider name and model ID; its result list scrolls within the floating surface and shows an explicit empty state when no model matches
-- the picker uses concise settings-specific search copy; each result gives visual priority to the model ID and keeps the provider as secondary metadata
-- results are grouped by provider so a provider name is shown once per group rather than repeated on every model row
-- if none configured, onboarding checklist requires provider setup before first agent run
-
-Session-level:
-- inherits app default at creation
-- initializes thinking to the highest level enabled by the inherited model's
-  binding; published levels seed a new binding, while an empty or `off`-only
-  binding starts at `off`
-- can override independently
-
-## 11. Capability gating
-
-| mode/feature | required capability |
+| mode/feature | 所需能力 |
 |---|---|
-| Agent mode tools | `tools` (warn if missing; hard-block only if runtime cannot function) |
-| image input | `vision` |
-| reasoning UI affordances | `reasoning` |
-| structured repair helpers | `json` optional |
+| Agent 模式工具 | `tools`（如果丢失则发出警告；仅当运行时无法运行时才硬块） |
+| 图像输入 | `vision` |
+| 推理 UI 可供性 | `reasoning` |
+| 结构化修复助手 | `json` 可选 |
 
-Warnings are non-blocking unless execution is impossible.
+除非不可能执行，否则警告是非阻塞的。
 
-### 11.1 Reasoning capability resolution
+### 11. 1 推理能力解析
 
-1. Resolve the models.dev metadata for the matching provider/API URL and exact
-   `modelId`. Matching also accepts a catalog vendor prefix when the configured
-   provider uses an unprefixed ID (for example `deepseek-v4` matches
-   `deepseek/deepseek-v4` only under the matching provider identity).
-2. The models.dev record is authoritative for published `reasoning` and
-   `reasoning_options`; cached/provider capability claims cannot replace it.
-3. The provider's exact `ModelBinding.thinkingLevels` is authoritative for the
-   user's effective selection. It may explicitly enable a canonical level that
-   the catalog does not publish.
-4. A free-form ID absent from models.dev starts as an unknown generic model and
-   exposes only `off`; Settings can promote it only after an explicit binding
-   selection, never through discovery or an automatic inference.
-5. The Composer renders the effective binding levels in canonical order. If no
-   binding exists, it falls back to the published model levels and provider
-   defaults.
-6. If a stored/requested level is unavailable, choose the nearest enabled
-   binding level by scanning upward first and then downward. A binding with no
-   non-`off` level resolves to `off`.
-7. Changing to a provider/model with no enabled reasoning level persists `off`;
-   no unconfigured level leaks into the next request.
-8. For explicitly enabled `xhigh`/`max`, an absent or null catalog mapping is
-   materialized as an identity adapter mapping; a non-null catalog mapping is
-   preserved.
+1. 解析 pi 目录元数据以获得确切的 `(vendorKey, modelId)` 或
+   分隔符限制的兼容网关别名。
+2、完整的pi模型记录，权威； cached/discovered 模型
+   功能和遗留提供程序覆盖不能取代其推理
+   旗帜或思维层面的地图。
+3. pi 中不存在的自由格式 id 是未知的通用模型，并且仅公开
+   `off`； UI 无法将其提升为具有推理能力。
+4. 仅当解析的 pi 模型支持时，Composer 才会渲染选择器
+   推理并仅列出已解析的 `supportedThinkingLevels`。
+5. 如果 stored/requested 级别不可用，请选择最近支持的级别
+通过先向上然后向下扫描来调整水平。非推理模型
+   始终解析为 `off`。
+6. 更改为非推理提供商仍然存在 `off`；没有不支持的级别
+   泄漏到下一个请求中。
 
-### 11.2 Vision capability resolution
+## 12. 刷新策略
 
-1. Resolve the published image-input baseline from the matching model record.
-2. Apply the exact configured binding's `supportsImages` value to that
-   baseline. An absent or `null` value follows the published capability;
-   `true` enables image input for a configured endpoint even when its published
-   record is text-only, and `false` disables a published image capability.
-3. The Composer model-row vision badge and the main attachment transport gate
-   use this same effective result. An unknown or custom model without an
-   explicit binding override remains on the conservative path-fallback route;
-   discovery or cache metadata alone cannot promote it to image transport.
-4. The main process prepares pasted images as content-addressed refs. A
-   vision-capable model receives images within the 10 MB app-side inline
-   bound as transient image blocks; other cases receive a safe `@path`.
+- settings/model 选择器中的手动刷新按钮
+- 提供商 create/test 成功后的可选刷新
+- MVP 中没有激进的背景轮询
+- 刷新失败保留以前的缓存并显示非致命错误
 
-### 11.3 Settings model-add metadata
+Electron 使用本地 `models.dev` 记录装饰缓存和新发现的模型行。其
+`contextWindow` 与 agent sidecar 共享同一套 effective 解析；提供商发现只
+为目录缺失的模型提供 ID，未知模型仍使用通用后备。
 
-When the setup form adds a model the service returned, its initial context
-window, output limit, capability badges and thinking defaults come from
-`bindingFromModelInfo` over the enriched record, so the common path needs no
-manual token entry. The enrichment lookup is:
+上下文窗口解析必须与 agent runtime 使用同一个 effective window。每个 binding 记录
+自己的 `contextWindow` 从哪来（`contextWindowSource`）：
 
-1. A matching models.dev provider is preferred by `vendorKey`, then by
-   normalized provider API URL, including explicit native-adapter aliases
-   such as `openai-codex` → `openai`; its exact model record supplies the fields.
-2. A provider endpoint may add custom/account-specific IDs, but cannot replace
-   models.dev metadata. A free-form miss receives the fixed generic defaults
-   from `bindingForCustomModel`.
-3. The lookup does not send API keys to models.dev. Runtime model resolution
-   uses the same models.dev record and the selected pi-ai transport adapter.
+- `catalog`——该值是 models.dev 快照，之后目录修正 `limit.context` 时会跟着更新，
+  所以 `gpt-5.6-luna`（`1,050,000`）这类记录不会再显示为 128k，被修正上限的模型
+  也不用删掉重建；
+- `user`——该值来自 Advanced 里的手改（含预设档位），任何目录修正都不会覆盖它，
+  包括手改的 `128,000`。
 
-## 12. Refresh strategy
+在标记出现之前保存的 binding 没有来源标记，它们按确定的历史规则解析：已发布的
+`limit.context` 只替换恰好等于 128,000 的通用种子，其余值一律按显式值保留；未知模型
+仍保守使用 128k，不能仅凭 ID 猜测。标记在持久化记录中是可选的，旧版本写出的配置
+仍可读，降级版本会忽略它。
 
-- manual refresh button in settings/model picker
-- optional refresh on provider create/test success
-- no aggressive background polling in MVP
-- refresh failures keep previous cache and surface non-fatal error
+## 13. 搜索行为
 
-Electron decorates cached and freshly returned model rows from the local
-models.dev snapshot. Runtime model resolution passes the same full models.dev
-configuration to the selected pi-ai transport adapter. Provider discovery
-remains an ID-only fallback for custom/account-specific models absent from the
-snapshot.
+- displayName、modelId、提供商名称、vendorKey 上不区分大小写的匹配
+- 能力过滤器是 AND
+- 提供商过滤器是精确的providerId
+- 空查询首先显示最近的内容 + popular/bundled
 
-## 13. Search behavior
+## 14. 验收标准
 
-There is no catalog search channel. The models a user chooses from are the ones
-their service returned, and that list is short enough to filter in the renderer:
-the provider form matches the typed text against model id and display name with
-a plain case-insensitive substring test.
-
-The Composer picker likewise searches the **configured** models only, matching
-model id, display name, published family and the account-aware provider display
-name (`composerModelMatchesQuery`).
-
-Model ids are compared case-insensitively wherever a chosen model is matched
-against a returned one, so a hand-typed `GPT-5` and a published `gpt-5` are the
-same model to the check mark, the toggle and the duplicate guard.
-## 14. Acceptance criteria
-
-- [ ] the model list a user chooses from is the one their service returned; the
-      bundled catalog is never offered as a browsable list of every published
-      model
-- [ ] the catalog is consulted only when the endpoint publishes nothing usable,
-      and that result is reported as `catalog`, is not cached, and carries the
-      discovery error
-- [ ] adding an AI service is one form, with no stages to step through, and the
-      wire API is derived from the published adapter instead of being asked for
-- [ ] adding a discovered model requires no manual context-window or
-      output-token entry; overrides stay behind a per-model Advanced disclosure
-- [ ] the API-key path and the OAuth vendor-account path use the same live model
-      list and the same binding shape
-- [ ] selected models can be reordered by drag handle or Up/Down arrow keys in
-      both editors; saving and reopening preserves the order, aliases, and
-      overrides, and a filtered move preserves hidden bindings and their order
-- [ ] canceling a drag or the editor preserves the previous applicable order;
-      busy forms disable reordering, and text-copy and row actions still work
-- [ ] an unsaved provider can be probed from the form before it is persisted,
-      and a saved one reuses its stored secret without a retyped key
-- [ ] custom model id path works without catalog hit
-- [ ] recent models surface in the picker
-- [ ] refresh merges into cache and picker (never destructively replaces)
-- [ ] restart hydrates the prior catalog before live refresh, and offline
-      refresh keeps the cached picker populated
-- [ ] capability badges visible
-- [ ] session model change applies to next turn only
-- [ ] a new session defaults a reasoning-capable inherited model to that
-      binding's stored default thinking level (clamped onto the enabled set;
-      strongest-enabled only when unset) and otherwise defaults to `off`
-- [ ] the settings picker always exposes the canonical thinking ladder;
-      published levels seed known models and explicit binding levels clamp the
-      same way in Composer, Electron main, and the pi sidecar
-- [ ] models.dev metadata wins for a matching provider/model; an ID absent from
-      it uses the generic shape while pi-ai supplies only transport/OAuth
-- [ ] provider settings and cached discovery cannot replace known catalog
-      capabilities; explicit binding edits remain persisted configuration
-- [ ] a models.dev limit correction reaches an already saved `catalog` binding
-      without deleting and re-adding the model, while a number the user entered in
-      Advanced (`user`) survives every correction, a hand-entered `128,000`
-      included
-- [ ] a binding saved before the provenance marker resolves deterministically:
-      the generic 128k seed follows the catalog and every other value stays as
-      stored
-- [ ] the provenance marker survives a provider save/read round trip and an
-      unmarked record keeps working
-- [ ] unknown free-form models remain runnable without invented capabilities
-- [ ] a models.dev record and an unknown generic record resolve through the same
-      selected transport without sending provider credentials to the remote catalog
-- [ ] compact limit text never reads above the published value, keeps the
-      neighbouring 1M-line windows apart (`1M` / `1.05M` / `1.1M`), and never
-      renders a `K` mantissa at or above 1000
+- [ ] 搜索可查找跨多个提供商的模型
+- [ ] 两个编辑器都可通过拖动手柄或上、下方向键调整已选模型顺序；保存后重新打开会
+      保留顺序、别名和覆盖设置，过滤后的移动会保留隐藏绑定及其顺序
+- [ ] 取消拖动或取消编辑器会保留相应的原顺序；表单忙碌时禁用排序，文本复制和行操作
+      仍正常工作
+- [ ] 自定义模型 ID 路径无需目录命中即可工作
+- [ ] 最近的模型出现在选择器中
+- [ ] 刷新合并到缓存和选择器中（绝不破坏性替换）
+- [ ] 重新启动会在实时刷新和离线之前水合先前的目录
+      刷新使缓存的选择器保持填充状态
+- [ ] 能力徽章可见
+- [ ] 会话模型更改仅适用于下一回合
+- [ ] 新会话将具有推理能力的继承模型默认为该绑定存储的默认
+      思考等级（钳位到已启用档；未设置时才用最高已启用档），否则默认为 `off`
+- [ ] 推理选择器是能力门控和 pi 发布的稀疏级别
+      在 Composer、Electron main 和 pi sidecar 中以相同的方式设置钳位
+- [ ] 提供程序设置和缓存发现无法覆盖已知的 pi 模型
+- [ ] 未知的自由形式模型在没有发明功能的情况下仍然可以运行
+- [ ] 固定 pi-ai ^0.82.1+ 将 `claude-opus-5`（和网关兼容的别名）解析为已发布的 1M 上下文自适应思维记录，无需桌面覆盖
+- [ ] 目录修正的模型上限会回流到已保存的 `catalog` 绑定，无需删除重建；用户在
+      Advanced 手改的值（`user`）在任何修正下都不被覆盖，包括手改的 `128,000`
+- [ ] 没有来源标记的旧 binding 按确定规则解析：128k 通用种子跟随目录，其余值保持原样
+- [ ] 来源标记能在提供商保存/读取往返后保留，未标记记录仍可正常使用
+- [ ] 紧凑上限文本不会高于已发布值，1M 附近的相邻窗口保持可区分
+      （`1M` / `1.05M` / `1.1M`），且永远不会渲染出大于等于 1000 的 `K` 尾数

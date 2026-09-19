@@ -1,51 +1,46 @@
-# 15. Workspace Ignore Rules
+# 15. 工作区忽略规则
 
 ## 1. Goal
 
-Prevent tools from scanning/reading/writing sensitive or useless paths by
-default, while allowing an explicit, visible permission decision when a task
-intentionally targets a path outside the session workspace.
+通过以下方式防止工具进入 scanning/reading/writing 敏感或无用路径
+默认情况下，同时允许在执行任务时进行明确的、可见的权限决策
+故意以会话工作区之外的路径为目标。
 
-## 2. Rule layers (priority high → low)
+## 2. 规则层（优先级高→低）
 
-1. **Security denylist** (always on, not user-disable in MVP)
-2. **App defaults** (shipped)
-3. **Workspace rules** (`.pi-desktopignore` at the workspace root)
-4. **User global ignore** (`<data_dir>/ignore`, i.e. `~/.pi-desktop/ignore`
-   by default)
-5. Explicit tool path still subject to the security denylist and the
-   outside-path permission gate
+1. **安全拒绝列表**（始终开启，不在 MVP 中由用户禁用）
+2. **应用程序默认设置**（已发货）
+3. **工作区规则**（工作区根目录下的 `.pi-desktopignore`）
+4. **用户全局忽略**（`<data_dir>/ignore`，默认即 `~/.pi-desktop/ignore`）
+5. 显式工具路径仍受安全拒绝名单和
+   外部路径权限门
 
-An explicit `path` argument on `Glob`/`Grep` opts that walk out of layers 2–4
-(the same way it already bypasses parent `.gitignore` rules), so a caller who
-names `node_modules/pkg` or `dist` can still search it. Layer 1 applies to
-every walk and every explicit path.
+`Glob`/`Grep` 的显式 `path` 参数会让遍历跳出第 2–4 层（与它已经绕过上层
+`.gitignore` 规则的方式相同），因此显式点名 `node_modules/pkg` 或 `dist` 的
+调用者仍然可以搜索它们。第 1 层对每一次遍历和每一个显式路径都生效。
 
-## 3. Security denylist (always)
+## 3. 安全拒绝名单（始终）
 
-Outside-workspace read/write/search is denied by default. An explicit
-`Read`/`Glob`/`Grep`/`Write`/`Edit` path may proceed only after the host applies
-the permission mode: `auto` allows it, while `ask` and `accept-edits` ask the
-user. An implicit recursive walk never gains outside-workspace access.
+默认情况下，工作空间外 read/write/search 被拒绝。明确的
+Goal/scanning/reading/writing/MVP/`.pi-desktopignore`/`~/.pi-desktop/ignore` 路径只有在主机申请后才能继续
+权限模式：`auto` 允许，而 `ask` 和 `accept-edits` 询问
+用户。隐式递归遍历永远不会获得工作空间外部的访问权限。
 
-Also deny inside workspace (and inside the scratch or an approved external
-root) for:
+在工作区内（以及 scratch 目录或已批准的外部根目录内）还拒绝以下内容：
 - `.git/objects/**`
-- private key patterns: `*.pem`, `*.key`, `id_rsa`, `id_ed25519`
-- `.env`, `.env.*` — except the documentation variants `.env.example`,
-  `.env.sample`, and `.env.template`, which hold no secrets and are what a
-  coding task usually needs
-- credential files: `*.p12`, `*.pfx`, `credentials.json` (Google), `.npmrc` with tokens (best-effort)
+- 私钥模式：`*.pem`、`*.key`、`id_rsa`、`id_ed25519`
+- `.env`、`.env.*` —— 但文档变体 `.env.example`、`.env.sample` 和
+  `.env.template` 除外，它们不含密钥，而且通常正是编码任务需要的
+- 凭证文件：`*.p12`、`*.pfx`、`credentials.json` (Google)、带有令牌的 `.npmrc`（尽力而为）
 
-File-name matching is case-insensitive. `Glob` and `Grep` drop matching files
-from their results silently; an explicit `Read`, `Write`, or `Edit` (including
-the `Edit` move destination) fails with `WORKSPACE_PATH_DENIED`, and an
-outside-path grant does not lift the denial. `Bash` is not filtered (§6).
+文件名匹配不区分大小写。`Glob` 和 `Grep` 会静默地把命中的文件从结果中丢掉；
+显式的 `Read`、`Write` 或 `Edit`（包括 `Edit` 的移动目标）以
+`WORKSPACE_PATH_DENIED` 失败，外部路径授权也不会解除这一拒绝。`Bash` 不做
+过滤（§6）。
 
-> Read may be allowed with an explicit permission prompt in a later revision;
-> MVP fails closed.
+> 后续版本中 Read 可能在明确的权限提示下被允许；MVP 一律失败关闭。
 
-## 4. Default ignore (app)
+## 4. 默认忽略（应用程序）
 
 ```gitignore
 .git/
@@ -67,40 +62,40 @@ coverage/
 .cache/
 ```
 
-## 5. Workspace file
+## 5. 工作区文件
 
-Support:
+支持：
 
 ```text
 .pi-desktopignore
 ```
 
-Syntax: gitignore-compatible subset.
+语法：与 gitignore 兼容的子集。
 
-## 6. Tool behavior
+## 6. 工具行为
 
-| tool | ignore application |
+| 工具 | 忽略应用程序 |
 |---|---|
-| Glob | unscoped walk: layers 1–4 filter results; explicit `path`: layer 1 only |
-| Grep | unscoped walk: layers 1–4 filter the file set (in-process walker and the system `rg` fast path alike); explicit `path`: layer 1 only |
-| Read | `WORKSPACE_PATH_DENIED` on a denylisted file; otherwise permission-gated when the explicit path is outside; `TOOL_DENIED` after denial |
-| Write/Edit | `WORKSPACE_PATH_DENIED` on a denylisted file or move destination; otherwise permission-gated when the explicit path is outside; `TOOL_DENIED` after denial |
-| Bash | path sandbox still enforced by host; ignore file does not expand bash powers |
+| Glob | 无范围遍历：第 1–4 层过滤结果；显式 `path`：仅第 1 层 |
+| Grep | 无范围遍历：第 1–4 层过滤文件集（进程内遍历器与系统 `rg` 快速路径一致）；显式 `path`：仅第 1 层 |
+| Read | 命中拒绝名单的文件返回 `WORKSPACE_PATH_DENIED`；否则当显式路径在外部时权限门控；拒绝后 `TOOL_DENIED` |
+| Write/Edit | 命中拒绝名单的文件或移动目标返回 `WORKSPACE_PATH_DENIED`；否则当显式路径在外部时权限门控；拒绝后 `TOOL_DENIED` |
+| Bash | 路径沙箱仍然由主机强制执行；忽略文件不会扩展 bash 权限 |
 
-## 7. Diagnostics
+## 7. 诊断
 
-Tools should return stable errors:
-- `PATH_OUTSIDE_WORKSPACE` — path escapes the workspace root before an
-  outside-path permission decision
-- `TOOL_DENIED` — outside-path permission was denied, timed out, or cancelled
-- `WORKSPACE_PATH_DENIED` — an explicit path hit the security denylist (see
-  [08-error-codes §3.3](08-error-codes.md))
+工具应返回稳定的错误：
+- `PATH_OUTSIDE_WORKSPACE` — 在做出外部路径权限决策之前，路径逃逸了
+  工作区根目录
+- `TOOL_DENIED` — 外部路径权限被拒绝、超时或取消
+- `WORKSPACE_PATH_DENIED` — 显式路径命中了安全拒绝名单（请参阅
+  [08-错误代码 §3.3](/spec/03-runtime/08-error-codes)）
 
-UI can show “hidden by ignore rules” counts for Glob/Grep optionally later.
+UI 可以选择稍后显示 Glob/Grep 的“被忽略规则隐藏”计数。
 
-## 8. Acceptance criteria
+## 8. 验收标准
 
-- [x] outside paths require permission in non-auto modes and are allowed in Auto
-- [x] default ignores hide node_modules from Glob/Grep
-- [x] workspace ignore file honored
-- [x] security denylist cannot be disabled from UI in MVP
+- [x] 外部路径在非自动模式下需要许可，并且在自动模式下允许
+- [x] 默认忽略规则在 Glob/Grep 中隐藏 node_modules
+- [x] 工作区忽略文件得到遵守
+- [x] 无法从 MVP 中的 UI 禁用安全拒绝列表

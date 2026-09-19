@@ -1,20 +1,19 @@
-# 10. WorkBuddy Benchmark — UX Spec Proposal
+# 10. WorkBuddy 基准 —— UX 规范提案
 
-> Source: hands-on walkthrough of WorkBuddy v5.3.5 (macOS, Electron) on
-> 2026-07-25, captured via CDP screenshots. This doc records what WorkBuddy
-> does UX-wise, and specs which patterns PI-Desktop should adopt, adapt, or
-> reject. Baseline shell IA: [01-ui-ia](01-ui-ia.md).
+> 来源：2026-07-25 对 WorkBuddy v5.3.5（macOS，Electron）的上手走查，
+> 通过 CDP 截图记录。本文档记录 WorkBuddy 在 UX 上的做法，并规范
+> PI-Desktop 应该采用、改造或拒绝哪些模式。基线外壳 IA：
+> [01-ui-ia](01-ui-ia.md)。
 
-## 1. What WorkBuddy is (observed)
+## 1. WorkBuddy 是什么（观察所得）
 
-A consumer/prosumer "AI work companion": chat-first desktop app whose unit of
-work is a **Task** (a conversation with a goal), organized under **Spaces /
-Projects**, extended by a marketplace of **Experts (personas) · Skills ·
-Connectors**, plus **Automations** (scheduled tasks). It is persona- and
-template-heavy; PI-Desktop is developer- and workspace-heavy. The value here
-is interaction patterns, not product scope.
+一个消费/准专业级的 “AI 工作伙伴”：聊天优先的桌面应用，其工作单元
+是**任务**（一段带有目标的对话），组织在**空间 / 项目**之下，由
+**专家（人设）· 技能 · 连接器**市场和**自动化**（定时任务）扩展。
+它重人设和模板；PI-Desktop 重开发者和工作区。这里的价值在于交互
+模式，而不是产品范围。
 
-## 2. Observed IA
+## 2. 观察到的 IA
 
 ```text
 +----------------------------+------------------------------------------+
@@ -33,184 +32,165 @@ is interaction patterns, not product scope.
 +----------------------------+------------------------------------------+
 ```
 
-Notable per-screen details:
+值得注意的各屏细节：
 
-- **Chat / Task**: title in header with search / share / history / panel
-  icons; per-message action row (copy, like/dislike, TTS, retry, share, more)
-  plus a **token-cost chip** (`共消耗 ◇2.85`) and model badge inline; global
-  disclaimer "内容由 AI 生成，请核实重要信息" under the composer.
-- **Composer**: single pill; placeholder teaches syntax ("@ 引用对话文件，
-  / 调用技能与指令"); left cluster `+` and a **permission-mode dropdown**
-  ("默认权限"); right cluster model selector ("Auto"/named model), mic, send.
-- **助理 (Assistant)**: a persistent "local assistant" chat with a
-  **connection status in the header** ("已连接: 微信小程序" + gear) — the
-  assistant is presented as an entity with integrations, not just a thread.
-- **项目 (Projects)**: landing page with hero (title, one-line value prop,
-  illustration), primary CTA "新建项目", "我的项目" card list with kebab
-  menus, then a **"从模版创建" template gallery** (PRD flow, market research,
-  team knowledge base, delivery, bug tracking).
-- **自动化 (Automations)**: tabs 定时任务 / 运行记录; empty state (icon +
-  one-liner + primary CTA); below it a **template gallery** of ~12 recipes
-  (daily AI news, weekly report, meeting prep…) so the empty state still
-  offers one-click value.
-- **专家·技能·连接器**: sidebar item opens a 3-way flyout; the page has
-  segmented tabs (专家/技能/连接器), search, "我的专家", featured-scenario
-  banner cards, category chip row, sort (综合/最热/最新), and rich persona
-  cards (avatar, tagline, capability tags).
-- **更多**: overflow flyout for secondary destinations (我的文件, 腾讯文档,
-  ima知识库, 乐享知识库, 灵感) — keeps the rail at ~6 primary items.
-- **我的文件 (My Files)**: not a file manager — an **artifact browser for
-  task outputs**. Tabs 任务成果 / 云端网盘 (cloud-drive sync); type filter,
-  search across "文件、任务或工作空间", favorites toggle; a table
-  (name / type / updated-by / updated-at / size) whose rows are **grouped by
-  the task that produced them** (group header shows task name + count, e.g.
-  "未分组 · 1个任务" → task → main.js / styles.css / index.html). Every
-  deliverable an agent produces is findable later without reopening the
-  conversation.
-- **空间 (Spaces)**: a sidebar section between 任务 and the footer. A Space
-  is **bound to a local directory** (hovering the space "tools" reveals a
-  tooltip such as `/Users/example/Projects/tools`) and **expands inline to list
-  the tasks run inside it**; row actions on hover: `+` (new task in this
-  space) and `…` (manage). Tasks in both lists carry status badges — green
-  dot = running, red `!` = failed. Cloud/collab Projects (项目) also appear
-  in this section, so "Space" is the umbrella for "place work happens",
-  local folder or shared project alike.
-- **Onboarding**: the first assistant message is a structured interview
-  (name/style for the agent; how to address you, city, current focus) —
-  personalization by conversation instead of a form wizard.
+- **聊天 / 任务**：标题栏中有搜索 / 分享 / 历史 / 面板图标；每条消息
+  有操作行（复制、点赞/点踩、TTS、重试、分享、更多），外加一个
+  **token 消耗 chip**（`共消耗 ◇2.85`）和内联的模型徽章；Composer 下
+  方有全局免责声明 “内容由 AI 生成，请核实重要信息”。
+- **Composer**：单个胶囊；占位符教学语法（“@ 引用对话文件，
+  / 调用技能与指令”）；左侧一簇 `+` 和一个**权限模式下拉**
+  （“默认权限”）；右侧一簇模型选择器（“Auto”/具名模型）、麦克风、
+  发送。
+- **助理（Assistant）**：一个持久的 “本地助理” 聊天，**标题栏中
+  有连接状态**（“已连接: 微信小程序” + 齿轮）—— 助理被呈现为一个
+  带集成的实体，而不仅仅是一个线程。
+- **项目（Projects）**：带 hero 的落地页（标题、一句话价值主张、
+  插画）、主要 CTA “新建项目”、带 kebab 菜单的 “我的项目” 卡片
+  列表，然后是一个 **“从模版创建” 模板库**（PRD 流程、市场调研、
+  团队知识库、交付、缺陷跟踪）。
+- **自动化（Automations）**：标签页 定时任务 / 运行记录；空状态
+  （图标 + 一句话 + 主要 CTA）；其下是一个约 12 个配方的**模板库**
+  （每日 AI 资讯、周报、会议准备……），使空状态仍提供一键价值。
+- **专家·技能·连接器**：侧边栏项打开一个三向 flyout；页面有分段
+  标签（专家/技能/连接器）、搜索、“我的专家”、精选场景横幅卡片、
+  分类 chip 行、排序（综合/最热/最新），以及富人设卡片（头像、
+  标语、能力标签）。
+- **更多**：次级目的地的溢出 flyout（我的文件、腾讯文档、
+  ima知识库、乐享知识库、灵感）—— 让主栏保持在约 6 个主要项。
+- **我的文件（My Files）**：不是文件管理器 —— 而是**任务产物的
+  工件浏览器**。标签页 任务成果 / 云端网盘（云盘同步）；类型过滤、
+  跨 “文件、任务或工作空间” 搜索、收藏开关；一个表格
+  （名称 / 类型 / 更新者 / 更新时间 / 大小），其行**按产生它们的
+  任务分组**（组头显示任务名 + 数量，例如
+  “未分组 · 1个任务” → 任务 → main.js / styles.css / index.html）。
+  agent 产出的每个交付物之后都能在不再打开会话的情况下找到。
+- **空间（Spaces）**：位于 任务 和 footer 之间的侧边栏分区。一个
+  空间**绑定到一个本地目录**（悬停空间 “tools” 会显示诸如
+  `/Users/example/Projects/tools` 的 tooltip），并**内联展开以列出
+  在其中运行的任务**；悬停时的行操作：`+`（在此空间新建任务）和
+  `…`（管理）。两个列表中的任务都带状态徽章 —— 绿点 = 运行中，
+  红色 `!` = 失败。云/协作项目（项目）也出现在这个分区，因此
+  “空间” 是 “工作发生之地” 的统称，本地文件夹和共享项目都一样。
+- **引导**：第一条助理消息是一场结构化访谈（agent 的名字/风格；
+  如何称呼你、城市、当前关注点）—— 用对话代替表单向导来做个性化。
 
-## 3. Adopt (spec changes for PI-Desktop)
+## 3. 采用（PI-Desktop 的规范变更）
 
-Each item below is a concrete proposal; decisions go to the decisions log.
+下面每一项都是具体提案；决策进入决策日志。
 
-### 3.1 Permission mode in the composer
-WorkBuddy puts the permission posture next to the send button. PI-Desktop
-exposes the same control as a composer chip (current effective mode:
-`Ask every time / Accept edits / Auto`) opening a small menu. The menu shows
-only those three modes and marks the effective selection directly; it does not
-surface global-default or inherit provenance. Choosing a mode creates a
-per-session override. This complements, rather than replaces, the inline
-permission cards in [03-permission-ux](03-permission-ux.md) (D132).
+### 3.1 Composer 中的权限模式
+WorkBuddy 把权限姿态放在发送按钮旁边。PI-Desktop 以 Composer chip
+形式暴露同一个控件（当前有效模式：`Ask every time / Accept edits /
+Auto`），打开一个小菜单。菜单只显示这三种模式并直接标记有效选择；
+不呈现全局默认或继承来源。选择模式会创建按会话的覆盖。这是对
+[03-permission-ux](03-permission-ux.md) 中内联权限卡片的补充而非
+替代（D132）。
 
-### 3.2 Per-message meta: cost + model
-Adopt the inline **token/cost chip and model badge** on assistant messages
-(collapsed by default into the message action row; hover to expand
-input/output/cached breakdown). Data already exists in the runtime usage
-events.
+### 3.2 每消息元信息：成本 + 模型
+在 assistant 消息上采用内联的 **token/成本 chip 与模型徽章**（默认
+折叠进消息操作行；悬停展开 input/output/cached 明细）。数据已存在
+于运行时 usage 事件中。
 
-**Adopted in D103 (tokens-only first cut), placement amended by D347**:
-completed assistant turns show a model badge under the answer. The compact
-Codex-style context inspector lives in the composer toolbar next to the model
-picker and always mirrors the newest assistant turn that reported usage. The
-trigger shows remaining context percentage in a small ring; clicking it
-toggles a light summary panel with remaining/window counts and two unboxed
-turn/speed values. Provider input/output/cache/reasoning usage stays
-available as one inline exact-usage row, while tool usage is reduced to one
-aggregate row with tool types, calls, and estimated tokens. Per-tool rows,
-share bars, badges, and explanatory estimate copy are omitted from the default
-view. Generation rate is a completed-turn snapshot rather than a live
-streaming counter. The context-window total comes from the same `pi-ai` model
-metadata used by the agent sidecar, with provider metadata and the default
-window only as fallbacks for unknown models. Tool estimates remain separate
-from exact provider totals because providers do not expose per-tool context
-allocation.
-Currency pricing remains deferred. Regenerate is available as a quiet action
-chip next to Copy and rewrites the current turn in place (D105); when multiple
-variants exist, a ChatGPT-style `current / total` pager on the root user turn
-restores archived branches (D109). Completed assistant rows also expose Fork
-and reversible Edit, while omitting Delete; both edits diverge into isolated
-sessions so the source cache/runtime stays untouched (D134).
+**D103 已采用（先只做 tokens 的版本），位置由 D347 修订**：已完成
+的 assistant 回合在答案下方显示模型徽章。紧凑的 Codex 风格上下文
+检查器位于 Composer 工具栏中模型选择器旁边，始终镜像最近一个报告
+了 usage 的 assistant 回合。触发器以小圆环显示剩余上下文百分比；
+点击它切换一个轻量摘要面板，包含剩余/窗口计数和两个不加框的
+回合/速度数值。provider 的 input/output/cache/reasoning usage 仍以
+一行内联精确用量行提供，而工具用量缩减为一行聚合行，含工具类型、
+调用次数和估计 token。每工具行、份额条、徽章和解释性估算文案都从
+默认视图中省略。生成速率是已完成回合的快照，而不是实时流式计数器。
+上下文窗口总量来自 agent sidecar 使用的同一份 `pi-ai` 模型元数据，
+provider 元数据和默认窗口仅作为未知模型的回退。工具估算与精确的
+provider 总量保持分离，因为 provider 不暴露每工具的上下文分配。
+货币定价仍然推迟。Regenerate 作为 Copy 旁边的安静操作 chip 提供，
+原地重写当前回合（D105）；存在多个变体时，根用户回合上的
+ChatGPT 风格 `current / total` 分页器可以恢复归档分支（D109）。
+已完成的 assistant 行还暴露 Fork 和可逆 Edit，而省略 Delete；两种
+编辑都分叉到隔离会话中，源缓存/运行时保持不受影响（D134）。
 
-### 3.3 Template galleries on empty states
-WorkBuddy never ships a dead empty state: Automations and Projects both pair
-the empty hero with click-to-instantiate templates. **Spec**: Scheduled page
-empty state gains 4–6 developer recipes (nightly test run, dependency-update
-digest, PR review sweep, changelog draft); the Settings Project archive keeps
-its table but gains a "Start from template" row when empty.
+### 3.3 空状态上的模板库
+WorkBuddy 从不交付死空状态：Automations 和 Projects 都把空 hero
+与点击即可实例化的模板配对。**规范**：定时页面的空状态增加 4–6 个
+开发者配方（夜间测试运行、依赖更新摘要、PR 审阅扫荡、changelog
+草稿）；设置中的项目归档保留其表格，并在为空时增加一个
+“从模板开始” 行。
 
-### 3.4 Teaching placeholder in the composer
-Replace the static placeholder with a syntax-teaching one:
-"Describe a task — @ to reference files, / for commands". The empty home keeps
-this direct-entry surface focused on the hero, optional onboarding, and bottom
-composer, without adding developer starter cards or a contextual quick-action
-layer (D204/D206).
+### 3.4 Composer 中的教学占位符
+把静态占位符换成教学语法的：
+“Describe a task — @ to reference files, / for commands”。空首页
+保持这个直接输入表面聚焦于 hero、可选引导和底部 Composer，不增加
+开发者入门卡片或上下文快捷操作层（D204/D206）。
 
-### 3.5 Overflow "More" flyout for secondary destinations
-Keep the sidebar rail at ≤6 primary items. As destinations grow (Logs,
-Files, Knowledge, future panels), park them under a "More" flyout instead of
-lengthening the rail.
+### 3.5 次级目的地的溢出 “More” flyout
+让侧边栏主栏保持 ≤6 个主要项。随着目的地增长（Logs、Files、
+Knowledge、未来的面板），把它们停在一个 “More” flyout 下，而不是
+拉长主栏。
 
-### 3.6 Conversational onboarding (first-run)
-Complement the checklist onboarding (05-onboarding) with a first assistant
-turn that interviews the user (project, preferred tone, guardrails) and
-writes results to workspace memory/config — a form disguised as a chat.
+### 3.6 对话式引导（首次运行）
+用第一个 assistant 回合补充清单式引导（05-onboarding）：它访谈用户
+（项目、偏好语气、护栏）并把结果写入工作区记忆/配置 —— 一场伪装成
+聊天的表单。
 
-### 3.7 Artifacts view (from 我的文件)
-Sessions produce files the user later can't find without scrolling the
-transcript. **Adopted first step in D128**: clicking a file artifact creates a
-path-keyed, closeable work-panel tab; its second half — a successful workspace
-Write/Edit opening Review by itself — was withdrawn in D451, and Review now
-opens only from an explicit user action. **Adopted in D179**: the transcript
-also places a
-message-scoped review card directly after each successful file mutation; its
-status, +/− totals, and expandable hunks stay attached to that tool row rather
-than becoming a global footer entry. These renderer tabs and cards are
-transient views, not a second
-persistence model; the host-owned `artifacts` table remains authoritative.
-A future dedicated Artifacts destination may list files grouped by session
-with name / kind / session / time columns and Finder/diff actions. Skip the
-cloud-drive tab (no cloud storage in scope).
+### 3.7 工件视图（来自 我的文件）
+会话产生的文件，用户之后不翻转会话就找不到。**D128 已采用第一
+步**：点击文件工件创建一个按路径键控、可关闭的工作面板标签；其
+后半部分 —— 成功的工作区 Write/Edit 自行打开 Review —— 已在
+D451 中撤回，Review 现在只通过显式用户操作打开。**D179 已采
+用**：转录还在每次成功的文件变更之后直接放置一个消息作用域的
+审阅卡片；其状态、+/− 合计和可展开的 hunk 保持附着在该工具行上，
+而不是变成全局 footer 条目。这些渲染器标签和卡片是临时视图，不是
+第二个持久化模型；宿主拥有的 `artifacts` 表仍是权威。未来专用的
+工件目的地可以按会话分组列出文件，带 名称 / 类型 / 会话 / 时间
+列和 Finder/diff 操作。跳过云盘标签页（范围内没有云存储）。
 
-### 3.8 Workspace-scoped session tree (from 空间)
-WorkBuddy nests tasks under the folder-bound Space they ran in, with `+`
-(new task here) on hover and status badges (running dot / failure mark) per
-task. **Adopted and extended in D093**: PI-Desktop renders every retained,
-path-keyed project as a compact, independently collapsible group, followed by
-a Temporary sessions group for path-less sessions. Each directory title is
-the single disclosure target (chevron, folder, label, and remaining row hit
-area), while `+` and overflow actions appear on hover/focus. The active project
-is still the only selected host workspace; retained groups do not create
-parallel workspace singletons. This supersedes D088's one-current-project
-sidebar limitation while preserving its exact-path and Temporary boundaries.
-**Refined in D135**: each conversation row uses a fixed leading status slot
-with distinct color and geometry: accent-blue selection ring, warning-orange
-breathing in-progress dot, success-green check, and error-red alert. In-progress
-outranks selection, selection outranks the latest terminal outcome, and reduced
-motion keeps the in-progress dot static.
+### 3.8 工作区作用域的会话树（来自 空间）
+WorkBuddy 把任务嵌套在它们运行时所在的目录绑定空间之下，悬停时
+有 `+`（在此新建任务），每个任务有状态徽章（运行中圆点 / 失败
+标记）。**D093 已采用并扩展**：PI-Desktop 把每个保留的、按路径
+键控的项目渲染为紧凑、可独立折叠的组，随后是一个用于无路径会话
+的临时会话组。每个目录标题是唯一的展开/折叠目标（chevron、文件夹、
+标签和剩余的整行命中区域），而 `+` 和溢出操作在悬停/聚焦时出现。
+活跃项目仍是唯一选中的宿主工作区；保留的组不会创建并行的工作区
+单例。这取代了 D088 的单一当前项目侧边栏限制，同时保留其精确路径
+与临时边界。**D135 已细化**：每个会话行使用固定的前导状态槽，
+颜色和几何形状各不相同：强调蓝的选择环、警告橙的呼吸进行中圆点、
+成功绿的对勾、错误红的警示。进行中优先于选择，选择优先于最近一次
+终态结果，减少动态效果时进行中圆点保持静止。
 
-## 3.9 Transcript density and user-plate alignment
-WorkBuddy's task transcript keeps user turns as compact right-side plates and
-assistant turns as full-width transparent prose, with quiet hover actions under
-each turn. **Adopted in D101**: PI-Desktop keeps the developer-tool restraint
-(no mascot, no like/dislike) but densifies row spacing, right-aligns the user
-plate at `min(78%, 560px)`, softens the plate border/shadow, and shows copy
-chips only on hover/focus-within. Streaming assistant answers use a thin
-accent left rule instead of a heavy pulse frame.
+## 3.9 转录密度与用户板对齐
+WorkBuddy 的任务转录把用户回合保持为紧凑的右侧板，assistant 回合
+为全宽透明散文，每个回合下方有安静的悬停操作。**D101 已采用**：
+PI-Desktop 保持开发者工具的克制（无吉祥物、无点赞/点踩），但加密
+行距，用户板右对齐在 `min(78%, 560px)`，柔化板的边框/阴影，并只
+在悬停/聚焦时显示复制 chip。流式 assistant 答案使用细的强调色左边
+线，而不是沉重的脉冲边框。
 
-## 4. Adapt with caution
+## 4. 谨慎改造
 
-- **Assistant-with-integrations header** ("已连接: X"): good pattern for
-  showing MCP/connector health per session; adapt as a small connector
-  status cluster in the context panel, not the chat header.
-- **Persona marketplace**: out of scope as a store, but the **card grammar**
-  (avatar/icon, one-line tagline, capability tags, category chips, sort) is
-  the right template for the Plugins page as the catalog grows.
-- **Voice input / TTS**: note as future; not MVP.
+- **带集成的助理标题栏**（“已连接: X”）：按会话展示 MCP/连接器
+  健康状况的好模式；改造为上下文面板中的一个小型连接器状态簇，
+  而不是聊天标题栏。
+- **人设市场**：作为商店超出范围，但**卡片语法**（头像/图标、
+  一句话标语、能力标签、分类 chip、排序）是插件页面随目录增长的
+  正确模板。
+- **语音输入 / TTS**：记为未来项；不在 MVP。
 
-## 5. Reject
+## 5. 拒绝
 
-- **Mascot artwork** floating over the transcript — conflicts with the
-  restrained developer-tool aesthetic (07-ui-design-system).
-- **Like/dislike + share on every message** — no backend to serve; keep the
-  action row to copy / retry / (cost chip).
-- **Consumer template content** (bedtime stories, wallpapers) — replaced by
-  developer recipes in §3.3.
-- **Blanket AI disclaimer footer** — redundant in a tool whose every output
-  is inspectable; permission UX already carries the trust surface.
+- 悬浮在转录上的**吉祥物美术** —— 与克制的开发者工具美学冲突
+  （07-ui-design-system）。
+- **每条消息上的点赞/点踩 + 分享** —— 没有后端可服务；操作行保持
+  复制 / 重试 / （成本 chip）。
+- **消费级模板内容**（睡前故事、壁纸）—— 由 §3.3 的开发者配方
+  取代。
+- **一刀切 AI 免责声明 footer** —— 在每个输出都可检查的工具中是
+  冗余的；权限 UX 已经承载了信任表面。
 
-## 6. Open questions
+## 6. 开放问题
 
-1. Does the composer permission chip write through to Settings or stay
-   session-scoped? (Proposed: session-scoped, Settings unchanged.)
-2. Cost chip currency: tokens only, or provider-priced estimate?
-3. Scheduled templates: hardcoded or plugin-contributable?
+1. Composer 权限 chip 是写回设置，还是保持会话作用域？（提案：
+   会话作用域，设置不变。）
+2. 成本 chip 的货币：仅 tokens，还是按 provider 定价的估算？
+3. 定时任务模板：硬编码，还是插件可贡献？

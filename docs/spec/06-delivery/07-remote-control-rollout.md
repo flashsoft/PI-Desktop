@@ -1,480 +1,168 @@
-# Remote Agent Control Rollout and Acceptance
-
-- Status: Target delivery specification; post-MVP
-- Decision: D373 / ADR 0205, amended by D374 and D375
-- Normative protocol: `03-runtime/19-remote-agent-control-protocol.md`
-- Normative security: `05-security/02-remote-control-security.md`
-
-## 1. Delivery boundary and order
-
-Remote control is a post-MVP capability. The current MVP continues to ship:
-
-- Electron Main as the local orchestrator;
-- Node pi sidecar as the Agent runtime;
-- Rust host-core over local stdio NDJSON JSON-RPC;
-- optional loopback-only MCP control under ADR 0203; and
-- no public or LAN Gateway listener.
-
-Remote work MUST NOT begin by exposing the existing host-core or IPC endpoint.
-The implementation starts with the typebox contract, the headless Agent Host
-module, and conformance tests, then adds transport bindings behind explicit
-feature flags.
-
-D375 fixes the order of the milestones around recorded demand rather than
-around transport breadth:
-
-- issues #176 and #140 ask to operate projects on a remote Linux or WSL
-  machine from the local desktop, which is the SSH-tunnel remote Host
-  topology;
-- issue #100 asks for task completion and approval notifications on
-  Telegram, WeChat, Slack, or a webhook, plus simple commands back, which is
-  an outbound integration beside the Host; and
-- no recorded request asks for a browser or phone client of the desktop, so
-  the Gateway and browser milestones are unscheduled.
-
-The scheduled order is R0, R1, R2, R3. Milestones marked unscheduled keep
-their specifications so the contract does not drift, and they are scheduled
-only by a later product decision.
-
-## 2. Milestones
-
-### R0 — Contract and test fixtures
-
-Deliver:
-
-- RACP v1 resource and operation schemas as typebox definitions in
-  `packages/shared`, the single source of the contract, including the
-  remote-host profile operations of protocol §6.2;
-- generated JSON Schema fixtures and shared request/response/event traces;
-- error mapping and capability negotiation fixtures;
-- cursor, epoch, snapshot, idempotency, turn-queue, and approval
-  state-machine tests, including `allow-session` and Plan/Goal
-  permission-mode selection;
-- binding-independent authorization test vectors, including the remote
-  permission ceiling and the SSH-paired owner exemption; and
-- threat model review against the security specification.
-
-Exit criteria:
-
-1. A fixture trace has an identical semantic result for every shipped
-   binding adapter.
-2. Duplicate, stale, expired, and unauthorized requests have deterministic
-   outcomes.
-3. No fixture requires direct host-core or renderer access.
-4. No hand-written second copy of the contract exists.
-
-### R1 — Headless Agent Host module
-
-Deliver `packages/agent-host`, a module with no Electron dependency that
-owns session and turn admission, the per-session turn queue, the approval
-broker, the in-memory event log with epochs, and the snapshot builder
-including active items and pending requests. Electron Main hosts it; the
-existing IPC handlers become adapters over it, incrementally if needed. Two
-local changes ship with it:
-
-- Rust host-core exposes `permissions.pending` so a late-attaching client
-  receives open requests; and
-- the renderer's in-memory prompt queue is replaced by the Host-owned turn
-  queue, persisted by Rust host-core under its own ADR and schema bump
-  (D375), restored after a restart and held until a controller attaches, so
-  every client sees the same pending prompts and a reboot never starts work
-  unattended.
-
-A development-only loopback RACP-WS endpoint drives the module; it is not
-reachable outside loopback or an explicit development tunnel.
-
-Exit criteria:
-
-1. A client can close and reopen without interrupting a turn.
-2. A stale cursor or a new epoch results in a snapshot, not an invented event
-   sequence.
-3. Existing local renderer behavior and the local MCP control plane are
-   unchanged, and the desktop's queued prompts now come from the Host queue.
-4. The module's test suite runs without Electron.
-5. A client that attaches during an open approval sees it in the snapshot and
-   its decision closes the local desktop card.
-
-Timing: the extraction starts after the release in flight ships, and each of
-`permissions.pending`, the Host queue, and the module extraction lands as its
-own commit, because the repository has concurrent sessions and 54 tests that
-match `electron/main/index.ts` by source pattern and must be repointed.
-
-### R2 — Remote Host over an SSH tunnel
-
-Deliver the first remote topology (`02-architecture/05-remote-agent-control.md`
-§5.2): the desktop as Remote Client of a headless Host on another machine.
-
-R2 lands in two ordered slices so the desktop-side kernel can ship, be
-tested, and stay dead code until the full topology is ready:
-
-- **R2a — Desktop kernel (delivered, ADR 0286).** The single interception
-  seam, the transport-agnostic backend, the event bridge, the coordinator, an
-  encrypted-at-rest registry, and the boot hook. With an empty registry
-  (default install) the kernel is a full no-op; the router has no remote
-  backends, every renderer call still hits the local handler byte-for-byte.
-  Every subsystem has a `node --test` fixture that exercises it against a
-  fake — or, for the RACP adapter, against the real in-memory harness in
-  `@pi-desktop/racp/test-harness`.
-- **R2b — Pairing, SSH bootstrap, terminal, and reverse tool relay.** The
-  remaining bullets below. R2's exit criteria stay unchanged and land with
-  R2b; R2a alone is not user-visible and does not attempt them.
-
-Deliverables:
-
-- the `pi-host` bundle: the module, the Node pi sidecar, and the platform's
-  host-core binary, versioned with the desktop, bound to loopback, downloaded
-  from GitHub Releases by a bootstrap script the desktop uploads over SSH
-  with the published SHA-256 verified before install, then started and paired
-  over that SSH session;
-- the desktop RACP client adapter in Electron Main under `lib/api.ts`, so the
-  renderer needs no transport knowledge and a remote session renders like a
-  local one;
-- `RACP-WS` on the header profile over the forwarded port, with the loopback
-  rule of security §5.1 and the device-token pairing of security §3.2;
-- the remote-host profile operations (`session/configure`, `session/fork`,
-  `session/rename`, `session/delete`, `session/compact`, `workspace/list`,
-  `workspace/read`, `workspace/diff`) so mode, model, thinking level, and the
-  work panel's files and diff work against the remote session; and
-- the remote session ownership split of architecture §6.3;
-- the reverse tool relay: `tools/advertise` and the `tool/execute` server
-  request, so desktop MCP servers and workspace-free plugin tools run on the
-  desktop for a remote session; and
-- the terminal: `terminal/open`, `terminal/input`, `terminal/resize`,
-  `terminal/close`, `terminal.output`, and a bounded replay ring, running on
-  the remote machine.
-
-Design decisions (D375, recorded 2026-09-10):
-
-1. Provider configuration on the remote Host is written over the SSH
-   bootstrap channel as Host-local configuration; nothing crosses RACP.
-2. Desktop user MCP servers and workspace-free plugin tools reach remote
-   sessions through the reverse tool relay in this milestone; plugin tools
-   that require workspace or filesystem access are excluded.
-3. The work-panel terminal ships in this milestone as the `terminal/*`
-   operations, running on the remote machine.
-4. `pi-host` is downloaded from GitHub Releases per platform at the desktop's
-   version by a bootstrap script the desktop uploads over SSH, with the
-   published SHA-256 verified; a version mismatch is `PROTOCOL_MISMATCH`
-   and the desktop offers to re-run the download. A machine without outbound
-   access to GitHub is not supported in the first version.
-5. The SSH-paired desktop device holds `owner` and is exempt from the remote
-   permission ceiling unless the Host policy `applyCeilingToPairedDevices`
-   is enabled.
-6. R2 ships as one milestone; it is not split into sub-milestones.
-
-Exit criteria:
-
-1. E2E-231 passes: a turn started from the desktop reads, writes, and runs
-   commands on the remote machine only, approvals appear in the desktop card,
-   and the remote host-core binds loopback only.
-2. Dropping and restoring the SSH session mid-turn resumes by cursor without
-   duplicating the turn.
-3. Mode, model, and thinking-level changes on a remote session behave as
-   locally, idle-only.
-4. The remote tool catalog contains no desktop plugin tool.
-5. A `pi-host` at another version is rejected and the update path is offered.
-6. A desktop-configured MCP tool advertised for relay executes on the desktop
-   during a remote turn, a workspace-requiring plugin tool is absent from the
-   remote catalog, and closing the desktop mid-call fails the tool without
-   interrupting the turn.
-7. A terminal opened on a remote session runs on the remote machine inside
-   the session root and its output resumes from the replay ring after an SSH
-   drop.
-8. The bootstrap download verifies the published checksum and refuses a
-   tampered bundle.
-
-### R3 — Outbound messaging integration
-
-Deliver the integration adapter beside the Host (issue #100): a further
-caller of the module inside the Host process, with no transport and no
-inbound listener.
-
-- It subscribes to host-scope and session events and relays redacted
-  summaries of `turn.completed`, `turn.failed`, `approval.requested`, and
-  `input.requested` to outbound channels: webhook first, then Telegram and
-  Slack through their outbound polling or socket modes; channels that require
-  an inbound callback are deferred.
-- It maps a fixed command vocabulary from a linked chat to `turn/start`,
-  `turn/stop`, `turn/interrupt`, and `approval/respond`, executed under the
-  linked principal's roles and the same Host policy as any client; unlinked
-  chats are ignored and audited.
-- It never blocks a turn: delivery failures are logged and retried with a
-  bound, and the Host runs the same whether the adapter is configured or not.
-
-Exit criteria: E2E-232 passes; payloads contain summaries and ids only;
-commands from an unlinked chat have no effect; the Host has no new listener.
-
-### Unscheduled — Gateway and Host link (formerly R3)
-
-A separate Remote Gateway and the outbound Host link
-(`racp-hostlink.v1`) with identity, routing, rate limits, audit, revocation,
-and transient attachment relay. PI does not operate it: a user runs it on
-their own infrastructure and it admits clients with Host-issued device
-credentials, so there is no identity source beyond the Host (D385). Exit criteria remain those of E2E-227.
-
-### Unscheduled — Browser profile (formerly R4)
-
-`RACP-HTTP` and the cookie authentication profile for browser clients on
-both `RACP-WS` and SSE. Before it is scheduled, the browser client's first
-needs are already covered by the remote-host profile (`session/configure`,
-history, workspace reads); a Host-issued session cookie for Gateway-less use
-still needs a specification clause. Exit criteria remain those of E2E-228.
-
-### Reserved — gRPC binding (formerly R5)
-
-`RACP-GRPC` is delivered only when a named native service consumer or
-Gateway implementation needs it. Generate the `.proto` and clients from the
-typebox source; do not maintain an independent hand-written gRPC contract.
-It is not a release gate for remote control.
-
-## 3. Implementation rules
-
-### 3.1 Preserve the local path
-
-The RACP server calls the headless Agent Host module, which calls the same
-host and sidecar paths the renderer uses. It does not call the renderer,
-`host.proxy`, or Rust host-core from a network listener. The `pi-host` bundle
-runs the module and supervision on another machine without changing RACP.
-
-### 3.2 Keep the Agent independent of clients
-
-The Host owns active turns, the turn queue, and event cursors. Client
-lifetime, browser tab lifetime, Electron window visibility, and SSH session
-lifetime do not control Agent execution. A client must explicitly call
-`turn/stop` or `turn/interrupt` to end a turn.
-
-### 3.3 Keep the queue in the Host
-
-Queued prompts are Host state. No client, including the local renderer,
-keeps a private queue once the module ships; a queued turn is visible to
-every attached client and can be canceled by any controller.
-
-### 3.4 Keep the renderer transport-agnostic
-
-The renderer reaches every backend through `lib/api.ts`. The desktop RACP
-client adapter implements that surface for a remote Host; features the
-remote-host profile does not cover are hidden by capability negotiation, not
-stubbed. The renderer never learns whether a session is local or remote
-beyond a display badge.
-
-### 3.5 Make replay a first-class test surface
-
-Every event-producing test records:
-
-- the initial snapshot revision and cursor;
-- the exact command and idempotency key;
-- every durable event sequence applied;
-- the disconnect point;
-- the replay request; and
-- the final snapshot hash.
-
-The test fails if a duplicate, gap, out-of-order durable event, or
-unannounced state change appears. Ephemeral events are excluded from ordering
-assertions and must be reconstructible from the snapshot's active items.
-
-### 3.6 Keep bindings semantically equal
-
-The conformance fixture is the source of truth for behavior. Each shipped
-binding may choose its native status and serialization, but it must preserve:
-
-- operation acceptance and rejection;
-- authorization scope and the remote permission ceiling;
-- idempotency result;
-- durable event order and cursor;
-- queue order;
-- approval lifecycle and decision vocabulary;
-- attachment hash and size checks; and
-- terminal turn state.
-
-## 4. Validation plan
-
-### 4.1 Unit and contract validation
-
-- generated schema validation for every request, response, and event;
-- state-machine transition tests for Session, Turn, turn queue, Approval,
-  Input, and Attachment;
-- idempotency tests with lost response and retry;
-- cursor replay, epoch change, expiry, gap, and snapshot tests;
-- authorization matrix tests for every role and operation, including the
-  permission ceiling, its SSH-paired exemption, and `allow-session` policy;
-- redaction tests for prompts, tool data, credentials, pending-request reads,
-  integration payloads, and attachments; and
-- generated binding round-trip tests.
-
-### 4.2 Integration validation
-
-- the headless module inside Electron Main with the real sidecar and
-  host-core supervision;
-- a `pi-host` bundle on a Linux test machine reached through an SSH port
-  forward, including bootstrap, pairing, version mismatch, and re-pairing;
-- the desktop adapter rendering a remote session through the unchanged
-  renderer;
-- SSH session drop and restore while a remote turn is running;
-- host restart while a turn is running and turns are queued, verifying that
-  the persisted queue is restored and held;
-- relayed tool execution and terminal streaming across an SSH drop;
-- bootstrap download with a valid and a tampered checksum;
-- the integration adapter against a webhook sink and a long-polling bot
-  fixture; and
-- when scheduled: Gateway routing across two Hosts, browser reconnect on the
-  cookie profile, and the Host link relay through a NAT harness.
-
-### 4.3 Security validation
-
-- invalid, expired, revoked, and wrong-Host device tokens;
-- non-loopback peers and non-loopback binds without TLS on a `pi-host`;
-- pairing token reuse and pairing over a non-SSH channel;
-- wrong role, wrong Session, wrong Host, and stale revision;
-- SSRF and arbitrary file/path attempts, including `workspace/read` outside
-  the session root;
-- oversized and hash-mismatched uploads;
-- prompt-injected requests attempting to select secrets or permissions;
-- integration commands from unlinked chats and replayed commands;
-- slow-reader and connection-exhaustion tests;
-- audit-log redaction and retention checks; and
-- when scheduled: Origin, CORS, CSRF, cookie, and Gateway relay checks.
-
-### 4.4 Operational validation
-
-Record at minimum:
-
-- turn admission latency and queue depth;
-- event delivery latency and sequence lag over the SSH forward;
-- replay, resync, and epoch-change counts;
-- approval wait time and expiry count;
-- Host connection health, bootstrap duration, and version mismatches;
-- authentication and authorization failures;
-- integration delivery latency and retry counts;
-- event queue drops, ephemeral and durable separately; and
-- active Host/Session/client counts.
-
-The first production target is a bounded, observable remote control service,
-not an unbounded real-time stream. Load tests must demonstrate that a slow or
-disconnected client does not affect Agent execution on either machine.
-
-## 5. Rollout and rollback
-
-1. Ship the typebox contract, generated fixtures, and disabled code paths
-   first.
-2. Enable R1 only in development profiles.
-3. Enable the SSH-tunnel topology behind a feature flag for allowlisted test
-   users, then generally.
-4. Enable the integration adapter as an opt-in setting with no channel
-   configured by default.
-5. Schedule the Gateway, browser, and gRPC milestones only by a recorded
-   product decision.
-6. Keep a kill switch that rejects new remote connections and cancels queued
-   turns submitted by remote principals while preserving already-running
-   local desktop sessions.
-
-Rollback MUST:
-
-- stop accepting new remote connections and stop the integration adapter;
-- leave a remote `pi-host` process running or stopped according to the
-  user's choice, never deleting its transcripts;
-- leave local stdio, renderer, and MCP paths usable;
-- preserve completed local transcript data; and
-- never replay a turn merely because a remote feature flag changed.
-
-## 6. Release acceptance
-
-The scheduled feature set is not production-ready until:
-
-1. remote scenarios E2E-221 through E2E-226, E2E-229, E2E-230, and E2E-231
-   are green in the approved remote harness, and E2E-232 for the integration
-   adapter;
-2. the security acceptance gates in
-   `05-security/02-remote-control-security.md` that apply to the scheduled
-   milestones are signed off;
-3. a failure-injection run proves no duplicate execution after reconnect,
-   including an SSH session drop;
-4. `pi-host` bundles are published to GitHub Releases with checksums for
-   every Linux platform the desktop's release pipeline publishes, and the
-   version-mismatch and tampered-download paths are tested;
-5. the Host operational metrics are available; and
-6. a new release/rollback runbook names the feature flag, pairing revocation
-   path, data retention on the remote machine, and incident owner.
-
-Binding parity and E2E-227 / E2E-228 become gates when their milestones are
-scheduled.
-
-## 7. Implementation status
-
-Recorded on the `feat/remote-agent-host` branch, 2026-09-10:
-
-- R0 shipped: the RACP contract as typebox schemas in `packages/shared`
-  (`racp.ts`), the generated JSON Schema fixture, the local-to-RACP event
-  mapping, the remote permission ceiling, and the shared error codes.
-- R1 shipped: host-core `permissions.pending`; the headless
-  `packages/agent-host` module with the epoch event log, bounded fan-out,
-  the approval broker, the turn queue, and the snapshot builder; the
-  Electron bridge that hosts the module over the existing IPC handlers and
-  feeds every agent event through it; and schema v15 with the persisted
-  `turn_queue` and its RPC methods (D386 / ADR 0213).
-- R1 shipped: the renderer's in-memory prompt queue is retired; the
-  composer pushes through `agent/queue/push`, mirrors
-  `agent/event/queueChanged`, and "send now" is `turn/prioritize` plus a
-  graceful stop.
-- R1 partial (2026-09-18): the runtime-level per-turn permission ceiling is
-  plumbed end-to-end (`AgentPromptRequest.permissionMode` → agent-ipc →
-  `RuntimeService.startTurn` → sidecar `agent.prompt`), and the bridge no
-  longer fails closed on every session/effective-mode mismatch. A widening
-  request (effective more permissive than session) is still refused as
-  defence-in-depth; a narrower ceiling is forwarded and recorded by the
-  sidecar as a documented stub. Turn-scoped enforcement in host-core
-  (`session.beginTurn` accepting an override) is the remaining piece, so a
-  narrower ceiling on a local turn does not yet clamp tool decisions.
-- R2 started (2026-09-18, D447 / ADR 0284): `packages/host-runtime` holds the
-  Electron-independent runtime layer — the host-core and sidecar stdio
-  transports, the restart supervisor, `RuntimeService` (the module's
-  `RuntimePort` with the durable turn lifecycle), transcript persistence, a
-  headless launch resolver, and approved Plan/Goal dispatch — and Electron
-  main runs on it through thin adapters.
-- R2 (2026-09-18, D448 / ADR 0285): `packages/racp` holds the `RACP-WS`
-  server and client cores, the `ws` binding on loopback, and device-token
-  pairing; handshake, authorization, idempotency, queue order, approvals,
-  cursor replay, eviction, epoch change, slow clients, and reconnect without
-  duplicate execution are package tests. The `pi-host` bundle, the desktop
-  adapter, and the SSH bootstrap have since started: the R2a desktop kernel
-  (D449 / ADR 0286) brought the adapter and the bundle, and the SSH bootstrap
-  followed in D453 / ADR 0292.
-- R2b partial (2026-09-19, D453 / ADR 0292): the desktop installs and pairs
-  a `pi-host` over the user's own `ssh` client with `BatchMode=yes`, so the
-  user's configuration, agent, and jump hosts apply and no SSH secret reaches
-  the app. `remote/pi-host-release.ts` holds the pure release coordinates
-  (remote platform, desktop version, published SHA-256, refusal of unpublished
-  targets) and `remote/pi-host-bootstrap-script.ts` generates the single
-  `umask 077` script that downloads, verifies, installs under the remote
-  `$HOME`, restarts the host on loopback with `--pair`, and echoes
-  `PI_HOST_READY` / `PI_HOST_PAIRING_TOKEN`; `remote/ssh-transport.ts` is the
-  injectable transport port and `remote/ssh-tunnel.ts` owns one durable
-  `ssh -N -L` forward per host, re-established on every launch and adopted
-  from the bootstrap so pairing opens exactly one tunnel. Records carry
-  `metadata.transport = "ssh"` plus an SSH descriptor instead of a URL, and
-  `pi-desktop/remoteHost/bootstrap` joins `list` / `pair` / `remove`. The
-  terminal work-panel client, the reverse tool relay, and provider-configuration
-  propagation over the SSH channel are not in this slice.
-
-## 8. Amendment history
-
-D374 (2026-09-10) replaced the Electron facade milestone with the headless
-Agent Host module, added the Host queue and `permissions.pending` changes,
-made `RACP-WS` the only normative v1 binding with a browser profile and a
-reserved gRPC binding, added the Host link relay and identity-source
-decision, and made tenant isolation tests conditional on a multi-tenant
-harness.
-
-D375 (2026-09-10) re-sequenced the milestones around recorded demand: R2 is
-the SSH-tunnel remote Host with the desktop as client, R3 is the outbound
-messaging integration, and the Gateway, browser, and gRPC milestones are
-unscheduled. It added the `pi-host` bundle, the desktop adapter rule, and
-E2E-231 / E2E-232 as the acceptance targets. Its design-gate answers,
-recorded the same day, put the reverse tool relay and the terminal in R2 as
-one milestone, download `pi-host` from GitHub Releases, persist the turn
-queue in host-core, default the remote approval lifetime to 30 minutes, make
-the paired-device exemption a Host policy, and fix the Gateway identity
-source to the PI account service.
-
-D385 (2026-09-10) withdrew the identity-source clause: remote control is
-user-local by construction, and any Gateway is self-hosted and admits clients
-with Host-issued device credentials.
+# 远程 Agent 控制交付与验收
+
+- 状态：目标交付规格，属于 MVP 之后
+- 决策：D373 / ADR 0205，经 D374 与 D375 修订
+- 英文源规格：[英文源规格](/spec/06-delivery/07-remote-control-rollout)
+
+## 1. 交付边界与顺序
+
+当前 MVP 仍然只提供本地 Electron Main、pi sidecar、Rust host-core、
+loopback MCP；不得直接暴露 host-core 或现有 IPC。远程工作先从 typebox
+契约、无头 Agent Host 模块、fixture 和状态机测试开始，再在显式 feature flag
+之后加入传输绑定。
+
+D375 按已记录的需求而不是传输广度排序：#176 与 #140 要从本地桌面操作远程
+Linux 或 WSL 机器上的项目，即 SSH 隧道远端 Host 拓扑；#100 要把任务完成与
+审批通知推送到 Telegram、微信、Slack 或 Webhook 并回传简单指令，即 Host 旁的
+出站集成；没有任何已记录的请求要求浏览器或手机端控制桌面，因此 Gateway 与
+浏览器里程碑不排期。排期顺序为 R0、R1、R2、R3；不排期的里程碑保留规格以免
+契约漂移，只由后续产品决策排期。
+
+## 2. 里程碑
+
+- R0：在 `packages/shared` 中以 typebox 定义 RACP v1 资源与操作（唯一契约来源，
+  含远端 Host profile），生成 JSON Schema fixture，完成错误、游标、epoch、幂等、
+  回合队列、审批（含 `allow-session` 与 Plan/Goal 权限模式选择）、远程权限上限
+  及其 SSH 配对豁免的测试向量。
+- R1：交付无 Electron 依赖的 `packages/agent-host` 模块，拥有会话/回合准入、
+  回合队列、审批代理、带 epoch 的内存事件日志和快照构建；Electron Main 承载它，
+  现有 IPC handler 成为适配层。随之交付 host-core 的 `permissions.pending`
+  读取，并用由 host-core 持久化的 Host 队列替换 renderer 内存 prompt 队列（需单独 ADR 与
+  schema 升级，D375），重启后队列恢复并挂起到 controller 接入。仅提供开发环境的
+  loopback RACP-WS 端点。抽取在在途版本发布后开始，`permissions.pending`、
+  Host 队列和模块抽取各自独立提交，因为仓库存在并发会话，且 54 个测试按源码
+  模式匹配 `electron/main/index.ts`，需要重新指向。
+- R2：SSH 隧道上的远端 Host。分两个有序切片交付，桌面侧内核先落地并保持关闭态：
+  - R2a — 桌面内核（已交付，见 ADR 0286）：backend-router seam、传输无关的 remote-backend、
+    event bridge、per-host coordinator、safeStorage 加密的 remote-host 注册表以及启动引导。
+    默认注册表为空即完整 no-op：router 无远程 backend，renderer 每次调用仍逐字节走本地
+    handler。`node --test` 用 fake 或真实的 `@pi-desktop/racp/test-harness` 覆盖每个模块。
+  - R2b — 配对、SSH 引导、终端、反向工具中继。R2 的出口条件保持不变，随 R2b 一并达成；
+    R2a 单独不面向用户，且不尝试完成这些条件。
+
+  交付项：`pi-host` 包（模块、Node pi sidecar 与平台
+  host-core 二进制，与桌面同版本，只绑定 loopback，由桌面经 SSH 上传的引导脚本从
+  GitHub Releases 下载并校验公布的 SHA-256，再经该 SSH 会话启动并配对）；位于 `lib/api.ts` 之下的桌面 RACP 客户端适配层，使远程会话像本地
+  一样渲染；转发端口上的 `RACP-WS` header profile，遵守安全规格的 loopback 规则
+  与设备 token 配对；远端 Host profile 操作（`session/configure`、
+  `session/fork`、`session/rename`、`session/delete`、`session/compact`、
+  `workspace/list`、`workspace/read`、`workspace/diff`）；以及远程会话归属划分；反向工具中继（`tools/advertise` 与 `tool/execute` 服务端
+  请求，让桌面 MCP 服务器和不需工作区的插件工具在远程会话中于桌面执行）；终端
+  （`terminal/open`、`terminal/input`、`terminal/resize`、`terminal/close`、
+  `terminal.output` 与有界回放环，在远端机器运行）。
+- R3：出站消息集成（#100）。Host 进程内的又一个模块调用方，无传输、无入站
+  监听：订阅 Host 范围与会话事件，把 `turn.completed`、`turn.failed`、
+  `approval.requested`、`input.requested` 的脱敏摘要转发到出站渠道（先 Webhook，
+  再经 Telegram、Slack 的出站轮询或 socket 模式；需要入站回调的渠道推迟）；把固定
+  指令词汇从已关联的聊天映射到 `turn/start`、`turn/stop`、`turn/interrupt`、
+  `approval/respond`，以关联主体的角色和同一 Host 策略执行，未关联聊天忽略并审计；
+  投递失败有界重试，绝不阻塞回合。
+- 不排期：Gateway 与 Host link（原 R3），PI 不运营 Gateway，用户自托管并以 Host 签发的设备凭据准入，没有 Host 之外的身份源（D385）；浏览器 profile
+  （原 R4），Gateway-less 场景的 Host 自签 cookie 仍需补规格条款；保留的 gRPC
+  绑定（原 R5）仅在有明确消费者时交付，`.proto` 由 typebox 来源生成。
+
+R2 的设计决定（D375，2026-09-10 记录）：远端 Host 的 provider 配置经 SSH 引导通道
+写入，不经 RACP；桌面用户 MCP 服务器与不需工作区的插件工具在本里程碑通过反向工具
+中继进入远程会话，需要工作区或文件系统访问的插件工具排除；工作面板终端在本里程碑
+以 `terminal/*` 操作交付，在远端机器运行；`pi-host` 由桌面经 SSH 上传的引导脚本按
+平台从 GitHub Releases 下载桌面版本并校验公布的 SHA-256，版本不匹配即
+`PROTOCOL_MISMATCH` 并提供重新下载，首版不支持没有 GitHub 出网能力的机器；SSH 配对
+的桌面设备持有 `owner` 并豁免远程权限上限，除非启用 Host 策略
+`applyCeilingToPairedDevices`；R2 作为一个里程碑整体交付，不拆分。
+
+R1 退出条件包括模块测试不依赖 Electron、晚接入的客户端能在快照中看到已打开
+的审批且其决定能关闭本地桌面卡片。R2 退出条件包括 E2E-231 通过、SSH 会话中断
+恢复后按游标续传不重复回合、远程会话的模式/模型/思考等级变更与本地一致且仅限
+空闲、远端工具目录不含需要工作区的桌面插件工具、公布中继的桌面 MCP 工具在远程回合
+中于桌面执行且桌面中途关闭时工具失败而回合继续、远程会话终端在远端机器的会话根内
+运行且 SSH 中断后从回放环续传、引导下载校验 checksum 并拒绝被篡改的包、版本不匹配
+被拒并提供更新。R3 退出条件包括
+E2E-232 通过、载荷只含摘要与 id、未关联聊天的指令无效、Host 无新监听器。
+
+## 3. 实现规则
+
+RACP 服务只调用无头 Agent Host 模块，模块再调用 renderer 使用的同一套
+host 与 sidecar 路径；不从网络监听器调用 renderer、`host.proxy` 或 host-core；
+`pi-host` 在另一台机器上运行模块与监督而不改 RACP。Host 拥有活动回合、回合
+队列和事件游标，客户端、浏览器标签、Electron 窗口与 SSH 会话的生命周期都不
+控制 Agent 执行，结束回合必须显式调用 `turn/stop` 或 `turn/interrupt`。队列
+只存在于 Host。renderer 保持与传输无关：它只经 `lib/api.ts` 访问后端，桌面
+适配层为远端 Host 实现同一表面，远端 Host profile 未覆盖的功能按能力协商隐藏
+而不是打桩，renderer 除展示徽标外不知道会话是本地还是远程。回放测试记录初始
+快照游标、命令与幂等 key、每个已应用的持久序号、断开点、回放请求和最终快照
+哈希；瞬态事件不参与顺序断言，但必须能从快照的 activeItems 重建。每个已发布
+绑定必须保持相同的准入/拒绝、授权范围与权限上限、幂等结果、持久事件顺序、
+队列顺序、审批生命周期与决策词汇、附件校验和终止状态。
+
+## 4. 验证
+
+必须覆盖生成的 schema 校验、会话/回合/队列/审批/输入/附件状态机、幂等、
+游标回放与 epoch 变化、含权限上限及其 SSH 配对豁免与 `allow-session` 策略的
+角色矩阵、待处理请求读取与集成载荷的脱敏、已发布 binding 一致性；集成层面
+覆盖 Electron Main 内的模块、Linux 测试机上经 SSH 端口转发的 `pi-host`（含引导、
+配对、版本不匹配、重新配对）、不变的 renderer 经桌面适配层渲染远程会话、远程
+回合运行中 SSH 会话中断与恢复、Host 重启（含排队回合，验证持久化队列恢复并挂起）、SSH 中断下的中继工具执行与终端
+流式、引导下载的有效与篡改 checksum、针对 Webhook 接收端与
+长轮询 bot fixture 的集成适配层，排期后再覆盖 Gateway 路由、cookie profile 下的
+浏览器重连和 NAT 下的 Host link 中继。安全验证覆盖无效、过期、撤销、错误 Host
+的设备 token，`pi-host` 上非 loopback 对端与无 TLS 的非 loopback 绑定，配对 token
+复用与非 SSH 通道配对，错误角色/会话/Host/revision，含 `workspace/read` 越界的
+SSRF 与路径攻击，超限与哈希不符的上传，试图选择 secret 或权限的注入请求，
+未关联聊天与重放的集成指令，慢读者与连接耗尽，审计脱敏与保留，排期后再覆盖
+Origin、CORS、CSRF、cookie 与 Gateway 中继。运营指标记录准入延迟与队列深度、
+SSH 转发上的事件延迟与序号滞后、回放/重同步/epoch 变化次数、审批等待与过期、
+Host 连接健康与引导时长与版本不匹配、认证与授权失败、集成投递延迟与重试、
+瞬态/持久分别统计的事件丢弃数，以及活动 Host/会话/客户端数。
+
+## 5. 发布与回滚
+
+先发布 typebox 契约、生成的 fixture 和禁用代码路径；R1 只在开发 profile 启用；
+SSH 隧道拓扑先对 allowlist 用户以 feature flag 启用再普遍开放；集成适配层作为
+默认不配置任何渠道的可选设置启用；Gateway、浏览器与 gRPC 只由记录在案的产品
+决策排期。kill switch 拒绝新的远程连接并取消远程主体提交的排队回合，不影响
+本地桌面。回滚必须停止接受新的远程连接并停止集成适配层，远端 `pi-host` 进程
+按用户选择保留或停止但绝不删除其 transcript，保持本地 stdio、renderer 与 MCP
+路径可用，保留本地已完成的 transcript，且绝不因远程 feature flag 变化而重放回合。
+
+## 6. 生产准入
+
+已排期的功能集只有在 E2E-221 至 E2E-226、E2E-229、E2E-230、E2E-231 通过，
+集成适配层的 E2E-232 通过，适用于已排期里程碑的远程安全门签核，故障注入证明
+含 SSH 会话中断在内的重连不重复执行，桌面发布流水线发布的每个 Linux 平台都有带
+checksum 发布到 GitHub Releases 的 `pi-host` 包且版本不匹配与篡改下载路径已测试，Host 运营指标可用，且新的发布/回滚
+runbook 写明 feature flag、配对撤销路径、远端机器上的数据保留和事件负责人之后，
+才可进入生产。绑定 parity 与 E2E-227 / E2E-228 在其里程碑排期后成为门槛。
+
+## 7. 实现状态
+
+记录于 `feat/remote-agent-host` 分支，2026-09-10：
+
+- R0 已交付：`packages/shared` 中以 typebox 定义的 RACP 契约（`racp.ts`）、生成的
+  JSON Schema fixture、本地到 RACP 的事件映射、远程权限上限和共享错误码。
+- R1 已交付：host-core 的 `permissions.pending`；无头 `packages/agent-host` 模块（epoch
+  事件日志、有界扇出、审批代理、回合队列、快照构建）；在现有 IPC handler 之上承载该
+  模块并把每个 agent 事件送入它的 Electron 桥接层；以及 schema v15 的持久化
+  `turn_queue` 与其 RPC 方法（D386 / ADR 0213）。
+- R1 已交付：renderer 的内存 prompt 队列已退役；composer 经 `agent/queue/push` 推入，
+  镜像 `agent/event/queueChanged`，“立即发送”即 `turn/prioritize` 加优雅停止。
+- R1 部分完成（2026-09-18）：运行时级别的逐回合权限上限已在 JS 端全链路串通（`AgentPromptRequest.permissionMode` → agent-ipc → `RuntimeService.startTurn` → sidecar `agent.prompt`），桥接层不再对每一处会话/生效模式不一致直接拒绝。生效模式比会话更宽的请求（提权）仍作为深度防御拒绝；更窄的上限透传并在 sidecar 侧作为文档化的占位收下。turn 级的真正执行还差 host-core 一步（`session.beginTurn` 接受覆盖参数），因此本地回合上的收紧目前尚未夹紧工具决策。
+- R2 已开始（2026-09-18，D447 / ADR 0284）：`packages/host-runtime` 承载与 Electron 无关的运行时层 —— host-core 与 sidecar 的 stdio 传输、重启监督器、`RuntimeService`（模块的 `RuntimePort`，含持久回合生命周期）、转录持久化、无头启动解析器与已批准 Plan/Goal 的派发 —— Electron main 通过薄适配层运行其上。
+- R2（2026-09-18，D448 / ADR 0285）：`packages/racp` 承载 `RACP-WS` 服务端与客户端核心、回环上的 `ws` 绑定与设备令牌配对；握手、鉴权、幂等、队列顺序、审批、游标重放、驱逐、epoch 变更、慢客户端与不重复执行的重连都是包内测试。`pi-host` 包、桌面适配器与 SSH 引导此后均已开始：R2a 桌面内核（D449 / ADR 0286）带来了适配器与 `pi-host` 包，SSH 引导随后在 D453 / ADR 0292 落地。
+- R2b 部分完成（2026-09-19，D453 / ADR 0292）：桌面使用用户自己的 `ssh` 客户端并以 `BatchMode=yes` 在远端安装并配对 `pi-host`，用户的配置、agent 与跳板机照常生效，应用不持有任何 SSH 密钥。`remote/pi-host-release.ts` 承载纯发布坐标（远端平台、桌面版本、已发布的 SHA-256、拒绝未发布的目标），`remote/pi-host-bootstrap-script.ts` 生成唯一的 `umask 077` 脚本：下载、校验、安装到远端 `$HOME`、以 `--pair` 在回环上重启主机，并回显 `PI_HOST_READY` / `PI_HOST_PAIRING_TOKEN`；`remote/ssh-transport.ts` 是可注入的传输端口，`remote/ssh-tunnel.ts` 为每台主机维护一条持久的 `ssh -N -L` 转发，每次启动重新建立，并在引导时被收编（adopt），使配对只建立一条隧道。记录以 `metadata.transport = "ssh"` 加 SSH 描述符取代 URL，`pi-desktop/remoteHost/bootstrap` 加入 `list` / `pair` / `remove`。终端工作面板客户端、反向工具中继，以及经 SSH 通道下发 provider 配置均不在本次范围内。
+
+## 8. 修订记录
+
+D374（2026-09-10）用无头 Agent Host 模块替换 Electron facade 里程碑，加入
+Host 队列与 `permissions.pending`，将 `RACP-WS` 定为 v1 唯一规范绑定并加入
+浏览器 profile、保留的 gRPC、Host link 中继与身份源决定，并把租户隔离测试改为
+依赖多租户 harness。
+
+D375（2026-09-10）按已记录的需求重排里程碑：R2 为桌面作为客户端的 SSH 隧道
+远端 Host，R3 为出站消息集成，Gateway、浏览器与 gRPC 里程碑不排期；并加入
+`pi-host` 包、桌面适配层规则以及作为验收目标的 E2E-231 / E2E-232。同日记录的设计
+决定把反向工具中继与终端放进 R2 并整体交付，`pi-host` 从 GitHub Releases 下载，
+回合队列持久化到 host-core，远程审批默认寿命 30 分钟，配对设备豁免改为 Host 策略，
+Gateway 身份源定为 PI 账号服务。
+
+D385（2026-09-10）撤回身份源条款：远程控制从结构上就是用户本地的，Gateway 只能由
+用户自托管并以 Host 签发的设备凭据准入。
