@@ -152,6 +152,35 @@ test("Browser declares plan-safe actions for Plan-mode URL inspection (ADR 0211)
   }
 });
 
+test("Review ships as an ordinary plugin over the reviewed control plane (ADR 0299)", () => {
+  const reviewManifest = JSON.parse(read("resources/plugins/pi.review/manifest.json"));
+  const reviewMain = read("resources/plugins/pi.review/main.js");
+  const reviewView = read("resources/plugins/pi.review/views/review.html");
+  assert.equal(reviewManifest.id, "pi.review");
+  assert.equal(reviewManifest.schemaVersion, 1);
+  assert.deepEqual(reviewManifest.contributes.views.map((v) => v.id), ["review"]);
+  // ui.view for the work-panel surface, desktop.control for the reviewed
+  // review/* operations — nothing else.
+  assert.deepEqual([...reviewManifest.permissions].sort(), ["desktop.control", "ui.view"]);
+  assert.equal(typeof reviewManifest.contributes.views[0].title.en, "string");
+  assert.equal(typeof reviewManifest.contributes.views[0].title["zh-CN"], "string");
+  assert.equal(reviewManifest.i18n["zh-CN"].name, "审阅");
+  assert.deepEqual(reviewManifest.contributes.commands.map((c) => c.id), ["review.open"]);
+  assert.match(reviewMain, /pi\.commands\.register/);
+  assert.match(reviewMain, /review\.open/);
+  // Every host interaction goes through the reviewed control-plane gateway.
+  assert.match(reviewMain, /pi\.desktop\.invoke/);
+  assert.match(reviewMain, /review\/reviewTurns/);
+  assert.match(reviewMain, /review\/checkBatch/);
+  assert.match(reviewMain, /review\/rollbackBatch/);
+  // The dangerous operation must opt into the host's native user consent.
+  assert.match(reviewMain, /confirm:\s*true/);
+  // The view is a sandboxed page over the public bridge, like pi.browser's.
+  assert.match(reviewView, /pluginBridge/);
+  assert.match(reviewView, /meta name="pi-plugin-chrome" content="v2"/);
+  assert.doesNotMatch(reviewView, /require\(|import\s+.*from\s+["']node:|ipcRenderer/);
+});
+
 
 test("Advisor is temporarily not bundled", () => {
   assert.equal(existsSync(resolve("resources/plugins/pi.advisor")), false);

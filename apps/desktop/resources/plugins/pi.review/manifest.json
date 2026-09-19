@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "pi.review",
+  "name": "Review",
+  "version": "1.0.0",
+  "description": "Turn-grouped workspace change review with guarded rollback and rewind, over the reviewed control-plane operations (ADR 0299).",
+  "i18n": {
+    "en": {
+      "name": "Review",
+      "description": "Turn-grouped workspace change review with guarded rollback and rewind, over the reviewed control-plane operations (ADR 0299)."
+    },
+    "zh-CN": {
+      "name": "审阅",
+      "description": "按轮次分组的工作区变更审阅，带预检保护的回滚与倒回，经由受审的控制面操作实现（ADR 0299）。"
+    }
+  },
+  "author": "PI-Desktop",
+  "main": "main.js",
+  "contributes": {
+    "views": [
+      {
+        "id": "review",
+        "title": {
+          "en": "Review",
+          "zh-CN": "审阅"
+        },
+        "icon": "diff",
+        "entry": "views/review.html",
+        "order": 20
+      }
+    ],
+    "commands": [
+      {
+        "id": "review.open",
+        "title": "Review: Open"
+      }
+    ]
+  },
+  "permissions": ["ui.view", "desktop.control"],
+  "engines": {
+    "piDesktop": ">=0.15.0"
+  },
+  "activationEvents": ["onStartup", "onCommand:review.open"]
+}

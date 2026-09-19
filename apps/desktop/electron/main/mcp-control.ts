@@ -145,6 +145,9 @@ const SESSION_MUTATION_IDS = new Set([
   "session/saveRevision",
   "session/activateRevision",
   "session/importRun",
+  // Batch rollback rewrites workspace files and marks the affected tool
+  // messages rolledBack, so the renderer must refresh the session transcript.
+  "review/rollbackBatch",
 ]);
 
 const objectSchema = (
@@ -233,6 +236,9 @@ const CONTROL_OPERATION_SPECS: OperationSpec[] = [
   spec("projectSet", "project/set", "Open and bind a project path.", "write", ["path"]),
   spec("projectClear", "project/clear", "Clear the active project.", "write", []),
   spec("workspaceDiff", "workspace/diff", "Read the active workspace diff.", "read", []),
+  spec("sessionReviewTurns", "review/reviewTurns", "Read turn-grouped review change records for a session.", "read", ["input"]),
+  spec("workspaceReviewCheckBatch", "review/checkBatch", "Read-only preflight: report whether every file of a snapshot batch is untouched since capture.", "read", ["input"]),
+  spec("workspaceReviewRollbackBatch", "review/rollbackBatch", "Restore workspace files from a snapshot batch (turn or rewind mode).", "dangerous", ["input"]),
   spec("statsGetTokenUsageHistory", "stats/getTokenUsageHistory", "Read completed-turn token usage history.", "read", ["input"]),
   spec("browserGetState", "browser/getState", "Read embedded Browser state.", "read", []),
   spec("fsList", "fs/list", "List files in the active workspace.", "read", ["input"]),

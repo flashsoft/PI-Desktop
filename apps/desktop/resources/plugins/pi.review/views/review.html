@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="pi-plugin-chrome" content="v2" />
+    <title>Review</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #181818;
+        --surface: #1e1e1e;
+        --fg: #ffffff;
+        --muted: color-mix(in oklab, #ffffff 52%, transparent);
+        --faint: color-mix(in oklab, #ffffff 34%, transparent);
+        --border: color-mix(in oklab, #ffffff 7%, transparent);
+        --accent: #ffffff;
+        --add-fg: #7ee787;
+        --add-bg: color-mix(in oklab, #2ea043 22%, transparent);
+        --del-fg: #ff9492;
+        --del-bg: color-mix(in oklab, #f85149 20%, transparent);
+        --warn: #e3b341;
+        font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      }
+      :root[data-base="light"] {
+        color-scheme: light;
+        --bg: #fafafa;
+        --surface: #ffffff;
+        --fg: #1a1c1f;
+        --muted: #5d5d5d;
+        --faint: #9a9a9a;
+        --border: color-mix(in oklab, #1a1c1f 8%, transparent);
+        --accent: #1a1c1f;
+        --add-fg: #1a7f37;
+        --add-bg: color-mix(in oklab, #2da44e 16%, transparent);
+        --del-fg: #cf222e;
+        --del-bg: color-mix(in oklab, #cf222e 12%, transparent);
+        --warn: #9a6700;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); }
+      body { padding-top: var(--pi-plugin-titlebar-height, 0px); overflow: hidden; }
+      button, select { font: inherit; color: inherit; }
+      button { background: transparent; border: 0; padding: 0; cursor: pointer; }
+      button:disabled { opacity: 0.35; cursor: default; }
+      button:focus-visible, select:focus-visible {
+        outline: 2px solid color-mix(in oklab, var(--accent) 58%, transparent);
+        outline-offset: -2px;
+      }
+      .app { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+      .toolbar {
+        display: flex; flex: 0 0 auto; align-items: center; gap: 6px;
+        min-height: 36px; padding: 4px 8px;
+        border-bottom: 1px solid var(--border); background: var(--surface);
+      }
+      .toolbar select {
+        flex: 1; min-width: 0; height: 26px; padding: 0 8px;
+        border: 1px solid var(--border); border-radius: 6px;
+        background: color-mix(in oklab, var(--fg) 4%, transparent);
+      }
+      .icon-btn {
+        display: inline-flex; width: 26px; height: 26px; flex: 0 0 auto;
+        align-items: center; justify-content: center; border-radius: 6px; color: var(--muted);
+      }
+      .icon-btn:hover:not(:disabled) { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+      .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; }
+      .empty {
+        display: flex; height: 100%; flex-direction: column; align-items: center;
+        justify-content: center; gap: 6px; padding: 24px; color: var(--muted); text-align: center;
+      }
+      .empty[hidden] { display: none; }
+      .empty h1 { margin: 0; font-size: 13px; font-weight: 600; color: var(--fg); }
+      .empty p { margin: 0; max-width: 260px; }
+      .turn {
+        margin: 0 0 10px; border: 1px solid var(--border); border-radius: 8px;
+        background: var(--surface); overflow: hidden;
+      }
+      .turn-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 4px; }
+      .turn-index {
+        flex: 0 0 auto; font-size: 11px; font-weight: 600; color: var(--muted);
+        text-transform: uppercase; letter-spacing: 0.04em;
+      }
+      .turn-label {
+        flex: 1; min-width: 0; overflow: hidden; font-weight: 600;
+        text-overflow: ellipsis; white-space: nowrap;
+      }
+      .turn-stats { flex: 0 0 auto; color: var(--faint); font-size: 11px; white-space: nowrap; }
+      .adds { color: var(--add-fg); }
+      .dels { color: var(--del-fg); }
+      .turn-actions { display: flex; gap: 6px; padding: 0 10px 8px; }
+      .act {
+        height: 22px; padding: 0 8px; border: 1px solid var(--border);
+        border-radius: 6px; color: var(--muted); font-size: 11px;
+      }
+      .act:hover:not(:disabled) { background: color-mix(in oklab, var(--fg) 6%, transparent); color: var(--fg); }
+      .act.rewind { color: var(--warn); }
+      .blocked {
+        margin: 0 10px 8px; padding: 6px 8px;
+        border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent);
+        border-radius: 6px; color: var(--warn); font-size: 11px;
+      }
+      .blocked[hidden] { display: none; }
+      .blocked ul { margin: 4px 0 0; padding-left: 16px; }
+      .files { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border); }
+      .file-row {
+        display: flex; width: 100%; align-items: center; gap: 8px;
+        padding: 5px 10px; text-align: left;
+      }
+      .file-row:hover { background: color-mix(in oklab, var(--fg) 4%, transparent); }
+      .file.rolled-back .file-row { opacity: 0.5; }
+      .badge {
+        display: inline-flex; width: 16px; height: 16px; flex: 0 0 auto;
+        align-items: center; justify-content: center; border-radius: 4px;
+        font-size: 10px; font-weight: 700;
+      }
+      .badge.added { background: var(--add-bg); color: var(--add-fg); }
+      .badge.modified { background: color-mix(in oklab, var(--fg) 10%, transparent); color: var(--muted); }
+      .badge.deleted { background: var(--del-bg); color: var(--del-fg); }
+      .path {
+        flex: 1; min-width: 0; overflow: hidden;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .counts {
+        flex: 0 0 auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px; white-space: nowrap;
+      }
+      .rolled-back-tag { flex: 0 0 auto; color: var(--faint); font-size: 10px; font-style: italic; }
+      .diff {
+        margin: 0; padding: 6px 0; overflow-x: auto;
+        border-top: 1px solid var(--border);
+        background: color-mix(in oklab, var(--fg) 2%, transparent);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px; line-height: 1.5;
+      }
+      .diff[hidden] { display: none; }
+      .diff .hunk-header { padding: 0 10px; color: var(--faint); white-space: pre; }
+      .diff .line { padding: 0 10px; white-space: pre-wrap; word-break: break-all; }
+      .diff .line.add { background: var(--add-bg); color: var(--add-fg); }
+      .diff .line.del { background: var(--del-bg); color: var(--del-fg); }
+      .diff .line.context { color: var(--muted); }
+      .diff .note { padding: 0 10px; color: var(--faint); font-style: italic; }
+      .status {
+        flex: 0 0 auto; padding: 5px 10px; border-top: 1px solid var(--border);
+        background: var(--surface); color: var(--muted); font-size: 11px;
+      }
+      .status[hidden] { display: none; }
+      .status.error { color: var(--del-fg); }
+      .status.ok { color: var(--add-fg); }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="toolbar">
+        <select id="session" aria-label="Session"></select>
+        <button type="button" class="icon-btn" id="refresh" title="Refresh" aria-label="Refresh">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+        </button>
+      </div>
+      <div class="scroll" id="scroll">
+        <div class="empty" id="empty">
+          <h1 id="empty-title"></h1>
+          <p id="empty-body"></p>
+        </div>
+        <div id="turns"></div>
+      </div>
+      <div class="status" id="status" hidden></div>
+    </div>
+    <script>
+      const bridge = window.pluginBridge;
+      const sessionSelect = document.getElementById("session");
+      const refreshBtn = document.getElementById("refresh");
+      const emptyEl = document.getElementById("empty");
+      const emptyTitle = document.getElementById("empty-title");
+      const emptyBody = document.getElementById("empty-body");
+      const turnsEl = document.getElementById("turns");
+      const statusEl = document.getElementById("status");
+
+      let locale = "en";
+      let sessions = [];
+      let currentSessionId = "";
+      let turns = [];
+      let busyKey = null;
+      // Blocked-preflight reasons keyed by turn snapshot batch, so they
+      // survive the re-render that follows a failed rollback attempt.
+      let blockedByTurnKey = new Map();
+      // Monotonic request id: a slow response must never overwrite the
+      // state of a session the user has since switched away from.
+      let requestSeq = 0;
+
+      const copy = {
+        en: {
+          refresh: "Refresh",
+          pickSession: "Select a session",
+          noSessionTitle: "No session selected",
+          noSessionBody: "Pick a session above to review its workspace changes.",
+          noSessionsTitle: "No sessions yet",
+          noSessionsBody: "Start a conversation first; turns with workspace changes show up here.",
+          noChangesTitle: "No changes",
+          noChangesBody: "This session has no recorded workspace changes yet.",
+          loading: "Loading…",
+          turn: (n) => "Turn " + n,
+          changes: "Changes",
+          activeCount: (n) => n + " active",
+          rollbackTurn: "Rollback turn",
+          rewind: "Rewind to here",
+          rewindTitle: "Rolls back this turn and every later turn",
+          blockedTitle: "Rollback blocked",
+          blockedBy: (path, session) => path + " — touched by a later change (session " + session + ")",
+          blockedGeneric: (path) => path + " — changed since the snapshot",
+          rolledBack: "Rolled back",
+          binary: "Binary file",
+          truncated: "Diff truncated",
+          confirmTurn: (n) => "Roll back the workspace changes of turn " + n + "?",
+          confirmRewind: (n) => "Roll back turn " + n + " and every later turn?",
+          done: "Rollback finished.",
+          loadFailed: "Failed to load review data.",
+        },
+        zh: {
+          refresh: "刷新",
+          pickSession: "选择会话",
+          noSessionTitle: "未选择会话",
+          noSessionBody: "在上方选择一个会话以审阅它的工作区变更。",
+          noSessionsTitle: "还没有会话",
+          noSessionsBody: "先开始一段对话；产生工作区变更的轮次会显示在这里。",
+          noChangesTitle: "没有变更",
+          noChangesBody: "该会话还没有记录任何工作区变更。",
+          loading: "加载中…",
+          turn: (n) => "第 " + n + " 轮",
+          changes: "变更",
+          activeCount: (n) => n + " 项生效",
+          rollbackTurn: "回滚本轮",
+          rewind: "倒回至此",
+          rewindTitle: "回滚本轮及之后所有轮的变更",
+          blockedTitle: "无法回滚",
+          blockedBy: (path, session) => path + " — 被之后的变更改动（会话 " + session + "）",
+          blockedGeneric: (path) => path + " — 快照之后已被改动",
+          rolledBack: "已回滚",
+          binary: "二进制文件",
+          truncated: "差异已截断",
+          confirmTurn: (n) => "确定回滚第 " + n + " 轮的工作区变更吗？",
+          confirmRewind: (n) => "确定回滚第 " + n + " 轮及之后所有轮的变更吗？",
+          done: "回滚完成。",
+          loadFailed: "加载审阅数据失败。",
+        },
+      };
+
+      const t = (key, ...args) => {
+        const value = copy[locale]?.[key] ?? copy.en[key];
+        return typeof value === "function" ? value(...args) : value ?? key;
+      };
+
+      const el = (tag, className, text) => {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      };
+
+      const setStatus = (text, kind) => {
+        statusEl.hidden = !text;
+        statusEl.textContent = text || "";
+        statusEl.className = "status" + (kind ? " " + kind : "");
+      };
+
+      const showEmpty = (title, body) => {
+        emptyEl.hidden = false;
+        turnsEl.replaceChildren();
+        emptyTitle.textContent = title;
+        emptyBody.textContent = body;
+      };
+
+      const invoke = async (channel, payload) => {
+        const result = await bridge.invoke(channel, payload ?? {});
+        if (result && result.ok === false) {
+          throw Object.assign(new Error(result.message || channel), { code: result.code });
+        }
+        return result;
+      };
+
+      const STATUS_LETTER = { added: "A", modified: "M", deleted: "D" };
+
+      const buildDiff = (change) => {
+        const diff = el("pre", "diff");
+        diff.hidden = true;
+        if (change.binary) {
+          diff.append(el("div", "note", t("binary")));
+          return diff;
+        }
+        const hunks = Array.isArray(change.hunks) ? change.hunks : [];
+        if (!hunks.length) {
+          diff.append(el("div", "note", change.truncated ? t("truncated") : "—"));
+          return diff;
+        }
+        for (const hunk of hunks) {
+          diff.append(el("div", "hunk-header", hunk.header || ""));
+          for (const line of hunk.lines || []) {
+            const type = line.type === "add" || line.type === "del" ? line.type : "context";
+            const prefix = type === "add" ? "+" : type === "del" ? "-" : " ";
+            diff.append(el("div", "line " + type, prefix + (line.text ?? "")));
+          }
+        }
+        if (change.truncated) diff.append(el("div", "note", t("truncated")));
+        return diff;
+      };
+
+      const buildFileRow = (entry) => {
+        const change = entry?.change ?? {};
+        const rolledBack = change.state === "rolledBack";
+        const item = el("li", "file" + (rolledBack ? " rolled-back" : ""));
+        const row = el("button", "file-row");
+        row.type = "button";
+        const status = typeof change.status === "string" ? change.status : "modified";
+        row.append(el("span", "badge " + status, STATUS_LETTER[status] ?? "?"));
+        row.append(el("span", "path", change.path ?? ""));
+        const counts = el("span", "counts");
+        counts.append(el("span", "adds", "+" + (change.additions ?? 0)), " ");
+        counts.append(el("span", "dels", "−" + (change.deletions ?? 0)));
+        row.append(counts);
+        if (rolledBack) row.append(el("span", "rolled-back-tag", t("rolledBack")));
+        const diff = buildDiff(change);
+        row.addEventListener("click", () => {
+          diff.hidden = !diff.hidden;
+        });
+        item.append(row, diff);
+        return item;
+      };
+
+      const buildTurnCard = (turn) => {
+        const card = el("section", "turn");
+        const head = el("div", "turn-head");
+        head.append(el("span", "turn-index", t("turn", turn.turnIndex)));
+        head.append(el("span", "turn-label", turn.label || t("changes")));
+        const stats = el("span", "turn-stats");
+        stats.append(
+          el("span", "adds", "+" + (turn.additions ?? 0)),
+          " ",
+          el("span", "dels", "−" + (turn.deletions ?? 0)),
+          " · ",
+          document.createTextNode(t("activeCount", turn.activeCount ?? 0)),
+        );
+        head.append(stats);
+        card.append(head);
+
+        const actions = el("div", "turn-actions");
+        const rollbackBtn = el("button", "act rollback", t("rollbackTurn"));
+        rollbackBtn.type = "button";
+        rollbackBtn.disabled = busyKey !== null || !turn.snapshotIds.length;
+        rollbackBtn.addEventListener("click", () => void runRollback(turn, "turn"));
+        const rewindBtn = el("button", "act rewind", t("rewind"));
+        rewindBtn.type = "button";
+        rewindBtn.title = t("rewindTitle");
+        rewindBtn.disabled = busyKey !== null || !turn.snapshotIds.length;
+        rewindBtn.addEventListener("click", () => void runRollback(turn, "rewind"));
+        actions.append(rollbackBtn, rewindBtn);
+        card.append(actions);
+
+        const blocked = el("div", "blocked");
+        const turnKey = turn.snapshotIds.join(",");
+        const blockedReasons = blockedByTurnKey.get(turnKey);
+        if (blockedReasons && blockedReasons.length) {
+          blocked.hidden = false;
+          blocked.append(el("strong", "", t("blockedTitle")));
+          const list = el("ul");
+          for (const reason of blockedReasons) list.append(el("li", "", reason));
+          blocked.append(list);
+        } else {
+          blocked.hidden = true;
+        }
+        card.append(blocked);
+
+        const files = el("ul", "files");
+        for (const entry of turn.entries ?? []) files.append(buildFileRow(entry));
+        card.append(files);
+        return card;
+      };
+
+      const render = () => {
+        if (!currentSessionId) {
+          showEmpty(t("noSessionTitle"), t("noSessionBody"));
+          return;
+        }
+        if (!turns.length) {
+          showEmpty(t("noChangesTitle"), t("noChangesBody"));
+          return;
+        }
+        emptyEl.hidden = true;
+        turnsEl.replaceChildren(...turns.map(buildTurnCard));
+      };
+
+      const runRollback = async (turn, mode) => {
+        const key = turn.snapshotIds.join(",");
+        if (busyKey) return;
+        busyKey = key;
+        blockedByTurnKey.delete(key);
+        render();
+        try {
+          const check = await invoke("rv.checkBatch", {
+            sessionId: currentSessionId,
+            snapshotIds: turn.snapshotIds,
+          });
+          const files = Array.isArray(check?.files) ? check.files : [];
+          const reasons = files
+            .filter((file) => file && file.clean === false)
+            .map((file) =>
+              file.blockedBy
+                ? t("blockedBy", file.path, String(file.blockedBy.sessionId ?? ""))
+                : t("blockedGeneric", file.path),
+            );
+          if (check?.clean !== true || reasons.length) {
+            blockedByTurnKey.set(
+              key,
+              reasons.length ? reasons : [t("blockedGeneric", "—")],
+            );
+            return;
+          }
+          const confirmed = window.confirm(
+            mode === "rewind" ? t("confirmRewind", turn.turnIndex) : t("confirmTurn", turn.turnIndex),
+          );
+          if (!confirmed) return;
+          await invoke("rv.rollbackBatch", {
+            sessionId: currentSessionId,
+            snapshotIds: turn.snapshotIds,
+            mode,
+          });
+          await loadTurns();
+          setStatus(t("done"), "ok");
+        } catch (error) {
+          setStatus(error?.message || t("loadFailed"), "error");
+        } finally {
+          busyKey = null;
+          render();
+        }
+      };
+
+      const loadTurns = async () => {
+        const sessionId = currentSessionId;
+        if (!sessionId) {
+          turns = [];
+          render();
+          return;
+        }
+        const seq = ++requestSeq;
+        try {
+          const result = await invoke("rv.reviewTurns", { sessionId });
+          if (seq !== requestSeq || sessionId !== currentSessionId) return;
+          turns = Array.isArray(result?.turns) ? result.turns : [];
+          setStatus("");
+        } catch (error) {
+          if (seq !== requestSeq || sessionId !== currentSessionId) return;
+          turns = [];
+          setStatus(error?.message || t("loadFailed"), "error");
+        }
+        render();
+      };
+
+      const loadSessions = async () => {
+        setStatus(t("loading"));
+        try {
+          const result = await invoke("rv.listSessions");
+          sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+        } catch (error) {
+          sessions = [];
+          setStatus(error?.message || t("loadFailed"), "error");
+        }
+        sessionSelect.replaceChildren();
+        if (!sessions.length) {
+          sessionSelect.append(el("option", "", t("pickSession")));
+          currentSessionId = "";
+          showEmpty(t("noSessionsTitle"), t("noSessionsBody"));
+          setStatus("");
+          return;
+        }
+        const keep = sessions.some((session) => session.id === currentSessionId);
+        currentSessionId = keep ? currentSessionId : sessions[0].id;
+        for (const session of sessions) {
+          const option = el("option", "", session.title);
+          option.value = session.id;
+          if (session.id === currentSessionId) option.selected = true;
+          sessionSelect.append(option);
+        }
+        await loadTurns();
+      };
+
+      sessionSelect.addEventListener("change", () => {
+        currentSessionId = sessionSelect.value;
+        blockedByTurnKey = new Map();
+        void loadTurns();
+      });
+      refreshBtn.addEventListener("click", () => void loadSessions());
+
+      const applyChrome = () => {
+        refreshBtn.title = t("refresh");
+        refreshBtn.setAttribute("aria-label", t("refresh"));
+        render();
+      };
+
+      const setBaseTheme = (appearance) => {
+        const base = appearance?.base;
+        document.documentElement.dataset.base =
+          base === "light" || base === "dark"
+            ? base
+            : window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        const next = String(appearance?.locale ?? navigator.language).toLowerCase();
+        locale = next.startsWith("zh") ? "zh" : "en";
+        document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+        applyChrome();
+      };
+
+      bridge.on("appearance:changed", setBaseTheme);
+      bridge.invoke("app.getAppearance").then(setBaseTheme).catch(() => setBaseTheme(null));
+      void loadSessions();
+    </script>
+  </body>
+</html>

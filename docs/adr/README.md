@@ -327,5 +327,6 @@ Each ADR includes:
 | 0296 | [Signed macOS DMG is a two-icon install](0296-macos-signed-dmg-two-icon-install.md) | Accepted (D457; amends ADR 0232 / ADR 0204) |
 | 0297 | [Provider-hosted web search as an adapter capability](0297-provider-hosted-web-search-adapter-capability.md) | Accepted |
 | 0298 | [The app ships no fonts](0298-remove-bundled-fonts.md) | Accepted (D598; amends ADR 0083 / D232) |
+| 0299 | [Review capabilities as a bundled plugin with shared turn semantics](0299-review-capabilities-as-bundled-plugin.md) | Accepted (ADR 0043 / ADR 0203 / ADR 0170 / ADR 0241) |
 | turn-process-and-thinking-display | [Turn process and thinking presentation](turn-process-and-thinking-display.md) | Accepted |
 | provider-display-order | [Provider display order](provider-display-order.md) | Accepted |

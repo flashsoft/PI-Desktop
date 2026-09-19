@@ -790,6 +790,20 @@ or a host without a dialog service all fail with `PERMISSION_DENIED` before
 the controller is reached. Calls are logged with the plugin id, operation,
 risk, and result status; argument values are not copied into the audit entry.
 
+Review capabilities (ADR 0299) reach first-party plugins through the same
+catalog: `review/reviewTurns` (read) returns a session's change records
+grouped by the shared turn semantics (`@pi-desktop/shared`'s
+`groupReviewChangesByTurn`, the same source as the core Review tab);
+`review/checkBatch` (read) is the read-only rollback preflight for a
+snapshot batch, equivalent to `review.checkTurn`; `review/rollbackBatch`
+(dangerous) restores a snapshot batch with `mode: "turn" | "rewind"`,
+equivalent to `review.rollbackTurn`, and likewise requires `confirm: true`
+plus the native user confirmation, and the host still rejects with
+`CONFLICT` while the session runs or has queued inputs. The bundled plugin
+`pi.review` is the current consumer of this catalog.
+
+### 麦克风面板（需要 `ui.microphone`）
+
 ### microphone panels (requires `ui.microphone`)
 
 An isolated panel may request microphone audio through the browser media API

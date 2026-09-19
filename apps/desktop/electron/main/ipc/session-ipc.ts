@@ -13,6 +13,10 @@ import {
   type ModelConfigImportDraft,
   type Mode,
   type SessionThinkingLevel,
+  type UiMessage,
+  type ReviewTurnGroup,
+  groupReviewChangesByTurn,
+  reviewChangeFromMessage,
 } from "@pi-desktop/shared";
 import {
   convertSession,
@@ -287,6 +291,50 @@ export function registerSessionIpc({
       return result.session
         ? { ...result, session: enrichSession(result.session, providers, defaults) }
         : result;
+    },
+  );
+
+  // Turn-grouped review evidence for the control plane (review/reviewTurns).
+  // The turn grouping is computed here from the same shared pure functions
+  // the renderer's Review tab uses, so both surfaces agree on turn boundaries.
+  handle(
+    IPC.invoke.sessionReviewTurns,
+    async (input?: { sessionId?: unknown; messageLimit?: unknown }) => {
+      if (!host) throw new Error("host unavailable");
+      const sessionId =
+        typeof input?.sessionId === "string" ? input.sessionId.trim() : "";
+      if (!sessionId || sessionId.length > 256) {
+        throw Object.assign(new Error("sessionId must be a non-empty string of at most 256 characters"), {
+          errorCode: ErrorCodes.INVALID_ARGUMENT,
+        });
+      }
+      // Native-pi sessions live in the sidecar and have no host-side review
+      // evidence; reject them here instead of failing deep inside the host.
+      if (sessionId.startsWith("native-pi:")) {
+        throw Object.assign(new Error("Native Pi sessions have no review turns"), {
+          errorCode: ErrorCodes.INVALID_ARGUMENT,
+        });
+      }
+      // The host clamps the read window to 1000 messages (sessions.rs); keep
+      // the control-plane contract explicit instead of inheriting the magic.
+      const messageLimit = Math.min(
+        Number.isInteger(input?.messageLimit) && (input!.messageLimit as number) > 0
+          ? (input!.messageLimit as number)
+          : 2000,
+        1000,
+      );
+      const result = (await host.call("session.get", {
+        id: sessionId,
+        messageLimit,
+      })) as { session?: { messages?: unknown } | null };
+      const rawMessages = result.session?.messages;
+      const messages = (Array.isArray(rawMessages) ? rawMessages : []) as UiMessage[];
+      const entries = messages.flatMap((message) => {
+        const change = reviewChangeFromMessage(message);
+        return change ? [{ message, change }] : [];
+      });
+      const turns: ReviewTurnGroup[] = groupReviewChangesByTurn(messages, entries);
+      return { sessionId, turns };
     },
   );
   handle(IPC.invoke.sessionCollaboration, async (input?: { sessionId?: unknown }) => {

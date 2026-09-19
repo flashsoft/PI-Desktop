@@ -49,6 +49,75 @@ test("the plugin and MCP paths share desktop operation validation", async () => 
   ]);
 });
 
+test("review operations are exposed with reviewed risk levels", async () => {
+  const calls = [];
+  const controller = createMcpControlController({
+    channels: {
+      sessionReviewTurns: "pi-desktop/session/reviewTurns",
+      workspaceReviewCheckBatch: "pi-desktop/workspace/review/checkBatch",
+      workspaceReviewRollbackBatch: "pi-desktop/workspace/review/rollbackBatch",
+    },
+    invoke: async (channel, args) => {
+      calls.push({ channel, args });
+      return { ok: true };
+    },
+  });
+
+  assert.deepEqual(
+    controller.operations.map((operation) => [operation.id, operation.risk]),
+    [
+      ["review/reviewTurns", "read"],
+      ["review/checkBatch", "read"],
+      ["review/rollbackBatch", "dangerous"],
+    ],
+  );
+
+  await controller.invoke({
+    operation: "review/reviewTurns",
+    args: [{ sessionId: "s1" }],
+  });
+  await controller.invoke({
+    operation: "review/checkBatch",
+    args: [{ sessionId: "s1", snapshotIds: ["snap-1"] }],
+  });
+  await assert.rejects(
+    () =>
+      controller.invoke({
+        operation: "review/rollbackBatch",
+        args: [{ sessionId: "s1", snapshotIds: ["snap-1"], mode: "turn" }],
+      }),
+    (error) => error.code === "CONFIRMATION_REQUIRED",
+  );
+  await controller.invoke({
+    operation: "review/rollbackBatch",
+    args: [{ sessionId: "s1", snapshotIds: ["snap-1"], mode: "turn" }],
+    confirm: true,
+  });
+  // A plugin-driven rollback must refresh the visible transcript: the
+  // renderer only updates message review state for rollbacks it initiated.
+  assert.deepEqual(
+    mcpControlRendererEvent(
+      { id: "review/rollbackBatch", risk: "dangerous" },
+      { outcomes: [] },
+      [{ sessionId: "s1", snapshotIds: ["snap-1"], mode: "turn" }],
+      "plugin",
+    ),
+    { reason: "mcp.session" },
+  );
+
+  assert.deepEqual(calls, [
+    { channel: "pi-desktop/session/reviewTurns", args: [{ sessionId: "s1" }] },
+    {
+      channel: "pi-desktop/workspace/review/checkBatch",
+      args: [{ sessionId: "s1", snapshotIds: ["snap-1"] }],
+    },
+    {
+      channel: "pi-desktop/workspace/review/rollbackBatch",
+      args: [{ sessionId: "s1", snapshotIds: ["snap-1"], mode: "turn" }],
+    },
+  ]);
+});
+
 async function post(url, token, body, headers = {}) {
   const response = await fetch(url, {
     method: "POST",

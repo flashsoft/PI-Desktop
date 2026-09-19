@@ -630,6 +630,29 @@ export function registerWorkspaceIpc({
     },
   );
 
+  // Control-plane aliases (review/checkBatch, review/rollbackBatch): the host
+  // batch RPCs are turn-agnostic snapshot primitives, so the reviewed
+  // operations share the same handlers as the turn-scoped channels above.
+  handle(
+    IPC.invoke.workspaceReviewCheckBatch,
+    async (input: { sessionId: string; snapshotIds: string[] }) => {
+      if (!host) throw new Error("host unavailable");
+      return host.call("review.checkTurn", input);
+    },
+  );
+
+  handle(
+    IPC.invoke.workspaceReviewRollbackBatch,
+    async (input: {
+      sessionId: string;
+      snapshotIds: string[];
+      mode: "turn" | "rewind";
+    }) => {
+      if (!host) throw new Error("host unavailable");
+      return host.call("review.rollbackTurn", input);
+    },
+  );
+
   handle(
     IPC.invoke.statsGetTokenUsageHistory,
     async (input?: { startDate?: number; endDate?: number; bucket?: string }) => {
