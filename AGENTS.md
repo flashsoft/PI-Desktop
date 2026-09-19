@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Policy-Sync: 2026-09-18.1
+Policy-Sync: 2026-09-19.1
 
 Mandatory rules for AI coding agents working in PI-Desktop.
 
@@ -32,8 +32,10 @@ Optimize for, in order:
 
 - Reply to the user in the language they used. When the request is in
   Chinese, answer in Chinese and keep it terse.
-- Keep code, identifiers, comments, commit messages, specs, ADRs, log
-  strings, protocol field names, and repository documentation in English.
+- Keep code, identifiers, comments, commit messages, log strings, and
+  protocol field names in English. Repository documentation — specs,
+  ADRs, and READMEs — is written in Chinese (zh-CN); write and update
+  documentation in Chinese.
 - GitHub issue / PR discussion follows the original author's language.
 
 ---
