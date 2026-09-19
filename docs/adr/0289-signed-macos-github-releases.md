@@ -41,7 +41,7 @@ for the official `vastsa/PI-Desktop` release lane.
    `CSC_LINK` (p12, file path or base64), `CSC_KEY_PASSWORD`, `APPLE_ID`,
    `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Nothing of that set is
    committed, echoed, or written into electron-builder config.
-4. Local `pnpm dist:mac` / `pnpm pack` remain unsigned when no identity is
+4. Local `pnpm dist:mac` / `pnpm package` remain unsigned when no identity is
    configured. `scripts/release-macos.sh` remains the local signed lane.
    `workflow_dispatch` may set `sign_macos: false` only to produce unsigned
    debug artifacts; that path must not be used for a GitHub Release tag.

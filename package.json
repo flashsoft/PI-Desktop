@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "pnpm --filter @pi-desktop/desktop dev",
     "preview": "pnpm --filter @pi-desktop/desktop run preview",
-    "pack": "pnpm --filter @pi-desktop/desktop run pack",
+    "package": "pnpm --filter @pi-desktop/desktop run pack",
     "dist": "pnpm --filter @pi-desktop/desktop run dist",
     "pi-plugin": "pi-plugin",
     "build": "pnpm -r --if-present build && cargo build --release -p host-core",
