@@ -50,7 +50,6 @@ import {
   shouldShowNativeNotification,
 } from "./notification-policy";
 import { PersistenceOutbox } from "./persistence-outbox";
-import { InflightCheckpointer } from "./inflight-checkpoint";
 import { AgentSidecar } from "./agent-sidecar";
 import { Logger, ignoreBrokenStdio } from "./logger";
 import { installMainProcessErrorHandlers } from "./main-process-errors";
@@ -89,14 +88,12 @@ import {
   type PreparedPromptAttachment,
 } from "./prompt-attachments";
 import {
+  InflightCheckpointer,
   executionFromResponse,
   executionListFromResponse,
   planExecutionFromUnknown,
-} from "./plan-execution";
-import {
-  readWindowState,
-  writeWindowState,
-} from "./window-preferences";
+} from "@pi-desktop/host-runtime";
+import { readWindowState, writeWindowState } from "./window-preferences";
 import { createPlanUiProbe } from "./plan-ui-probe";
 import type { McpControlController, McpControlServer } from "./mcp-control";
 import type { AgentHostBridge } from "./agent-host-bridge";
@@ -681,7 +678,6 @@ const {
   emitBrowserState,
   pluginPanels,
   pluginViews,
-  pluginSettingsViews,
   browserHost,
   browserPane,
   announceTurnEnded,
@@ -819,6 +815,7 @@ function isHostUnavailable(error: unknown): boolean {
 
 /** Pull the user's MCP server records from host-core into the local runtime. */
 function sendToRenderer(channel: string, payload: unknown) {
+  applicationLifecycle?.traySessions.observeEvent(channel, payload);
   if (channel === IPC.event.pluginChanged) {
     applicationLifecycle?.applyNativeThemeSource({
       theme: applicationAppearanceState.appThemePreference,
@@ -903,6 +900,7 @@ const applicationAppearanceState: ApplicationAppearanceState = {
 };
 
 applicationLifecycle = createApplicationLifecycle({
+  getRunningSessionIds: () => activeTurns.keys(),
   state: windowLifecycleState,
   appState: applicationLifecycleState,
   appearanceState: applicationAppearanceState,
@@ -925,7 +923,6 @@ applicationLifecycle = createApplicationLifecycle({
   applyCloseBehavior: applyCloseBehaviorForLifecycle,
   browserPane,
   pluginViews,
-  pluginSettingsViews,
   plugins,
   logger,
   refreshReleaseNotes: () => updater.refreshReleaseNotes(),
@@ -1251,11 +1248,13 @@ const { bootHostStatus, runtimeArch, bootBackends } = runtimeLifecycle;
 
 function registerIpc() {
   return registerIpcHandlers({
+    traySessions: applicationLifecycle!.traySessions,
     ipcMain,
     getMainWindow: () => mainWindow,
     getHost: () => host,
     getSidecar: () => sidecar,
     getAgentHostBridge: () => agentHostBridge,
+    getBackendRouter: () => startupState.backendRouter,
     getNotificationViewingSessionId: () => notificationViewingSessionId,
     setNotificationViewingSessionId: (sessionId: string | null) => {
       notificationViewingSessionId = sessionId;
@@ -1330,7 +1329,6 @@ function registerIpc() {
     activeUserSubagentDocuments,
     disabledBuiltinSubagents,
     pluginViews,
-    pluginSettingsViews,
     pluginScopes,
     rememberPluginScopes,
     pluginPanels,
@@ -1371,6 +1369,7 @@ const startupState: StartupState = {
   set agentHostBridge(value) {
     agentHostBridge = value;
   },
+  backendRouter: null,
   get desktopControl() {
     return desktopControl;
   },
@@ -1487,7 +1486,6 @@ registerShutdownHandlers({
   mcpOAuth,
   browserPane,
   pluginViews,
-  pluginSettingsViews,
   updater,
   logger,
   confirmQuitDialog,

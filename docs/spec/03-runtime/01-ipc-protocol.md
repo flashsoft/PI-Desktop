@@ -168,13 +168,14 @@ The renderer changes those values through
 type ThinkingLevel =
   | "off" | "minimal" | "low" | "medium"
   | "high" | "xhigh" | "max";
+type SessionThinkingLevel = ThinkingLevel | "omit";
 
 type SessionConfigureRequest = {
   id: string;
   mode: "plan" | "goal" | "agent";
   providerId?: string;
   modelId?: string;
-  thinkingLevel: ThinkingLevel;
+  thinkingLevel: SessionThinkingLevel;
 };
 ```
 
@@ -867,7 +868,7 @@ type SessionSummary = {
  modelId?: string;
  providerId?: string;
   mode: "plan" | "goal" | "agent";
- thinkingLevel: ThinkingLevel;
+ thinkingLevel: SessionThinkingLevel;
  supportsReasoning?: boolean;
  supportedThinkingLevels?: ThinkingLevel[];
  updatedAt: string;
@@ -1553,7 +1554,7 @@ Desktop-only MCP market channels (not host RPC) live on Electron IPC:
   cursor state for browse and server-side search. One failed source does not
   discard successful sources; the response and caches are bounded.
 
-### MCP OAuth (ADR 0281)
+### MCP OAuth (ADR 0283)
 
 Browser-based OAuth 2.1 authentication for HTTP MCP servers is handled in the Electron main process via non-blocking IPC invocations and an event stream:
 
@@ -1580,7 +1581,7 @@ type McpOAuthLoginEvent = {
 - `McpServerStatus` includes:
   - `hasOauth: boolean` — whether the server has an encrypted OAuth secret stored in host-core (`secret:mcp:<serverId>:oauth`).
   - `authRequired: boolean` — flags that a connection attempt or `tools/call` returned HTTP 401 Unauthorized and user re-authentication is required.
-- OAuth tokens (`accessToken`, `refreshToken`, `expiresAt`, `resource`, `clientId`) are persisted exclusively in host-core encrypted secrets under `secret:mcp:<serverId>:oauth` and never exposed to the renderer.
+- OAuth tokens (`accessToken`, `refreshToken`, `expiresAt`, `resource`, `clientId`, `redirectUris`) are persisted exclusively in host-core encrypted secrets under `secret:mcp:<serverId>:oauth` and never exposed to the renderer. Authorization-server endpoints must be HTTPS (loopback HTTP is the only exception). Token-endpoint error bodies stay in main-process logs and are not copied into renderer events.
 
 ## 12c. Subagent API (D202)
 
@@ -1876,6 +1877,26 @@ Browser view continues to follow the renderer-measured panel rectangle.
 Window bounds persistence and display reconciliation therefore operate on the
 ordinary application bounds; there is no panel-specific width or x-offset
 reservation, and background artifacts cannot change visible window geometry.
+
+### Tray session shortcuts (ADR tray-session-shortcuts)
+
+- `pi-desktop/tray/setSessionPreferences({ sessionMeta, archivedProjectPaths, sort })`
+  returns `{ ok: true }`. `sessionMeta` maps IDs to optional boolean `pinned`
+  and `archived` flags plus a non-negative safe integer `order`. `sort` is
+  `recent`, `created`, `oldest`, `name`, or `manual`; the renderer mirrors the
+  sidebar's effective sort. Main validates the payload, strips unrelated
+  metadata, and rejects senders other than the current main window. The setter
+  is excluded from the local MCP catalog and persists nothing.
+- Main emits `pi-desktop/tray/event/sessionActivated { sessionId: string | null }`
+  after restoring/focusing the window, waiting for post-bootstrap
+  `menu/rendererReady`, and checking that the session still exists and is not
+  archived. Renderer enters normal session selection, including cross-project
+  navigation and unread acknowledgement. A null ID closes search, returns to
+  the conversation page, and expands the sidebar for View more. Merely opening
+  the menu is read-only.
+- Main reads existing Host session/inbox APIs, observes root runtime events and
+  successful session/inbox mutations, and combines them with the ephemeral
+  organization copy. No host protocol or storage schema changes.
 
 ## 13c. Composer input APIs (D123/D124/D197, ADR 0024/0059)
 

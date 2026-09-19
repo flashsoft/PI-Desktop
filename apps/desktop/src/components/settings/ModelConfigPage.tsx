@@ -126,6 +126,7 @@ export function ModelConfigPage() {
     );
   }, [defaultModelOptionsList, defaultModelQuery]);
 
+
   if (!settings) return null;
 
   const defaultProvider =
@@ -133,6 +134,7 @@ export function ModelConfigPage() {
   const editingProvider =
     setupFor ? providers.find((provider) => provider.id === setupFor) ?? null : null;
   const defaultProviderReady = defaultProvider !== null && providerReady(defaultProvider);
+
 
   const setDefaultModel = async (provider: ProviderPublic, modelId: string) => {
     setBusyId(provider.id);

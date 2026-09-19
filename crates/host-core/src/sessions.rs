@@ -39,8 +39,11 @@ pub fn is_contract_mode(mode: &str) -> bool {
 
 /// Values accepted by the persisted per-session thinking selector.  Keep this
 /// list in the host boundary so old clients cannot write arbitrary provider
-/// options into the session row.
-pub const THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+/// options into the session row. `omit` is a client choice to send no thinking
+/// override; it is not a catalog/binding capability (ADR 0295).
+pub const THINKING_LEVELS: [&str; 8] = [
+    "off", "minimal", "low", "medium", "high", "xhigh", "max", "omit",
+];
 
 pub fn is_valid_thinking_level(level: &str) -> bool {
     THINKING_LEVELS.contains(&level)
@@ -154,8 +157,6 @@ pub struct UiMessage {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hosted_search: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -339,20 +340,6 @@ pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String
     if let Some(thinking) = &message.thinking {
         blocks.push(json!({ "type": "thinking", "text": thinking }));
     }
-    if let Some(hosted_search) = &message.hosted_search {
-        let mut block = serde_json::Map::new();
-        block.insert("type".into(), json!("hostedSearch"));
-        if let Some(obj) = hosted_search.as_object() {
-            for (key, value) in obj {
-                if key != "type" {
-                    block.insert(key.clone(), value.clone());
-                }
-            }
-        } else {
-            block.insert("value".into(), hosted_search.clone());
-        }
-        blocks.push(Value::Object(block));
-    }
     let text = if message.role == "tool" {
         let mut block = serde_json::Map::new();
         block.insert("type".into(), json!("tool_call"));
@@ -482,9 +469,6 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
         })
         .collect::<Vec<_>>();
     let thinking = (!thinking.is_empty()).then(|| thinking.concat());
-    let hosted_search = blocks.iter().find(|b| {
-        b.get("type").and_then(|t| t.as_str()) == Some("hostedSearch")
-    }).cloned();
     let is_error = record.is_error.then_some(true);
     let attachments = blocks
         .iter()
@@ -526,7 +510,6 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             steering,
             created_at: record.created_at,
             thinking,
-            hosted_search: hosted_search.clone(),
             status,
             model_id,
             provider_id,
@@ -575,7 +558,6 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             steering,
             created_at: record.created_at,
             thinking,
-            hosted_search: hosted_search.clone(),
             status,
             model_id,
             provider_id,
@@ -3434,7 +3416,6 @@ mod tests {
             steering: None,
             created_at: ts.into(),
             thinking: None,
-            hosted_search: None,
             status: None,
             model_id: None,
             provider_id: None,
@@ -3685,6 +3666,18 @@ mod tests {
             None,
         )
         .is_err());
+        let omitted = configure_session_with_thinking(
+            &db,
+            &session.id,
+            "chat",
+            None,
+            None,
+            Some("omit"),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(omitted.thinking_level, "omit");
     }
 
     #[test]
@@ -3933,7 +3926,6 @@ mod tests {
             steering: None,
             created_at: "2025-05-01T00:00:02Z".into(),
             thinking: None,
-            hosted_search: None,
             status: Some("complete".into()),
             model_id: None,
             provider_id: None,
@@ -4362,7 +4354,6 @@ mod tests {
             steering: None,
             created_at: "2025-05-01T00:00:01Z".into(),
             thinking: Some("first plan\nsecond plan".into()),
-            hosted_search: None,
             status: Some("complete".into()),
             model_id: Some("model-1".into()),
             provider_id: Some("provider-1".into()),

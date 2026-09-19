@@ -178,6 +178,18 @@
 
 ---
 
+### Native tray session menu
+
+The Main-owned native menu contains Open, non-empty Running/Unread/Pinned
+sections, and Quit. Each section has a disabled localized heading, single-line
+session rows up to the share allocated to that group, and View more only when
+it overflows that share. Session rows are globally deduplicated before
+truncation. View more expands session navigation;
+session rows enter their original conversation. The menu follows active locale
+changes and never marks a result read merely by opening. macOS single-click
+opens the attached menu; Open and double-click restore/focus the window.
+See [ADR tray-session-shortcuts](/adr/tray-session-shortcuts).
+
 ## 2. Topbar
 
 ### 2.1 目的
@@ -254,6 +266,7 @@ Composer 拥有 Agent/Plan/Goal 控件以及组合的模型 × 推理选择（§
 ### 2.5 辅助功能
 
 - 每个控件都可以通过 Tab 键盘访问
+- 输入框不渲染任何转写或朗读控件；宿主语音能力只能由 IPC 与插件调用（ADR 0291）。
 - 停止按钮有 `aria-label="Stop generating"`
 
 ### 2.6 MVP 约束
@@ -263,6 +276,25 @@ Composer 拥有 Agent/Plan/Goal 控件以及组合的模型 × 推理选择（§
   通知首选项仍在范围之外。交互询问通知仅通过本机通知显示，不进入收件箱。
 
 ---
+
+### 2.7 会话上下文簇
+
+会话顶部栏的右侧展示当前会话的工作上下文：
+
+```text
+[⑂ branch] [Open location ▾]
+```
+
+- **分支徽标** — 当工作区根目录解析出 git 分支且会话在该根目录中工作时显示。
+  点击复制分支名，并将图标短暂切换为对勾。
+- **Open location** — 拆分按钮。主按钮直接使用持久化的首选应用（默认取第一个
+  检测到的编辑器）打开目录；箭头打开一个菜单，列出本机检测到的编辑器、平台
+  文件管理器和终端。选择菜单项会将其持久化为新的默认应用。
+
+安全约定：渲染进程只提供会话 id 和目录中的应用 id。主进程从宿主自己的会话 /
+工作区记录中解析目标目录，并且只允许以参数数组形式启动白名单目录中的应用
+id —— 绝不信任渲染进程提供的路径。
+
 
 ## 3. Sidebar
 
@@ -772,8 +804,10 @@ vendor 进来的 `pi.file-manager` 视图在插件自己的隔离页面内完成
 
 - 触发器：file/URL 引用和 BrowserPreview 在原始会话运行时上下文中
   创建或激活资源选项卡。BrowserPreview 事件携带 `sessionId`，渲染器保留
-  该会话的预览 path/URL 作为其浏览器资源。成功的工作区 Write/Edit 工件
-  在原始会话中创建或激活审阅。
+  该会话的预览 path/URL 作为其浏览器资源。审阅永不由工具结果触发：
+  它只会从 `+` 启动器行，或视口固定开关与 `Cmd/Ctrl + J` 显示的会话
+  保留上下文打开，因此成功的工作区 Write/Edit 不会在任何会话中打开、
+  激活或改变面板。
   `Cmd/Ctrl + J` 显示活动会话的保留面板上下文，无需
   创建资源；如果没有活动会话，它什么也不做。捷径是
   当“设置”处于活动页面时被忽略。
@@ -2365,55 +2399,76 @@ dismissToast(id: number); // ToastHost internal / tests
 
 ---
 
-## 18. SessionImportPanel
+## 18. 导入目的地
 
 ### 18.1 目的
 
-扫描支持的本地代理商店，以可管理的方式查看发现的会话
-组、选择候选者并开始显式导入。
+扫描受支持的本地代理存储，找出这台机器能够移交的四样内容——会话、
+提供商/模型配置、技能和 MCP 服务器——然后审查候选项、选中它们并
+发起一次显式导入。
 
 ### 18.2 解剖学
 
+每个类型一个工作台，位于分段式类型切换器之后；每个类型拥有自己的
+扫描、选择和导入操作。
+
 ```text
-[Found N sessions]  [Group by: Source ▾]  [Import selected (N)]
-──────────────────────────────────────────────────────────────────
-[ ] [›] Claude Code                                      N sessions
-[ ] [›] Codex                                            N sessions
+[ Sessions | Models | Skills | MCP ]                   ← 类型切换器
+[ ] Found 12 · 6 selected   Group by: Source ▾   [Scan] [Import selected (6)]
+───────────────────────────────────────────────────────────────────────────
+CLAUDE CODE              ~/code/pi                                  4
+[ ] Refactor the importer   12 messages · Jan 5, 2026   [Claude Code]
 ```
 
-- 分组控件支持**项目路径**和**来源**。
-- 来源是默认分组。
-- 在项目路径模式下，精确路径在组标题中保持可见。
-- 没有项目路径的会话出现在最终的**无项目**组中。
-- 每个组标题包括组选择、公开、标签和计数。
-- 导入源名称、分组控件、计数、结果和可访问名称
-  来自共享的 i18n 目录。候选日期使用活动的应用程序区域设置。
+- 切换器复用侧边栏和设置导航栏已经发布的标签（`nav.sessions`、
+  `settings.nav.models`、`settings.nav.skills`、`settings.nav.mcp`），
+  因此该页面不新增自己的目录条目。
+- 每个类型都带自己的工具栏：全选复选框连同“found”文案和已选数量、
+  该类型自己的选项（会话分组、技能导入模式）、重新扫描，以及 Import selected。
+- 在某个类型首次扫描之前，其面板会显示一个安静的下一步操作状态：扫描会读取
+  什么，以及 Scan 操作。切换选项卡绝不会启动扫描（D007 / D342）。
+- 分组标题是安静的标签行——来源或项目名称、以等宽字体显示的解析路径，
+  以及一个计数胶囊——而不是着色条带；它们下方的候选项是独立磁贴。
+- 分组控件支持**项目路径**和**来源**。来源是默认值。在项目路径模式下，
+  精确路径在分组标题中保持可见，没有项目路径的会话出现在最后的
+  **无项目**分组中。
+- 导入来源名称、分组与模式控件、计数、结果和可访问名称都来自共享的
+  i18n 目录。候选项日期使用当前应用区域设置。
 
 ### 18.3 状态和交互
 
-- 成功的扫描会替换先前的候选集，清除选择，并且
-  让每组都崩溃了。
-- 成功的导入会创建或重复使用一个持久的项目索引条目
-  每个不同的非空项目路径并刷新 sessions/projects。
-- 无路径导入不会创建项目条目并保留在临时状态下
-  会话。导入永远不会创建物理文件系统目录。
-- 重新导入现有源会话会跳过它，而不重复它
-  项目进入。
-- 更改分组模式可以保留候选选择，但会折叠每个
-  新成立的团体。
-- 展开或折叠一组不会影响其他组。
-- 组和全局复选框支持选中、未选中和不确定
-  选择状态适用。
-- 每个组内的候选人以及组本身都按最新的排在最前面；
-  无路径组在项目路径模式下保持在最后。
+- 一次成功的扫描会替换先前的候选集合、清空选择，并让每个分组保持展开：
+  找到的候选项就是扫描的答案，所以它们不会被藏在第二次点击之后。
+- 每个类型各自扫描：会话扫描绝不会启动模型配置、技能或 MCP 扫描，
+  切换选项卡会保留离开的那个类型的结果和选择（非活动面板保持挂载并隐藏）。
+- 一次成功的导入会为每个不同的非空项目路径创建或重复使用一个持久的项目索引条目
+  并刷新 sessions/projects。
+- 当一次成功的核心或插件导入在已归档项目下新增一个绑定项目的会话时，
+  渲染器会在刷新之后恢复该项目的展示状态，使该项目和导入的会话在默认
+  侧边栏中可见。这只适用于新增的绑定会话；普通刷新、无路径会话和被跳过的
+  导入都会保留归档状态。
+- 无路径导入不会创建项目条目并保留在临时
+  会话下。导入永远不会创建物理文件系统目录。
+- 重新导入现有来源会话会跳过它，而不会重复其项目条目。
+- 更改分组模式会保留候选选择，并让每个新形成的分组保持展开。
+- 展开或折叠一个分组不会影响其他分组。
+- 分组和全局复选框支持选中、未选中和不确定
+  选择状态；全局复选框将部分选择报告为不确定。
+- 每个分组内的候选项以及分组本身都按最新优先排序；
+  无路径分组在项目路径模式下保持在最后。
 
 ### 18.4 辅助功能
 
+- 类型切换器是一个由 `tab` 控件组成的 `tablist`，每个控件都带有
+  `aria-selected` 和命名其面板的 `aria-controls`。每个面板都是一个由其选项卡
+  标记的 `tabpanel`；非活动面板是 `hidden`，而不是被视觉覆盖。
 - 每个公开按钮都会公开 `aria-expanded` 并引用其主体
   `aria-controls`。
-- 全局和组复选框具有本地化的可访问名称。
-- 分组选择器具有可见标签并且可通过键盘操作。
-- 项目行公开和操作菜单按钮公开本地化、
+- 全局和分组复选框具有本地化的可访问名称，并携带不确定状态。
+- 分组和导入模式选择器是共享的应用内菜单选择器，具有可见标签并可通过键盘操作，
+  绝不是平台绘制的 `<select>`。
+- 分组计数胶囊以其标题携带本地化的计数文案。
+- 项目行公开按钮和操作菜单按钮公开本地化、
 项目特定的可访问名称。
 
 ### 18.5 ModelConfigImportPanel
@@ -2422,18 +2477,17 @@ dismissToast(id: number); // ToastHost internal / tests
 选中它们，然后发起一次显式导入。
 
 ```text
-[Found N providers]                         [Import selected (N)]
-──────────────────────────────────────────────────────────────────
-[ ] [›] Claude Code                                      N providers
-[ ] [›] OpenCode                                         N providers
-[ ] [›] CC Switch                                        N providers
+[ ] Found 3 · 1 selected                        [Scan] [Import selected (1)]
+───────────────────────────────────────────────────────────────────────────
+CLAUDE CODE                                                                1
+[ ] acme-gateway   4 models · api.acme.dev    [API key]
 ```
 
-- 该卡片独立于会话导入：它有自己的扫描、选择和"导入所选"操作。会话扫描
-  绝不会触发模型配置扫描。
+- 该类型独立于会话导入：它有自己的扫描、选择和 Import selected 操作。
+  会话扫描绝不会启动模型配置扫描，两者在切换器之后一次只显示一个。
 - 按来源分组是唯一的分组方式。一次成功的扫描会替换先前的候选集合、清空
-  选择，并让所有分组保持折叠。
-- 每一行显示提供商名称、模型数量、主机、"有 API key / 无 API key"徽章，
+  选择，并让所有分组保持展开。
+- 每一行显示提供商名称、模型数量、主机、“有 API key / 无 API key”徽章，
   以及来源。原始密钥绝不会到达渲染器。
 - 导入会为每个选中的候选项创建一条 `providers.create` 记录。若已存在
   base URL 归一化结果、API 风格和凭据都相同的提供商，则跳过；同一端点的

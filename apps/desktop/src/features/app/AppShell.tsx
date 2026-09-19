@@ -52,8 +52,10 @@ export function AppShell() {
     sidebarEntering,
     sidebarExiting,
     sidebarWidth,
+    sidebarWidthMax,
     handleSidebarWidthChange,
     handleSidebarWidthCommit,
+    handleSidebarResizeCollapse,
     toggleSidebar,
     reopenSidebar,
     autoCollapseSidebar,
@@ -102,10 +104,12 @@ export function AppShell() {
               onToggleSidebar={toggleSidebar}
               sidebarToggleShortcut={sidebarToggleShortcut}
               sidebarWidth={sidebarWidth}
+              widthMax={sidebarWidthMax}
               onWidthChange={handleSidebarWidthChange}
               onWidthCommit={handleSidebarWidthCommit}
               onNewTask={() => void runMenuCommand("newTask")}
               onOpenSearch={() => setSearchOpen(true)}
+              onResizeCollapse={handleSidebarResizeCollapse}
             />
           ) : null}
 
@@ -291,6 +295,7 @@ export function AppShell() {
       )}
       style={{ "--ds-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
     >
+      <div className="app-scenic-backdrop" aria-hidden />
       {shell}
       <ProjectCreateDialog />
       {splash}
