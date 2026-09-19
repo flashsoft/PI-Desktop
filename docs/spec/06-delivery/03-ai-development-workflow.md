@@ -1,235 +1,148 @@
-# 03. AI-Assisted Development Workflow
+# 03. AI 辅助开发工作流程
 
-> Scope: AI agents and human collaborators working on PI-Desktop
-> Status: Accepted
-> Cross-references: [00-baseline](../00-baseline.md) · [decisions-log](../08-meta/decisions-log.md) · [acceptance-criteria](02-acceptance-criteria.md) · [e2e-test-plan](04-e2e-test-plan.md) · [change-checklist](05-change-checklist.md) · [ADR index](../../adr/README.md)
-
----
-
-## 1. Core Immutable Rules
-
-The rules below govern every change to the PI-Desktop codebase and documentation. R1–R4 restate the five numbered Immutable Rules in `AGENTS.md` (R4 covers both the merge-back and worktree clean-up rules); R5 and R6 restate its GitHub issue and pull request handling sections. They cannot be relaxed by an agent without explicit human override.
-
-### R1 — Spec-first / Spec-sync
-
-> **No behavior change without updating the corresponding spec.**
-
-- Every code, config, or UX change that alters observable behavior must update the relevant `docs/spec/` document before or alongside the change.
-- Architectural boundary changes (process model, IPC contract, storage ownership, security boundary) also require an ADR — see `docs/adr/README.md`.
-- Pure refactor that preserves behavior and API contracts does not require spec updates, but must still be committed (R2).
-
-### R2 — Commit-per-change
-
-> **Every completed logical change must be git committed.**
-
-- No large uncommitted piles of work. Each logical unit of work — a feature, a fix, a spec update, a chore — gets its own commit.
-- Uncommitted work at session end is a violation of this rule.
-- If a change is incomplete, either commit it as a draft with a `WIP:` prefix or roll it back.
-
-### R3 — E2E coverage doc
-
-> **Every feature/fix that affects user-visible or protocol-visible behavior must update e2e test documentation.**
-
-- "User-visible": anything the end-user sees or interacts with (UI, CLI output, dialogs, notifications).
-- "Protocol-visible": IPC messages, RPC methods, plugin API surfaces, event payloads.
-- Document the scenario in `06-delivery/04-e2e-test-plan.md` — even before the automated test exists.
-- Internal-only changes (logging format, internal variable rename) do not require e2e doc updates.
-
-### R4 — Request branch + worktree + merge gate
-
-> **Every development request starts from `main` in a dedicated branch and
-> worktree. A user request to commit or push includes completing the task's
-> integration into `main` through the authorized delivery route.**
-
-- Before editing, preserve any existing uncommitted work, fetch `origin/main`,
-  fast-forward local `main` when its worktree is clean, and create a new request
-  branch and worktree from that up-to-date commit. Existing work in the primary
-  checkout must never be moved, stashed, or overwritten merely to start a new
-  request.
-- Use one short-lived branch per request. Name it
-  `<type>/<short-description>`, where `type` matches the conventional change
-  type when practical, for example `feat/provider-import` or
-  `docs/request-branch-workflow`.
-- Use one dedicated worktree per request. Do not implement a new request in the
-  primary checkout or reuse another request's worktree.
-- Reuse the primary checkout's development environment where safe: installed
-  toolchains, package-manager stores, build caches, and ignored local
-  environment configuration remain the canonical environment. Reference or
-  link those resources into the request worktree when required; do not copy
-  environment state into tracked files. Install or generate worktree-local
-  state only when isolation or version compatibility requires it.
-- Development commits and direct pushes on `main` are forbidden.
-- A user request to commit, push, or both authorizes and requires integrating
-  this task into local `main`. Do not stop after a task-branch commit or push,
-  or ask for a second merge confirmation. Explicit branch-only or draft-only
-  instructions override this completion target.
-- A commit or local-merge request does not itself authorize remote publishing.
-  If remote delivery has not been authorized, complete the required validation
-  and merge into local `main` without pushing or opening a remote PR/MR.
-- When a push or other remote delivery is authorized, the fixed delivery order
-  applies: merge the request branch into local `main`, run the required E2E
-  gate against that integrated commit (R7), and only then push the request
-  branch, open a PR/MR targeting `main`, pass the required remote checks and
-  reviews, and merge using a permitted strategy. Fetch and safely synchronize
-  local `main` with the landed change. Do not infer permission to push directly
-  to `main`, force-push, or discard unrelated local work.
-- A code-bearing change is pushed for review, opened as a PR/MR, and merged
-  remotely only after the request branch is merged into local `main` and the
-  R7 gate has run against that integrated commit.
-- Both routes retain the required validation, security, and conflict gates.
-  Relevant E2E runs on the integrated local `main` before the request branch is
-  pushed for review, under R7. If a gate, authentication, permissions, or
-  required review prevents integration, report the actual blocker and remaining
-  work; the requested integration is not Done.
-- Worktree cleanup is mandatory and immediate. As soon as the request branch is
-  integrated into `main` — including a local `main` merge when the request is
-  delivered without a remote PR/MR — remove the worktree and delete the merged
-  branch. A merged request must not leave a worktree on disk. Remove only your
-  own worktree and branch, and only after verifying the merge commits are
-  present in `main`.
-- If the user requests a launch after delivery, build and start the app from
-  the integrated `main` checkout and its development environment.
-
-### R5 — Verify linked GitHub issues before work, then reply and close
-
-> **A linked GitHub issue is not a task until the reported problem is shown to exist. After the outcome is conclusive, reply on that issue and close it.**
-
-This rule applies when the user prompt includes a GitHub issue URL or an
-unambiguous issue number for this repository.
-
-- Fetch the issue (title, body, labels, comments, and state) before creating a
-  worktree or changing files for the claimed problem.
-- Independently verify the claim against the current codebase. For a bug,
-  reproduce it or cite concrete code/spec evidence. For a feature or
-  improvement, confirm the requested behavior is actually missing or incomplete
-  and in scope.
-- Do not start implementation until verification confirms the problem exists.
-- If the problem does not exist (already fixed, invalid, or a
-  misunderstanding): comment with the verification evidence and close the issue
-  when that conclusion is clear. If verification is inconclusive, comment with
-  what was tried and leave the issue open.
-- If the problem exists: follow R4, implement the smallest coherent change,
-  and after the request is merged into local `main`, comment with the
-  resolution and close the issue.
-- Write the GitHub comment in the language of the original issue title and
-  body. Code, commits, specs, and other repository documentation stay English.
-- An issue link authorizes commenting on and closing **that** issue only. It
-  does not authorize a git push. Remote publishing remains opt-in per R4 and
-  `AGENTS.md`.
-- Do not comment on or close unrelated issues. Do not reopen a closed issue
-  unless the user explicitly asks.
-
-### R6 — Merge a linked pull request whose principle is sound, then follow up
-
-> **A linked GitHub pull request whose direction is sound is merged first. Completeness, style, spec-sync, and polish happen after merge so the contributor's work is not discarded.**
-
-This rule applies when the user prompt includes a GitHub pull request URL or
-an unambiguous pull request number for this repository.
-
-- Fetch the pull request (title, body, files, commits, comments, checks, draft
-  state, base/head, and linked issues) before creating a replacement
-  implementation or requesting a rewrite.
-- Independently judge whether the **principle** is sound. The change must
-  address a real, in-scope problem, and the approach must be compatible with
-  the baseline, security boundaries, and architecture (or be a justified
-  spec-backed amendment). Judge the direction, not whether the pull request
-  already satisfies R1–R5 completeness.
-- Do not reimplement the pull request as a replacement, close it for nits, or
-  ask the contributor to start over when the principle is sound.
-- If the principle is sound:
-  1. Merge **that** pull request first, preserving the contributor's commits.
-     Use a repository-permitted merge strategy that keeps the contributor as
-     author of the landed work.
-  2. Missing additional test coverage, documentation, naming cleanup,
-     formatting, and other non-blocking polish are follow-up work. Build,
-     typecheck, relevant existing test, required E2E, security, data-safety,
-     protocol-compatibility, and merge-conflict failures remain landing
-     blockers.
-  3. Landing blockers that would break `main` (the change does not compile,
-     fails existing tests for the changed area, or has merge conflicts) may
-     receive the smallest commits **on top of** the author's work so the pull
-     request can land. Do not squash away the author. Do not rewrite the
-     design.
-  4. After the pull request is in `main`, follow R4 for any follow-up
-     improvements from the updated `main`.
-  5. Comment on the pull request in its language: acknowledge the
-     contribution, state what was merged, and list follow-up if any.
-- If the principle is not sound, or a harm blocker exists (secrets, sandbox
-  or privilege bypass, malicious or clearly destructive changes, out-of-scope
-  reversal of a frozen decision, unrelated drive-by payload): do not merge.
-  Comment with the evidence in the pull request's language. Do not silently
-  reimplement the same idea as if the pull request never existed.
-- Do not merge a draft pull request the author has not marked ready, unless
-  the user explicitly asks to merge the draft. Comment with the principle
-  review and wait until it is ready.
-- A pull request link authorizes reviewing, commenting on, and merging
-  **that** pull request when this rule applies. It does not authorize
-  force-pushing the contributor's branch or publishing unrelated branches.
-  Follow-up still follows R4's opt-in remote publishing rule.
-- Do not comment on or merge unrelated pull requests. An already-merged pull
-  request is not reopened; remaining gaps become ordinary follow-up.
-- When both an issue and a pull request are linked, R6 applies to the pull
-  request and R5 still applies to the issue after the merged outcome.
-
-### R7 — Code-bearing changes require relevant E2E after main integration
-
-> **Every code-bearing change must pass relevant E2E on the integrated local
-> `main` before its request branch is pushed, a PR/MR is opened, or a
-> commit-only delivery is declared complete.**
-
-This rule applies to changes that modify executable or runtime-affecting
-content, including `apps/`, `packages/`, `crates/`, runtime scripts, build or
-CI configuration, packaging behavior, protocol behavior, and persisted data.
-Documentation-only changes are exempt when they do not alter executable
-behavior.
-
-E2E execution is mandatory for code-bearing changes, and the gate runs on the
-integrated local `main` commit that carries the change, before the branch push
-and the PR/MR; a route that stops at local `main` runs it before the change is
-declared delivered. Run the selected suites from the latest integrated local
-`main` checkout and commit. An E2E run on the request branch itself is
-exploratory and does not satisfy R7. Select suites using the
-regression-surface guidance in `04-e2e-test-plan.md`; build, typecheck,
-lint, unit tests, integration tests, manual review, and source inspection do
-not replace relevant E2E.
-
-Required validation is part of the authorized integration workflow and does
-not require a separate user request to run tests.
-
-If a required suite cannot run in the current environment, record the suite,
-reason, alternative validation, and remaining risk as `NOT RUN`. The branch
-push and PR/MR may still proceed with that record so the change can be
-validated in a capable environment, but the gate is not satisfied and delivery
-remains incomplete until the suite passes against the integrated `main` that
-carries the change. A failed required suite blocks the push, the PR/MR, and
-declaring the change delivered until the failure is classified and fixed.
-
-After the PR/MR merges into remote `main`, rerun the affected suites when the
-landed executable content differs from the commit the gate ran on (landing
-fixes, conflict resolution, or commits added during review). Otherwise the
-recorded result stands. Always state the commit the recorded E2E evidence
-applies to.
-
-### GitHub issue templates
-
-`.github/ISSUE_TEMPLATE` is the only public intake path (`blank_issues_enabled:
-false`). English is the source label language; Chinese remains on the same
-fields.
-
-- **Bug report** requires: description, reproduction steps, expected behavior,
-  actual behavior, app version, and OS. Logs, extra environment, and
-  screenshots are optional. Settings → Info prefills version, OS, and
-  environment when opened from the app (D313).
-- **Feature request** requires: problem and proposed change. Alternatives and
-  extra context are optional.
-
-Do not weaken these required fields. Blank issues stay disabled.
+> 范围：致力于 PI-Desktop 的人工智能代理和人类合作者
+> 状态：已接受
+> 交叉引用：[00 基线](/spec/00-baseline) · [决策日志](/spec/08-meta/decisions-log) · [接受标准](/spec/06-delivery/02-acceptance-criteria) · [e2e-测试计划](/spec/06-delivery/04-e2e-test-plan) · [更改检查表](/spec/06-delivery/05-change-checklist) · [ADR索引](/adr/README)
 
 ---
 
-## 2. Development Loop
+## 1. 核心不可变规则
 
-Every change follows this sequence. Steps may be iterated if the implementation reveals new requirements. If the prompt includes a GitHub issue, complete R5 verification before step 1. If the prompt includes a GitHub pull request, complete the R6 principle review (and merge when sound) before starting a replacement or follow-up implementation.
+下列规则管理着 PI-Desktop 代码库和文档的每次更改。R1–R4 复述 `AGENTS.md` 中五条编号的不可变规则（R4 同时涵盖合并回 main 与清理工作树两条）；R5 与 R6 复述其 GitHub issue 与 pull request 处理章节。如果没有明确的人工干预，代理就无法放松它们。
+
+### R1 — 规格优先/规格同步
+
+> **如果不更新相应的规范，行为不会发生变化。**
+
+- 改变可观察行为的每个代码、配置或 UX 更改都必须在更改之前或同时更新相关的 `docs/spec/` 文档。
+- 架构边界变更（进程模型、IPC 合约、存储所有权、安全边界）也需要 ADR — 请参阅 `docs/adr/README.md`。
+- 保留行为和 API 合约的纯重构不需要规范更新，但仍必须提交（R2）。
+
+### R2 — 每次更改提交
+
+> **每个已完成的逻辑更改都必须进行 git 提交。**
+
+- 没有大量未提交的工作。每个逻辑工作单元——一个功能、一个修复、一个规范更新、一个杂务——都有自己的提交。
+- 会话结束时未提交的工作违反了此规则。
+- 如果更改不完整，请将其作为带有 `WIP:` 前缀的草稿提交或回滚。
+
+### R3 — E2E 覆盖文档
+
+> **每个影响用户可见或协议可见行为的 feature/fix 都必须更新 e2e 测试文档。**
+
+- “用户可见”：最终用户看到或与之交互的任何内容（UI、CLI 输出、对话框、通知）。
+- “协议可见”：IPC 消息、RPC 方法、插件 API 表面、事件负载。
+- 在 `06-delivery/04-e2e-test-plan.md` 中记录场景——甚至在自动化测试存在之前。
+- 仅内部更改（日志记录格式、内部变量重命名）不需要 e2e 文档更新。
+
+### R4 — 请求分支+工作树+合并门
+
+> **每个开发请求都必须从 `main` 的专用分支和工作树开始。用户请求提交或推送时，还必须通过获准的交付路径将该任务集成到 `main`。**
+
+- 在编辑之前，保留任何现有的未提交工作，获取 `origin/main`，
+  当工作树干净时快进本地 `main`，并创建一个新请求
+  来自最新提交的分支和工作树。小学现有工作
+  决不能仅仅为了开始新的操作而移动、隐藏或覆盖结账
+  请求。
+- 每个请求使用一个短期分支。命名它
+  `<type>/<short-description>`，其中 `type` 匹配常规更改
+  实用时键入，例如 `feat/provider-import` 或
+  `docs/request-branch-workflow`。
+- 每个请求使用一个专用工作树。不要在
+  主要结账或重用另一个请求的工作树。
+- 在安全的情况下重用主要结帐的开发环境：已安装
+  工具链、包管理器存储、构建缓存和忽略本地
+  环境配置仍然是规范环境。参考或
+  需要时将这些资源链接到请求工作树中；请勿复制
+  环境状态写入跟踪文件。安装或生成worktree-local
+  仅当隔离或版本兼容性需要时才声明。
+- 禁止对 `main` 进行开发提交和直接推送。
+- 用户请求提交、推送或两者时，即授权并要求将本次任务集成到本地
+  `main`。如果用户没有明确要求仅保留分支或草稿，不得停在任务分支提交或推送，
+  也不得再次请求合并确认。
+- 仅请求提交或本地合并，并不自动授权远程发布。未获远程交付授权时，完成必要的
+  验证并合入本地 `main`，不要推送或创建远程 PR/MR。
+- 远程推送获得授权后，推送请求分支，创建面向 `main` 的 PR/MR，通过所需的远程
+  检查和审查，并使用仓库允许的策略合并。随后安全地获取并同步本地 `main`。
+  不得据此推断可以直接推送 `main`、强制推送或丢弃无关本地工作。
+- 两条交付路径都必须保留验证、E2E、安全和冲突门禁。如果门禁、认证、权限或所需
+  审查阻止集成，必须报告实际阻塞原因和剩余工作；该请求尚未完成。
+- 工作树清理是强制性的并且是立即的。一旦请求分支
+  集成到 `main` — 包括请求时的本地 `main` 合并
+  在没有远程 PR/MR 的情况下交付 — 删除工作树并删除合并的
+  分支。合并的请求不得在磁盘上留下工作树。仅删除您的
+  自己的工作树和分支，并且只有在验证合并提交之后
+  存在于 `main` 中。
+- 如果用户在交付后要求启动应用，必须从已集成的 `main` 工作树和开发环境构建并启动。
+
+### R5 — 先核实链接的 GitHub issue，再回复并关闭
+
+> **链接的 GitHub issue 在被独立证实存在之前，还不是一项任务。结论明确后，必须在该 issue 上回复并关闭。**
+
+当用户提示包含 GitHub issue URL，或本仓库中无歧义的 issue 编号时，适用本规则。
+
+- 在为所声称的问题创建工作树或修改文件之前，先获取 issue（标题、正文、标签、评论和状态）。
+- 对照当前代码库独立核实该主张。对于缺陷：复现，或给出具体的代码/规范证据。对于功能或改进：确认所请求的行为确实缺失或不完整，且在范围内。
+- 在核实确认问题存在之前，不得开始实现。
+- 若问题不存在（已修复、无效或理解有误）：用核实证据评论；结论明确时关闭 issue。若核实无法定论：评论已尝试的内容并保持 issue 打开。
+- 若问题存在：遵循 R4，实现最小一致的变更，并在请求合并到本地 `main` 之后，用处理结果评论并关闭 issue。
+- 用原始 issue 标题和正文的语言撰写 GitHub 评论。代码、提交、规范和仓库内其他文档仍使用英文。
+- issue 链接仅授权评论并关闭**该** issue。它不授权 git push。远程发布仍按 R4 和 `AGENTS.md` 选择加入。
+- 不得评论或关闭无关 issue。除非用户明确要求，否则不得重新打开已关闭的 issue。
+
+### R6 — 原则没问题的链接 PR 先合入，再完善
+
+> **链接的 GitHub pull request 只要方向正确，就必须先合入。完整性、风格、规格同步和打磨在合入之后进行，以免贡献者的工作被丢掉。**
+
+当用户提示包含 GitHub pull request URL，或本仓库中无歧义的 pull request 编号时，适用本规则。
+
+- 在创建替代实现或要求重写之前，先获取 pull request（标题、正文、文件、提交、评论、检查、草稿状态、base/head 以及关联 issue）。
+- 独立判断**原则**是否成立。该变更必须针对真实且在范围内的问题，并且方案与基线、安全边界和架构兼容（或是有规格依据的正当修订）。判断的是方向，而不是该 pull request 是否已经满足 R1–R5 的完整性。
+- 当原则成立时，不得把该 pull request 重写为替代实现、因细枝末节关闭它，或要求贡献者从头再来。
+- 若原则成立：
+  1. 先合入**该** pull request，并保留贡献者的提交。使用仓库允许的、能让贡献者作为合入工作作者的合并策略。
+  2. 额外测试覆盖、文档、命名清理、格式化和其他非阻塞打磨可以作为后续工作。构建、类型检查、相关既有测试、必需的 E2E、安全、数据安全、协议兼容性和合并冲突失败仍然是落地阻塞项。
+  3. 会破坏 `main` 的落地阻塞（无法编译、使改动区域的现有测试失败、或存在合并冲突）可以在作者工作**之上**追加最小提交以便合入。不得 squash 掉作者。不得改写设计。
+  4. 该 pull request 进入 `main` 之后，按 R4 从更新后的 `main` 做任何后续完善。
+  5. 用该 pull request 的原文语言评论：肯定贡献、说明已合入的内容，并列后续工作（如有）。
+- 若原则不成立，或存在危害阻塞（密钥、沙箱或权限绕过、恶意或明显破坏性改动、超出范围地推翻冻结决策、无关的顺便改动）：不得合入。用该 pull request 的原文语言评论证据。不得在假装该 pull request 从未存在的情况下悄悄重做同一想法。
+- 不得合入作者尚未标为 ready 的草稿 pull request，除非用户明确要求合入该草稿。评论原则审查结果并等到它 ready。
+- pull request 链接在本规则适用时，授权审查、评论并合入**该** pull request。它不授权对贡献者分支 force-push，也不授权发布无关分支。后续工作仍遵循 R4 的远程发布选择加入规则。
+- 不得评论或合入无关 pull request。已合入的 pull request 不再重新打开；剩余缺口转为普通后续工作。
+- 当同时链接了 issue 和 pull request 时，R6 适用于该 pull request；R5 在合入结果之后仍适用于该 issue。
+
+### R7 — 原则成立的代码 pull request 必须通过相关 E2E
+
+> **代码 pull request 未成功通过相关 E2E 验证时不得合入。**
+
+此规则适用于修改可执行或影响运行时的内容，包括 `apps/`、`packages/`、
+`crates/`、运行时脚本、构建或 CI 配置、打包行为、协议行为和持久化数据。
+如果文档更改不影响可执行行为，则仅文档更改可豁免。
+
+代码 pull request 必须执行 E2E。根据 `04-e2e-test-plan.md` 中的回归面选择套件；
+构建、类型检查、lint、单元测试、集成测试、人工审查和源码检查都不能替代相关 E2E。
+
+代码变更集成到本地 `main` 时也适用同一门禁。必要的验证和 E2E 属于获准集成流程的一部分，
+无需再次请求单独的测试授权。
+
+如果当前环境无法运行必需套件，必须记录原因并保持分支未合入、PR/MR 为 Draft / Not Ready。
+在具备条件且可信的环境中通过该套件之前，任何交付路径都不得合入。必需 E2E 失败是落地阻塞项。
+
+### GitHub issue 模板
+
+`.github/ISSUE_TEMPLATE` 是唯一公开入口（`blank_issues_enabled: false`）。
+英文是标签源语言；中文写在同一字段上。
+
+- **Bug 反馈**必填：描述、复现步骤、预期行为、实际行为、应用版本和操作系统。日志、其他环境信息和截图选填。从应用内「设置 → 信息」打开时会预填版本、操作系统和环境（D313）。
+- **功能请求**必填：问题和期望改动。其他方案和补充信息选填。
+
+不得削弱这些必填项。空白 issue 保持关闭。
+
+---
+
+## 2. 开发循环
+
+每一个变化都遵循这个顺序。如果实施过程中出现新的需求，则可以重复步骤。如果提示包含 GitHub issue，必须在步骤 1 之前完成 R5 核实。如果提示包含 GitHub pull request，必须在开始替代实现或后续完善之前完成 R6 原则审查（原则成立时先合入）。
 
 ```
 0. If a GitHub issue is linked: verify the claim (R5) before any implementation
@@ -240,194 +153,162 @@ Every change follows this sequence. Steps may be iterated if the implementation 
 4. Implement
 5. Update specs / ADR / decisions-log if needed
 6. Update or add e2e scenarios when R3 applies
-7. Run targeted local checks necessary for the change's risk
+7. Run targeted local checks necessary for the change's risk and the relevant
+   E2E suites required for code-bearing main integration
 8. Commit with conventional message
 9. Update BOARD if milestone-related
-10. Complete the requested local `main` integration and run the relevant E2E
-    gate from that integrated commit (R7); when remote delivery is authorized,
-    push branch + open PR/MR to main only after that gate
-11. Merge the PR/MR into remote `main` through the remote gates when remote
-    delivery is authorized, synchronize local `main`, verify, and clean up
+10. If remote delivery is authorized: push branch + open PR/MR to main
+11. Complete requested main integration after applicable gates; verify and clean up
 12. If launch was requested: build and start from integrated main
 ```
 
-### Step-by-step
+### 一步一步
 
-| Step | Action | Output |
+| 步骤 | 行动 | 输出 |
 |---|---|---|
-| **0. Issue verify** | When a GitHub issue is linked, fetch it and independently verify that the reported problem exists. Stop here (comment, and close only if conclusive) when it does not. | Verified issue, or a comment and close/leave-open decision. |
-| **0b. PR review** | When a GitHub pull request is linked, fetch it and independently judge whether the principle is sound. Merge first when it is; start follow-up only after it is in `main`. Stop (comment, do not rewrite) when it is not. | Merged contributor PR plus follow-up plan, or a comment and no merge. |
-| **1. Branch + worktree** | Preserve existing work, update from `origin/main`, and create a dedicated request branch in a dedicated worktree. Reuse the primary checkout's environment where safe. | Isolated task files on current `main` with a consistent development environment. |
-| **2. Read** | Read `00-baseline.md` and any specs relevant to the change area. | Mental model of constraints. |
-| **3. Plan** | Describe the intended change. List every spec, ADR, and e2e scenario that will need updates, and assess whether local validation is necessary. | Change plan + impact and validation list. |
-| **4. Implement** | Write code, config, or assets. | Changed files. |
-| **5. Spec-sync** | Update specs per the impact list. Add ADR if architectural. Update `decisions-log.md` if an implementation default changes. | Updated docs/spec/\* and/or docs/adr/\*. |
-| **6. E2E doc** | When R3 applies, add or update scenario entries in `04-e2e-test-plan.md` and link to acceptance criteria IDs (A–H). Otherwise, confirm no scenario update is needed. | Updated e2e test plan, or confirmed not applicable. |
-| **7. Validate** | Use change risk and regression scope to select the smallest useful local checks. The relevant E2E gate for a code-bearing change runs on the integrated local `main` after step 10's local integration and before any branch push or PR/MR; a suite that cannot run is recorded as `NOT RUN` and keeps delivery incomplete. | Targeted check and E2E results, or an explicit environment limitation. |
-| **8. Commit** | Git commit with conventional message (see §4). | One or more commits. |
-| **9. BOARD** | If the change completes a milestone deliverable, update `docs/project/BOARD.md`. | Updated board. |
-| **10. Local integrate + gate** | Complete the requested local `main` integration, then run the relevant E2E gate from that integrated commit. When remote publishing is authorized, push the request branch and open a PR/MR targeting `main` only after that gate. | Verified local `main` integration with the E2E gate result, or a recorded `NOT RUN` limitation; reviewable remote change or a local-only delivery route. |
-| **11. Remote merge + cleanup** | For authorized remote delivery, merge the PR/MR into remote `main` through the required gates and synchronize local `main`; rerun the affected suites when the landed executable content differs from the commit the gate ran on. Verify the expected commits and remove the merged worktree and branch. | Requested integration complete, or an explicit blocker / narrower user-requested handoff. |
-| **12. Launch** | When requested, build and start from the integrated `main` checkout and its development environment. | Running app includes the delivered change. |
+| **0. Issue 核实** | 当链接了 GitHub issue 时，先获取并独立核实所报告的问题是否存在。若不存在则停止实现（评论，并仅在结论明确时关闭）。 | 已核实的 issue，或评论以及关闭/保持打开的决定。 |
+| **0b. PR 审查** | 当链接了 GitHub pull request 时，先获取并独立判断原则是否成立。成立则先合入；仅在它进入 `main` 之后开始后续完善。不成立则停止（评论，不重写）。 | 已合入的贡献者 PR 加后续计划，或评论且不合入。 |
+| **1.分支+工作树** | 保留现有工作，从 `origin/main` 进行更新，并在专用工作树中创建专用请求分支。在安全的情况下重复使用主要结账环境。 | 当前 `main` 上的独立任务文件具有一致的开发环境。 |
+| **2.阅读** | 阅读 `00-baseline.md` 以及与变更区域相关的任何规范。 | 约束的心理模型。 |
+| **3. Plan** | 描述预期的改变。列出需要更新的每个规范、ADR 和 e2e 场景，并评估是否需要本地验证。 | 变更计划+影响和验证列表。 |
+| **4.实施** | 编写代码、配置或资产。 | 更改了文件。 |
+| **5.规格同步** | 根据影响列表更新规格。如果是建筑，请添加 ADR。如果实现默认值发生更改，请更新 `decisions-log.md`。 | 更新了 docs/spec/\* and/or docs/adr/\*。 |
+| **6。 E2E 文档** | 当 R3 应用时，添加或更新 `04-e2e-test-plan.md` 中的场景条目并链接到验收标准 ID (A–H)。否则，确认不需要场景更新。 | 更新了 e2e 测试计划，或确认不适用。 |
+| **7.验证** | 使用变更风险和回归范围选择最小的有用本地检查。每个代码变更的本地或远程 `main` 集成都必须在可合入前运行相关 E2E；无法运行的必需套件必须记录为未运行并阻止合入。 | 有针对性的检查和 E2E 结果，或明确的环境限制。 |
+| **8.提交** | 使用常规消息进行 Git 提交（请参阅第 4 节）。 | 一项或多项提交。 |
+| **9.董事会** | 如果更改完成了里程碑交付，请更新 `docs/project/BOARD.md`。 | 更新了董事会。 |
+| **10.远程交付** | 仅在获得远程发布授权时，推送请求分支并创建面向 `main` 的 PR/MR。 | 可审查的远程变更，列出了受影响的规格和验证；或明确的本地交付路径。 |
+| **11.集成** | 完成 R4 要求的集成，满足验证和适用的远程门禁；确认本地 `main`（远程交付时还包括远程 `main`）包含预期提交，并清理工作树和分支。 | 请求已完成集成，或记录明确的阻塞原因/用户限定的交付范围。 |
+| **12.启动** | 用户要求时，从已集成的 `main` 工作树和开发环境构建并启动。 | 运行中的应用包含已交付的变更。 |
 
-### Local Validation and E2E Execution Policy
+### 本地验证和 E2E 执行策略
 
-- Local validation is risk-based rather than an automatic prerequisite for
-  delivery. Documentation-only changes and low-risk mechanical edits normally
-  require no local tests or checks and proceed to the authorized delivery route
-  under R4. No separate approval or waiver is needed to skip unnecessary checks;
-  the required E2E gate on the integrated local `main` still applies to
-  code-bearing changes.
-- Changes with material regression risk, including security boundaries,
-  protocol contracts, data migrations, build configuration, or widely shared
-  behavior, normally require the smallest targeted non-E2E validation that can
-  address that risk. A full local suite is not the default.
-- E2E scenario documentation and E2E execution are separate concerns. R3 still
-  requires scenario updates for user-visible or protocol-visible behavior.
-- Every code-bearing change must run at least one relevant E2E suite on the
-  integrated local `main` before its branch is pushed or a PR/MR is opened,
-  and must run the union of suites required by the affected regression
-  surfaces. The available commands are defined by the root `package.json` and
-  the selection matrix in `04-e2e-test-plan.md`.
-- Development-time iteration remains risk-based: an E2E run on the request
-  branch may be used for debugging, but only a run against the integrated local
-  `main` commit satisfies this policy.
-- If the environment cannot run a required suite, record the suite, reason,
-  alternative validation, and remaining risk as `NOT RUN`. The branch push and
-  PR/MR may proceed with that record, but the gate is not satisfied and
-  delivery remains incomplete until the suite passes against the integrated
-  `main` that carries the change.
-- Required E2E jobs that the hosting platform starts before a remote merge do
-  not replace the local `main` gate. Observe and report their result; after
-  the remote merge, rerun the affected suites when the landed executable
-  content differs from the commit the gate ran on. Otherwise the recorded
-  result stands.
+- 本地验证是基于风险的，而不是自动先决条件
+  交货。通常仅进行文档更改和低风险机械编辑
+  不需要本地测试或检查，直接按 R4 进入获准的交付路径。无需单独批准或豁免即可跳过不必要的检查，
+  但代码变更仍必须通过 E2E 合并门禁。
+- 材料回归风险的变化，包括安全边界，
+  协议契约、数据迁移、构建配置或广泛共享
+  行为，通常需要最小的目标非 E2E 验证
+  解决该风险。完整的本地套件不是默认的。
+- E2E 场景文档和 E2E 执行是不同的问题。 R3依然
+  需要场景更新以实现用户可见或协议可见的行为。
+- 每个代码 PR 或本地 `main` 集成都必须运行至少一个相关 E2E 套件，并运行受影响回归面所需套件的并集。可用命令由根目录 `package.json` 和 `04-e2e-test-plan.md` 中的选择说明定义。
+- 开发迭代仍然基于风险：小改动不需要每次都运行全部套件，但合入前所有相关 E2E 必须通过。
+- 如果本地环境无法运行必需套件，必须记录套件、原因、替代验证和剩余风险。在具备条件且可信的环境中通过前，分支不具备合入条件。
+- 托管平台在运行后自动启动所需的 E2E 作业
+  推或 PR 仍然是合并门。观察并报告结果；仅在托管平台或仓库工作流要求时重新运行。
 
-### Marketplace/update diagnosis gate
+### 市场/更新诊断门
 
-Plugin update incidents require an evidence-first prompt flow before code
-changes:
+插件更新事故在改代码之前必须走证据优先的提示流程：
 
-1. Capture the exact plugin ID, installed version, displayed version, expected
-   release, catalog URL, and observation time.
-2. Fetch the live catalog and inspect the exact entry, then inspect the local
-   catalog cache and installed registry independently.
-3. Classify the failure boundary: publisher/catalog data, fetch/cache fallback,
-   host version comparison, IPC propagation, or renderer presentation.
-4. Run `pnpm check:marketplace -- --url <catalog-url> --plugin <id>`. Missing
-   `shasum`, `url`, positive `sizeBytes`, or `permissions`, or a catalog
-   `author` that is not a string (for example `{ name, url }` copied from a
-   plugin manifest), is a release-data failure, not evidence of a stale
-   renderer. Incomplete releases remain non-installable.
-5. Reproduce with a fixture containing unsorted versions and incomplete
-   metadata before changing host or renderer code.
+1. 记录确切的插件 ID、已安装版本、显示版本、预期发布版本、目录 URL 和观察时间。
+2. 抓取线上目录并检查确切条目，然后分别独立检查本地目录缓存和已安装注册表。
+3. 划分失败边界：发布者/目录数据、抓取/缓存回退、宿主版本比较、IPC 传播，还是渲染器呈现。
+4. 运行 `pnpm check:marketplace -- --url <catalog-url> --plugin <id>`。缺少 `shasum`、`url`、正数 `sizeBytes` 或 `permissions` 属于发布数据失败，不是渲染器过期的证据。不完整的发布仍然不可安装。
+5. 在修改宿主或渲染器代码之前，先用包含未排序版本和不完整元数据的 fixture 复现。
 
-The agent must state which boundary failed and what evidence rules out the
-other boundaries. A client-side fallback may preserve safe discovery, but it
-must not be used to conceal an invalid marketplace release.
+代理必须说明哪个边界失败，以及哪些证据排除了其他边界。客户端回退可以保住安全的发现能力，但不得用来掩盖无效的市场发布。
 
 ---
 
-## 3. Spec Update Matrix
+## 3. 规格更新矩阵
 
-Which change types require which doc updates.
+哪些变更类型需要更新哪些文档。
 
-| Change type | Spec update | ADR | Decisions-log | E2E doc | BOARD |
+| 变更类型 | 规格更新 | ADR | 决策日志 | E2E 文档 | 董事会 |
 |---|---|---|---|---|---|
-| New feature (user-visible) | Related domain spec | If architectural boundary | — | New scenario | If milestone deliverable |
-| Bug fix (user-visible) | Related spec if behavior clarified | — | — | New or updated scenario | — |
-| Bug fix (internal) | — | — | — | — | — |
-| Refactor (behavior preserved) | — | — | — | — | — |
-| Architectural change | Related specs + baseline | **New ADR** | Update entry if default changes | Update affected scenarios | — |
-| New IPC/RPC method | `03-runtime/01-ipc-protocol.md` or `06-host-rpc-protocol.md` | If contract boundary | — | New protocol scenario | — |
-| Plugin API addition | `07-plugins/03-plugin-api.md` | If boundary change | — | New plugin scenario | If M4 deliverable |
-| Security change | `05-security/01-security.md` | If boundary change | Update if D001–D010 touched | New security scenario | — |
-| UX change | Related `04-ux/` spec | — | — | New UI scenario | — |
-| Spec-only update | The spec itself | — | — | — | — |
-| Chore (deps, tooling) | — | — | If tooling decision | — | — |
-| **App version release / stable tag** | `06-delivery/06-release-runbook.md` (mandatory version-surface gate before tag: shipped-locale `packages/shared/src/changelog.ts`, its test list, all workspace/Cargo/`APP_VERSION` versions, and the release line in `README.md` + `README.zh-CN.md`) | — | If release policy changes | Confirm E2E-067B still accurate | If milestone ship |
+| 新功能（用户可见） | 相关域规范 | 如果建筑边界 | — | 新场景 | 如果里程碑可交付 |
+| 错误修复（用户可见） | 相关规范（如果行为已明确） | — | — | 新的或更新的场景 | — |
+| 错误修复（内部） | — | — | — | — | — |
+| 重构（保留行为） | — | — | — | — | — |
+| 建筑变革 | 相关规格+基线 | **新 ADR** | 如果默认更改则更新条目 | 更新受影响的场景 | — |
+| 新的 IPC/RPC 方法 | `03-runtime/01-ipc-protocol.md` 或 `06-host-rpc-protocol.md` | 如果合同边界 | — | 新协议场景 | — |
+| 插件 API 添加 | `07-plugins/03-plugin-api.md` | 如果边界改变 | — | 新插件场景 | 如果M4可交付 |
+| 安全变更 | `05-security/01-security.md` | 如果边界改变 | 如果 D001–D010 被触摸则更新 | 新安全场景 | — |
+| 用户体验变化 | 相关 `04-ux/` 规范 | — | — | 新的UI场景 | — |
+| 仅规格更新 | 规范本身 | — | — | — | — |
+| 杂务（部门、工具） | — | — | 如果模具决定 | — | — |
+| **应用程序版本发布/稳定标签** | `06-delivery/06-release-runbook.md`（打标签前的强制版本面门禁：双语 `packages/shared/src/changelog.ts` 及其测试清单、全部工作区/Cargo/`APP_VERSION` 版本号，以及 `README.md` + `README.zh-CN.md` 中的版本线） | — | 如果发布政策发生变化 | 确认 E2E-067B 仍然准确 | 如果里程碑船 |
 
 ---
 
-## 4. Git Commit Rules
+## 4. Git 提交规则
 
-### 4.1 Conventional Commits
+### 4. 1 常规提交
 
-Format: `type(scope): description`
+格式：`type(scope): description`
 
-| Type | Use for |
+| 类型 | 用于 |
 |---|---|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation-only change |
-| `test` | Adding or updating tests |
-| `chore` | Build, deps, tooling, CI |
-| `refactor` | Code restructuring, no behavior change |
-| `perf` | Performance improvement |
-| `build` | Build system or external dependency change |
-| `ci` | CI/CD configuration change |
+| `feat` | 新功能 |
+| `fix` | 错误修复 |
+| `docs` | 仅文档更改 |
+| `test` | 添加或更新测试 |
+| `chore` | 构建、部门、工具、CI |
+| `refactor` | 代码重构，没有行为改变 |
+| `perf` | 性能提升 |
+| `build` | 构建系统或外部依赖项更改 |
+| `ci` | CI/CD 配置更改 |
 
-**Scope** is optional but encouraged — e.g. `feat(host-core):`, `fix(ui):`, `docs(spec):`.
+**范围**是可选的，但受到鼓励 - 例如`feat(host-core):`、`fix(ui):`、`docs(spec):`。
 
-### 4.2 Language
+### 4. 2 语言
 
-- Commit messages: **English only** (matches baseline language policy).
-- Body: optional; use for non-obvious context.
+- 提交消息：**仅限英语**（符合基准语言政策）。
+- 主体：可选；用于不明显的上下文。
 
-### 4.3 One logical change per commit
+### 4. 3 每次提交一个逻辑更改
 
-- Prefer small, focused commits.
-- Spec updates that are tightly coupled to the code change should be in the same commit.
-- Pure doc changes (spec rewrite, ADR) may be a separate adjacent `docs:` commit.
+- 喜欢小而集中的承诺。
+- 与代码更改紧密耦合的规范更新应该在同一个提交中。
+- 纯文档更改（规范重写、ADR）可能是单独的相邻 `docs:` 提交。
 
-### 4.4 Never commit
+### 4. 4 永不提交
 
-- Secrets, API keys, tokens, passwords
-- Local-only data (user configs, session data, logs)
-- `node_modules/`, build artifacts, release packages
-- Generated files that should be rebuilt per CI
+- 秘密、API 密钥、令牌、密码
+- 仅限本地数据（用户配置、会话数据、日志）
+- `node_modules/`，构建工件，发布包
+- 生成的文件应根据 CI 重建
 
-### 4.5 Pre-commit checklist
+### 4. 5 预提交清单
 
-Before committing, verify:
+提交之前，请验证：
 
-1. Change is one logical unit (or clearly split).
-2. No secrets or local data in the diff.
-3. Specs updated per §3 matrix.
-4. E2E doc updated if behavior changed.
-5. `git diff --stat` review — nothing unexpected.
-6. Commit message follows conventional format.
+1. 变化是一个逻辑单元（或明确划分）。
+2. diff 中没有秘密或本地数据。
+3. 根据 §3 矩阵更新规格。
+4. 如果行为发生变化，则更新 E2E 文档。
+5. `git diff --stat` 评论——没什么意外的。
+6.提交消息遵循常规格式。
 
 ---
 
-## 5. Branching Model
+## 5. 分支模型
 
-The repository uses a mandatory request-branch and worktree workflow:
+存储库使用强制请求分支和工作树工作流程：
 
-- **`main`** is always deployable and is the protected integration target. Do
-  not develop or create development commits on it, or push it directly.
-- **Request branches and worktrees** are mandatory for every development request,
-  including docs, chores, and small fixes. Create each branch and worktree from
-  an up-to-date `main`, then remove both immediately after the branch is merged
-  into `main`.
-- **Branch names** use `<type>/<short-description>` with a lowercase,
-  kebab-case description. Allowed type prefixes mirror §4.1.
-- **No long-lived development branch** exists. Each request gets a new branch;
-  an old request branch must not be reused for unrelated work.
-- **The primary checkout owns the default development environment.** Request
-  worktrees reuse its toolchains, package-manager stores, caches, and ignored
-  local configuration where safe. A request may create isolated local state
-  when sharing would be unsafe or incompatible, but that state stays ignored
-  and must not leak into commits.
-- **Delivery follows R4's authorization boundary and its fixed order.**
-  Commit-only delivery completes a validated local `main` merge. Authorized
-  push/remote delivery first merges the request branch into local `main` and
-  runs the required E2E gate against that integrated commit (R7), then pushes
-  the request branch and opens the PR/MR, merges it into remote `main` through
-  the PR/MR gates, and synchronizes local `main`. Explicit branch-only or
-  draft-only requests retain their narrower scope.
+- **`main`** 始终可部署，并且是受保护的集成目标。做
+  不开发、提交或直接推动它。
+- **请求分支和工作树**对于每个新请求都是强制性的，
+  包括文档、杂务和小修复。创建每个分支和工作树
+  最新的 `main`，然后在合并分支后立即删除两者
+  进入 `main`。
+- **分支名称** 使用 `<type>/<short-description>` 和小写字母，
+  烤肉串案例描述。允许的类型前缀镜像§4.1。
+- **不存在长期的开发分支**。每个请求都会得到一个新的分支；
+  旧的请求分支不得重复用于不相关的工作。
+- **主结账拥有默认开发环境。** 请求
+  工作树重用其工具链、包管理器存储、缓存并忽略
+  安全的本地配置。请求可能会创建隔离的本地状态
+  当共享不安全或不兼容时，但该状态仍被忽略
+并且不得泄漏到提交中。
+- **交付遵循 R4 的授权边界。** 仅提交的交付完成经过验证的本地 `main` 合并；获得
+  远程交付授权时，完成进入远程 `main` 的 PR/MR 合并并同步本地 `main`。明确要求仅
+  分支或草稿时，以较窄的范围为准。
 
-Typical request start (run from the primary checkout; choose a path outside it):
+典型请求开始（从主结帐运行；选择其外部的路径）：
 
 ```bash
 git status --short
@@ -435,59 +316,39 @@ git fetch origin main
 git worktree add -b <type>/<short-description> <worktree-path> origin/main
 ```
 
-If `main` is checked out in a clean primary worktree, `git switch main` plus
-`git fetch origin main` and `git pull --ff-only origin main` should be run
-before `git worktree add`. That fast-forward fails once local `main` carries
-its own integration merge of a delivered request; synchronize with
-`git merge origin/main` in that case, and resolve the divergence before
-starting new work without discarding commits. If the primary worktree is not
-clean or is on another branch, leave it untouched and create the request
-worktree directly from the fetched `origin/main`. Never discard, stash, move,
-or overwrite unrelated work merely to satisfy this sequence.
+如果在干净的主工作树中签出 `main`，则 `git switch main` 加上
+`git pull --ff-only origin main` 应在 `git worktree add` 之前运行。如果
+主工作树不干净或者位于另一个分支上，保持其不变并且
+直接从获取的 `origin/main` 创建请求工作树。从来没有
+仅仅为了满足这一点而丢弃、隐藏、移动或覆盖不相关的工作
+序列。
 
-Environment reuse is resource-specific. Package-manager stores and language
-toolchains are normally shared automatically. Ignored local configuration or a
-compatible dependency tree may be referenced or linked from the primary
-checkout when a task needs it. Build outputs that can race, mutable runtime
-data, and incompatible dependency trees must remain worktree-local.
+环境重用是特定于资源的。包管理器存储和语言
+工具链通常会自动共享。忽略本地配置或
+兼容的依赖树可以从主引用或链接
+当任务需要时结账。构建可以竞争、可变运行时的输出
+数据和不兼容的依赖树必须保持工作树本地。
 
-Typical authorized GitHub delivery (use the hosting platform's equivalent when
-needed; synchronize and clean up from the clean primary checkout after merge):
+典型的已授权 GitHub 交付（需要时使用托管平台的等效平台；合并后从干净的主结账同步
+并清理）：
 
 ```bash
-# from the primary checkout: local `main` integration and the R7 E2E gate come first
-cd <primary-checkout>
-git fetch origin main
-git switch main
-git merge <type>/<short-description>
-# run the required E2E suites for this change from the integrated local `main` (R7)
 git push -u origin <type>/<short-description>
 gh pr create --base main --head <type>/<short-description>
 gh pr checks --watch
 gh pr merge --merge
-git fetch origin main
-git merge origin/main
-git merge-base --is-ancestor <type>/<short-description> origin/main
+cd <primary-checkout>
+git switch main
+git pull --ff-only origin main
+git merge-base --is-ancestor <type>/<short-description> main
 git worktree remove <worktree-path>
 git branch -d <type>/<short-description>
 git worktree prune
 git push origin --delete <type>/<short-description>
 ```
 
-After the remote merge, synchronize local `main` with `git merge origin/main`:
-local `main` normally carries its own integration merge of the request branch
-and is no longer strictly behind `origin/main`. Reset local `main` to
-`origin/main` once the request commits are verified present in remote `main`
-and that local merge is no longer needed; the reset also restores plain
-fast-forward synchronization for later requests.
-
-If the primary checkout cannot take the local integration merge, use a
-short-lived worktree for `main` instead of disturbing unrelated work. If the
-PR/MR is abandoned, the local integration merge remains in local `main` until
-it is reset.
-
-Request cleanup when the request is integrated by merging into local `main`
-instead of a remote PR/MR (run from the primary checkout):
+通过合并到本地 `main` 来集成请求时进行请求清理
+而不是远程 PR/MR（从主结帐运行）：
 
 ```bash
 git switch main
@@ -498,139 +359,109 @@ git branch -d <type>/<short-description>
 git worktree prune
 ```
 
-For local-only delivery, `git branch -d` may refuse because the request branch
-still tracks `origin/main`, which does not contain the locally delivered
-commits. Only if the ancestry check above exited successfully and this is your
-own request branch with that inherited upstream, unset its upstream and retry
-normal deletion:
+本地交付时，如果请求分支仍跟踪不包含本地提交的 `origin/main`，`git branch -d` 可能
+会拒绝删除。仅当上面的 ancestry 检查成功且该分支确实属于本次请求时，才解除上游后
+再次执行普通删除：
 
 ```bash
 git branch --unset-upstream <type>/<short-description>
 git branch -d <type>/<short-description>
 ```
 
-Local `main` must contain every task commit. This fallback does not apply to
-a published request branch whose remote `main` integration is still pending.
+本地 `main` 必须包含每个任务提交；已发布但尚未合入远程 `main` 的请求分支不适用此回退。
 
-The worktree must be clean before removal; commit or discard the request's own
-leftover changes first. Use `git branch -d` rather than `-D` so an unmerged
-branch refuses to delete. If `git worktree remove` reports the worktree as dirty
-or locked, resolve that state instead of forcing removal, and never remove
-another request's worktree.
-
----
-
-## 6. Definition of Done
-
-A change is **Done** when all applicable conditions are true, respecting an
-explicit branch-only or draft-only delivery scope:
-
-1. A dedicated request branch and worktree were created from an up-to-date
-   `main`.
-2. Code (or doc) implements the planned change.
-3. All impacted specs are updated.
-4. E2E scenarios are documented (or confirmed not needed per §3).
-5. Necessary targeted local validation passes; for a code-bearing change the
-   relevant E2E gate has run against the integrated local `main` commit before
-   the branch push, the PR/MR, or a commit-only completion, or the environment
-   limitation is recorded as `NOT RUN` and delivery remains incomplete until
-   the suite passes against the integrated `main` that carries the change;
-   automatically triggered remote gates also pass.
-6. Change is committed with a conventional message.
-7. BOARD is updated if a milestone deliverable completed.
-8. No secrets or local data are present in the commit.
-9. Requested commit/push delivery is integrated into local `main` before the
-   request branch is pushed or the PR/MR is opened. When remote delivery was
-   authorized, the PR/MR was reviewed and merged into remote `main`, local
-   `main` includes the landed change, and the affected suites were rerun when
-   the landed executable content differs from the commit the gate ran on.
-10. After integration, the expected commits were verified in `main`, the request
-    worktree was removed, and the merged request branch was deleted.
-11. If a GitHub issue was linked: the claim was verified before implementation;
-    the issue received a comment in its language; and the issue was closed when
-    the outcome was conclusive.
-12. If a GitHub pull request was linked: the principle was reviewed; the pull
-    request was merged first when sound; follow-up landed after merge; the
-    contributor's work was not discarded.
-13. If launch was requested after delivery: the app was built and started from
-    the integrated `main` checkout and its development environment.
-
-### Release / version-tag gate
-
-When the change is a **stable app version release** (version bump + tag),
-Definition of Done also requires, **before** the tag, that every
-version-bearing surface describes the new version: the shipped-locale in-app
-changelog entries in `packages/shared/src/changelog.ts` (English and every
-shipped product locale, with aligned highlight counts) with its `changelog.test.ts` list, every workspace
-`package.json` (including `docs/package.json`), the Cargo workspace version and
-`host-core` lockfile entry, `APP_VERSION`, and the release line stated in
-`README.md` + `README.zh-CN.md`. `node scripts/check-release-docs.mjs` must
-pass; `scripts/release.mjs` runs it and refuses to tag otherwise. See
-[06-release-runbook.md §4.1](06-release-runbook.md#41-mandatory-release-version-surface-gate-d164--d260),
-D164, and D260. GitHub release notes are not a substitute.
+拆卸前工作树必须清洁；提交或丢弃请求自己的
+首先进行剩余的更改。使用 `git branch -d` 而不是 `-D` 因此未合并
+分支拒绝删除。如果 `git worktree remove` 报告工作树为脏
+或锁定，解决该状态而不是强制删除，并且永远不要删除
+另一个请求的工作树。
 
 ---
 
-## 7. Forbidden Practices
+## 6. 完成的定义
 
-| Practice | Why |
+在遵守明确的“仅分支”或“草稿”范围限制的前提下，满足所有适用条件时，更改才算**完成**：
+
+1. 根据最新的请求创建专用请求分支和工作树
+   `main`。
+2. 代码（或文档）实施计划的变更。
+3. 所有受影响的规格均已更新。
+4. 记录 E2E 场景（或根据第 3 节确认不需要）。
+5. 必要的有针对性的本地验证和代码变更所需的 E2E 通过；若环境受限则记录限制并在 E2E 通过前保持不可合入；自动触发的远程闸门也通过。
+6. 改变是通过传统的信息来实现的。
+7. 如果里程碑交付完成，则更新董事会。
+8. 提交中不存在任何机密或本地数据。
+9. 按用户要求的提交/推送交付已集成到本地 `main`；获得远程交付授权时，PR/MR 已审核并合入远程 `main`，且本地 `main` 包含已落地的变更。
+10. 集成后已在 `main` 中确认预期提交，且请求工作树已移除、合并的请求分支已删除。
+11. 若链接了 GitHub issue：在实现前已核实该主张；issue 收到以其原文语言撰写的评论；结论明确时已关闭该 issue。
+12. 若链接了 GitHub pull request：已审查原则；原则成立时已先合入；后续完善在合入之后落地；贡献者的工作未被丢掉。
+
+### 发布/版本标签门
+
+当更改是**稳定应用程序版本发布**（版本提升 + 标签）时，完成的定义还要求在
+打标签**之前**，所有带版本号的位置都描述新版本：`packages/shared/src/changelog.ts`
+中的已发货语言应用内变更日志条目（英语和每个已发货产品语言，亮点条数一致）及其
+`changelog.test.ts` 清单、每个工作区 `package.json`（含 `docs/package.json`）、
+Cargo 工作区版本与 `host-core` 锁文件条目、`APP_VERSION`，以及 `README.md` +
+`README.zh-CN.md` 中声明的版本线。`node scripts/check-release-docs.mjs` 必须
+通过；`scripts/release.mjs` 会执行它，未通过则拒绝打标签。参见
+[06-release-runbook.md §4.1](/spec/06-delivery/06-release-runbook#_4-1-强制发布版本面门禁-d164-d260)、
+D164 与 D260。 GitHub 发行说明并不能替代。
+
+---
+
+## 7. 禁止的做法
+
+| 练习 | 为什么 |
 |---|---|
-| Committing secrets | Security violation |
-| Large uncommitted diffs | Violates R2; loss of granularity |
-| Changing behavior without spec update | Violates R1; specs become unreliable |
-| Skipping e2e doc for user-visible changes | Violates R3; traceability gap |
-| Declaring a code-bearing change complete without successful relevant E2E after integration into local or remote `main` | Violates R7 and leaves cross-process behavior unverified |
-| Treating the full local test/check suite as an automatic pre-push requirement | Ignores risk-based validation and delays delivery without evidence of need |
-| Developing or creating development commits on `main`, or pushing it directly | Violates R4; bypasses isolation and review gates |
-| Developing a new request in the primary checkout or another request's worktree | Violates R4; mixes task files and local state |
-| Reusing a request branch for unrelated work | Mixes request scope and weakens traceability |
-| Stopping at a task-branch commit or push when the user requested commit/push delivery | Violates R4 unless the user explicitly limited delivery to a branch or draft |
-| Leaving a merged request worktree on disk | Violates R4; stale worktrees accumulate and invite cross-request contamination |
-| Modifying baseline frozen decisions without ADR + version bump | Baseline is frozen; changes need formal process |
-| Committing generated artifacts that CI should rebuild | Repo bloat, merge conflicts |
-| Mixing multiple logical changes in one commit without clear message | Loss of history granularity |
-| Implementing a linked GitHub issue without verifying the problem exists | Violates R5; wastes work on invalid or already-fixed claims |
-| Closing a linked GitHub issue without a comment in the issue language | Violates R5; leaves no public record of the outcome |
-| Closing, rewriting, or requesting a restart of a linked pull request whose principle is sound | Violates R6; discards the contributor's work |
-| Blocking merge of a sound linked pull request solely for missing specs, tests, style, or agent-workflow completeness | Violates R6; completeness is follow-up after merge |
-| Merging a linked pull request whose principle is unsound or that introduces a harm blocker | Violates R6; merge-first does not apply to unsafe or wrong-direction changes |
-| Force-pushing a contributor's branch to land a linked pull request | Violates R6; landing fixes go on top of the author's commits |
-| Tagging a stable app release without updating `packages/shared/src/changelog.ts` for every shipped locale | Violates D164 / D345 / release runbook; in-app What's new is empty for that locale and version |
-| Tagging a stable app release while `README.md` / `README.zh-CN.md` still state an older release line, or bypassing `scripts/check-release-docs.mjs` with `--skip-docs-check` | Violates D260 / release runbook; published documentation advertises a version the release no longer matches |
-| Pushing a request branch or opening a PR/MR before the required E2E has run against the integrated local `main`, or declaring a code-bearing change delivered without that result (except a recorded `NOT RUN` limitation) | Violates R7's fixed order; review would start on an unvalidated commit |
+| 犯下秘密 | 违反安全规定 |
+| 未提交的较大差异 | 违反 R2；粒度损失 |
+| 无需更新规范即可更改行为 | 违反 R1；规格变得不可靠 |
+| 跳过 e2e 文档以进行用户可见的更改 | 违反 R3；可追溯性差距 |
+| 代码变更未成功通过相关 E2E 就集成到本地或远程 `main` | 违反 R7，跨进程行为未经验证 |
+| 将完整的本地 test/check 套件视为自动预推送要求 | 忽略基于风险的验证并在没有必要证据的情况下延迟交付 |
+| 直接在 `main` 上开发、提交或推送 | 违反 R4；绕过隔离和审查门 |
+| 在主结帐或另一个请求的工作树中开发新请求 | 违反 R4；混合任务文件和本地状态 |
+| 重用请求分支来完成不相关的工作 | 混合请求范围并削弱可追溯性 |
+| 用户要求提交/推送交付时停在任务分支提交或推送 | 违反 R4，除非用户明确限定为分支或草稿交付 |
+| 将合并的请求工作树保留在磁盘上 | 违反 R4；陈旧的工作树积累并导致交叉请求污染 |
+| 修改基线冻结决策，无需 ADR + 版本升级 | 基线被冻结；变更需要正式流程 |
+| 提交 CI 应重建的生成工件 | 回购膨胀、合并冲突 |
+| 在一次提交中混合多个逻辑更改而没有明确的消息 | 历史粒度的损失 |
+| 未核实问题是否存在就开始实现链接的 GitHub issue | 违反 R5；把工作浪费在无效或已修复的主张上 |
+| 关闭链接的 GitHub issue 时没有以其原文语言撰写的评论 | 违反 R5；没有公开记录处理结果 |
+| 关闭、重写或要求重启原则成立的链接 pull request | 违反 R6；丢掉贡献者的工作 |
+| 仅因缺失规格、测试、风格或智能体工作流完整性而阻止合入原则成立的链接 pull request | 违反 R6；完整性是合入后的后续工作 |
+| 合入原则不成立或引入危害阻塞的链接 pull request | 违反 R6；先合入不适用于不安全或方向错误的改动 |
+| 为落地链接 pull request 而对贡献者分支 force-push | 违反 R6；落地修复加在作者提交之上 |
+| 在不为每个已发货语言更新 `packages/shared/src/changelog.ts` 的情况下标记稳定的应用程序版本 | 违反 D164/D345/发布操作手册；该语言版本的应用内新增功能为空 |
+| 在 `README.md` / `README.zh-CN.md` 仍声明旧版本线时标记稳定版本，或用 `--skip-docs-check` 绕过 `scripts/check-release-docs.mjs` | 违反 D260/发布操作手册；已发布文档宣传的版本与实际发布不符 |
+| 在必需的 E2E 于已集成的本地 `main` 上运行之前推送请求分支或创建 PR/MR，或在缺少该结果（已记录的 `NOT RUN` 限制除外）的情况下宣告含代码变更已交付 | 违反 R7 的固定顺序；审查将从未经验证的提交开始 |
 
 ---
 
-## 8. Acceptance Criteria for This Workflow
+## 8. 此工作流程的验收标准
 
-This workflow spec itself is accepted when:
+在以下情况下，此工作流程规范本身被接受：
 
-- [ ] R1/R2/R3/R4/R5/R6/R7 are stated clearly and cross-linked to relevant specs.
-- [ ] Development loop is documented and referenced by `AGENTS.md`.
-- [ ] Spec update matrix covers all change types in the baseline.
-- [ ] Git commit rules match existing repo commit style (`docs:`, `chore:`).
-- [ ] Every development request is required to use a dedicated branch and
-      worktree created from current `main`.
-- [ ] Request worktrees reuse the primary checkout's environment where safe
-      without committing local environment state.
-- [ ] Commit/push requests complete local `main` integration without another
-      merge confirmation; explicit branch-only or draft-only limits prevail.
-- [ ] Remote publishing requires authorization and uses PR/MR gates before
-      remote `main` integration and local synchronization.
-- [ ] Local `main` integration and the relevant E2E gate precede the request
-      branch push and the pull request.
-- [ ] Worktree removal and branch deletion are required immediately after the
-      request branch is merged into `main`, including local-merge delivery.
-- [ ] Relevant E2E execution is mandatory for code-bearing changes on the
-      integrated local `main` before the PR/MR is opened, without a separate
-      test request; E2E documentation remains mandatory under R3.
-- [ ] Local validation is risk-based; unnecessary checks may be skipped without
-      blocking commit, push, or PR/MR creation.
-- [ ] Definition of Done is complete and actionable.
-- [ ] Forbidden practices list covers known risk areas.
-- [ ] `AGENTS.md` points to this doc, `04-e2e-test-plan.md`, and `05-change-checklist.md`.
-- [ ] Linked GitHub issues are verified before implementation, then commented
-      on in the issue language and closed when conclusive.
-- [ ] Linked GitHub pull requests whose principle is sound are merged first,
-      then followed up; contributor work is not discarded.
-- [ ] All indexes updated (NAV, delivery README, spec README, docs README, BOARD).
+- [ ] R1/R2/R3/R4/R5/R6/R7 已明确说明并与相关规范交叉链接。
+- [ ] 开发循环由 `AGENTS.md` 记录和引用。
+- [ ] 规范更新矩阵涵盖基线中的所有变更类型。
+- [ ] Git 提交规则与现有存储库提交样式匹配（`docs:`、`chore:`）。
+- [ ] 每个请求都需要使用创建的专用分支和工作树
+      从当前的 `main` 开始。
+- [ ] 请求工作树在安全的情况下重用主要结账环境
+      无需提交本地环境状态。
+- [ ] 用户请求提交/推送时，无需再次确认即可完成本地 `main` 集成；明确的仅分支或草稿范围优先。
+- [ ] 远程发布需要授权，并且在远程 `main` 集成和同步本地之前通过 PR/MR 门禁。
+- [ ] 工作树删除和分支删除需要在执行完之后立即进行。
+      请求分支合并到 `main` 中，包括本地合并传递。
+- [ ] 代码 PR 和本地 `main` 集成都必须执行相关 E2E，R3 中的 E2E 场景文档仍然是强制性的。
+- [ ] 本地验证是基于风险的；不必要的检查可以被跳过而无需
+      阻止提交、推送或 PR/MR 创建。
+- [ ] 完成的定义是完整且可操作的。
+- [ ] 禁止行为列表涵盖已知的风险领域。
+- [ ] `AGENTS.md` 指向此文档、`04-e2e-test-plan.md` 和 `05-change-checklist.md`。
+- [ ] 链接的 GitHub issue 必须在实现前核实，然后以其原文语言评论，并在结论明确时关闭。
+- [ ] 原则成立的链接 GitHub pull request 必须先合入，再完善；不得丢掉贡献者的工作。
+- [ ] 更新所有索引（NAV、交付自述文件、规格自述文件、文档自述文件、董事会）。

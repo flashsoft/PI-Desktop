@@ -1,60 +1,60 @@
-# 05. Onboarding
+# 05. 新手引导
 
-## 1. Decision for MVP
+## 1. MVP 的决策
 
-Use an **inline first-run checklist**, not a multi-page modal wizard.
+使用**内联首次运行清单**，而不是多页模式向导。
 
-Reasons:
+理由：
 
-- faster to first value
-- less blocking
-- easier to skip/return
+- 更快地获得第一个值
+- 更少的阻塞
+- 更容易使用 skip/return
 
-## 2. First-run detection
+## 2. 首次运行检测
 
-Show checklist when any of these is true:
+当满足以下任一条件时显示检查表：
 
-1. no provider configured
-2. no secret present for default provider
-3. no session exists yet
+1. 没有配置提供商
+2.默认提供商没有秘密存在
+3. 尚无会话存在
 
-Persist dismissal state, but incomplete critical steps can reappear as banners.
+保留解雇状态，但不完整的关键步骤可能会重新显示为横幅。
 
-## 3. Checklist steps
+## 3. 检查清单步骤
 
-1. **Add a provider**
-2. **Save an API key**
-3. **Open a project folder**
-4. **Send your first prompt**
-5. *(Optional)* Load a development plugin
+1. **添加提供商**
+2. **保存 API 密钥**
+3. **打开项目文件夹**
+4. **发送您的第一个提示**
+5. *（可选）* 加载开发插件
 
-## 4. Placement
+## 4. 安置
 
-- shown in main chat empty state
-- provider and key items deep-link to Settings → Agent
-- the optional plugin item opens the app shell's Plugins destination
-- project and prompt items invoke their relevant app actions
-- checklist collapses after core steps complete
+- 显示在主聊天空白状态
+- 提供商和关键项目深层链接至“设置”→ Agent
+- 可选插件项打开应用程序外壳的插件目的地
+- 项目和提示项调用其相关的应用程序操作
+- 核心步骤完成后清单会崩溃
 
-## 5. Copy tone
+## 5. 复制提示音
 
-English source, concise, action-oriented.
+英文源码，简洁，行动导向。
 
-Example:
+示例：
 
-- “Add a model provider”
-- “Save your API key”
-- “Open a project to enable local tools”
+- “添加模型提供商”
+- “保存您的 API 密钥”
+- “打开项目以启用本地工具”
 
-## 6. Non-goals
+## 6. 非目标
 
-- account signup
-- cloud sync setup
-- long product tour overlays
-- forced tutorial for returning users
+- 帐户注册
+- 云同步设置
+- 长产品巡演覆盖
+- 为回访用户提供强制教程
 
-## 7. Acceptance
+## 7. 验收
 
-1. Fresh profile shows checklist
-2. Completing provider+key+prompt removes critical empty-state blocker
-3. User can dismiss optional parts without breaking app use
+1. 新鲜的个人资料显示清单
+2. 完成provider+key+prompt删除关键的空状态拦截器
+3. 用户可以在不中断应用程序使用的情况下关闭可选部分

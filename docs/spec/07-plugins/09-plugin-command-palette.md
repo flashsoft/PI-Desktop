@@ -1,23 +1,23 @@
-# 09. Plugin Command Palette
+# 09. 插件命令面板
 
-> **Status — merged into global search.** The standalone command palette overlay was removed. Plugin (and built-in) commands now appear in the **Commands** section of the global search dialog, opened with `Cmd/Ctrl+Shift+P` (or `Cmd/Ctrl+K`). All rules below still apply to that section.
+> **状态 — 合并到全局搜索中。** 独立命令面板覆盖已删除。插件（和内置）命令现在显示在全局搜索对话框的 **命令** 部分中，使用 `Cmd/Ctrl+Shift+P`（或 `Cmd/Ctrl+K`）打开。以下所有规则仍然适用于该部分。
 
-## 1. Goals
+## 1. 目标
 
-Provide a fast command entry point that unifies discovery and execution of built-in and plugin capabilities in a single searchable surface.
+提供快速命令入口点，将内置功能和插件功能的发现和执行统一在单个可搜索界面中。
 
-## 2. Entry point
+## 2. 入口点
 
-Commands are surfaced inside the global search dialog (the "Commands" section). The same shortcut opens global search with the command list pre-populated:
+命令显示在全局搜索对话框中（“命令”部分）。相同的快捷方式可打开全局搜索并预先填充命令列表：
 
-- macOS: `Command + Shift + P` (also `Command + K`)
-- Windows/Linux: `Ctrl + Shift + P` (also `Ctrl + K`)
+- macOS：`Command + Shift + P`（也为 `Command + K`）
+- Windows/Linux：`Ctrl + Shift + P`（也为 `Ctrl + K`）
 
-Also configurable:
-- Custom shortcut
-- Launcher mode (later)
+还可配置：
+- 自定义快捷方式
+- 启动器模式（稍后）
 
-## 3. Command model
+## 3. 命令模型
 
 ```ts
 type PaletteCommand = {
@@ -33,27 +33,27 @@ type PaletteCommand = {
 }
 ```
 
-## 4. Command sources
+## 4. 命令来源
 
-1. Built-in commands
- - New task
- - Compact conversation context
- - Switch to Agent / Plan / Goal
-2. Plugin `contributes.commands`
-3. Later: skill shortcuts / marketplace search entry
+1. 内置命令
+ - 新建任务
+ - 压缩对话上下文
+ - 切换到 Agent / Plan / Goal
+2. 插件 `contributes.commands`
+3.后期：技能快捷键/市场搜索入口
 
-## 5. Search rules
+## 5. 搜索规则
 
-- Match by title / keywords / category / pluginName
-- Support prefix and substring matching
-- Chinese keywords are supported
-- Result ordering:
- 1. Recently used
- 2. Exact prefix
- 3. Built-in priority or user weighting (configurable)
- 4. Alphabetical
+- 按标题/关键字/类别/插件名称匹配
+- 支持前缀和子串匹配
+- 支持中文关键词
+- 结果排序：
+ 1.最近使用过
+ 2. 精确前缀
+ 3.内置优先级或用户权重（可配置）
+ 4. 按字母顺序
 
-## 6. Execution flow
+## 6. 执行流程
 
 ```text
 open global search (Commands section)
@@ -65,13 +65,13 @@ open global search (Commands section)
  → close search / keep open (optional)
 ```
 
-If the command needs a panel:
-- Open PluginPanelHost after execution
+如果命令需要面板：
+- 执行后打开PluginPanelHost
 
-If the command needs a permission:
-- Go through the permission gateway first
+如果该命令需要权限：
+- 先经过权限网关
 
-## 7. UI structure
+## 7. UI 结构
 
 ```text
 -------------------------------------------------
@@ -89,29 +89,29 @@ Enter to run · Esc to close
 -------------------------------------------------
 ```
 
-Each item shows:
-- Title
-- Source badge (builtin/plugin)
-- Shortcut hint (optional)
+每一项显示：
+- 标题
+- 来源徽章 (builtin/plugin)
+- 快捷方式提示（可选）
 
-## 8. Empty state / errors
+## 8. 空状态/错误
 
-- No match: show "No commands, try installing a plugin"
-- Plugin command execution failed: toast + log
-- Disabled plugin: its commands do not appear
+- 不匹配：显示“没有命令，尝试安装插件”
+- 插件命令执行失败：toast + log
+- 禁用插件：其命令不会出现
 
-## 9. Relationship to the Agent
+## 9. 与 Agent 的关系
 
-The command surface (now part of global search) is not a replacement for the chat composer.
-It is responsible for "launching actions"; chat is responsible for "conversational tasks".
+命令界面（现在是全局搜索的一部分）并不能替代聊天编辑器。
+它负责“发起行动”； chat 负责“会话任务”。
 
-Possible command to support:
-- "Send the currently selected command result to the session" (later)
+可能支持的命令：
+- “将当前选择的命令结果发送到会话”（稍后）
 
-## 10. Acceptance
+## 10. 验收
 
-1. Shortcut opens global search with the Commands section
-2. Built-in and plugin commands are searchable
-3. Executing a plugin command succeeds
-4. Commands disappear after a plugin is disabled
-5. Recently-used ordering takes effect
+1. 通过命令部分快捷方式打开全局搜索
+2.内置和插件命令可搜索
+3.执行插件命令成功
+4. 插件禁用后命令消失
+5.最近使用的订单生效

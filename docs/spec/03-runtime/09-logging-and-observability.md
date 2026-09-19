@@ -1,87 +1,66 @@
-# 09. Logging and Observability
+# 09. 日志记录和可观测性
 
-## 1. Goals
+## 1. 目标
 
-1. Diagnose failures quickly.
-2. Audit sensitive tool and plugin actions.
-3. Avoid leaking secrets.
-4. Keep the MVP local-first and quiet during normal operation.
+1. 快速诊断故障。
+2. 审计敏感的工具和插件操作。
+3. 避免泄露秘密。
+4. 保持 MVP 本地优先，并让正常运行保持安静。
 
-## 2. Log levels
+## 2. 日志级别
 
 - `debug`
 - `info`
 - `warn`
 - `error`
 
-Default runtime level:
+默认运行时级别：
 
-- development: `debug`
-- release: `info`
+- 开发：`debug`
+- 发布：`info`
 
-## 3. Channels
+## 3. 通道
 
-| channel | content | location |
+| 通道 | 内容 | 位置 |
 |---|---|---|
-| app | boot, IPC, window, process supervision | `~/.pi-desktop/logs/app/<category>.log` |
-| host | Rust host-core events (stderr capture) | `~/.pi-desktop/logs/host/<category>.log` |
-| agent | pi sidecar events (stderr capture) | `~/.pi-desktop/logs/agent/<category>.log` |
-| audit | sensitive permission, tool, and plugin actions | host-core SQLite `audit_log` table |
-| plugin | per-plugin logs | `~/.pi-desktop/plugins/logs/<id>.log` |
+| app | 启动、IPC、窗口、进程监控 | `~/.pi-desktop/logs/app/<category>.log` |
+| host | Rust host-core 事件（stderr 捕获） | `~/.pi-desktop/logs/host/<category>.log` |
+| agent | pi sidecar 事件（stderr 捕获） | `~/.pi-desktop/logs/agent/<category>.log` |
+| audit | 敏感的权限、工具和插件操作 | host-core SQLite `audit_log` 表 |
+| plugin | 每个插件的日志 | `~/.pi-desktop/plugins/logs/<id>.log` |
 
-`app`, `host`, and `agent` are NDJSON files written by the Electron main
-`Logger` (`apps/desktop/electron/main/logger.ts`). Host and agent stderr lines
-are wrapped into records on their channel. The audit channel is stored in
-SQLite, owned exclusively by host-core, so it remains queryable independently
-of rotating diagnostic files.
+`app`、`host` 和 `agent` 是由 Electron 主进程 `Logger`
+（`apps/desktop/electron/main/logger.ts`）写入的 NDJSON 文件。host 和
+agent 的 stderr 行会被包装成对应通道的记录。audit 通道由 host-core
+独占写入 SQLite，因此可以独立于轮换的诊断文件进行查询。
 
-### 3a. Category routing
+### 3a. 类别路由
 
-The three process channels are directories, not aggregate files. Main-process
-call sites choose a category. Host and agent stderr uses marker-based
-classification; unknown child output uses `runtime`.
+三个进程通道是目录，而不是聚合文件。主进程调用点明确选择类别。
+host 和 agent stderr 使用标记进行分类；无法分类的子进程输出使用
+`runtime`。
 
-The application categories are:
+应用程序类别包括：
 
-- `lifecycle` — boot, shutdown, and application supervision
-- `session` — prompts, turns, session lifecycle, and compaction
-- `tool` — tool execution outcomes and interruptions
-- `permission` — permission requests and decisions
-- `plugin` — plugin loading, services, and plugin tool execution
-- `provider` — provider/model discovery, retries, and cache failures
-- `persistence` — transcript and outbox persistence failures
-- `updater` — updater diagnostics and errors
-- `diagnostics` — blocked navigation, menu, template, and outbound-fetch
-  diagnostics. The skill market's two channels record one
-  `skillMarket.sourceFailed` / `skillMarket.documentFailed` record per source
-  or document that produced nothing, with `source`, `host`, `kind`, `address`
-  and — for a guard refusal — `reason`, `addressKind` and `route` in `data`. `kind`
-  is `policy` when the guard judged the target's own address, `fake-ip` when it
-  judged a placeholder the local proxy invented for the name (Clash's
-  `198.18.0.0/15`), `unresolved` when the local resolver returned no answer, and
-  `network` otherwise; `code` is `NETWORK_POLICY_BLOCKED` for the first two and
-  `NETWORK_RESOLVE_FAILED` for the third, so one log line separates "the address
-  is not public" from "a proxy answered with a fake-IP" from "the resolver
-  answered nothing". `reason` names the guard's own branch (`url-syntax`,
-  `resolve-failed`, `non-public-address`, `redirect-limit`), `addressKind` the
-  class of the refused address (`benchmark` for a TUN fake-IP, `private` for
-  RFC1918), and `route` the route that address was judged on (`proxied`, `direct`,
-  or `unknown` when the transport reported no readable route), so a fake-IP
-  refusal on a direct route reads apart from one on a route nobody could read
-  (ADR 0272). The record carries the host name, the address it resolved to, that
-  class and that route — never the URL, its path, query or credentials — because a
-  catalog source URL is user-supplied and the refused host and address are the
-  whole diagnostic value (issue #419).
-- `runtime` — host/sidecar lifecycle, uncategorized child output, and
-  main-process `uncaughtException` / `unhandledRejection` records
+- `lifecycle` — 启动、关闭和应用监控
+- `session` — 提示、回合、会话生命周期和压缩
+- `tool` — 工具执行结果和中断
+- `permission` — 权限请求和决定
+- `plugin` — 插件加载、服务和插件工具执行
+- `provider` — provider/model 发现、重试和缓存失败
+- `persistence` — 成绩单和发件箱持久化失败
+- `updater` — 更新器诊断和错误
+- `diagnostics` — 阻止导航、菜单、模板以及对外请求的诊断。技能市场的两个通道会为每个没有产出结果的源或文档各记录一条 `skillMarket.sourceFailed` / `skillMarket.documentFailed`：`data` 里带 `source`、`host`、`kind`、`address`,以及被守卫拒绝时的 `reason`、`addressKind` 与 `route`。`kind` 在守卫判定的是目标自身地址时为 `policy`,判定的是本地代理伪造的 fake-IP 占位地址时为 `fake-ip`,本地解析没有返回答案时为 `unresolved`,其余为 `network`；`code` 前两者为 `NETWORK_POLICY_BLOCKED`,第三者为 `NETWORK_RESOLVE_FAILED`,因此一行日志即可区分「目标地址不是公网」「代理用了 fake-IP」与「解析器没有应答」。`reason` 记录守卫自己的分支（`url-syntax`、`resolve-failed`、`non-public-address`、`redirect-limit`）,`addressKind` 记录被拒地址的类别（TUN fake-IP 为 `benchmark`,RFC1918 为 `private`）,`route` 记录该地址是在哪条线路上被判定的（`proxied`、`direct`,或传输层读不出线路时的 `unknown`）,因此「直连线路上的 fake-IP 拒绝」与「读不出线路的拒绝」可以区分（ADR 0272）。记录会保留主机名、被解析到的地址、该地址的类别与该线路 —— 但绝不包含 URL、其路径、查询串或凭据 —— 因为目录源 URL 由用户提供,而被拒绝的主机、地址及其类别正是全部诊断价值所在（issue #419）。
+- `runtime` — host/sidecar 生命周期、未分类的子进程输出，以及主进程
+  `uncaughtException` / `unhandledRejection` 记录
 
-There is no dedicated `timing` category. Timing files from older application
-runs are left untouched, but current code does not create or append to them.
-Flat legacy `app.log`, `host.log`, and `agent.log` files are also left untouched.
+不存在独立的 `timing` 类别。较早运行生成的 timing 文件保持不变，
+但当前代码不会创建或追加这些文件。旧的 `app.log`、`host.log` 和
+`agent.log` 文件同样保持不变。
 
-## 4. Required fields
+## 4. 必填字段
 
-Every structured log line should include:
+每个结构化日志行应包括：
 
 ```ts
 type LogRecord = {
@@ -89,7 +68,7 @@ type LogRecord = {
   level: "debug" | "info" | "warn" | "error"
   channel: string
   category: string
-  event: string              // stable dot-separated machine-readable name
+  event: string              // 稳定的点号分隔机器可读名称
   message: string
   traceId?: string
   requestId?: string
@@ -105,114 +84,101 @@ type LogRecord = {
 }
 ```
 
-Format: NDJSON files.
+格式：NDJSON 文件。
 
-`event` is the stable query key; `message` is a short human-readable summary.
-Correlation fields are emitted at the top level so a failed tool, its
-permission request, and its parent/child agent can be joined without parsing
-free-form text. `data` is diagnostic metadata, not a transcript or command
-output: it is redacted, depth/collection bounded, and capped at 8 KiB per
-record.
+`event` 是稳定的查询键，`message` 是简短的人类可读摘要。关联字段位于
+顶层，因此无需解析自由文本即可串联工具失败、权限请求和父子 agent。
+`data` 仅用于诊断元数据，不是成绩单或命令输出；它会脱敏、限制深度和集合
+大小，并且每条记录最多 8 KiB。
 
-## 5. What must be logged
+## 5. 必须记录的内容
 
-### Always
+### 始终记录
 
-- app boot and shutdown;
-- host/agent spawn, handshake, and unexpected exit;
-- session create/delete;
-- prompt accepted/aborted;
-- tool completion/failure/interruption and permission request/decision/timeout;
-- Plan artifact creation, approval, expiry, rejection, execution transition,
-  and startup interruption;
-- shell identity, timeout, abort, and process-tree shutdown;
-- plugin enable/disable/load/error;
-- tool admission rejection, queue/resource exhaustion, and updater errors.
+- 应用启动和关闭；
+- host/agent 生成、握手和意外退出；
+- 会话 create/delete；
+- 提示 accepted/aborted；
+- 工具完成/失败/中断以及权限 request/decision/timeout；
+- Plan 工件创建、approval、expiry、拒绝、执行转换和启动中断；
+- shell 身份、超时、中止和进程树关闭；
+- 插件 enable/disable/load/error；
+- 工具准入拒绝、队列或资源耗尽，以及更新器错误。
 
-These records should identify the relevant session, turn, tool call, plugin, or
-stable error code when available. A normal tool call emits one completion or
-failure record after `tool_end`; an unexpected sidecar exit emits one
-interruption record for each still-active tool. The sidecar protocol still
-uses `tool_start` and `tool_end` unchanged for execution and transcript
-correctness. Normal successful operations should not emit per-phase or
-per-request latency records.
+这些记录在可用时应包含对应的会话、回合、工具调用、插件或稳定错误码。
+正常工具调用在 `tool_end` 后只产生一条完成或失败记录；sidecar 意外退出时，
+为每个仍在运行的工具产生一条中断记录。sidecar 的 `tool_start`/`tool_end`
+协议事件和成绩单持久化保持不变。正常成功操作不应输出逐阶段或逐请求的延迟记录。
 
-### Never
+### 绝不记录
 
-- API keys or raw secrets;
-- full secure-storage payloads; or
-- unnecessary full file contents for large reads in audit records.
+- API 密钥或原始秘密；
+- 完整的安全存储有效负载；
+- 审计记录中不必要的大型读取完整文件内容。
 
-## 6. Redaction rules
+## 6. 脱敏规则
 
-1. Keys matching token, secret, password, API key, authorization, cookie,
-   credential, private key, or client secret are redacted.
-2. Bearer/Basic credentials, URL user-info, and common provider token formats
-   are redacted even when they occur inside a string.
-3. Home, application-data, and log-directory prefixes are normalized to
-   placeholders; raw local paths are not retained in diagnostic records.
-4. Arbitrary strings are bounded. Structured data is bounded by depth and
-   collection size and then capped at 8 KiB per record, including host-core
-   audit payloads after shaping.
-5. Tool arguments and results are never copied wholesale into normal logs.
-   Tool results retain only safe metadata such as outcome, error code,
-   duration, field names, content-block count, and stdout/stderr sizes.
-   Long command output is counted or truncated in audit records.
-6. Child stderr is stored as a bounded, ANSI-free `data.output` field under a
-   stable `child.process.stderr` event; it is not used as the record message.
+1. 与 token、secret、password、API key、authorization、cookie、credential、
+   private key 或 client secret 匹配的键名做脱敏处理。
+2. 字符串中的 Bearer/Basic 凭据、URL 用户信息和常见 provider token 格式也做
+   脱敏处理。
+3. home、应用数据和日志目录前缀替换为占位符；诊断记录不保留原始本机路径。
+4. 任意字符串有长度上限；结构化数据限制深度和集合大小，每条记录的 `data`
+   最多 8 KiB；host-core 审计 payload 整形后也最多 8 KiB。
+5. 工具参数和结果不会整体复制到常规日志。工具结果只保留结果、错误码、时长、
+   字段名、内容块数量以及 stdout/stderr 大小等安全元数据；审计记录中的长命令
+   输出应计数或截断。
+6. 子进程 stderr 以稳定的 `child.process.stderr` 事件写入有界、去 ANSI 的
+   `data.output`，而不是放入记录消息。
 
-## 7. Trace correlation
+## 7. 追踪关联
 
-Use one `traceId` per user-visible action when possible:
+尽可能为每个用户可见的操作使用一个 `traceId`：
 
-- prompt → `turnId`;
-- tool call → `toolCallId`; and
-- permission flow → `toolCallId` / `requestId`.
+- 提示 → `turnId`；
+- 工具调用 → `toolCallId`；
+- 权限流 → `toolCallId` / `requestId`。
 
-Renderer, Electron, host, and agent should propagate these identifiers.
+Renderer、Electron、host 和 agent 应传播这些标识符。
 
-## 7a. Functional duration metadata
+## 7a. 功能性时长元数据
 
-The application still preserves bounded duration metadata needed by product
-features: `ToolsExecuteResult.duration_ms`, transcript `toolDurationMs` and
-`responseDurationMs`, delegation start/completion timestamps, and bounded
-provider diagnostics. These values support the transcript, context inspector,
-throughput display, and audit records; they do not create timing log lines.
+应用仍会保留产品功能所需的有界时长元数据：
+`ToolsExecuteResult.duration_ms`、成绩单中的 `toolDurationMs` 和
+`responseDurationMs`、委托任务的开始/完成时间戳，以及有界的 provider
+诊断信息。这些值用于成绩单、上下文检查器、吞吐量展示和审计记录；
+它们不会创建 timing 日志行。
 
-Host-core audit rows may retain the existing permission and execution timing
-fields for forensic inspection. They are structured audit data, not a separate
-`timing.log` stream.
+host-core 的 audit 行可以保留既有的权限和执行时长字段用于取证检查。
+它们是结构化审计数据，不是独立的 `timing.log` 流。
 
-## 8. User-facing diagnostics
+## 8. 面向用户的诊断
 
-MVP provides:
+MVP 提供：
 
-1. in-app error text with a stable code;
-2. an “Open logs folder” command; and
-3. optional copy of error details (code and `traceId`).
+1. 带稳定代码的应用内错误文本；
+2. “打开日志文件夹”命令；
+3. 可选复制错误详细信息（代码和 `traceId`）。
 
-There is no remote telemetry pipeline or cloud crash analytics in the MVP.
+MVP 不包含远程遥测管道或云崩溃分析。
 
-## 9. Retention
+## 9. 保留
 
-- app/host/agent category logs: rotate each category file at 5 MB and keep two
-  rotated files beside it (`<category>.1.log`, `<category>.2.log`);
-- audit log (SQLite): retained with the database and pruned according to the
-  host retention policy; and
-- rotation and logging failures must never fail the caller.
+- app/host/agent 类别日志：每个类别文件达到 5 MB 后轮换，并在旁边保留两个
+  轮换文件（`<category>.1.log`、`<category>.2.log`）；
+- audit 日志（SQLite）：与数据库一起保留，并按 host 保留策略清理；
+- 轮换和日志写入失败绝不能让调用者失败。
 
-Session transcripts are user data and are not deleted by log rotation.
+会话成绩单属于用户数据，不会因日志轮换而删除。
 
-## 10. Acceptance
+## 10. 验收
 
-1. Failed and interrupted tool calls can be traced by `toolCallId` across key
-   logs, with one outcome record per normal execution.
-2. Secrets never appear in log files during normal flows.
-3. The logs folder can be opened from the app/command palette.
-4. Boot, host, sidecar, plugin, updater, and renderer paths emit only their
-   lifecycle, state-change, error, or security-relevant records; no timing
-   category files are created for normal operation.
-5. Logging or console mirroring never crashes the main process when stdout is a
-   broken pipe.
-6. Host restart, permission failure, shell timeout, and process abort remain
-   diagnosable from stable lifecycle records and error codes.
+1. 失败和中断的工具调用可以通过 `toolCallId` 跨关键日志追踪，正常执行每次只
+   有一条结果记录。
+2. 正常流程中秘密永远不会出现在日志文件中。
+3. 可从应用或命令面板打开日志文件夹。
+4. boot、host、sidecar、plugin、updater 和 renderer 路径只输出生命周期、
+   状态变更、错误或安全相关记录；正常运行不会创建 timing 类别文件。
+5. 当 stdout 是断开的管道时，日志或控制台镜像绝不能让主进程崩溃。
+6. 主机重启、权限失败、shell 超时和进程中止仍可通过稳定的生命周期记录和
+   错误码诊断。

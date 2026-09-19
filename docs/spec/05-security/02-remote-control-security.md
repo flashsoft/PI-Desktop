@@ -1,31 +1,29 @@
-# Remote Agent Control Security Specification
+# 远程 Agent 控制安全规范
 
-- Status: Target specification; post-MVP
-- Decision: D373 / ADR 0205, amended by D374 and D375
-- Applies to: RACP-WS over the SSH tunnel and any later binding: RACP-HTTP,
-  the reserved RACP-GRPC, and the Host link
-- Does not weaken: local MCP, host-core, plugin, or provider-secret boundaries
+- 状态：目标规范；post-MVP
+- 决策：D373 / ADR 0205，由 D374 和 D375 修订
+- 适用于：SSH 隧道上的 RACP-WS 和任何后续绑定：RACP-HTTP、
+  保留的 RACP-GRPC，以及 Host 链路
+- 不削弱：本地 MCP、host-core、插件或 provider 秘密边界
 
-## 1. Security goals
+## 1. 安全目标
 
-Remote control MUST provide:
+远程控制必须提供：
 
-1. authenticated user and device identity;
-2. authorization scoped to tenant, Host, project, Session, operation, and role;
-3. confidentiality and integrity in transit;
-4. no direct network access to Rust host-core;
-5. host-owned permission and workspace enforcement;
-6. revocation and auditability;
-7. bounded resource use and safe disconnect behavior;
-8. no replay of a completed or previously admitted mutation; and
-9. a remote permission ceiling, so a remote controller cannot turn a session
-   into unattended execution.
+1. 经认证的用户和设备身份；
+2. 限定到租户、Host、项目、会话、操作和角色的授权；
+3. 传输中的机密性与完整性；
+4. Rust host-core 无直接网络访问；
+5. 宿主拥有的权限与工作区执行；
+6. 可撤销与可审计；
+7. 有界的资源使用与安全的断开行为；
+8. 已完成或已准入的变更不被重放；以及
+9. 远程权限上限，使远程控制者不能把会话变成无人值守执行。
 
-The security design assumes that an Agent can be prompt-injected. A prompt,
-tool result, attachment, or model output is untrusted data and MUST NOT grant
-an authority that the authenticated principal does not already have.
+本安全设计假设 Agent 可能被提示注入。prompt、工具结果、附件或
+模型输出是不可信数据，不得授予已认证 principal 本不具有的权限。
 
-## 2. Trust zones
+## 2. 信任区
 
 ```text
 ┌──────────────────────┐       HTTPS/WSS        ┌─────────────────────┐
@@ -44,76 +42,70 @@ an authority that the authenticated principal does not already have.
                                                └──────────┴──────────────┘
 ```
 
-| Zone | Trust assumption | Required boundary |
+| 区 | 信任假设 | 要求的边界 |
 |---|---|---|
-| Remote Client | Authenticated but UI and prompt data are untrusted | Scoped session or bearer credential; no secret authority by default |
-| Gateway | User-hosted relay, routable and exposed | Authn, authz, rate limits, audit, transient buffers only, no raw host RPC |
-| Agent Host | Trusted local authority beside the workspace | mTLS/device identity, signed route context, host policy, remote permission ceiling |
-| Node sidecar | Agent runtime, not policy owner | Main/Host proxy allowlist |
-| Rust host-core | Workspace, storage, tool, permission, and secret authority | stdio only; no public listener |
+| 远程客户端 | 已认证，但 UI 和 prompt 数据不可信 | 有作用域的会话或 bearer 凭据；默认无秘密权限 |
+| Gateway | 用户托管的中继，可路由且暴露 | 认证、授权、限流、审计、仅临时缓冲，无原始宿主 RPC |
+| Agent Host | 工作区旁的可信本地权威 | mTLS/设备身份、签名路由上下文、宿主策略、远程权限上限 |
+| Node sidecar | Agent 运行时，不是策略所有者 | Main/Host 代理 allowlist |
+| Rust host-core | 工作区、存储、工具、权限和秘密权威 | 仅 stdio；无公共监听器 |
 
-## 3. Identity and enrollment
+## 3. 身份与登记
 
-### 3.1 Client to Gateway
+### 3.1 客户端到 Gateway
 
-The production Gateway MUST validate an established identity before routing.
-D385 makes remote control user-local by construction. No project-operated
-identity or account service is in the path: the only credential a client ever
-holds is a device token issued by the user's own Host at pairing (§3.4). A
-Gateway, if a user runs one, is self-hosted on the user's infrastructure and
-admits clients with those same Host-issued device credentials; it validates
-the token's Host id, expiry, and revocation state before routing. OIDC
-federation and the pi-backend account service are out of scope for remote
-control, and refresh tokens do not exist in this model.
+生产 Gateway 必须在路由前验证已确立的身份。D385 使远程控制在
+构造上用户本地。路径中没有项目运营的身份或账户服务：客户端持有
+的唯一凭据是配对时由用户自己的 Host 签发的设备 token（§3.4）。
+Gateway（如果用户运行一个）自托管在用户的基础设施上，并以同样
+由 Host 签发的设备凭据准入客户端；它在路由前验证 token 的 Host
+id、过期时间和撤销状态。OIDC 联合和 pi-backend 账户服务超出
+远程控制范围，此模型中不存在刷新 token。
 
-Because a browser cannot set request headers on the `WebSocket` and
-`EventSource` APIs, the Gateway offers two authentication profiles:
+因为浏览器无法在 `WebSocket` 和 `EventSource` API 上设置请求头，
+Gateway 提供两种认证配置：
 
-- **Header profile** for non-browser clients: the access token is sent in the
-  `Authorization` header of every request and of the WebSocket upgrade.
-- **Cookie profile** for browser clients: after device pairing the self-hosted Gateway or the Host issues an
-  `HttpOnly`, `Secure`, `SameSite=Lax` or stricter session cookie; the
-  WebSocket upgrade and the SSE request are authorized by that cookie plus the
-  per-tenant Origin allowlist, and every mutation carries a CSRF token issued
-  with the session. A browser client MAY instead stream events through `fetch`
-  with the header profile.
+- **Header 配置**用于非浏览器客户端：访问 token 在每个请求和
+  WebSocket 升级的 `Authorization` 头中发送。
+- **Cookie 配置**用于浏览器客户端：设备配对后，自托管 Gateway
+  或 Host 签发一个 `HttpOnly`、`Secure`、`SameSite=Lax` 或更严格
+  的会话 cookie；WebSocket 升级和 SSE 请求由该 cookie 加每租户
+  Origin allowlist 授权，每个变更携带随会话签发的 CSRF token。
+  浏览器客户端也可以改用 header 配置经 `fetch` 流式接收事件。
 
-In both profiles access tokens MUST NOT be placed in query strings, WebSocket
-URLs, SSE URLs, attachment names, or event payloads. Bearer-only APIs still
-validate Origin for browser requests.
+两种配置中，访问 token 都不得放在查询字符串、WebSocket URL、
+SSE URL、附件名或事件负载中。仅 bearer 的 API 仍对浏览器请求
+验证 Origin。
 
-The Gateway and the cookie profile belong to the unscheduled Gateway and
-browser milestones (D375). The first remote topology uses the header profile
-with a device token obtained through the SSH bootstrap pairing in §3.4.
+Gateway 和 cookie 配置属于未排期的 Gateway 和浏览器里程碑
+（D375）。第一个远程拓扑使用 header 配置，设备 token 通过 §3.4
+的 SSH 引导配对获得。
 
-For the first trusted-device prototype, a one-time pairing code MAY bootstrap
-the identity link. It MUST be short-lived, single-use, displayed out of band,
-and exchanged over TLS. A pairing code MUST NOT become a long-lived API token.
+对于第一个可信设备原型，一次性配对码可以用于引导身份链接。它
+必须短生命周期、单次使用、带外显示，并经 TLS 交换。配对码不得
+变成长生命周期的 API token。
 
-### 3.2 Agent Host to Gateway
+### 3.2 Agent Host 到 Gateway
 
-The Agent Host MUST open the production connection outbound. The Host link
-uses mutual TLS with a per-host identity certificate or an equivalent signed
-device credential.
+Agent Host 必须出站发起生产连接。Host 链路使用双向 TLS 和每宿主
+身份证书，或等效的签名设备凭据。
 
-- Enrollment credentials are one-time and expire after the enrollment window.
-- Host credentials are scoped to one tenant and Host identity.
-- The Gateway rejects a certificate or device credential after revocation.
-- Credentials rotate without exposing provider secrets to the Gateway.
-- The Host rejects a Gateway connection whose server identity is not pinned to
-  the configured product trust roots.
-- The Host never accepts an unauthenticated inbound control socket.
-- The Host link authenticates the Gateway only. User authority on a relayed
-  connection comes solely from the per-connection route context in §3.3.
+- 登记凭据是一次性的，在登记窗口后过期。
+- Host 凭据限定到一个租户和 Host 身份。
+- Gateway 在撤销后拒绝证书或设备凭据。
+- 凭据轮换不向 Gateway 暴露 provider 秘密。
+- Host 拒绝其服务器身份未固定到所配置产品信任根的 Gateway 连接。
+- Host 从不接受未认证的入站控制套接字。
+- Host 链路只认证 Gateway。中继连接上的用户权限仅来自 §3.3 的
+  每连接路由上下文。
 
-Direct LAN or development connections still use TLS and an expiring device
-token. Plain `ws://`, plain HTTP, and static shared tokens in URLs are not
-supported.
+直接 LAN 或开发连接仍使用 TLS 和会过期的设备 token。不支持纯
+`ws://`、纯 HTTP 和 URL 中的静态共享 token。
 
-### 3.3 Host capability context
+### 3.3 Host 能力上下文
 
-After the Gateway authenticates a user, it issues a short-lived signed route
-context for each logical client connection:
+Gateway 认证用户之后，为每个逻辑客户端连接签发一个短生命周期的
+签名路由上下文：
 
 ```ts
 type HostRouteContext = {
@@ -129,406 +121,363 @@ type HostRouteContext = {
 }
 ```
 
-The Agent Host verifies the signature, audience, Host id, expiry, and session
-scope before executing any mutation. The Gateway's transport connection is not
-itself authorization for a session, and a route context for one
-`clientConnectionId` cannot be replayed on another.
+Agent Host 在执行任何变更之前验证签名、受众、Host id、过期时间
+和会话范围。Gateway 的传输连接本身不是对会话的授权，一个
+`clientConnectionId` 的路由上下文不能在另一个上重放。
 
-### 3.4 SSH bootstrap pairing (first remote topology)
+### 3.4 SSH 引导配对（第一个远程拓扑）
 
-The desktop bootstraps a `pi-host` on a remote machine over the user's own
-SSH session (`02-architecture/05-remote-agent-control.md` §5.2). The trust
-argument is that an SSH login already proves shell access to that machine;
-pairing only binds a desktop device to the Host it started.
+桌面经用户自己的 SSH 会话在远程机器上引导 `pi-host`
+（`02-architecture/05-remote-agent-control.md` §5.2）。信任论据是
+SSH 登录已经证明了对该机器的 shell 访问；配对只把桌面设备绑定到
+它启动的 Host。
 
-- The pairing token is generated by the Host at start, is single-use, expires
-  within the bootstrap window, and travels only over the SSH channel; it is
-  never written to a world-readable file or a URL.
-- The desktop exchanges it once, over the forwarded loopback port, for a
-  device token that it stores in its secure storage; the Host records the
-  device as `owner` of that Host.
-- The Host binds loopback only and accepts a device token only from a
-  loopback peer; a non-loopback bind requires TLS and the same device token.
-- The bootstrap script, uploaded over SSH, downloads the `pi-host` bundle for
-  the remote platform at the desktop's version from GitHub Releases, verifies
-  the SHA-256 published with the release, and installs it under the user's
-  home; the desktop never uploads executable bytes itself. A machine without
-  outbound access to GitHub cannot be bootstrapped in the first version.
-- Revoking the device token on the Host, or removing the Host from the
-  desktop, ends the pairing; a new pairing needs a new SSH bootstrap.
-- Provider configuration for the remote Host is written over the SSH channel
-  by the bootstrap step as Host-local configuration; it never crosses RACP.
+- 配对 token 由 Host 在启动时生成，单次使用，在引导窗口内过期，
+  且只经 SSH 通道传输；从不写入全局可读文件或 URL。
+- 桌面经转发的 loopback 端口把它交换一次，换成存入安全存储的
+  设备 token；Host 把该设备记录为该 Host 的 `owner`。
+- Host 只绑定 loopback，且只接受来自 loopback 对端的设备 token；
+  非 loopback 绑定要求 TLS 和同样的设备 token。
+- 经 SSH 上传的引导脚本按桌面版本从 GitHub Releases 下载远程
+  平台的 `pi-host` 包，验证随发布公布的 SHA-256，并安装到用户主
+  目录下；桌面从不自己上传可执行字节。没有到 GitHub 出站访问的
+  机器在第一个版本中无法被引导。
+- 在 Host 上撤销设备 token，或从桌面移除该 Host，即结束配对；
+  新的配对需要新的 SSH 引导。
+- 远程 Host 的 provider 配置由引导步骤经 SSH 通道写入，作为 Host
+  本地配置；从不跨越 RACP。
 
-**SSH credential handling (ADR 0293).** The desktop MAY hold the SSH login
-password for a host the user paired that way, under these rules:
+**SSH 凭据处理（ADR 0293）。** 对于用户以该方式配对的宿主，桌面
+可以持有其 SSH 登录密码，规则如下：
 
-- The password is supplied by the user in Settings, is passed to the system
-  `ssh` client through OpenSSH's askpass helper, and is never an `ssh`
-  argument, an environment variable value, or part of a URL.
-- Credential material exists on disk only inside a `0700` directory as a `0600`
-  file, only while an `ssh` child can still prompt for it, and is removed on
-  every path including a failed forward and `dispose`.
-- It is persisted at rest only through the same OS-keychain encryption the
-  device token uses, and a password that cannot be decrypted costs the secret
-  rather than the paired host.
-- The renderer never receives it: `RemoteHostSummary` and
-  `RemoteHostSshMetadata` carry no secret field.
-- A password containing a line break cannot survive the askpass round trip and
-  is rejected before any remote command runs. Windows OpenSSH cannot execute
-  the helper and is refused with a remedy instead.
-- Password mode is exclusive: `PubkeyAuthentication=no` and
-  `NumberOfPasswordPrompts=1`. Default identities are not tried, because an
-  encrypted local key would consume the single askpass answer as a passphrase.
-  A user with both a key and a password picks key mode.
+- 密码由用户在设置中提供，经 OpenSSH 的 askpass 助手传给系统
+  `ssh` 客户端，从不是 `ssh` 参数、环境变量值或 URL 的一部分。
+- 凭据材料只以 `0700` 目录中 `0600` 文件的形式存在于磁盘上，
+  且只在 `ssh` 子进程仍可能提示输入时存在，并在包括转发失败和
+  `dispose` 在内的每条路径上移除。
+- 它在静态时只通过与设备 token 相同的 OS 钥匙串加密持久化；无法
+  解密的密码代价是失去该秘密，而不是失去已配对的宿主。
+- 渲染器从不收到它：`RemoteHostSummary` 和
+  `RemoteHostSshMetadata` 不携带秘密字段。
+- 包含换行的密码无法在 askpass 往返中存活，会在任何远程命令运行
+  之前被拒绝。Windows OpenSSH 无法执行该助手，会以附带补救措施
+  的方式拒绝。
+- 密码模式是排他的：`PubkeyAuthentication=no` 且
+  `NumberOfPasswordPrompts=1`。不尝试默认身份，因为加密的本地
+  密钥会把唯一的 askpass 回答消耗为密钥口令。同时拥有密钥和密码
+  的用户选择密钥模式。
 
-## 4. Authorization model
+## 4. 授权模型
 
-### 4.1 Role matrix
+### 4.1 角色矩阵
 
-| Operation | Viewer | Controller | Approver | Owner |
+| 操作 | Viewer | Controller | Approver | Owner |
 |---|---:|---:|---:|---:|
-| List/get visible hosts, projects, and sessions | yes | yes | yes | yes |
-| Subscribe to session or host events | yes | yes | yes | yes |
-| Read session history | yes | yes | yes | yes |
-| Create/attach as viewer | yes | yes | yes | yes |
-| Start or queue a turn | no | yes | optional | yes |
-| Stop, interrupt, or cancel a session turn | no | yes | optional | yes |
-| Resolve tool approval (`allow-once`, `deny`) | no | no by default | yes | yes |
-| Resolve tool approval with `allow-session` | no | no | policy | yes |
-| Resolve Plan/Goal approval with permission mode | no | no by default | explicit policy | yes |
-| Answer an input request | no | yes | optional | yes |
-| Upload an attachment | no | yes | optional | yes |
-| Revoke membership | no | no | no | yes |
-| Archive a session | no | no | no | yes |
-| Open or use a session terminal | no | policy | policy | yes |
-| Advertise relayed tools | no | no | no | yes |
+| 列出/获取可见宿主、项目和会话 | yes | yes | yes | yes |
+| 订阅会话或宿主事件 | yes | yes | yes | yes |
+| 读取会话历史 | yes | yes | yes | yes |
+| 以 viewer 创建/附加 | yes | yes | yes | yes |
+| 启动或排队回合 | no | yes | optional | yes |
+| 停止、中断或取消会话回合 | no | yes | optional | yes |
+| 解决工具批准（`allow-once`、`deny`） | no | 默认 no | yes | yes |
+| 以 `allow-session` 解决工具批准 | no | no | policy | yes |
+| 以权限模式解决 Plan/Goal 批准 | no | 默认 no | 显式 policy | yes |
+| 回答输入请求 | no | yes | optional | yes |
+| 上传附件 | no | yes | optional | yes |
+| 撤销成员资格 | no | no | no | yes |
+| 归档会话 | no | no | no | yes |
+| 打开或使用会话终端 | no | policy | policy | yes |
+| 通告中继工具 | no | no | no | yes |
 
-Role checks are necessary but not sufficient. The Host MUST additionally check:
+角色检查是必要但不充分的。Host 还必须检查：
 
-- the Session belongs to the requested tenant and Host;
-- the principal is allowed to use the Session's project;
-- the operation is legal in the Session state;
-- the durable permission/mode policy allows the proposed action;
-- the remote permission ceiling has been applied to the turn; and
-- the request's expected revision and idempotency key are valid.
+- 会话属于请求的租户和 Host；
+- principal 被允许使用该会话的项目；
+- 操作在会话状态中合法；
+- 持久的权限/模式策略允许所提议的操作；
+- 远程权限上限已应用于该回合；以及
+- 请求的期望修订和幂等键有效。
 
-### 4.2 No privilege escalation through protocol fields
+### 4.2 不允许通过协议字段提权
 
-The following client fields are advisory only or forbidden:
+以下客户端字段仅为建议性或被禁止：
 
-- `permissionMode` cannot upgrade a durable Session policy; the only accepted
-  permission-mode field is the explicit selection on a Plan/Goal `approve`,
-  and it is validated against `allowedPermissionModes`;
-- `admission: "queue"` cannot bypass single-turn execution; it only places a
-  bounded, cancelable entry in the Host queue;
-- `workspaceRoot` cannot replace a Host-owned project binding;
-- `toolName` cannot select a tool outside the Host catalog;
-- `confirm` cannot replace an approval request or create an approval result;
-- `providerApiKey`, secret values, and secret references cannot be supplied in
-  a turn payload; and
-- a client cannot claim another `principal`, `agentName`, `connectionId`, or
-  `clientConnectionId`.
+- `permissionMode` 不能提升持久的会话策略；唯一被接受的权限模式
+  字段是 Plan/Goal `approve` 上的显式选择，且按
+  `allowedPermissionModes` 验证；
+- `admission: "queue"` 不能绕过单回合执行；它只在 Host 队列中
+  放置一个有界、可取消的条目；
+- `workspaceRoot` 不能替换宿主拥有的项目绑定；
+- `toolName` 不能选择 Host 目录之外的工具；
+- `confirm` 不能替代批准请求或创建批准结果；
+- `providerApiKey`、秘密值和秘密引用不能在回合负载中提供；以及
+- 客户端不能冒称另一个 `principal`、`agentName`、`connectionId`
+  或 `clientConnectionId`。
 
-The Host chooses the effective model/provider configuration from its own
-session and provider state. Remote control does not become a credential relay.
+Host 从自己的会话和 provider 状态中选择有效的模型/provider 配置。
+远程控制不会变成凭据中继。
 
-### 4.3 Remote permission ceiling
+### 4.3 远程权限上限
 
-A turn started by a remote principal runs under the lower of the Session's
-durable permission mode and the Host's configured `remoteMaxPermissionMode`,
-ordered `ask` < `accept-edits` < `auto`. The default ceiling is `ask`. The
-Host operator may raise it; a principal may exceed it only when the principal
-holds `approver` and Host policy allows approvers to use the session's own
-mode. The applied value is reported as `effectivePermissionMode` and never
-changes the durable session mode.
+由远程 principal 启动的回合在会话持久权限模式与 Host 配置的
+`remoteMaxPermissionMode` 两者较低者之下运行，排序为
+`ask` < `accept-edits` < `auto`。默认上限是 `ask`。Host 运营者
+可以提高它；principal 只有在持有 `approver` 且 Host 策略允许
+approver 使用会话自身模式时才能超过它。应用的值以
+`effectivePermissionMode` 报告，且从不改变持久会话模式。
 
-The ceiling applies to Gateway-routed principals. A desktop device paired
-through the SSH bootstrap (§3.4) holds `owner` on that Host and is exempt:
-an SSH login already grants shell access to the machine, so a ceiling would
-withhold nothing. Its turns report the session's own mode as
-`effectivePermissionMode`. The Host policy `applyCeilingToPairedDevices`
-(default off) re-applies the ceiling to paired devices for an operator who
-wants every remote turn to start at `ask`.
+该上限适用于 Gateway 路由的 principal。经 SSH 引导配对的桌面
+设备（§3.4）在该 Host 上持有 `owner`，被豁免：SSH 登录已经授予
+对该机器的 shell 访问，上限无可保留。其回合把会话自身模式报告为
+`effectivePermissionMode`。Host 策略
+`applyCeilingToPairedDevices`（默认关闭）为希望每个远程回合都从
+`ask` 开始的运营者重新应用上限。
 
-`allow-session` is offered to a remote approver only when Host policy allows
-remote session grants; otherwise the request's `allowedDecisions` omit it. A
-session grant made remotely is the same by-tool-name grant as a local one
-(frozen decision 18) and ends with the Session.
+只有当 Host 策略允许远程会话授权时，才向远程 approver 提供
+`allow-session`；否则请求的 `allowedDecisions` 省略它。远程做出
+的会话授权与本地授权一样是按工具名的授权（冻结决策 18），并随
+会话结束。
 
-## 5. Network and transport protections
+## 5. 网络与传输保护
 
 ### 5.1 TLS
 
-- Public HTTP, SSE, and WebSocket endpoints MUST use TLS 1.2 or newer; TLS
-  1.3 is preferred. A reserved gRPC binding inherits the same rule.
-- A `pi-host` bound to loopback and reached through an SSH port forward MAY
-  accept plain `ws://` when both the bind address and the peer address are
-  loopback and a valid device token is presented; the SSH channel provides
-  confidentiality, matching the loopback rule of ADR 0203. Any non-loopback
-  bind requires TLS.
-- The production Host link MUST use mutual TLS or an equivalent device-bound
-  authenticated channel.
-- Certificate validation MUST include hostname or service identity validation;
-  disabling verification is not a development shortcut supported by the
-  product.
-- WebSocket upgrade credentials, header or cookie, are validated before
-  accepting the connection.
+- 公共 HTTP、SSE 和 WebSocket 端点必须使用 TLS 1.2 或更新版本；
+  首选 TLS 1.3。保留的 gRPC 绑定继承同样的规则。
+- 绑定 loopback 并经 SSH 端口转发到达的 `pi-host`，可以在绑定地址
+  和对端地址都是 loopback 且出示有效设备 token 时接受纯 `ws://`；
+  SSH 通道提供机密性，与 ADR 0203 的 loopback 规则一致。任何非
+  loopback 绑定都要求 TLS。
+- 生产 Host 链路必须使用双向 TLS 或等效的设备绑定认证通道。
+- 证书验证必须包含主机名或服务身份验证；禁用验证不是产品支持的
+  开发捷径。
+- WebSocket 升级凭据（header 或 cookie）在接受连接之前验证。
 
-### 5.2 Origin and cross-site controls
+### 5.2 Origin 与跨站控制
 
-- The Gateway maintains an explicit browser Origin allowlist per tenant and
-  checks it on every WebSocket upgrade and SSE request from a browser.
-- Local-only endpoints bind loopback and validate loopback Origin as required
-  by ADR 0203.
-- Cookie-profile sessions use `SameSite` protection and a CSRF token on every
-  mutation, including mutations sent over an already-open WebSocket.
-- A bearer token in a URL is always rejected.
-- CORS exposes only the required methods, headers, and response types.
+- Gateway 为每个租户维护显式的浏览器 Origin allowlist，并在来自
+  浏览器的每次 WebSocket 升级和 SSE 请求上检查它。
+- 仅本地的端点按 ADR 0203 要求绑定 loopback 并验证 loopback
+  Origin。
+- Cookie 配置的会话使用 `SameSite` 保护，并在每个变更上携带 CSRF
+  token，包括经已打开 WebSocket 发送的变更。
+- URL 中的 bearer token 一律拒绝。
+- CORS 只暴露必需的方法、头部和响应类型。
 
-### 5.3 Request binding and replay protection
+### 5.3 请求绑定与重放保护
 
-Every mutation carries a principal-bound idempotency key. The Host stores the
-key and result for at least the active turn lifetime and rejects reuse with
-different payload bytes. A Gateway retry MUST preserve the key and trace
-context.
+每个变更携带一个与 principal 绑定的幂等键。Host 至少在整个活跃
+回合生命周期内保存键和结果，并拒绝以不同负载字节复用。Gateway
+重试必须保留键和追踪上下文。
 
-Requests with an expired route context, stale session revision, or revoked
-connection fail before they reach the Agent runtime.
+带有过期路由上下文、陈旧会话修订或已撤销连接的请求，在到达
+Agent 运行时之前失败。
 
-## 6. Workspace, file, and attachment security
+## 6. 工作区、文件与附件安全
 
-1. A remote request identifies a Session, not an arbitrary filesystem root.
-2. The Host resolves every tool path against that Session's durable project or
-   scratch root.
-3. Remote clients send attachment bytes or opaque attachment ids, never local
-   absolute paths or `file://` URLs.
-4. The Host validates declared size, actual size, MIME policy, SHA-256, and
-   expiration before a turn can reference an attachment.
-5. Attachment storage is private to the owning tenant, Host, and Session.
-6. Uploads are not executable and are not automatically added to a tool root.
-7. Gateway URL fetches are not accepted as an attachment source, preventing
-   SSRF through a remote-control request.
-8. Workspace reads and writes continue to use the current host sandbox,
-   ignore rules, path checks, and permission policy.
-9. Behind a Gateway the upload target is served by the Gateway. The Gateway
-   enforces only the size bound, relays the bytes to the Host in bounded
-   chunks, deletes its copy when `attachment/complete` succeeds or the upload
-   expires, and never inspects, persists, or serves those bytes elsewhere.
+1. 远程请求标识一个会话，而不是任意文件系统根。
+2. Host 针对该会话的持久项目或 scratch 根解析每个工具路径。
+3. 远程客户端发送附件字节或不透明附件 id，从不发送本地绝对路径
+   或 `file://` URL。
+4. Host 在回合可以引用附件之前验证声明大小、实际大小、MIME 策略、
+   SHA-256 和过期时间。
+5. 附件存储对所属租户、Host 和会话私有。
+6. 上传不可执行，也不会被自动加入工具根。
+7. 不接受 Gateway URL 抓取作为附件来源，防止经远程控制请求的
+   SSRF。
+8. 工作区读写继续使用当前的宿主沙箱、忽略规则、路径检查和权限
+   策略。
+9. 在 Gateway 之后，上传目标由 Gateway 服务。Gateway 只强制大小
+   上限，把字节以有界分块中继到 Host，在 `attachment/complete`
+   成功或上传过期时删除自己的副本，且从不在其他地方检查、持久化
+   或服务这些字节。
 
-## 7. Tool and approval security
+## 7. 工具与批准安全
 
-Remote control MUST use the existing host-owned tool execution path. It MUST
-NOT expose:
+远程控制必须使用现有的宿主拥有工具执行路径。它不得暴露：
 
-- raw `host.proxy` calls;
-- raw Rust host-core methods;
-- generic Electron IPC invocation;
-- provider secret get/set/delete methods;
-- arbitrary process spawning; or
-- a remote equivalent of a disabled permission mode.
+- 原始 `host.proxy` 调用；
+- 原始 Rust host-core 方法；
+- 通用的 Electron IPC 调用；
+- provider 秘密 get/set/delete 方法；
+- 任意进程派生；或
+- 与已禁用权限模式等效的远程能力。
 
-Approval requests contain a bounded, redacted summary. The client submits a
-decision for a live request; it does not submit a tool invocation to be
-executed after approval. The decision vocabulary is the local one:
-`allow-once`, `allow-session`, and `deny` for tools; `approve` with an
-explicit permission mode, or `reject`, for Plan and Goal contracts. The Host
-verifies request id, Session id, turn id, principal role, expiry, allowed
-decision, permission-mode selection, and current state in one operation.
+批准请求包含有界的脱敏摘要。客户端为活跃请求提交决定；它不提交
+待批准后执行的工具调用。决策词汇是本地的那一套：工具的
+`allow-once`、`allow-session` 和 `deny`；Plan 和 Goal 契约的带显式
+权限模式的 `approve` 或 `reject`。Host 在一次操作中验证请求 id、
+会话 id、回合 id、principal 角色、过期时间、允许的决定、权限模式
+选择和当前状态。
 
-Pending requests are Host state. Rust host-core keeps the pending permission
-table and its timer; the Agent Host reads it through `permissions.pending`
-so a late-attaching client receives open requests. That read is redacted the
-same way as the request event and never returns tool arguments beyond the
-bounded preview.
+待处理请求是 Host 状态。Rust host-core 保存待处理权限表及其计时
+器；Agent Host 通过 `permissions.pending` 读取它，使晚附加的客户
+端收到未决请求。该读取与请求事件同样脱敏，从不返回超出有界预览
+的工具参数。
 
-Approval lifetime is Host policy. The local default remains 120 seconds then
-deny (frozen decision 17). While a remote subscriber is attached the default
-is 30 minutes (D375); the operator may shorten or lengthen it within a bound,
-the blocked tool waits for that lifetime unless a local or remote decision
-arrives earlier, and a client disconnect never extends it.
+批准寿命是 Host 策略。本地默认保持 120 秒后拒绝（冻结决策 17）。
+远程订阅者附加期间默认为 30 分钟（D375）；运营者可以在界限内
+缩短或延长它，被阻塞的工具等待该寿命，除非本地或远程决定更早到
+达，客户端断开从不延长它。
 
-An approval response that arrives after disconnect, expiry, abort, crash, or
-turn completion is a no-op or a structured stale/expired error. It never
-restarts the turn. The first valid decision wins across local and remote
-clients; later valid responses receive the stored result.
+在断开、过期、中止、崩溃或回合完成之后到达的批准响应是空操作，
+或结构化的 陈旧/过期 错误。它从不重启回合。第一个有效决定在
+本地和远程客户端之间胜出；之后的有效响应收到已存储的结果。
 
-A remote session's catalog contains the remote Host's tools plus the tools
-the paired desktop advertised for relay: its user-configured MCP servers and
-plugin tools that do not require the session workspace. A relayed tool
-executes on the desktop under the desktop's own plugin permissions and
-confirmation rules, never on the Host and never against the remote workspace;
-the Host's permission decision precedes the relay request, the Host sends only
-the Agent's arguments and never a secret, and a lost relay connection fails
-the tool without interrupting the turn. Provider secrets never cross RACP in
-either direction; the remote Host's providers are configured over the SSH
-bootstrap channel (§3.4).
+远程会话的目录包含远程 Host 的工具加上配对桌面通告用于中继的
+工具：其用户配置的 MCP 服务器和不需要会话工作区的插件工具。中继
+工具在桌面自己的插件权限和确认规则下于桌面上执行，从不在 Host
+上执行，也从不针对远程工作区；Host 的权限决定先于中继请求，Host
+只发送 Agent 的参数而从不发送秘密，丢失的中继连接使工具失败而
+不中断回合。provider 秘密从不沿任一方向跨越 RACP；远程 Host 的
+provider 经 SSH 引导通道配置（§3.4）。
 
-A session terminal is a shell on the Host machine running as the `pi-host`
-user with the session root as its working directory. Only the SSH-paired
-owner device or a principal holding the explicit `terminal` scope may open
-one; Gateway-routed principals need that scope from policy. Terminal output
-is ephemeral and recoverable only from the terminal's bounded replay ring.
+会话终端是 Host 机器上以 `pi-host` 用户身份运行、以会话根为工作
+目录的 shell。只有 SSH 配对的 owner 设备或持有显式 `terminal`
+作用域的 principal 可以打开它；Gateway 路由的 principal 需要从
+策略获得该作用域。终端输出是临时的，只能从终端的有界重放环恢复。
 
-## 8. Gateway and tenant isolation
+## 8. Gateway 与租户隔离
 
-The Gateway milestone is unscheduled (D375). These rules bind when it is
-scheduled and are retained so the contract does not drift.
+Gateway 里程碑未排期（D375）。这些规则在其排期时生效，保留于此
+以使契约不漂移。
 
-- Every route is keyed by `(tenantId, hostId, sessionId)`.
-- A user-local deployment has exactly one tenant, the Host itself; PI never
-  operates a shared Gateway (D385).
-- The first deployment is single-tenant. Routes already carry `tenantId` so a
-  second tenant is an operational change, not a protocol change; cross-tenant
-  isolation tests run once a multi-tenant harness exists.
-- A client cannot enumerate Host or Session ids outside its signed scope.
-- Gateway caches contain opaque ids and routing metadata, not provider secrets.
-- A Host reconnect replaces the old connection only after identity and tenant
-  match; stale links are closed.
-- A tenant's rate limits and event queues are independent of other tenants.
-- Logs and metrics carry tenant/host/session identifiers only where the
-  retention policy permits; prompt and tool content is excluded by default.
+- 每条路由以 `(tenantId, hostId, sessionId)` 键控。
+- 用户本地部署恰好有一个租户，即 Host 自身；PI 从不运营共享
+  Gateway（D385）。
+- 第一个部署是单租户。路由已携带 `tenantId`，因此第二个租户是
+  运营变更而不是协议变更；多租户测试床存在后运行跨租户隔离测试。
+- 客户端不能枚举其签名范围之外的 Host 或会话 id。
+- Gateway 缓存包含不透明 id 和路由元数据，不含 provider 秘密。
+- Host 重连只有在身份和租户匹配后才替换旧连接；陈旧链路被关闭。
+- 一个租户的限流和事件队列独立于其他租户。
+- 日志和指标只在保留策略允许的地方携带租户/宿主/会话标识符；
+  prompt 和工具内容默认排除。
 
-## 9. Abuse controls and resource bounds
+## 9. 滥用控制与资源上限
 
-The Gateway and Host enforce the lower of their configured limits:
+Gateway 和 Host 执行其配置限制中较低者：
 
-| Resource | Initial target |
+| 资源 | 初始目标 |
 |---|---:|
-| Control requests per principal | 120/minute |
-| Turn starts per Session | 20/minute |
-| Queued turns per Session | 8 |
-| Concurrent clients per Host | 16 |
-| Concurrent subscriptions per connection | 8 |
-| Request/event frame | 1 MiB |
-| Prompt payload | 256 KiB |
-| Attachment | 50 MiB |
-| In-flight attachment uploads per principal | 4 |
-| Event send queue | 4 MiB or 1,000 durable events |
-| Open terminals per Session | 2 |
+| 每 principal 控制请求 | 120/分钟 |
+| 每会话回合启动 | 20/分钟 |
+| 每会话排队回合 | 8 |
+| 每 Host 并发客户端 | 16 |
+| 每连接并发订阅 | 8 |
+| 请求/事件帧 | 1 MiB |
+| Prompt 负载 | 256 KiB |
+| 附件 | 50 MiB |
+| 每 principal 进行中附件上传 | 4 |
+| 事件发送队列 | 4 MiB 或 1,000 条持久事件 |
+| 每会话打开的终端 | 2 |
 
-Rate-limit responses include a retry hint but never disclose another tenant's
-quota. Slow clients lose ephemeral events first and are disconnected with a
-resumable cursor before a durable event is lost. The Host never blocks the
-Agent turn indefinitely on a remote client that stopped reading.
+限流响应包含重试提示，但从不披露其他租户的配额。慢客户端先丢失
+临时事件，并在丢失持久事件之前以可恢复游标断开。Host 从不在
+停止读取的远程客户端上无限期阻塞 Agent 回合。
 
-## 10. Audit and observability
+## 10. 审计与可观测性
 
-Every remote control mutation produces a structured audit record containing:
+每个远程控制变更产生一条结构化审计记录，包含：
 
-- `traceId`, `connectionId`, `clientConnectionId`, `principal`, `tenantId`,
-  `hostId`;
-- Session and turn ids;
-- operation and outcome, including the admission mode and
-  `effectivePermissionMode` of a started turn;
-- authorization decision and role;
-- idempotency key hash, not the raw key;
-- event epoch and sequence range, when applicable; and
-- error code, or approval decision with the selected permission mode.
+- `traceId`、`connectionId`、`clientConnectionId`、`principal`、
+  `tenantId`、`hostId`；
+- 会话和回合 id；
+- 操作和结果，包括已启动回合的准入模式和
+  `effectivePermissionMode`；
+- 授权决定和角色；
+- 幂等键哈希，而不是原始键；
+- 适用时的事件 epoch 和 sequence 范围；以及
+- 错误码，或带所选权限模式的批准决定。
 
-Audit records MUST NOT contain provider credentials, raw prompt text, raw tool
-arguments, raw tool output, attachment bytes, or approval secrets by default.
-The runtime logger may record bounded redacted summaries under the existing
-redaction policy.
+审计记录默认不得包含 provider 凭据、原始 prompt 文本、原始工具
+参数、原始工具输出、附件字节或批准秘密。运行时日志器可以在现有
+脱敏策略下记录有界的脱敏摘要。
 
-Metrics SHOULD cover connection count, reconnects, authentication failures,
-authorization failures, event lag, replay/resync counts, epoch changes, queue
-depth, turn admission latency, approval latency, queue drops, and Host
-availability.
+指标应覆盖连接数、重连、认证失败、授权失败、事件滞后、
+重放/重同步计数、epoch 变更、队列深度、回合准入延迟、批准延迟、
+队列丢弃和 Host 可用性。
 
-Trace propagation uses W3C `traceparent` where the selected transport supports
-it. A Gateway MUST preserve the trace id across the Host link.
+所选传输支持时，追踪传播使用 W3C `traceparent`。Gateway 必须在
+Host 链路上保留 trace id。
 
-## 11. Revocation and incident response
+## 11. 撤销与事件响应
 
-The Gateway MUST be able to revoke:
+Gateway 必须能够撤销：
 
-- a user session;
-- a Host device;
-- a client connection;
-- a Session membership; and
-- a pending attachment or upload target.
+- 一个用户会话；
+- 一个 Host 设备；
+- 一个客户端连接；
+- 一个会话成员资格；以及
+- 一个待处理附件或上传目标。
 
-Revocation closes active connections, prevents new mutations, cancels queued
-turns the revoked principal submitted, and leaves the Agent Host's local turn
-policy unchanged. A running turn is interrupted only when the revoked scope or
-incident policy explicitly requires it; revocation must not silently replay or
-roll back a completed turn.
+撤销会关闭活跃连接、阻止新变更、取消被撤销 principal 提交的排队
+回合，并保持 Agent Host 的本地回合策略不变。只有当被撤销范围或
+事件策略显式要求时才中断运行中的回合；撤销不得静默重放或回滚
+已完成的回合。
 
-Provider credential rotation remains an Agent Host operation. Remote clients
-cannot use the control protocol to export, test, or replace a secret unless a
-separate, explicitly specified credential-management capability is added.
+Provider 凭据轮换仍是 Agent Host 操作。远程客户端不能使用控制
+协议导出、测试或替换秘密，除非增加单独、明确规定的凭据管理能力。
 
-## 12. Security acceptance gates
+## 12. 安全验收门
 
-1. Plain HTTP and `ws://` are rejected outside an explicitly isolated local
-   test harness.
-2. Rust host-core has no public listener and cannot be addressed by a remote
-   client.
-3. A viewer cannot start a turn or resolve an approval.
-4. A controller cannot select an unauthorized Session, workspace, tool, model,
-   permission mode, or provider secret.
-5. A prompt-injected tool result cannot change the authenticated principal or
-   role.
-6. Duplicate mutation keys cannot create duplicate turns or approvals.
-7. An expired/revoked credential cannot resume a connection or upload bytes.
-8. Cross-tenant Host, Session, event, attachment, and audit access is denied
-   once a multi-tenant harness exists.
-9. Event replay never crosses a Session or principal scope.
-10. Gateway and Host logs contain no provider secrets or unredacted tool data.
-11. Slow clients cannot exhaust Host memory or stall an Agent turn.
-12. Host crash, Gateway reconnect, and client reconnect do not replay an
-    already-admitted execution.
-13. A remote-initiated turn never reports an `effectivePermissionMode` above
-    the configured ceiling, and `allow-session` is absent unless policy
-    allows it.
-14. Browser WebSocket and SSE connections succeed only on the cookie profile
-    with Origin and CSRF checks, or on the header profile through `fetch`;
-    URL tokens fail in both. Applies when the browser milestone is scheduled.
-15. A relayed server-initiated approval request is answered exactly once, and
-    the answer reaches only the Host that raised it. Applies when the Gateway
-    milestone is scheduled.
-16. A `pi-host` bound to loopback accepts only loopback peers with a valid
-    device token; a non-loopback bind without TLS fails to start.
-17. A pairing token is single-use, arrives only over the SSH channel, and
-    cannot be exchanged twice or from a non-loopback peer.
-18. A remote session exposes only the remote Host's tool catalog; desktop
-    plugin tools and desktop MCP servers never execute against a remote
-    workspace, and provider secrets never cross RACP.
-19. A relayed tool never executes on the Host and never receives a Host
-    secret; the Host's approval precedes the relay request; a lost relay
-    connection fails the tool without interrupting the turn.
-20. A session terminal opens only for the SSH-paired owner or a principal
-    with the `terminal` scope, with its working directory inside the session
-    root.
-    root.
-21. An SSH login password is supplied only by the user, reaches `ssh` only
-    through the askpass helper, is stored only encrypted, and never appears in
-    a process argument list, the renderer, or a log line.
-## 13. Amendment history
+1. 在显式隔离的本地测试床之外，纯 HTTP 和 `ws://` 被拒绝。
+2. Rust host-core 没有公共监听器，远程客户端无法寻址它。
+3. viewer 不能启动回合或解决批准。
+4. controller 不能选择未授权的会话、工作区、工具、模型、权限
+   模式或 provider 秘密。
+5. 被提示注入的工具结果不能改变已认证的 principal 或角色。
+6. 重复的变更键不能创建重复的回合或批准。
+7. 过期/已撤销的凭据不能恢复连接或上传字节。
+8. 多租户测试床存在后，跨租户的 Host、会话、事件、附件和审计
+   访问被拒绝。
+9. 事件重放从不跨越会话或 principal 范围。
+10. Gateway 和 Host 日志不含 provider 秘密或未脱敏的工具数据。
+11. 慢客户端不能耗尽 Host 内存或停滞 Agent 回合。
+12. Host 崩溃、Gateway 重连和客户端重连都不重放已准入的执行。
+13. 远程发起的回合从不报告高于配置上限的
+    `effectivePermissionMode`，且除非策略允许，否则不存在
+    `allow-session`。
+14. 浏览器 WebSocket 和 SSE 连接只在带 Origin 和 CSRF 检查的
+    cookie 配置下成功，或经 `fetch` 在 header 配置下成功；URL
+    token 在两者中都失败。在浏览器里程碑排期时适用。
+15. 中继的服务器发起批准请求恰好被回答一次，且回答只到达提出它
+    的 Host。在 Gateway 里程碑排期时适用。
+16. 绑定 loopback 的 `pi-host` 只接受带有效设备 token 的 loopback
+    对端；无 TLS 的非 loopback 绑定无法启动。
+17. 配对 token 单次使用，只经 SSH 通道到达，且不能被交换两次或
+    从非 loopback 对端交换。
+18. 远程会话只暴露远程 Host 的工具目录；桌面插件工具和桌面 MCP
+    服务器从不针对远程工作区执行，provider 秘密从不跨越 RACP。
+19. 中继工具从不在 Host 上执行，也从不接收 Host 秘密；Host 的
+    批准先于中继请求；丢失的中继连接使工具失败而不中断回合。
+20. 会话终端只对 SSH 配对的 owner 或持有 `terminal` 作用域的
+    principal 打开，其工作目录在会话根内。
+21. SSH 登录密码只由用户提供，只经 askpass 助手到达 `ssh`，只
+    加密存储，且从不出现在进程参数列表、渲染器或日志行中。
 
-D374 (2026-09-10) added the browser cookie/header authentication profiles,
-the two accepted identity sources, the remote permission ceiling, the local
-decision vocabulary, the remote approval lifetime policy, the Host link and
-Gateway attachment relay rules, the single-tenant-first clause, and gates
-13–15.
+## 13. 修订历史
 
-D375 (2026-09-10) added the SSH bootstrap pairing (§3.4), the loopback rule
-for `pi-host` behind an SSH port forward, the ceiling exemption for
-SSH-paired owner devices, the remote tool-catalog and provider-configuration
-rules, gates 16–18, and marked the Gateway and cookie-profile clauses as
-belonging to unscheduled milestones.
+D374（2026-09-10）增加了浏览器 cookie/header 认证配置、两个被
+接受的身份来源、远程权限上限、本地决策词汇、远程批准寿命策略、
+Host 链路和 Gateway 附件中继规则、单租户优先条款，以及验收门
+13–15。
 
-The D375 design-gate answers, recorded the same day, fixed the identity
-source to the PI account service, the GitHub Releases download for
-`pi-host`, the relay and terminal rules with gates 19–20, the 30-minute
-remote approval lifetime, and the `applyCeilingToPairedDevices` policy.
+D375（2026-09-10）增加了 SSH 引导配对（§3.4）、SSH 端口转发后
+`pi-host` 的 loopback 规则、SSH 配对 owner 设备的上限豁免、远程
+工具目录和 provider 配置规则、验收门 16–18，并把 Gateway 和
+cookie 配置条款标记为属于未排期里程碑。
 
-D385 (2026-09-10) withdrew the first-party identity source: remote control
-is user-local by construction, every credential is issued by the user's own
-Host, and any Gateway is self-hosted and admits clients with those device
-credentials.
+同日记录的 D375 设计门答复把身份来源固定为 PI 账户服务、
+`pi-host` 的 GitHub Releases 下载、带验收门 19–20 的中继和终端
+规则、30 分钟远程批准寿命，以及 `applyCeilingToPairedDevices`
+策略。
 
-D454 (2026-09-19) added SSH password authentication for the bootstrap (§3.4,
-ADR 0293): the credential-handling rules above and gate 21. It relaxes
-`BatchMode=yes` for a password target only, with `NumberOfPasswordPrompts=1`
-and `PubkeyAuthentication=no`, and keeps a key or agent as the default path.
+D385（2026-09-10）撤回了第一方身份来源：远程控制在构造上用户
+本地，每个凭据都由用户自己的 Host 签发，任何 Gateway 都是自托管
+的并以这些设备凭据准入客户端。
+
+D454（2026-09-19）为引导增加了 SSH 密码认证（§3.4，ADR 0293）：
+上述凭据处理规则和验收门 21。它只对密码目标放宽
+`BatchMode=yes`，配合 `NumberOfPasswordPrompts=1` 和
+`PubkeyAuthentication=no`，并保持密钥或 agent 为默认路径。

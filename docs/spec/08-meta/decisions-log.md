@@ -1,5127 +1,4061 @@
-# Decisions Log
+# 决策日志
 
-> Baseline delta: `0.3.0` → `0.4.16`
-> Date: `2026-08-14`
-> Status: Accepted for implementation
+> 基线增量：`0.3.0` → `0.4.16`
+> 日期：`2026-08-05`
+> 状态：已接受实施
 
-This log freezes previously open questions into concrete decisions.
+该日志将以前未解决的问题冻结为具体的决策。
 
-## A. High-priority architecture decisions
+## A. 高优先级架构决策
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D001 | Electron ↔ Rust transport | **Rust sidecar + stdio JSON-RPC (NDJSON)** | Simple isolation, debuggable, replaceable later |
-| D002 | SQLite ownership | **Rust host-core owns SQLite exclusively** | Single writer, clearer privilege boundary |
-| D003 | Default mode | **Agent** | Product is an agent desktop, not pure chat |
-| D004 | Former restricted profile | *(superseded by D189)* **The former Chat read-only profile is removed; persisted Chat values migrate to Plan.** | The product now has one Agent with a planning state and a separate approval boundary |
-| D005 | Permission timeout | **120s → deny** | Fail closed, do not hang forever |
-| D006 | `allow-session` scope | **By `toolName`** | Simple UX; workspace sandbox still enforces path safety |
-| D007 | `~/.pi` compatibility | **No auto-import in MVP** | Keep config ownership clean in `~/.pi-desktop` |
-| D008 | Node runtime packaging | **Dev uses system Node; release runs the bundled sidecar on the Electron binary via `ELECTRON_RUN_AS_NODE=1` (no separate Node shipped)** | Unblock M1–M4; resolved at M5, see 03-runtime/07-process-model §6 |
-| D009 | Plugin runtime isolation | **Target = separate process; M4 may use host-managed sandboxed runtime** | Ship plugin foundation pragmatically without weakening API gateway |
-| D010 | First release platform | **macOS arm64 only** | Focus acceptance and packaging |
-| D373 | Remote Agent Control host boundary | *(amended by D374 and D375)* **Remote control (post-MVP) runs through a logical Agent Host that owns Sessions, Turns, event cursors, approvals, attachments, workspace policy, and crash recovery; a production Gateway owns identity, routing, rate limits, revocation, and audit, and the Agent Host connects outbound. The existing Electron IPC, `host.proxy`, and host-core stdio boundaries are never exposed.** | A remote surface needs its own boundary rather than a tunnel into local IPC or the host-core stdio contract (ADR 0205, E2E-221 through E2E-230) |
-| D374 | Remote Agent Control v1 target amendments | **Amend D373 / ADR 0205: `RACP-WS` is the only normative v1 binding (`RACP-HTTP` is the browser profile, `RACP-GRPC` is reserved); typebox in `packages/shared` is the single contract source; the headless `packages/agent-host` module is the first deliverable and is shared by desktop IPC, local MCP, and RACP; cursors are `{ epoch, sequence }` with ephemeral deltas; the turn queue moves into the Host; host-core exposes `permissions.pending`; remote approvals carry the full local decision vocabulary under a default `ask` ceiling; browser clients use a cookie profile; the first deployment is single-tenant.** | Reviewing the D373 draft against the shipped desktop found the remote approval vocabulary narrower than the local contracts, pending requests held as connection state, per-token deltas exhausting the replay window, and more bindings than v1 can carry (ADR 0205) |
-| D447 | Headless runtime boundary | **Amend ADR 0205 rollout R2 prerequisites (ADR 0284): the Electron-independent runtime layer under the Agent Host module lives in `packages/host-runtime` — the host-core and sidecar stdio transports, the restart supervisor (process-model §4 policy), the durable turn lifecycle (`RuntimeService` as the module's `RuntimePort`: `session.beginTurn` → user row → prompt → `session.endTurn`, abort lock, stale-terminal guard, single-flight finalization), transcript persistence with the D299 checkpoint, a headless launch resolver over host-core's own registries, approved Plan/Goal dispatch (D189), and the host-core adapters for `SessionPort` / `QueueStore` / `permissions.pending`. Electron main keeps thin adapters (binary and bundle locations, `ELECTRON_RUN_AS_NODE`, redacted stderr, schema/glibc diagnoses, renderer status pushes) and its own local prompt path. `TurnStartRequest` gains an optional `userMessageId`. No IPC, sidecar, host-core, Plugin SDK, default, or persisted-data change.** | `pi-host` must run the same lifecycle invariants as the desktop without Electron; a second implementation of abort locks, stale terminal events, and queue release after durable settlement would drift from the one the desktop already fixed |
-| D448 | RACP-WS transport and device pairing | **Amend ADR 0205 rollout R2 (ADR 0285): `packages/racp` holds both ends of the normative `RACP-WS` binding. `RacpServer` dispatches every catalog operation through its role rule onto the Agent Host module and a `RacpHostOperations` interface the Host implements; `RacpClient` correlates requests, answers server-initiated requests, tracks the last durable cursor per session, reconnects with bounded backoff, and fails the dropped connection's in-flight calls with `HOST_DISCONNECTED` instead of re-sending them. Authentication is the header profile with Host-issued `pdt1.` device tokens and single-use, expiring `ppt1.` pairing tokens (hashed, constant-time compared; never in a URL); `connection/pair` mints an `owner` device. `connection/pair`, `project/register`, `project/browse`, `server.hostId`, the `events/closed` notification, and the codes `PAIRING_FAILED`, `PAIRING_TOKEN_EXPIRED`, `CAPABILITY_UNAVAILABLE`, `REMOTE_PATH_NOT_FOUND`, `REMOTE_PATH_FORBIDDEN`, `HOST_DISCONNECTED`, `HOST_BOOTSTRAP_FAILED`, `HOST_VERSION_MISMATCH`, `REMOTE_AUTH_FAILED`, `REMOTE_CONNECTION_FAILED`, `REMOTE_FORWARD_FAILED` join the contract (spec §14a). The bind refuses non-loopback addresses; attachments and the tool relay are advertised unavailable.** | The SSH-tunnel topology needs a server `pi-host` can bind and a client the desktop can run, with the pairing the security spec describes; the conformance behaviors that need no machine boundary become package tests |
-| D451 | Review opens only on explicit user action | **A tool result never opens, activates, or resizes the work panel. The `tool_end` artifact gate and `shouldOpenReviewArtifact` are removed; Review is reached only from the `+` New launcher row or from the retained session context the viewport-fixed toggle / `Cmd/Ctrl + J` reveals. A successful workspace Write/Edit still records its message-owned inline review card in the transcript.** | An agent edit silently revealing a side panel competes with the user's own reading and layout, and the transcript card already carries the change evidence. See ADR 0043, `04-ux/01-ui-ia.md`, `04-ux/08-component-spec.md` §5, `04-ux/09-interaction-patterns.md`, E2E-057. |
-| D450 | Signed macOS GitHub Releases | **Amend D078 / ADR 0022: GitHub tag releases Developer ID-sign, notarize (`notarytool` via electron-builder 26), staple, and Gatekeeper-verify macOS DMG/ZIP before upload, using identity `Developer ID Application: XingYu Liu (DUV63RKYTW)` / team `DUV63RKYTW` from Actions secrets (`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`). Missing secrets fail the job. Local unsigned packaging without a certificate remains. `workflow_dispatch` may set `sign_macos: false` only for unsigned debug artifacts. Packaged macOS uses in-app `electron-updater` (ZIP + merged `latest-mac.yml`); Linux deb/rpm and Windows portable stay notify-and-link. No afterPack/afterSign adhoc codesign (ADR 0278).** | Production DMGs must open without a Gatekeeper warning, and signed macOS installs can download and restart into a new tag. See ADR 0289, E2E-196c, E2E-067A. |
+| D001 | Electron ↔ Rust 运输 | **Rust sidecar + stdio JSON-RPC (NDJSON)** | 简单隔离，可调试，后期可更换 |
+| D002 | SQLite 所有权 | **Rust host-core 独家拥有 SQLite** | 单写入者，权限边界更清晰 |
+| D003 | 默认模式 | **Agent** | 产品是座席桌面，不是纯聊天 |
+| D004 | 前受限个人资料 | *（由 D189 取代）* **以前的聊天只读配置文件已删除；持久的聊天值迁移到 Plan。** | 该产品现在有一个 Agent，具有规划状态和单独的批准边界 |
+| D005 | 权限超时 | **120秒→拒绝** | 失败关闭，不会永远挂起 |
+| D006 | `allow-session` 范围 | **由 `toolName` 提供** | 简单的用户体验；工作区沙箱仍然强制路径安全 |
+| D007 | `~/.pi` 兼容性 | **MVP 中没有自动导入** | 在 `~/.pi-desktop` 中保持配置所有权干净 |
+| D008 | Node 运行时打包 | **开发人员使用系统 Node；版本通过 `ELECTRON_RUN_AS_NODE=1` 在 Electron 二进制文件上运行捆绑的 sidecar（未提供单独的 Node）** | 疏通M1–M4；在 M5 处解决，请参阅 03-runtime/07-process-model §6 |
+| D009 | 插件运行时隔离 | **目标=单独的进程； M4 可以使用主机管理的沙盒运行时** | 在不削弱 API 网关的情况下实用地发布插件基础 |
+| D010 | 首个发布平台 | **仅限 macOS arm64** | 重点验收及包装 |
+| D373 | 远程 Agent 控制的 Host 边界 | *(由 D374 与 D375 修订)* **远程控制（MVP 之后）经由一个逻辑 Agent Host 运行，它拥有 Sessions、Turns、事件游标、审批、附件、工作区策略与崩溃恢复；生产 Gateway 拥有身份、路由、限流、吊销与审计，Agent Host 向外连接。现有 Electron IPC、`host.proxy` 与 host-core stdio 边界永不暴露。** | 远程表面需要自己的边界，而不是通往本地 IPC 或 host-core stdio 契约的隧道（ADR 0205，E2E-221 至 E2E-230） |
+| D374 | 远程 Agent 控制 v1 目标修订 | **修订 D373 / ADR 0205：`RACP-WS` 是 v1 唯一规范绑定（`RACP-HTTP` 为浏览器 profile，`RACP-GRPC` 保留）；`packages/shared` 中的 typebox 是唯一契约来源；无头的 `packages/agent-host` 模块是首个交付物，桌面 IPC、本地 MCP 与 RACP 共同调用；游标为 `{ epoch, sequence }` 且增量为临时数据；回合队列移入 Host；host-core 暴露 `permissions.pending`；远程审批携带完整本地决策词汇并默认 `ask` 上限；浏览器客户端使用 cookie profile；首个部署为单租户。** | 对照已交付桌面审查 D373 草案发现远程审批词汇比本地契约窄、待处理请求被当作连接状态、逐 token 增量会耗尽重放窗口、绑定数量超过 v1 承载能力（ADR 0205） |
+| D447 | 无头运行时边界 | **修订 ADR 0205 里程碑 R2 的前置条件（ADR 0284）：Agent Host 模块之下与 Electron 无关的运行时层放入 `packages/host-runtime` —— host-core 与 sidecar 的 stdio 传输、重启监督器（进程模型 §4 的策略）、持久回合生命周期（`RuntimeService` 作为模块的 `RuntimePort`：`session.beginTurn` → 用户行 → prompt → `session.endTurn`、中止锁、过期终态事件守卫、单飞终结）、带 D299 检查点的转录持久化、基于 host-core 自身注册表的无头启动解析器、已批准 Plan/Goal 的派发（D189），以及 `SessionPort` / `QueueStore` / `permissions.pending` 的 host-core 适配器。Electron main 只保留薄适配层（二进制与资源位置、`ELECTRON_RUN_AS_NODE`、脱敏 stderr、schema/glibc 诊断、渲染层状态推送）以及自己的本地 prompt 路径。`TurnStartRequest` 新增可选 `userMessageId`。不改 IPC、sidecar、host-core、插件 SDK、默认值或持久化数据。** | `pi-host` 必须在没有 Electron 的情况下运行与桌面相同的生命周期不变量；第二份中止锁、过期终态事件与持久落库后释放队列的实现会与桌面已修好的那份漂移 |
+| D448 | RACP-WS 传输与设备配对 | **修订 ADR 0205 里程碑 R2（ADR 0285）：`packages/racp` 同时承载规范绑定 `RACP-WS` 的两端。`RacpServer` 按目录的角色规则把每个操作分发到 Agent Host 模块与 Host 实现的 `RacpHostOperations` 接口；`RacpClient` 关联请求、应答服务端发起的请求、按会话记录最后的持久游标、以有界退避重连，并让断开连接上未完成的调用以 `HOST_DISCONNECTED` 失败而不是重发。认证采用 header profile：Host 签发的 `pdt1.` 设备令牌与一次性、有时限的 `ppt1.` 配对令牌（散列存储、常量时间比较、绝不出现在 URL 中）；`connection/pair` 铸造 `owner` 设备。`connection/pair`、`project/register`、`project/browse`、`server.hostId`、`events/closed` 通知，以及错误码 `PAIRING_FAILED`、`PAIRING_TOKEN_EXPIRED`、`CAPABILITY_UNAVAILABLE`、`REMOTE_PATH_NOT_FOUND`、`REMOTE_PATH_FORBIDDEN`、`HOST_DISCONNECTED`、`HOST_BOOTSTRAP_FAILED`、`HOST_VERSION_MISMATCH`、`REMOTE_AUTH_FAILED`、`REMOTE_CONNECTION_FAILED`、`REMOTE_FORWARD_FAILED` 进入契约（规格 §14a）。绑定拒绝非回环地址；附件与工具中继宣告为不可用。** | SSH 隧道拓扑需要 `pi-host` 能绑定的服务端和桌面能运行的客户端，以及安全规格描述的配对；不需要机器边界的一致性行为成为包内测试 |
+| D451 | 审阅面板只在用户主动操作时打开 | **工具结果永不打开、激活或改变工作面板。移除 `tool_end` 中的 artifact 门控与 `shouldOpenReviewArtifact`；Review 仅从 `+` 新建启动器的 Review 行，或视口固定开关 / `Cmd/Ctrl + J` 显示的会话保留上下文进入。成功的 workspace Write/Edit 仍会在 transcript 中记录消息级内联审阅卡片。** | Agent 编辑静默弹出侧边栏会与用户正在阅读的内容和布局争夺注意力，且 transcript 卡片已承载变更证据。见 ADR 0043、`04-ux/01-ui-ia.md`、`04-ux/08-component-spec.md` §5、`04-ux/09-interaction-patterns.md`、E2E-057。 |
+| D450 | 签名的 macOS GitHub Release | **修订 D078 / ADR 0022：GitHub tag 发布使用身份 `Developer ID Application: XingYu Liu (DUV63RKYTW)` / 团队 `DUV63RKYTW`，通过 Actions 密钥（`CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`）对 macOS DMG/ZIP 做 Developer ID 签名、`notarytool` 公证、装订和 Gatekeeper 校验；缺少密钥则失败。无证书的本地未签名打包仍可用。`workflow_dispatch` 仅可把 `sign_macos: false` 用于未签名调试产物。打包的 macOS 走应用内 `electron-updater`（ZIP + 合并后的 `latest-mac.yml`）；Linux deb/rpm 与 Windows portable 仍为通知并打开发布页。禁止 afterPack/afterSign adhoc 签名（ADR 0278）。** | 正式 DMG 应无需 Gatekeeper 警告即可打开，已签名 macOS 安装可下载并重启到新 tag。见 ADR 0289、E2E-196c、E2E-067A。 |
 
-## B. Secondary implementation defaults
+## B. 辅助实现默认值
 
-| ID | Topic | Decision |
+| 身份证号 | 主题 | 决定 |
 |---|---|---|
-| D011 | TS schema validation | **typebox** |
-| D012 | i18n library | **i18next + react-i18next** |
-| D013 | Bash execution style in M3 | **Non-interactive only** (no PTY yet) |
-| D014 | Command palette shortcut | **Cmd/Ctrl + Shift + P** |
-| D015 | Plugin tool exposed name | **Forced prefix** `plugin_<pluginIdSafe>_<toolName>` |
-| D016 | Uninstall plugin data | **Delete by default**, optional keep-data later |
-| D017 | enable → load failure | **Auto fallback to disabled** |
-| D018 | Plugin secrets in settings | **Not allowed in MVP** |
-| D019 | Plugin session summary access | **Denied by default** *(amended by D336: granted only through `session.read`, and only for the in-flight tool session)* |
-| D020 | Auto-update | **Post-MVP** |
-| D021 | First-run onboarding | **Inline checklist (not modal wizard)** |
-| D022 | Local telemetry | **Local logs only in MVP (no remote telemetry)** |
+| D011 | TS 架构验证 | **打字机** |
+| D012 | 国际化图书馆 | **i18next + 反应-i18next** |
+| D013 | M3 中的 Bash 执行风格 | **仅非交互式**（尚无 PTY） |
+| D014 | 命令面板快捷键 | **Cmd/Ctrl + Shift + P** |
+| D015 | 插件工具公开名称 | **强制前缀** `plugin_<pluginIdSafe>_<toolName>` |
+| D016 | 卸载插件数据 | **默认删除**，可选稍后保留数据 |
+| D017 | 启用 → 加载失败 | **自动回退到禁用** |
+| D018 | 设置中的插件秘密 | **MVP 中不允许** |
+| D019 | 插件会话摘要访问 | **默认拒绝** *（由 D336 修订：仅在授予 `session.read` 时，且仅限进行中的工具会话）* |
+| D020 | 自动更新 | **后MVP** |
+| D021 | 首次运行新手引导 | **内联清单（不是模式向导）** |
+| D022 | 本地遥测 | **仅在 MVP 中记录本地日志（无远程遥测）** |
 
+## C. 提供商和模型覆盖决策 (0.3.4)
 
-## C. Provider & model coverage decisions (0.3.4)
-
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D023 | Provider coverage goal | **Universal market coverage** (not a tiny fixed vendor list) | Globalization + real coding workflows |
-| D024 | Coverage strategy | **pi-ai native providers + first-class OpenAI-compatible + custom providers** | Maximum reach without rewriting every SDK |
-| D308 | Zhipu / Z.AI named endpoint presets | **Amend D024 / ADR 0116: the add-provider Service select offers four OpenAI-compatible Zhipu endpoints — China and international standard API plus GLM Coding Plan — with locked published URLs and models.dev `vendorKey`s (`zhipuai`, `zhipuai-coding-plan`, `zai`, `zai-coding-plan`). No new apiStyle or wire adapter. Completions requests on those URLs use `thinkingFormat: "zai"` and `zaiToolStream: true`. Custom endpoint remains available.** | Users had to know which BigModel / Z.AI URL to paste, and `vendorKey: "custom"` could catalog-match the wrong API vs Coding Plan record. Named presets keep coverage on the existing OpenAI-compatible path. See ADR 0155 and E2E-005D. |
-| D389 | DeepSeek reasoning_content replay on aggregators | **Amend D024: Completions requests for DeepSeek-family models set `requiresReasoningContentOnAssistantMessages: true` when the row `vendorKey`, base URL, model id, or catalog `family` identifies DeepSeek. Do not change `thinkingFormat` for that match. pi-ai still auto-detects official `deepseek.com` URLs.** | DeepSeek thinking mode 400s if any replayed assistant message omits `reasoning_content`. PI-Desktop stores a UUID as `model.provider`, so SiliconFlow, Volcengine, and custom gateways never match pi-ai's `provider === "deepseek"` check. See E2E-005E. |
-| D424 | DeepSeek reasoning across compaction | **Amend D389 / ADR 0136: restore thinkingSignature on history rebuild; store recent thinking in checkpoint `details.retainedReasoning` and replay after the summary; non-official DeepSeek Completions rows set `requiresNonEmptyReasoningReplay` so the pi-ai patch uses a documented placeholder instead of `""`. Official deepseek.com keeps empty-string fill.** | OpenCode / third-party DeepSeek V4.1 Flash 400s after compaction when empty reasoning is echoed (#296). |
-| D309 | Add-provider common path is Service + key | **Amend D308 / ADR 0116 / ADR 0155: a new add-provider dialog starts with only Service. Named endpoints (Zhipu / Z.AI, OpenCode Go) then show Service + API key and a host summary. Custom endpoint then shows Name, Base URL, and API key. Name (named) and API format (custom) stay in Advanced. OpenCode Go is a Service option. No stepper or vendor-card grid.** | Stacking Name, Base URL, and API format next to Service made a known service look like a generic gateway. The common path should be pick a service and paste a key. See ADR 0156 and E2E-005 / E2E-005B / E2E-005D. |
-| D310 | Custom API format stays beside the key; Service lists top models.dev vendors | **Amend D309 / ADR 0155 / ADR 0156: Custom endpoint shows Name + Base URL, then API key beside API format on the common path. Named Service options expand to models.dev-backed international and China first-party endpoints (OpenAI, Anthropic, Google, OpenRouter, Groq, xAI, Mistral, Together, Fireworks, OpenCode Go, Z.AI, DeepSeek, Qwen, Moonshot, Zhipu, SiliconFlow, Volcengine, MiniMax Anthropic Messages, MiniMax OpenAI-compatible, Kimi For Coding), each with a published URL and wire style. Named display names stay in Advanced.** | Custom gateways need the format next to the key, while named vendors should cover the usual domestic and international APIs without a closed allowlist. See E2E-005 / E2E-005B / E2E-005D. |
-| D311 | Service picker is searchable; discovery waits for a stable choice | **Amend D310: the add-provider Service control is a searchable anchored menu (same pattern as the default-model picker), not a native select. Filtering is client-side over localized name, vendor key, aliases, and host. Named add-path discovery does not start until an API key is present (editing still reuses the stored secret). Custom endpoints still probe a valid URL without a key. The discovery hook does not mark loading until the debounce fires, and an endpoint change clears the previous list immediately.** | Native selects with optgroups are sluggish in the overlay, and changing Service or typing a key used to refetch/re-render on every change. Search matches how models are filtered. See E2E-005 / E2E-005D. |
-| D312 | Service list is a flat vendor catalog; add Xiaomi | **Amend D310 / D311: named Service options are one vendor list, not International / China groups. Add Xiaomi (`vendorKey: "xiaomi"`, `https://api.xiaomimimo.com/v1`, Chat Completions). Custom stays first. Search still matches localized name, vendor key, alias, and host.** | Region headings split the same vendors users already search by name. Xiaomi's first-party MiMo API is a models.dev vendor. See E2E-005. |
-| D025 | Model allowlist | **No closed product allowlist** | Models churn; power users need free-form IDs |
-| D026 | Catalog sources | **bundled snapshot + discovery/refresh + user-defined** | Works offline and stays current |
-| D027 | Default identity | **Model selection is `(providerId, modelId)`** | Same model id can exist on many gateways |
-| D028 | Secrets | **OS safeStorage (or controlled fallback) via secretRef; never in provider JSON** | Security boundary with Rust host ownership |
-| D029 | Local models | **Supported through OpenAI-compatible local gateways** | Ollama/LM Studio/vLLM without special-case architecture |
-| D030 | Connection test | **First-class host method before trusting provider for runs** | Fail early, actionable setup UX |
-| D031 | Secrets backend | **OS safeStorage primary + encrypted file fallback** | Robust on macOS first release |
-| D032 | Workspace ignore | **security denylist + defaults + `.pi-desktopignore`** | Safe/predictable tool FS behavior |
-| D033 | Tool result limits | **256KB/4000 lines defaults with explicit truncation markers** *(amended by D194, D306)* | Protect context & UI |
-| D306 | Search/read truncation is a cut, not a window | **Amend D033 / D194: Read/Glob/Grep `truncated` is true only when the host cut content the caller asked for (byte budget, per-line clip, Grep/Glob match cap). A Read that returned the requested or default window of a longer file is complete for that window; `totalLines`/`offset`/`lineCount` and a next-offset `notice` describe the remainder. Default Read window is 2000 lines (max 4000). `BUDGET_SEARCH` is 128KB / 4000 lines. Per-line clip is 16,384 characters. The UI truncated chip follows this flag.** | The 48KB / 500-line window marked almost every source and spec file truncated, including successful paged reads, which hid real cuts and forced the agent to re-search what it already had. |
-| D307 | Revision payloads follow the live branch | **Amend D109: a regenerate branch keeps growing after its archive (later prompts, error-ended turns that never reach `agent_end`), so every operation that discards the live branch first writes it back over the variant it belongs to. `session.activateRevision` re-archives the live branch of the family from the durable transcript before switching and takes the prefix from there; the regenerate path refreshes the stamped variant via `session.saveRevision { revisionIndex }`; `session.saveActiveRevision` refreshes an already-archived index instead of skipping it. The variant refreshed is the one the live root's `activeRevision` stamp names; a stamped variant with no index row yet is stored as its own variant, never over a previous one. Switching also carries each surviving message's owning `turn_id` and keeps checkpoints whose anchors survive.** | The archive was written once and reused forever: paging away from a branch that had grown since its agent_end archive, then back, restored the stale copy and silently deleted every later turn from the transcript and its JSONL. |
-| D390 | Host-owned regenerate truncate | **Amend D199 / D258 / D307: `agent/prompt` truncates through `session.truncateFrom` under the host lock (identity-first cut, abort leftover running turn, archive discarded tail, rewrite prefix). The kept transcript does not cross JSON-RPC. An NDJSON request line over 64 MiB is `LIMIT_EXCEEDED` and does not end the stdin reader. Protocol version stays at 11. See ADR 0216 and E2E-246.** | Retrying a multi-thousand-message session timed out at 130 s on `session.replaceMessages` and could kill host stdin at 64 MiB (issue #211). |
-| D391 | Host stdout sender must not outlive serve | **Amend D390 / ADR 0216: the Windows Alt+Space hook retains only a weak clone of the stdout sender. After stdin EOF, dropping serve's sender closes the writer channel and host-core exits. Electron rejects an NDJSON request over 64 MiB before writing, with `LIMIT_EXCEEDED`. A host-side oversize reply peeks the JSON-RPC id from the truncated prefix so the client does not wait 130 s. Serve waits at most 5 s for the stdout writer after stdin ends. Protocol version stays at 11. See ADR 0217 and E2E-247.** | On Windows v0.14.6 a 64 MiB stdin cap ended the reader, but a strong keyboard sender kept the writer thread alive, so host-core became a zombie and Electron reported `host RPC timeout: session.replaceMessages` (issue #211). |
-| D392 | Effective image-input overrides across Composer and transport | **Amend D243 / ADR 0101: image capability starts with the published model record, then an exact binding's `supportsImages` value wins when it is `true` or `false`; absent or `null` follows the published value. Composer badges, attachment status, and main-process image transport use the same effective result. Unknown/custom models remain conservative without an explicit override. See ADR 0218 and E2E-163.** | A configured endpoint could already transport an image through its binding override while the Composer row still hid the vision badge, or could show a published badge after image input was disabled for that endpoint. |
-| D393 | User-invoked Skills in the composer | **Amend D123 / D174 / ADR 0024 / ADR 0039: active built-in, plugin, and user Skills appear in a separate `Skills` group at the end of the composer slash menu. Selecting one inserts its exact id; Electron main revalidates the active project scope at send time and asks the model to call the local `Skill` tool, preserving on-demand body loading and existing permissions. Existing command names win collisions; inactive Skills remain literal slash text. See ADR 0219 and E2E-088b.** | D174's model-invoked catalog remains the body-loading and security contract, while a final explicit entry makes known workflows discoverable without moving Skill bodies into the renderer, prompt, or host protocol. |
-| D394 | Windows work-panel chrome keeps one resource action cluster | **Amend D154 / D357 / ADR 0195: the open work-panel header keeps one compact resource switcher; resource close is owned by the existing keyboard-operable context-menu rows, the viewport-fixed toggle remains the only panel collapse control, and subagent detail returns with a back chevron. Windows/Linux native controls remain fixed at the window edge. Renderer-only; no panel state, window geometry, IPC, protocol, or storage change. See ADR 0220 and E2E-067.** | The header resource `X`, viewport-fixed toggle, and Windows native close cluster read as duplicate close actions and became cramped at narrow panel widths. |
-| D396 | Renderer and plugin-panel scrollbars share one compact contract | **Amend D300: every renderer scroll container uses one 6px, trackless, transparent-at-rest scrollbar with the same hover, focus-within, scroll-reveal, and dragged-thumb states. Remove the sidebar-specific width and opacity override. The plugin-panel preload applies the same contract and 300ms reveal mark to docked and detached plugin documents, including the bundled Files view. External pages loaded inside the Browser guest remain page-owned. Presentation-only; no protocol, storage, host runtime, or external-page behavior change. See E2E-157.** | Windows' classic scrollbar made the right-side work-panel Files view visibly heavier than the conversation, while the sidebar retained a second scrollbar treatment. |
-| D-LOCAL-message-quotes | Message quotes and renderer-owned side chats | *(retired by ADR 0268 on 2026-09-16)* **Amend D209 / D301: every user message and assistant turn gains a Quote action that inserts a `> `-prefixed Markdown blockquote plus a `chat.quoteSource` attribution into the active session's composer draft and focuses it, using the live selection inside that message row when one exists and the message's own text otherwise; it never sends and adds no chip kind, with a 2000-character cap. Open side chat forks the anchored message through `session.fork` without activating the child, registers the child as a renderer-owned side chat of the parent, and opens one `sidechat:<childSessionId>` tab in the existing docked panel that streams from the same event stream through the background-transcript reducer, with Add to main chat, Open as a conversation, a compact Send/Stop input, and the existing permission card. Closing the tab or activating the child removes the registration; the durable child stays an ordinary session. No protocol, schema, IPC, or permission change. See ADR message-quotes-and-side-chats and E2E-CHAT-quote-prefill through E2E-CHAT-side-chat-close.** | Users needed to reuse an exact earlier message or answer and to ask a side question without replacing the visible main conversation, and the existing fork path always activated its child. *(Amended by D-LOCAL-selection-overlay: the excerpt is recovered from the rendered DOM as Markdown, and a selection inside a transcript row offers Add to chat, Ask in side chat, and Copy from a selection-following overlay.)* |
-| D-LOCAL-response-annotations | Response annotations as prompt attachments | *(retired by ADR 0268 on 2026-09-16)* **Amend D-LOCAL-message-quotes (decision 3) for assistant turns: selecting text in a response and choosing Add to chat attaches a numbered annotation to that turn instead of editing the composer draft — the answer body is not decorated (only a citation the model writes renders, as a numbered reference), the composer shows one annotation attachment chip whose tooltip lists the excerpts plus one control that drops them, and the next prompt carries them as `# Response annotations:` + an instruction + `<response-annotations>` JSON (`[{text, annotation, source:{messageId}}]`) + `## My request:` before the user's own text, consuming them. The visible draft, optimistic row, title, and edit seed stay annotation free, and a stored prompt carrying the block is displayed as its request. *(Amended 2026-09-12: Add to chat opens a compact comment editor whose Save writes the user's optional comment into the annotation; re-annotating an attached excerpt reopens that editor instead of a silent no-op, and the composer attachment lists each item with edit and remove controls beside clear-all.)* Quoting a user message, and the side chat's Add to main chat, keep D-LOCAL-message-quotes's draft quote; no protocol, storage-schema, IPC, or permission change. See ADR response-annotations and E2E-CHAT-annotation-attachments, E2E-CHAT-annotation-session-state.** | The draft quote copied the model's words into the user's own prompt text, and several referenced passes had no numbering the model could address; the reference implementation attaches them as numbered prompt data instead. |
-| D398 | Context usage display preference | **Amend D347 / ADR 0184: the context usage inspector's leading figure — the trigger ring arc, percentage, token label, popover heading, tooltip, and `aria-label` — is configurable via `AppSettings.contextUsageDisplay` (`"remaining"` or `"used"`). Default and fallback for absent/unrecognised values is `"remaining"`. When `"used"`, the ring fills by `usedRatio`, and text shows the used-capacity pair. Warning and critical color thresholds (remaining ≤ 25 % / ≤ 10 %) stay based on remaining capacity regardless of display mode. Settings → AI → Defaults adds a segmented control (Remaining / Used) after Link open destination and before Enter-to-send. Renderer only; no protocol, storage, host, or migration change. See ADR 0222 and E2E-250.** | The remaining-only display gave weak signal at low occupancy and did not match users who reason in terms of "how much have I spent". Color must stay on remaining to avoid a misleading green ring at 90 % used. |
-| D399 | Project group manual ordering | *(amended by D402)* **Amend D093: retained project groups expose a visible-on-hover/focus grip. Native drag/drop and ArrowUp/ArrowDown on that grip write contiguous normalized-path `order` values and set `projectSort` to `manual` in renderer-local sidebar preferences. Archived and pinned priority remains ahead of manual order; project activation, host workspace identity, session ordering, and on-disk directories are unchanged.** | Users with several active repositories need a stable working order independent of recent activity or alphabetical names, while the existing path-keyed and host-owned project model remains untouched. |
-| D400 | Restore deferred tools from effective session context | **Amend D185 / ADR 0048: before each new prompt and after a mode switch, clear the in-memory deferred activation set, then restore names from successful `ToolSearch` results (`addedToolNames`) and successful deferred-tool results in the effective `buildSessionContext` projection. Keep only names still in the current deferred catalog and mode; ignore errors, interrupted or missing-result placeholders, and assistant/user prose. No host permission or workspace boundary changes.** | Clearing activations while retaining their successful transcript markers left the model able to see a capability that was absent from the next provider schema. Reconstructing only from effective successful evidence keeps the provider request coherent without parsing prose or reviving stale or disallowed tools. See ADR 0225 and E2E-008a. |
-| D402 | Long-press project title to reorder | *(amended by D403)* **Amend D399 / D093 / ADR 0227: retained project groups have no visible reorder grip. A 400ms still press on the project title arms a pointer reorder; movement beyond 8px before that delay cancels it so a click still selects and toggles collapse. ArrowUp/ArrowDown on the focused title is the keyboard path; Escape cancels. Persistence, pin/archive buckets, host workspace identity, session ordering, and on-disk directories are unchanged. See ADR 0228 and E2E-253.** | The dedicated grip consumed a leading column and made reorder a second control beside the title that already selects and collapses the group. |
-| D403 | Press-and-move project title reorder | **Amend D402 / D093 / ADR 0228: mouse and pen reorder by pressing the project title and moving 8px; a click with no qualifying movement still selects and toggles collapse. Touch does not start a reorder. An accent insertion line shows before/after placement. ArrowUp/ArrowDown and Escape are unchanged. See ADR 0229 and E2E-253.** | A 400ms still press is a mobile long-press pattern and is slower than ChatGPT-style desktop sidebar lists. |
-| D404 | Skill ships with the Agent core tool set | **Amend D174 / D185 / ADR 0048 / ADR 0219: `Skill` joins the Agent-mode core tool set, so its schema is present on the first provider request whenever the skill catalog is non-empty. It is removed from the deferred catalog and never appears under `# On-demand tools`; the other on-demand capabilities and `ToolSearch` are unchanged, and Plan and Goal still omit the tool entirely. No protocol, storage, permission, or skill-body change. See ADR 0230 and E2E-254.** | A user-typed `/skill-id` and the `# Skills` section both ask the model to call `Skill`, and a tool that is absent from the schema cannot be called at all: the deferred entry added a discovery round trip before any skill body could load (issue #204). |
-| D405 | Ideographic comma opens the slash menu | **Amend D123 / D139 / ADR 0024: a `、` (U+3001) committed as the first character of an empty composer draft is rewritten to `/` before trigger detection, so a Chinese IME reaches the ordinary slash menu without switching input methods. Only that position is rewritten; a `、` anywhere else stays ordinary punctuation, and the `@` file menu is unaffected. Shared grammar and renderer only; no IPC, storage, or autocomplete-source change. See ADR 0231 and E2E-255.** | Reaching `/new`, `/compact`, a mode alias, or a Skill forced a Chinese IME user to switch to ASCII input mid-sentence and then switch back (issue #65). |
-| D406 | Keep macOS DMG opening guidance text-only | **Amend D371 / ADR 0204: macOS DMGs expose the opening-help note as `If app won't open, read this.txt` and no longer include the executable `PI-Desktop-macOS-open.command`. macOS ZIP packages retain both the note and the helper. The note provides the narrow Terminal fallback for trusted unsigned builds; signed and notarized builds do not need it. See ADR 0232 and E2E-196b.** | The DMG should keep the normal app-to-Applications flow focused while still giving users a visible, actionable answer when an unsigned app does not open. |
-| D407 | Restore archived projects after session import | **Additive renderer behavior for issue #250: when a core or plugin import adds a new project-bound session, the import-triggered session refresh normalizes its project path and clears the renderer's archived presentation state for that project. Pathless sessions, skipped imports, historical plugin paths without an active binding, and ordinary refreshes leave archive state unchanged. Host project rows, IPC channels, plugin methods, storage schema, and data formats do not change. See ADR 0236 and E2E-257.** | The host can successfully materialize an imported session under a project while the renderer still hides that project's sidebar row as archived. Restoring only the newly imported binding makes the result discoverable without weakening deliberate archive choices during ordinary refreshes (issue #250). |
-| D408 | Prioritize MainChat in the three-column shell | **Amend ADR 0226 / ADR 0151 / ADR 0033 for issue #267: MainChat keeps a hard 450px minimum, the work panel is capped by the live budget (`client width - 450px - expanded sidebar`, with no fixed maximum), and the expanded sidebar yields at that threshold — including while `sidebar-out` still occupies flex space. A manual sidebar reopen spends panel width first and otherwise targets 460px; closing the panel restores only a sidebar the layout collapsed. The native window never changes: the reservation seam stays at zero and no geometry is applied. Preview mode temporarily unmounts MainChat and uses a window-level chrome row; collapsed-sidebar macOS preview reserves 88px, or 8px in fullscreen, for traffic lights (D433). See ADR 0238 and E2E-LAYOUT-three-column-width-priority.** | The fixed client area had no explicit width priority, so the side docks could pin MainChat to its floor and leave the composer unusable. Making the yield order explicit keeps the chat readable inside the fixed window without reintroducing native window growth (issue #267). |
-| D409 | Host-owned session collaboration messages | *(amended by D446)* **Amend ADR 0237 / ADR 0165 / ADR 0213: Rust host-core owns a durable session-collaboration ledger keyed by message id and real source/target Session IDs. Plugin-mediated `spawn`, `send`, `status`, `result`, and `cancel` operations use the reviewed desktop-control gateway; the sender is bound to the active plugin Agent tool invocation, target turns retain their existing configuration, and each delivery is claimed by its actual durable turn. Completion callbacks are durable, at-most-once, and reference the settled turn. Provenance is persisted with transcript rows and cannot be forged, stripped, or edited through regeneration. The additive schema v16 migration retains queued work across restart without unattended replay, applies permission ceilings and bounded autonomous hops, and keeps the existing Task family unchanged. See ADR 0239 and E2E-PLUGIN-session-orchestrator-real-workers.** | The plugin's prior create/prompt polling path could infer neither a durable turn outcome nor a safe bidirectional sender identity. A host-owned ledger makes delivery, provenance, callback, cancellation, and restart behavior auditable without restoring the withdrawn A2A protocol. |
-| D410 | Independent session discovery and navigable collaboration projections | **Amend ADR 0239: add the reviewed read operation `session/collaboration/list`, bounded to 100 non-deleted Agent sessions and redacted to Session IDs, titles, status, updated time, readable provider/model labels, and bounded creation links. Extend the sidebar projection with readable model labels and at most eight created-session references. Render creator/created-session references as keyboard-focusable navigation buttons; independent sessions do not receive fabricated creator links. No renderer storage ownership or collaboration mutation boundary changes. See ADR 0240, E2E-SESSION-independent-top-level-communication, and E2E-SESSION-hover-card-model-and-links.** | Existing Session IDs were valid send targets but could be undiscoverable when they were not created by the plugin, while the hover card exposed only IDs and non-interactive provenance. A bounded host directory and navigable projection make durable sessions communicable and explainable without exposing transcripts or credentials. |
-| D446 | Silent completion notices | **Amend D409 / ADR 0239 and the D193 silent-turn contract for issue #504: the first settled assistant reply to a current Host-resolved completion notice may end with no visible text and no tool call without silent-turn recovery or `EMPTY_MODEL_RESPONSE`. The exception is spent by that reply (silent, textual, or a tool batch), survives a provider retry of the same attempt, and is revoked once accepted user steering enters the model context. Only provenance Main resolved from the Host ledger enables it (`kind: completion`, the current target session, nonempty message and reply-to IDs); prompt text, plugin content, task/message deliveries, and restored history cannot. An accepted silent reply is persisted as an empty completed row but is excluded from runtime entries and model context, as a restored transcript already is. See the ADR 0239 amendment and E2E-SESSION-completion-notice-allows-silence.** | The completion prompt already says no acknowledgement is needed, yet the runtime retried the silence and reported a failure after a task that had succeeded (issue #504). Bounding the exception to one ledger-verified reply keeps ordinary prompts, deliveries, tool work, and user steering under D193, and keeping the empty reply out of context avoids a provider rejecting the next request. |
-| D447 | Stage Manager bounds watchdog is macOS-only | **The permanent 1.5s `boundsWatchdog` in `bootstrap/window.ts` runs on macOS alone; every other platform clears the interval on its first tick. Its two inputs are macOS-only (the `/tmp/pi-window-bounds` CG helper, and a "window smaller than 500x400" test the 1040x700 minimum window size makes unreachable), so elsewhere it could never recover anything and only called `window.setAlwaysOnTop(false)` forever. On Linux/X11 that repeats a `_NET_WM_STATE` removal, and Mutter answers it by raising the window (`meta_window_unmake_above` calls `meta_window_raise` unconditionally), so the app yanked itself back to the top of the stack about 1.5s after the user focused another window even though `_NET_WM_STATE` never carried `_NET_WM_STATE_ABOVE`. macOS Stage Manager recovery is unchanged. See D039, D053, D083 and US-UI-19.** | A window that re-raises itself over whatever the user just focused is not usable, and the interval had no purpose off macOS; the fix removes the message instead of teaching each platform to tolerate it. |
-| D413 | Skill market public-HTTPS catalog fetch | **Additive: Settings → Skills Market discovers SKILL.md catalogs in Electron main under a shared public-HTTPS policy (syntactic public host + DNS classification + per-hop redirect re-validation). The renderer does not fetch. Install remains `skills.create`. Catalog ids match host `valid_capability_id`. Expanded documents over 128 KiB are refused. Builtin titles are English. See ADR 0243, E2E-SKILL-MARKET-*, issue #287.** | Community skill discovery needs main-process egress without a plugin-marketplace host allowlist, and copied classifiers would collide with the MCP market. |
-| D421 | Native Pi session continuation | **Amend baseline D007: discover Pi v3 sessions as source-discriminated projections and continue them through coding-agent `AgentSession`/`SessionManager` against their canonical JSONL. Rust remains authoritative for Desktop SQLite/transcripts. Native continuation requires exact saved provider/auth, project trust, canonical path/header identity, and a cooperative lease plus byte/leaf validation; failures remain browseable/read-only. First slice excludes native rename/delete/move/revisions/Plan/Goal/queue/collaboration; the 2026-09-14 ADR 0254 amendment adds native fork with exact stream re-keying and inode-tracked publication; the side-chat panel it added is retired by ADR 0268. See ADR 0254 and E2E-SESSION-native-pi-*.** | Importing a flattened copy cannot preserve Pi's tree or make later Desktop turns visible to Pi Web. |
-| D412 | Delta-only coalesced streaming updates | **Amend the local `message_update` contract: append-only streaming frames carry `stream: delta` plus `deltaText`/`deltaThinking` (and reset flags) without growing `content`/`thinking`. Runtime coalesces those frames every 16ms and flushes before semantic boundaries. AgentHost, inflight checkpoints, and the renderer apply deltas; `message_start`/`message_end` remain full snapshots. Transcript activity parts keep object identity when only the tail token changes. Protocol version stays 11. See ADR 0242, E2E-STREAM-long-turn-keeps-realtime, and issue #299.** | Each token re-serialized the full assistant snapshot across sidecar, AgentHost, and IPC, so a long turn cost O(n²) bytes and backlogged later short chunks. |
-| D416 | Git clone accepts only syntactically public hosts | **Amend home git clone: `parseGitCloneUrl` reuses `isPublicHostname` so loopback, private, CGNAT, link-local, ULA, and `.local`/`.localhost` remotes are rejected before `git clone` runs. HTTPS/HTTP/SSH/`git@host:path` to public hosts remain valid. `file:` and URL passwords stay rejected. Git still performs its own DNS; this is not a market-style pin. See ADR 0247 and E2E-CLONE-public-hostname-rejects-private.** | Clone accepted `http://127.0.0.1/...` and RFC1918 literals, which is a LAN/SSRF hole the market fetchers already close for HTTPS catalogs. |
-| D417 | Plugin runtime theme APIs + sidebar image token | **Add `pi.app.setTheme` and `pi.themes.upsert`/`remove`/`list` under `ui.theme` (ADR 0260 / issue #352). Remove `MAX_THEMES_PER_PLUGIN`. Runtime upsert sanitizes CSS like load-time registration and emits `pluginChanged` (`reason: "themes"`); `setTheme` persists `AppSettings.theme` and emits `settingsChanged`. Split sidebar paint: `--ds-bg-sidebar` stays a color; optional `--ds-bg-sidebar-image` holds gradients/images, with macOS vibrancy stacking sheen over the image layer.** | Theme editor plugins cannot apply a theme from their panel, cannot ship an unlimited library, and cannot live-edit production CSS without reload; sidebar gradients broke `color-mix` / vibrancy consumers when stuffed into the color token. |
-| D420 | Structured, bounded, and redacted process logs | **Amend ADR 0046 / ADR 0212: every app/host/agent NDJSON record has a stable event and top-level correlation fields. A normal tool call emits one completion/failure record, while an unexpected sidecar exit emits interruption records for active tools; the tool protocol and transcript remain unchanged. Central logging redacts credentials and local paths, bounds structured data to 8 KiB, summarizes tool results instead of copying output, and mirrors the same sanitized record to development console output.** | The old `tool start` / `tool end` rows were redundant and unclear, while free-form child/error details could leak secrets or consume unbounded storage. |
-| D422 | Host turn-end event for plugins | **`session:turnEnded` is a host event with payload `{ sessionId, turnId, reason }` (`completed` / `aborted` / `error`), broadcast once per turn actually started by `session.beginTurn` at the end of turn teardown, after the durable `session.endTurn` attempt. The emitted `turnId` is the identity the terminal runtime event carried rather than whichever turn is active, and the plugin tool context's `turnId` is populated with the same value. There is no ack and no replay: a live subscribed plugin receives it once, delivery that races a crash, reload, or host quit is not guaranteed, and receiving it does not mean every in-flight tool of that turn has exited, so cleanup must be serialised or scoped by `turnId`. No new permission is required, and no published host emits it yet (0.14.8 does not include it). See ADR 0252.** | Plugins driving a GUI had to guess turn completion with idle timers, which fire mid-turn and again after the turn ends. A host-owned once-per-turn terminal event with an explicit turn identity lets a plugin settle exactly once, and the same identity in the tool context lets it correlate late tool results. |
-| D423 | Remove the subagent turn limit | **Amend D328 / ADR 0062 / ADR 0063 / ADR 0119 / ADR 0126 / ADR 0166 / ADR 0210: `maxTurns` and `MAX_SUBAGENT_MAX_TURNS` leave the definition type, the frontmatter parser and its clamp/invalid warnings, `UserSubagentRecord` / `UserSubagentInput`, the host-core registry (record, input, frontmatter parse, document render, `MAX_TURNS_CEILING`), the five built-in documents, `SUBAGENT_PRESETS`, and the Subagent editor. A delegate ends only when it finishes, when the parent calls `TaskStop`, when the user Stops, or when a terminal parent error aborts it (ADR 0189). `maxTurns` / `max-turns` / `max_turns` in an existing document is now an unrecognized frontmatter key and is ignored like any other unknown key: no error, no warning, no definition-load failure, and no rewrite of the user's file. The `truncated` value leaves `SubagentRunStatus`, the renderer's `SubagentOutcome` union, the `chat.subagentStatus` catalog entry in every locale, and the delegation topology's warnings count; `timed_out` stays. No protocol version, schema version, or storage change. See ADR 0253, E2E-155, and E2E-SUBAGENT-legacy-turn-limit-frontmatter-is-ignored.** | The parent cannot see a delegate's live work, so it cannot size a turn cap, and the shipped 60 / 50 / 40 / 80 backstops had no derivation. The cap's only effect was to kill a delegate mid-task and surface it as `truncated` with a partial report — a state neither the user nor the parent model can resume. |
+| D023 | 提供商覆盖目标 | **全球市场覆盖**（不是一个很小的固定供应商列表） | 全球化+真实的编码工作流程 |
+| D024 | 覆盖策略 | **pi-ai 原生提供商 + 一流的 OpenAI 兼容 + 自定义提供商** | 无需重写每个 SDK 即可实现最大覆盖范围 |
+| D308 | 智谱 / Z.AI 命名端点预设 | **修订 D024 / ADR 0116：添加服务的「服务」下拉框提供四套 OpenAI 兼容智谱端点——国内/国际标准 API 以及 GLM Coding Plan——锁定已发布 URL，并写入 models.dev `vendorKey`（`zhipuai`、`zhipuai-coding-plan`、`zai`、`zai-coding-plan`）。不新增 apiStyle 或线路适配器。这些 URL 上的 Completions 请求使用 `thinkingFormat: "zai"` 与 `zaiToolStream: true`。自定义端点仍可用。** | 用户此前必须手填 BigModel / Z.AI 地址，且 `vendorKey: "custom"` 可能把 API 与 Coding Plan 目录配错。命名预设把覆盖范围留在现有 OpenAI 兼容路径上。见 ADR 0155 与 E2E-005D。 |
+| D389 | 聚合端点上回放 DeepSeek 的 reasoning_content | **修订 D024：DeepSeek 系模型的 Completions 请求在行 `vendorKey`、Base URL、模型 ID 或目录 `family` 能识别为 DeepSeek 时设置 `requiresReasoningContentOnAssistantMessages: true`。该匹配不改 `thinkingFormat`。pi-ai 仍对官方 `deepseek.com` URL 做自动检测。** | DeepSeek 思考模式在任一条回放的 assistant 消息缺少 `reasoning_content` 时会 400。PI-Desktop 把 UUID 存成 `model.provider`，硅基流动、火山方舟和自定义网关永远匹配不上 pi-ai 的 `provider === "deepseek"` 判断。见 E2E-005E。 |
+| D424 | 压缩后保留 DeepSeek 推理 | **修订 D389 / ADR 0136：历史重建时恢复 thinkingSignature；把最近思考写入检查点 `details.retainedReasoning` 并在摘要后回放；非官方 DeepSeek Completions 行设置 `requiresNonEmptyReasoningReplay`，使 pi-ai 补丁使用文档化占位符而非 `""`。官方 deepseek.com 仍用空串回填。** | OpenCode / 第三方 DeepSeek V4.1 Flash 在压缩后回传空推理字段会 400（#296）。 |
+| D309 | 添加服务的常见路径是服务 + 密钥 | **修订 D308 / ADR 0116 / ADR 0155：新建添加服务对话框先只显示服务。命名端点（智谱 / Z.AI、OpenCode Go）随后显示服务 + API 密钥和主机摘要。自定义端点随后显示名称、Base URL 和 API 密钥。名称（命名行）与接口格式（自定义行）放在高级里。OpenCode Go 是服务选项。没有步进器或厂商卡片网格。** | 把名称、Base URL 和接口格式与服务叠在一起，让已知服务看起来像通用网关。常见路径应是选服务并粘贴密钥。见 ADR 0156 与 E2E-005 / E2E-005B / E2E-005D。 |
+| D310 | 自定义接口格式与密钥并排；服务列出 models.dev 主流厂商 | **修订 D309：自定义端点在常见路径上并排显示 API 密钥与接口格式。服务下拉框按国际 / 国内列出 models.dev 的主流厂商端点。命名服务的显示名称仍在高级里。** | 自定义网关需要在密钥旁选择格式；命名厂商应覆盖常用国内外 API。见 E2E-005。 |
+| D311 | 服务选择可搜索；发现等待稳定选择 | **修订 D310：添加服务的「服务」控件改为可搜索锚定菜单（与默认模型选择器相同），不再使用原生下拉框。过滤在本地按显示名、vendor key、别名和主机进行。命名服务在填入 API 密钥前不发起模型发现（编辑仍复用已存密钥）。自定义端点仍可在无密钥时探测有效 URL。发现 hook 在防抖结束前不进入 loading，更换端点会立刻清空上一份列表。** | 带分组的原生下拉框在对话框里很卡，切换服务或输入密钥还会每次都重新请求。搜索方式与模型列表过滤一致。见 E2E-005 / E2E-005D。 |
+| D312 | 服务按厂商平铺；加入小米 | **修订 D310 / D311：命名服务不再分国际 / 国内，改为单一厂商列表。加入小米（`vendorKey: "xiaomi"`，`https://api.xiaomimimo.com/v1`，Chat Completions）。自定义端点仍在最前。搜索仍按显示名、vendor key、别名和主机过滤。** | 用户按厂商名搜索，区域标题没有帮助。小米 MiMo 是 models.dev 上的一流厂商。见 E2E-005。 |
+| D025 | 模型许可名单 | **无封闭产品许可名单** | 模型流失；高级用户需要自由格式的 ID |
+| D026 | 目录来源 | **捆绑快照 + discovery/refresh + 用户定义** | 离线工作并保持最新状态 |
+| D027 | 默认身份 | **模型选择为`(providerId, modelId)`** | 相同的模型 ID 可以存在于多个网关上 |
+| D028 | 秘密 | **通过secretRef进行操作系统安全存储（或受控回退）；从未在提供商 JSON 中出现** | Rust 主机所有权的安全边界 |
+| D029 | 本地模型 | **通过兼容 OpenAI 的本地网关支持** | Ollama/LM Studio/vLLM 无特殊情况架构 |
+| D030 | 连接测试 | **在信任提供商运行之前的一流主机方法** | 尽早失败，可操作的设置用户体验 |
+| D031 | 秘密后端 | **操作系统安全存储主要+加密文件后备** | 在 macOS 首次发布上稳健 |
+| D032 | 工作区忽略 | **安全拒绝列表 + 默认值 + `.pi-desktopignore`** | Safe/predictable 工具 FS 行为 |
+| D033 | 工具结果限制 | **256KB/4000 行默认带有显式截断标记** *（由 D194、D306 修订）* | 保护上下文和 UI |
+| D306 | 搜索/读取截断表示切断，而不是窗口 | **修订 D033 / D194：Read/Glob/Grep 的 `truncated` 仅在主机切断了调用方请求的内容时为真（字节预算、单行剪辑、Grep/Glob 命中上限）。一次返回了请求窗口或默认窗口的 Read，即使文件更长也是该窗口的完整结果；`totalLines`/`offset`/`lineCount` 和下一个偏移的 `notice` 描述剩余部分。默认 Read 窗口为 2000 行（最大 4000）。`BUDGET_SEARCH` 为 128KB / 4000 行。单行剪辑为 16,384 个字符。UI 截断芯片跟随该标志。** | 48KB / 500 行的窗口把几乎每个源文件和规格表都标成截断，包括已经填满的分页读取，既掩盖了真正的切断，又迫使智能体重新搜索已经读过的内容。 |
+| D307 | 修订载荷跟随实时分支 | **修订 D109：重新生成分支在归档后仍会继续生长（之后的提示、从未到达 `agent_end` 的错误回合），因此每个会丢弃实时分支的操作都先把它写回所属变体。`session.activateRevision` 在切换前从持久转录本重新归档该系列的实时分支，并从那里取前缀；重新生成路径通过 `session.saveRevision { revisionIndex }` 刷新被标记的变体；`session.saveActiveRevision` 对已归档索引做刷新而不是跳过。被刷新的是实时根消息 `activeRevision` 标记所指的变体；已标记但尚无索引行的变体作为新变体单独存储，绝不覆盖之前的变体。切换同时带上每条幸存消息所属的 `turn_id`，并保留锚点仍存在的检查点。** | 归档只写一次、永久复用：从一个自 agent_end 归档后又生长过的分支切走再切回，会恢复陈旧副本，并悄悄地从转录本及其 JSONL 中删掉之后的每一回合。 |
+| D390 | 主机拥有的重新生成截断 | **修订 D199 / D258 / D307：`agent/prompt` 在主机锁内通过 `session.truncateFrom` 截断（先按身份定位、中止残留 running 回合、归档被丢弃的尾部、重写前缀）。保留的 transcript 不会经过 JSON-RPC。超过 64 MiB 的 NDJSON 请求行返回 `LIMIT_EXCEEDED`，不会结束 stdin 读取器。协议版本仍为 11。见 ADR 0216 与 E2E-246。** | 在多千条消息的会话上重试时，`session.replaceMessages` 曾在 130 秒时超时，并可能在 64 MiB stdin 上限处失败（issue #211）。 |
+| D391 | 主机 stdout 发送端不得比 serve 更长寿 | **修订 D390 / ADR 0216：Windows Alt+Space 钩子只保留 stdout 发送端的弱克隆。stdin EOF 后，丢弃 serve 的发送端会关闭写入器通道，host-core 随之退出。Electron 在写入前拒绝超过 64 MiB 的 NDJSON 请求，并返回 `LIMIT_EXCEEDED`。主机侧超大回复从截断前缀中窥取 JSON-RPC id，避免客户端等待 130 秒。stdin 结束后 serve 最多等待 stdout 写入器 5 秒。协议版本仍为 11。见 ADR 0217 与 E2E-247。** | Windows v0.14.6 的 64 MiB stdin 上限会结束读取器，但强引用的键盘发送端让写线程继续运行，因此 host-core 变成僵尸进程，Electron 报告 `host RPC timeout: session.replaceMessages`（issue #211）。 |
+| D392 | Composer 与传输使用生效的图像输入覆盖 | **修订 D243 / ADR 0101：图像能力先取已发布模型记录；精确 binding 的 `supportsImages` 为 `true` 或 `false` 时覆盖该记录，缺失或 `null` 则跟随已发布值。Composer 徽章、附件状态和主进程图像传输使用同一个生效结果。没有显式覆盖时，未知/自定义模型仍保持保守行为。见 ADR 0218 与 E2E-163。** | 已配置的端点可能已经通过 binding 覆盖传输图像，但 Composer 行仍隐藏视觉徽章；或者端点已禁用图像输入，行却仍显示已发布徽章。 |
+| D393 | Composer 中用户调用的 Skills | **修订 D123 / D174 / ADR 0024 / ADR 0039：激活的内置、插件和用户 Skills 出现在 composer slash 菜单末尾独立的 `Skills` 分组中。选择后插入其精确 id；Electron main 在发送时重新验证当前项目范围，并要求模型调用本地 `Skill` 工具，同时保留按需加载正文和现有权限。现有命令名优先解决冲突；未激活的 Skills 保持为字面 slash 文本。见 ADR 0219 和 E2E-088b。** | D174 的模型调用目录仍是 Skill 正文加载和安全契约，但拒绝面向用户的 slash 条目使已经知道工作流的用户难以发现活跃 Skills。 |
+| D394 | Windows 工作面板 chrome 保持单一资源操作组 | **修订 D154 / D357 / ADR 0195：打开的工作面板标题栏只保留一个紧凑资源切换器；资源关闭由现有可键盘操作的上下文菜单行负责，视口固定开关仍是唯一的面板折叠控件，子代理详情使用返回箭头。Windows/Linux 原生控件仍固定在窗口边缘。仅渲染器变更；不改面板状态、窗口几何、IPC、协议或存储。见 ADR 0220 与 E2E-067。** | 标题栏资源 `X`、视口固定开关和 Windows 原生关闭按钮在窄面板中看起来像重复的关闭操作，并且过于拥挤。 |
+| D396 | 渲染器与插件面板滚动条统一为紧凑规则 | **修订 D300：渲染器中的每个滚动容器统一使用 6px、无轨道、静止时透明的滚动条，以及相同的悬停、focus-within、滚动显示和拖动状态。移除侧边栏专用的宽度和透明度覆盖。插件面板 preload 给停靠和独立插件文档（包括内置 Files 视图）注入同一规则和 300ms 的滚动显示标记。Browser 内部加载的外部网页仍由网页自己管理。仅表现层变更；不改变协议、存储、主机运行时或外部网页行为。见 E2E-157。** | Windows 的经典滚动条让右侧工作面板的 Files 视图明显比对话区更粗，而侧边栏还保留了第二套滚动条样式。 |
+| D-LOCAL-message-quotes | 消息引用与渲染器拥有的侧边聊天 | *（已由 ADR 0268 于 2026-09-16 退役）* **修订 D209 / D301：每条用户消息和每个助手回合的悬停操作行新增 Quote 操作，与 Copy、Edit、Delete、Fork、Retry 并列。它把以 `> ` 开头的 Markdown 引用块加一行 `chat.quoteSource` 归属写入当前会话的 composer 草稿并聚焦输入框；选区位于被点击消息行内时使用该选区，否则使用消息自身文本；摘录上限 2000 字符并带省略号；绝不发送，也不新增任何芯片类型。Open side chat 通过 `session.fork` 以锚点消息分叉且不激活子会话，把子会话注册为父会话的渲染器侧边聊天，并在现有停靠面板中打开一个 `sidechat:<childSessionId>` 标签，用同一条事件流经后台转录 reducer 实时流式渲染，提供 Add to main chat、Open as a conversation、紧凑 Send/Stop 输入和现有权限卡。关闭标签或以会话方式打开子会话会移除注册；持久子会话仍是普通会话。不改协议、schema、IPC 或权限。见 ADR message-quotes-and-side-chats 与 E2E-CHAT-quote-prefill 至 E2E-CHAT-side-chat-close。** | 用户需要复用之前某条消息或答案的原文，并在不替换当前可见主对话的前提下追问一个旁支问题，而现有 fork 路径总会激活子会话。 *（由 D-LOCAL-selection-overlay 修订：摘录改为从渲染后的 DOM 还原为 Markdown，且消息行内的选区可在跟随选区的浮层中选择「添加到对话」「在侧边聊天中提问」或复制。）* |
+| D-LOCAL-response-annotations | 响应批注作为提示词附件 | *（已由 ADR 0268 于 2026-09-16 退役）* **对助手回合修订 D-LOCAL-message-quotes 决定 3：在响应中选中文字并选择「添加到对话」时，把编号批注附加到该回合，而不是改写 composer 草稿——回答正文不被装饰（只有模型写出的引用才渲染为编号引用），composer 显示一个批注附件芯片（提示中列出各条摘录，并提供一键清除），下一条提示在用户自己的文字之前携带 `# Response annotations:` + 指令 + `<response-annotations>` JSON（`[{text, annotation, source:{messageId}}]`）+ `## My request:`，并消费这些批注。可见草稿、乐观行、标题与编辑种子都不含批注内容，已存提示在展示时会还原为用户请求。*（2026-09-12 修订：「添加到对话」会打开一个紧凑的评论编辑器，保存时把用户可选的评论写入批注的 `annotation`；再次批注同一摘录会重新打开该批注的编辑器，而不再是静默无操作；composer 附件会列出每条批注，并提供逐条编辑与移除，清除全部仍然保留。）* 引用用户消息以及侧边聊天的 Add to main chat 仍沿用 D-LOCAL-message-quotes 的草稿引用；不改协议、存储 schema、IPC 或权限。见 ADR response-annotations 与 E2E-CHAT-annotation-attachments、E2E-CHAT-annotation-session-state。** | 草稿引用会把模型的话混进用户自己的提示文本，且多处引用没有模型可寻址的编号；参考实现改为把摘录作为带编号的提示数据附加。 |
+| D398 | 上下文用量显示偏好 | **修订 D347 / ADR 0184：上下文用量检查器的引导数值——触发器圆弧（`strokeDashoffset`）、百分比、令牌标签、弹层标题、tooltip 与 `aria-label`——可通过 `AppSettings.contextUsageDisplay`（`"remaining"` 或 `"used"`）配置。缺省及非法值回退为 `"remaining"`。当设为 `"used"` 时，圆环按 `usedRatio` 填充，文字展示已用容量对。警告与临界颜色阈值（剩余 ≤ 25 % / ≤ 10 %）仍按剩余容量判定，不随显示模式变化。设置 → 全局 AI → 默认项新增分段控件（剩余 / 已用），位于链接打开目标之后、回车发送之前。仅渲染器改动；无协议、存储、宿主或迁移变更。见 ADR 0222 与 E2E-250。** | 仅显示剩余时在低占用下信号微弱，且不符合习惯用「已用多少」思考的用户。颜色必须始终按剩余判定，否则已用 90 % 仍为绿色会产生误导。 |
+| D399 | 项目组手动排序 | *（由 D402 修订）* **修订 D093：保留的项目组显示悬停/聚焦可见的手柄。原生拖放以及在手柄上按 `ArrowUp`/`ArrowDown` 会按规范化路径写入连续的 `order` 值，并在渲染器本地的侧边栏偏好中将 `projectSort` 设为 `manual`。归档和置顶优先级仍高于手动顺序；项目激活、主机工作区身份、会话顺序和磁盘目录保持不变。** | 多个活动仓库需要不受最近活动或名称影响的稳定工作顺序，同时保持现有按路径索引且由主机拥有的项目模型不变。 |
+| D400 | 从有效会话上下文恢复延迟工具 | **修订 D185 / ADR 0048：每个新提示和模式切换前，清除内存中的延迟激活集，然后从有效 `buildSessionContext` 投影中的成功 `ToolSearch` 结果（`addedToolNames`）和成功的延迟工具结果恢复名称。仅保留当前延迟目录和模式仍允许的名称；忽略错误、已中断或缺少结果的占位行，以及助手/用户文本。不改变主机权限或工作区边界。** | 清除激活却保留成功的转录标记，会让模型看到能力证据而下一次 provider schema 中没有对应工具。只从有效的成功证据恢复，既保持 provider 请求一致，也不解析文本或复活过时、被禁止的工具。见 ADR 0225 与 E2E-008a。 |
+| D402 | 长按项目标题重排 | *（由 D403 修订）* **修订 D399 / D093 / ADR 0227：保留的项目组不再显示重排手柄。在项目标题上静止按住 400ms 后开始指针重排；该延迟前移动超过 8px 会取消按住，因此单击仍会选中并折叠/展开。聚焦标题后按 `ArrowUp`/`ArrowDown` 是键盘路径；Escape 取消。持久化、置顶/归档分桶、主机工作区身份、会话顺序和磁盘目录保持不变。见 ADR 0228 与 E2E-253。** | 专用手柄占用一列，并把重排做成标题旁边的第二个控件，而标题本身已经负责选中和折叠。 |
+| D403 | 按住标题移动即可重排 | **修订 D402 / D093 / ADR 0228：鼠标和触控笔按住项目标题并移动 8px 开始重排；没有足够移动的单击仍会选中并折叠/展开。触摸不会开始重排。强调色插入线标出前/后放置位置。`ArrowUp`/`ArrowDown` 与 Escape 不变。见 ADR 0229 与 E2E-253。** | 静止按住 400ms 是移动端长按模式，比 ChatGPT 一类桌面侧边栏列表更慢。 |
+| D404 | Skill 随 Agent 核心工具集下发 | **修订 D174 / D185 / ADR 0048 / ADR 0219：`Skill` 加入 Agent 模式核心工具集，因此只要技能目录非空，第一个 provider 请求就带有它的 schema。它从延迟目录中移除，不再出现在 `# On-demand tools`；其他按需能力与 `ToolSearch` 不变，Plan 与 Goal 仍然完全不提供该工具。不改协议、存储、权限或技能正文。见 ADR 0230 与 E2E-254。** | 用户输入的 `/skill-id` 与 `# Skills` 段落都要求模型调用 `Skill`，而 schema 中不存在的工具根本无法被调用；延迟注册让任何技能正文加载前都多一次发现往返（issue #204）。 |
+| D405 | 顿号打开斜杠菜单 | **修订 D123 / D139 / ADR 0024：当输入框为空时，第 1 个字符提交的「、」（U+3001）会在触发检测前改写为 `/`，中文输入法因此无需切换输入方式即可打开普通斜杠菜单。只改写该位置；其他位置的「、」仍是普通标点，`@` 文件菜单不受影响。仅共享语法与渲染器改动；不改 IPC、存储或补全数据源。见 ADR 0231 与 E2E-255。** | 要唤出 `/new`、`/compact`、模式别名或某个 Skill，中文输入法用户必须在书写中途切到 ASCII 输入再切回（issue #65）。 |
+| D406 | macOS DMG 只保留打开说明 | **修订 D371 / ADR 0204：macOS DMG 以 Finder 名称 `If app won't open, read this.txt` 展示打开说明，不再包含或暴露可执行的 `PI-Desktop-macOS-open.command`。macOS ZIP 安装包保留说明和助手。说明为可信未签名构建提供范围明确的终端备用命令；已签名和公证版本无需执行。见 ADR 0232 与 E2E-196b。** | DMG 应保持应用拖入 Applications 的正常安装路径简洁，同时在未签名应用打不开时提供可见且可执行的处理指引。 |
+| D407 | 导入会话后恢复已归档项目 | **针对 issue #250 的渲染器增量行为：核心或插件导入新增项目绑定会话时，导入触发的会话刷新会规范化项目路径，并清除该项目的渲染器归档状态。无路径会话、跳过的导入、没有活动绑定的插件历史路径和普通刷新保持归档状态不变。host 项目行、IPC 通道、插件方法、存储 schema 和数据格式不变。见 ADR 0236 与 E2E-257。** | host 可以在项目下成功生成导入会话，而渲染器仍将该项目侧边栏行隐藏为已归档。只恢复新导入绑定对应的项目，可以让结果可发现，同时不会在普通刷新时削弱用户的归档选择（issue #250）。 |
+| D408 | 三栏布局中优先保障 MainChat | **针对 issue #267 修订 ADR 0226 / ADR 0151 / ADR 0033：MainChat 保持 450px 硬下限；工作面板上限为动态预算（`客户端宽度 − 450px − 展开的左栏宽度`，无固定上限）；中栏到达阈值时展开的左栏立即让位（`sidebar-out` 退场期间仍计入预算）。手动重开左栏优先占用右栏宽度，否则以 460px 为目标；关闭右栏只恢复由布局机制收起的左栏。原生窗口不变：预留 seam 保持 0 且不套用任何面板几何。预览模式临时卸载 MainChat 并使用窗口级 chrome 行；侧边栏折叠时，macOS 窗口模式预留 88px、全屏预留 8px 给交通灯（D433）。见 ADR 0238 与 E2E-LAYOUT-three-column-width-priority。** | 固定客户区此前没有明确的宽度优先级，侧边停靠可以把 MainChat 压到下限、使 composer 不可用；显式化让位顺序后聊天在固定窗口内保持可读，且不重新引入原生窗口增长（issue #267）。 |
+| D409 | 宿主拥有的会话协作消息 | *（由 D446 修订）* **修订 ADR 0237 / ADR 0165 / ADR 0213：Rust host-core 拥有以消息 id 和真实源/目标 Session ID 为键的持久会话协作 ledger。插件驱动的 `spawn`、`send`、`status`、`result` 和 `cancel` 使用已审查的 desktop-control 网关；发送者绑定当前插件 Agent 工具调用，目标回合保留原有配置，每条投递由实际持久回合认领。完成回调持久化且最多一次，并引用已结算回合。来源信息随转录行持久化，不能在重生成中伪造、剥离或编辑。增量架构 v16 迁移在重启后保留排队工作但不无人值守重放，执行权限上限和有界自主跳数，同时保持既有 Task 系列不变。见 ADR 0239 与 E2E-PLUGIN-session-orchestrator-real-workers。** | 插件之前的创建/提示轮询路径既无法推断持久回合结果，也无法安全确认双向发送者身份。宿主拥有的 ledger 让投递、来源、回调、取消和重启行为可审计，同时不恢复已撤回的 A2A 协议。 |
+| D410 | 独立会话发现与可导航协作投影 | **修订 ADR 0239：新增经审查的 `session/collaboration/list` 读取操作，限制为最多 100 个未删除 Agent 会话，并只返回 Session ID、标题、状态、更新时间、可读 provider/model 标签和有界创建关系。侧边栏投影增加可读模型标签和最多八个已创建会话引用。创建者/已创建会话引用渲染为可键盘聚焦的导航按钮；独立会话不伪造创建者链接。不改变渲染器存储归属或协作写入边界。见 ADR 0240、E2E-SESSION-independent-top-level-communication 和 E2E-SESSION-hover-card-model-and-links。** | 现有 Session ID 虽然是有效发送目标，但未由插件创建的会话可能不可发现；hover 卡片也只暴露 ID，来源信息不可交互。有界 host 目录和可导航投影让持久会话可通信、可解释，同时不暴露转录或凭据。 |
+| D446 | 完成通知允许静默 | **针对 issue #504 修订 D409 / ADR 0239 及 D193 静默回合契约：对当前由 Host 账本解析的完成通知，其第一条结算的 assistant 回复可以没有可见文本也没有工具调用，而不触发静默回合恢复或 `EMPTY_MODEL_RESPONSE`。该例外由这条回复消耗（无论静默、有文本还是工具批次），在同一次尝试的 provider 重试中保留，并在被接受的用户 steering 进入模型上下文后立即撤销。只有 Main 从 Host 账本解析出的来源信息才能开启它（`kind: completion`、目标为当前会话、消息 ID 与回复目标 ID 非空）；提示文本、插件内容、task/message 投递和恢复的历史都不能。被接受的静默回复仍以空的已完成行持久化，但不进入运行时条目和模型上下文，与恢复转录的处理一致。见 ADR 0239 修订段与 E2E-SESSION-completion-notice-allows-silence。** | 完成提示已经声明无需确认，运行时却重试这次静默并在任务已成功后报错（issue #504）。把例外限定在一条经账本校验的回复上，让普通提示、投递、工具工作和用户 steering 继续遵守 D193；空回复不进入上下文，避免下一次请求被 provider 拒绝。 |
+| D447 | 舞台管理器边界看门狗仅限 macOS | **`bootstrap/window.ts` 中常驻的 1.5 秒 `boundsWatchdog` 只在 macOS 运行；其他平台在第一次 tick 时即清除该定时器。它的两个输入都只存在于 macOS（`/tmp/pi-window-bounds` CG 辅助程序，以及“窗口小于 500×400”这一被 1040×700 最小窗口尺寸变得不可达的判断），因此在别处它什么也恢复不了，只会永远调用 `window.setAlwaysOnTop(false)`。在 Linux/X11 上这会重复发送 `_NET_WM_STATE` 移除消息，而 Mutter 收到后会抬升窗口（`meta_window_unmake_above` 无条件调用 `meta_window_raise`），于是用户刚聚焦其他窗口约 1.5 秒后，应用就自己跳回窗口栈顶端——即使 `_NET_WM_STATE` 从未包含 `_NET_WM_STATE_ABOVE`。macOS 的舞台管理器恢复行为不变。见 D039、D053、D083 与 US-UI-19。** | 一个会反复盖到用户刚聚焦窗口之上的窗口无法使用，而该定时器在 macOS 之外毫无用途；修复选择消除这条消息，而不是让每个平台去容忍它。 |
+| D413 | 技能市场公网 HTTPS 目录拉取 | **增量：设置 → 技能市场由 Electron 主进程按共享公网 HTTPS 策略发现 SKILL.md（公网主机语法 + DNS 分类 + 逐跳 redirect）。渲染层不发网。安装仍走 `skills.create`。目录 id 与 host `valid_capability_id` 对齐。展开后超过 128 KiB 拒绝写入。内置标题为英文。见 ADR 0243、E2E-SKILL-MARKET-*、issue #287。** | 社区技能发现需要主进程出网，且不能复用插件市场的主机允许列表；复制分类器会与 MCP 市场撞名。 |
+| D421 | Native Pi 会话续接 | **修订基线 D007：把 Pi v3 会话发现为按来源区分的投影，并通过 coding-agent `AgentSession`/`SessionManager` 针对其规范 JSONL 继续会话。Rust host-core 仍是 Desktop SQLite/Desktop 成绩单的权威；原生回合不进入 Desktop outbox，也不产生导入副本。原生续接要求精确的已存 provider/auth、项目信任、规范路径/头身份，以及带字节/叶节点校验的协作租约；失败保持可浏览/只读。首片不含原生 rename/delete/move/revisions/Plan/Goal/queue/collaboration；2026-09-14 的 ADR 0254 修订加入原生 fork，含精确流重键与 inode 跟踪的发布；该修订加入的侧边聊天面板已由 ADR 0268 移除。见 ADR 0254 与 E2E-SESSION-native-pi-*。** | 导入扁平副本无法保留 Pi 的树结构，也无法让之后 Desktop 的回合对 Pi Web 可见。 |
+| D412 | 仅增量且合并的流式更新 | **修订本地 `message_update` 契约：追加型流式帧携带 `stream: delta` 以及 `deltaText`/`deltaThinking`（和 reset 标志），不再附带增长中的 `content`/`thinking`。运行时每 16ms 合并这些帧，并在语义边界前立即 flush。AgentHost、进行中检查点和渲染器应用增量；`message_start`/`message_end` 仍是完整快照。仅尾部 token 变化时，转录活动 part 保持对象身份。协议版本仍为 11。见 ADR 0242、E2E-STREAM-long-turn-keeps-realtime 和 issue #299。** | 每个 token 都在 sidecar、AgentHost 和 IPC 上重新序列化完整助手快照，长回合接近 O(n²) 字节并让后续短块排队变慢。 |
+| D416 | Git clone 只接受语法上的公网主机 | **修订首页 Git clone：`parseGitCloneUrl` 复用 `isPublicHostname`，在运行 `git clone` 前拒绝回环、私网、CGNAT、链路本地、ULA 以及 `.local`/`.localhost` 远程。指向公网主机的 HTTPS/HTTP/SSH/`git@host:path` 仍然有效。`file:` 和 URL 密码继续拒绝。Git 仍自己做 DNS；这不是市场那种地址固定。见 ADR 0247 与 E2E-CLONE-public-hostname-rejects-private。** | clone 曾接受 `http://127.0.0.1/...` 和 RFC1918 字面量，这是市场 HTTPS 拉取已经关掉的局域网/SSRF 缺口。 |
+| D417 | 插件运行时主题 API + 侧栏图像令牌 | **在 `ui.theme` 下新增 `pi.app.setTheme` 与 `pi.themes.upsert`/`remove`/`list`（ADR 0260 / issue #352）。移除 `MAX_THEMES_PER_PLUGIN`。运行时 upsert 与加载期相同的 CSS 消毒，并发出 `pluginChanged`（`reason: "themes"`）；`setTheme` 持久化 `AppSettings.theme` 并发出 `settingsChanged`。拆分侧栏绘制：`--ds-bg-sidebar` 保持颜色；可选 `--ds-bg-sidebar-image` 承载渐变/图片，macOS vibrancy 在图像层之上叠加 sheen。** | 主题编辑插件无法在面板内应用主题，无法提供不限量主题库，也无法在生产模式免重载实时改 CSS；把渐变塞进颜色令牌会破坏 `color-mix` / vibrancy 消费方。 |
+| D420 | 结构化、有界且脱敏的进程日志 | **修订 ADR 0046 / ADR 0212：每条 app/host/agent NDJSON 记录都有稳定 event 和顶层关联字段。正常工具调用只产生一条完成/失败记录；sidecar 意外退出时为活动工具产生中断记录；工具协议和成绩单保持不变。中心日志会脱敏凭据与本机路径，将结构化数据限制为 8 KiB，用工具结果摘要替代原始输出，并把同一份已脱敏记录镜像到开发控制台。** | 旧的 `tool start` / `tool end` 行重复且不清楚，自由文本的子进程/错误详情还可能泄露秘密或无限增长。 |
+| D422 | 插件的宿主回合结束事件 | **`session:turnEnded` 是宿主事件，载荷为 `{ sessionId, turnId, reason }`（`completed` / `aborted` / `error`），对 `session.beginTurn` 真正开始的每个回合，在回合拆除结束时、持久化的 `session.endTurn` 尝试之后广播一次。携带的 `turnId` 是终止运行时事件本身所标识的身份，而不是恰好活动的那个回合；插件工具上下文中的 `turnId` 也会填充同一值。没有 ack，也没有重放：存活且已订阅的插件只收到一次；与崩溃、重载或宿主退出竞态的投递不作保证；收到该事件也不代表该回合的所有在途工具都已退出，因此清理必须按 `turnId` 串行化或限定作用域。不需要新权限，目前尚无任何已发布宿主发出该事件（0.14.8 也尚未包含）。见 ADR 0252。** | 驱动 GUI 的插件此前只能用空闲计时器猜测回合是否结束，而计时器会在回合中途触发、在回合结束后再次触发。宿主拥有的「每个回合一次」终止事件加上明确的回合身份，让插件可以精确结算一次，工具上下文中的同一身份还能用来关联迟到的工具结果。 |
+| D423 | 移除子智能体轮次上限 | **修订 D328 / ADR 0062 / ADR 0063 / ADR 0119 / ADR 0126 / ADR 0166 / ADR 0210：`maxTurns` 与 `MAX_SUBAGENT_MAX_TURNS` 从定义类型、frontmatter 解析器及其钳制/非法告警、`UserSubagentRecord` / `UserSubagentInput`、host-core 注册表（记录、输入、frontmatter 解析、文档渲染、`MAX_TURNS_CEILING`）、五个内置文档、`SUBAGENT_PRESETS` 以及子智能体编辑器中移除。委托只在完成、父级调用 `TaskStop`、用户 Stop，或父级终态错误中止它时结束（ADR 0189）。既有文档中的 `maxTurns` / `max-turns` / `max_turns` 现在是无法识别的 frontmatter 键，会像其他未知键一样被忽略：不报错、不告警、不让定义加载失败，也不改写用户文件。`truncated` 从 `SubagentRunStatus`、渲染器 `SubagentOutcome` 联合类型、各语言 `chat.subagentStatus` 目录项以及委托拓扑的警告计数中移除；`timed_out` 保留。不改协议版本、schema 版本或存储。见 ADR 0253、E2E-155 与 E2E-SUBAGENT-legacy-turn-limit-frontmatter-is-ignored。** | 父级看不到委托的实时工作，因此无法给出合理的轮次上限，而 60 / 50 / 40 / 80 这些内置兜底值也没有推导依据。该上限的唯一效果是把委托中途杀死，并以带部分报告的 `truncated` 呈现 —— 用户和父级模型都无法从中恢复。 |
+| D244 | 紧凑的上下文用量摘要 | **修订 D103 / D184 / ADR 0047：保留上下文检查器的剩余容量触发器、已用/窗口计数、回合合计、已完成回合速度、精确的提供商数值、聚合的工具类型/调用数/令牌数以及检查点摘要，但把它们渲染为一段简短摘要。从默认面板中移除逐工具行、占比条、来源徽章、解释性估算段落和已用容量计量条。不改动协议、存储、运行时计费或模型元数据。** *（由 D347 修订：触发器移到输入框工具栏。）* | 之前的诊断式布局让一次例行的容量检查变得又高又密。保留聚合信号、移除下钻装饰，使默认状态界面可以快速浏览，同时不改变底层用量数据。参见 ADR 0103 与 E2E-060d / US-UI-61。 |
+| D347 | 输入框工具栏中的上下文用量检查器 | **修订 D103 / D184 / D244 / ADR 0047 / ADR 0103：紧凑上下文检查器放在输入框右侧工具栏、模型 × 推理芯片左侧，始终对应当前最新一条已报告用量的助手回合。触发器保留剩余容量圆环和百分比，去掉重复的 Context 文字。弹层标题为剩余 tokens + 百分比；下方行用同一套左标签/右数值节奏，只用留白分隔，不画内部分隔线（D297）。答案下方的助理元只保留模型徽章。仅渲染器改动。** | 挂在最新答案下方的检查器会随记录滚出视野。输入框只保留一个入口作为最新快照的权威位置；标题双线通过去掉多余说明文字解决，而不是加分隔线。参见 ADR 0184 与 E2E-060d / US-UI-61。 |
+| D355 | 上下文检查器按最后一次请求计算占用 | **修订 D103 / D184 / D244 / D347 / ADR 0047 / ADR 0103 / ADR 0184：剩余容量、已用/窗口计数、本轮合计，以及模型 input/output/cache/reasoning/命中率，都取最新一条已报告用量的助手消息（最后一次模型请求）。占用为该消息的 `input + output + reasoning + cacheRead + cacheWrite`。它们不是视觉工具循环里每一次请求的加总。已完成回合速度和聚合工具行仍描述该视觉回合。仅渲染器改动；宿主回合汇总和 Token Insights 仍做账单累加。** | 把工具循环里的缓存读取加总后，367k 缓存读取会紧挨着 55k 窗口。OpenCode 的上下文组件只用最后一条助手消息。参见 ADR 0193 与 E2E-060d。 |
+| D356 | 可选的子智能体思考覆盖 | **修订 ADR 0062 / ADR 0144：子智能体 frontmatter 在沿用会话和七个规范档位之外接受 `thinkingLevel: omit`。`omit` 把智能体记账状态保持为 `off`，但走低层 provider 流，不合成思考覆盖。显式 `off` 仍关闭思考。模型配置里已选思考芯片在两种主题下使用强调底和反色主文本。不改存储 schema 或协议版本。见 ADR 0194 与 E2E-203。** | 用户需要区分沿用、显式关闭和保留提供商默认；深色主题下已选芯片原先对比不足。 |
+| D348 | macOS 侧边栏改用 source-list vibrancy | **修订 D304：主窗口改用 Electron `vibrancy: "sidebar"`，不再用 `under-window`。`nativeTheme.themeSource` 跟随应用主题（`system` / `light` / `dark` / 插件 base），进程级生效。仅在 `themeSource` 真变时重设 vibrancy；缺失的插件主题回落 `system`。** | macOS 26 Liquid Glass 让 `under-window` 变成浅色底板，40% tint 压不住，即使应用和系统都是深色也一样。见 `04-ux/08-component-spec.md` §1.7 与 US-UI-74 / E2E-076。 |
+| D243 | 模型感知的图片附件传输 | **修订 D197 / ADR 0059：输入框文件引用保留结构化的 kind/name/MIME 元数据。Electron main 在匹配时从精确的 models.dev 模型记录解析视觉能力，否则用精确的 pi-ai 回退记录（`modalities.input` / `input` 含 `image`），将图片字节存为 `attachments/<sha256>`，把符合条件的图片作为瞬态图片块发送，并对未知/非视觉或超大图片回退为安全的 `@path`。持久消息只存引用和元数据，绝不存 base64；渲染器展示可访问的能力状态。** | 之前只走路径的约定让具备视觉能力的 GPT 模型收到的是一个临时路径而不是图片内容。把能力归属放在所选目录来源上，可以避免提供商发现或未知模型 ID 擅自决定传输方式，而路径回退保留了非视觉的文件工具行为（ADR 0101，由 D266 修订）。 |
+| D245 | OpenCode 风格的有界提供商 429 重试 | **修订 D186 / D233 / ADR 0091：`PROVIDER_RATE_LIMITED` 在首次尝试之后获得五次静默、可中止的重试，请求建立与流中恢复共享同一个计数器。禁用 pi-ai 的嵌套重试；捕获失败响应的状态码/头部；依次遵循 `retry-after-ms`、`retry-after` 秒数、HTTP 日期，然后是 2 秒指数退避，带 25% 正向抖动、上限 30 秒。复用助手气泡，并在主会话与内置子代理中抑制中间的生命周期/错误事件。认证、模型选择、格式错误请求和上下文错误仍然是终止性的；耗尽时记录 `retryAttempt: 5` 与 `providerStatus: 429`。** | 之前拆分的单次重试策略过早暴露瞬时 429，并且允许建立层与流层各自漂移。OpenCode 那套有界、感知头部的策略在不隐藏持续性提供商故障、也不叠加嵌套重试的前提下保留了用户控制权。 |
+| D237 | 提供商的厂商账户（OAuth）登录 | **提供商行可以用厂商订阅账户认证，而不是 API 密钥。pi-ai 的七个 OAuth 流程在启动时静态注册（`registerBunOAuthFlows()`）；Electron 主进程拥有登录/退出编排，并在 host-core 的加密密钥存储之上实现 pi-ai 的 `CredentialStore`，使用新的引用 `secret:provider:<id>:oauth`，并按提供商串行化 `modify` 以满足带锁刷新。`auth_kind` 新增 `oauth`，`has_secret` 放宽为“存在 API 密钥**或** oauth 凭据”，新增的 `has_oauth` 与非敏感的 `oauthAccountLabel` 驱动徽标并隐藏密钥输入框；主机协议与存储架构不变。厂商卡片列表由 `models.getProviders().filter(p => p.auth.oauth)` 派生，登录按 `vendorKey` 幂等 upsert 一行。OAuth 行的 sidecar 启动载荷中 `apiKey: ""`；运行时注入 `resolveAuth` 回调，调用新的宿主代理方法 `provider.resolveAuth`，该方法由 Electron 主进程自行应答 —— 绝不转发给 host-core —— 并先用每次启动重写的绑定表校验 `(sessionId, providerId)`。应答是短时 `ModelAuth`（`apiKey`/`headers`/`baseUrl`），因此刷新令牌永不离开主进程，而 `matches()` 让厂商运行时跨回合保持温热。`providers.listModels` 与连接测试改走已认证的账户，而不是探测 `/models`；apiStyle 跟随所选模型，并新增 `openai_codex_responses` 与 `pi_messages`。交互由 `pi-desktop/providers/oauth/*` 下的五条调用通道与一条事件通道承载。** | Claude Pro/Max、ChatGPT Plus/Pro 与 Copilot 的订阅用户此前必须另买 API 额度才能使用本应用。pi-ai 提供了流程，但明确声明登录编排归宿主应用。厂商令牌约一小时过期，启动时解析一次会让长会话中断，并让 `matches()` 每回合失配；按请求解析既保持运行时稳定，又只把一个可作废的令牌交给运行模型指令的进程，且仅限该会话绑定的提供商 —— 严格少于今天无条件下发的长期 API 密钥（ADR 0095）。 |
 
+| D238 | 扁平设置目录与市场上下文归属 | **设置使用可搜索的扁平目录，顺序固定为基础 / 全局 AI / 快捷键 / 说明 / 模型配置 / 导入 / 项目存档 / 信息。移除个人、集成、编码等分组标题。移除设置中的扩展目的地，将官方/镜像/自定义市场来源选择器移入扩展 → 市场并保留原有持久化与刷新行为。不改变 IPC、主机协议、存储、提供商、权限或项目所有权契约。** | 九项设置目录重复了自身层级，且与应用外壳的扩展目的地使用相同名称；将市场来源与市场浏览放在一起可以去掉重复入口，同时保留镜像/自定义来源工作流（ADR 0096）。 |
 
-| D244 | Compact context usage summary | **Amend D103 / D184 / ADR 0047: keep the context inspector's remaining-capacity trigger, used/window counts, turn total, completed-turn speed, exact provider values, aggregate tool types/calls/tokens, and checkpoint summary, but render them as a short summary. Remove the per-tool rows, share bars, source badges, explanatory estimate paragraph, and used-capacity meter from the default panel. No protocol, storage, runtime accounting, or model metadata changes.** *(Amended by D347: the trigger moves to the composer toolbar.)* | The prior diagnostic layout made a routine capacity check tall and visually dense. Keeping the aggregate signal while removing drill-down chrome makes the default status surface scannable without changing the underlying usage data. See ADR 0103 and E2E-060d / US-UI-61. |
-| D347 | Composer-docked context usage inspector | **Amend D103 / D184 / D244 / ADR 0047 / ADR 0103: the compact context inspector lives in the composer right toolbar, immediately left of the model × reasoning chip, and always mirrors the newest assistant turn that reported usage. The trigger keeps the remaining-capacity ring and percentage and drops the redundant Context label. The popover heading is remaining tokens plus percentage; rows below share one label/value rhythm separated by spacing, with no inner section rules (D297). Assistant meta keeps the model badge. Renderer only.** | The inspector under the newest answer scrolled out of reach. One composer entry is the single authority for the latest snapshot, and the doubled heading rule is fixed by dropping the extra caption rather than adding hairlines. See ADR 0184 and E2E-060d / US-UI-61. |
-| D355 | Last-request occupancy in the context inspector | **Amend D103 / D184 / D244 / D347 / ADR 0047 / ADR 0103 / ADR 0184: remaining capacity, used/window counts, turn total, and provider input/output/cache/reasoning/hit-rate are the newest usage-bearing assistant message (the last model request). Occupancy is `input + output + reasoning + cacheRead + cacheWrite` on that message. They are not the sum of every model call in the visual tool-loop. Completed-turn speed and the aggregate tool row still describe that visual turn. Renderer only; host turn rollups and Token Insights stay additive billing.** | Summing cache reads across a tool loop put 367k cache read next to a 55k window. OpenCode's context widget uses only the last assistant message. See ADR 0193 and E2E-060d. |
-| D356 | Optional subagent thinking override | **Amend ADR 0062 / ADR 0144: subagent frontmatter accepts `thinkingLevel: omit` in addition to inherit and the seven canonical levels. `omit` keeps the agent bookkeeping state at `off` but uses the low-level provider stream so no thinking override is synthesized. Explicit `off` still disables thinking. Model-configuration thinking chips use an accent/inverted-text selected state in both themes. No storage schema or protocol version change. See ADR 0194 and E2E-203.** | Users need inherit, explicit off, and leave-the-provider-default as three distinct choices, and selected thinking chips were unreadable in dark mode. |
-| D348 | macOS sidebar source-list vibrancy | **Amend D304: the main window uses Electron `vibrancy: "sidebar"` instead of `under-window`. `nativeTheme.themeSource` follows the app theme (`system` / `light` / `dark` / plugin base) process-wide. Vibrancy re-applies only when `themeSource` changes; a missing plugin theme falls back to `system`.** | macOS 26 Liquid Glass made `under-window` a light plate that the 40% tint could not keep dark, including when app and OS appearances were both dark. See `04-ux/08-component-spec.md` §1.7 and US-UI-74 / E2E-076. |
-| D243 | Model-aware image attachment transport | **Amend D197 / ADR 0059: Composer file references retain structured kind/name/MIME metadata. Electron main resolves vision from the exact models.dev model record when matched, or the exact pi-ai fallback record (`modalities.input` / `input` includes `image`), then applies an exact binding's explicit `supportsImages` override. It stores image bytes as `attachments/<sha256>`, sends eligible images as transient image blocks, and falls back to a safe `@path` for unknown/non-vision or oversized images. Durable messages store refs and metadata, never base64; the renderer shows an accessible capability status.** | The previous path-only contract made a vision-capable GPT model receive a scratch path instead of image content. Keeping the published capability authoritative by default while allowing an explicit endpoint-local override keeps Composer and transport aligned without mutating shared model metadata (ADR 0101, amended by D266 and D392 / ADR 0218). |
-| D245 | OpenCode-style bounded provider 429 retry | **Amend D186 / D233 / ADR 0091: `PROVIDER_RATE_LIMITED` gets five silent, abortable retries after the initial attempt, with one counter shared across request setup and mid-stream recovery. Disable nested pi-ai retries; capture failed response status/headers; honor `retry-after-ms`, `retry-after` seconds, HTTP-date, then 2-second exponential backoff with 25% positive jitter and a 30-second cap. Reuse the assistant bubble and suppress intermediate lifecycle/error events in main sessions and builtin subagents. Authentication, model-selection, malformed-request, and context errors remain terminal; exhaustion records `retryAttempt: 5` and `providerStatus: 429`.** | The prior split one-retry policy exposed transient 429s too early and allowed setup and stream layers to drift. OpenCode's bounded, header-aware policy preserves user control without hiding persistent provider failure or multiplying nested retries. |
-| D237 | Vendor-account (OAuth) login for providers | **A provider row may be authenticated by a vendor subscription instead of an API key. pi-ai's seven OAuth flows are registered statically at startup (`registerBunOAuthFlows()`); Electron main owns login/logout orchestration and implements pi-ai's `CredentialStore` over host-core's encrypted secret store under the new ref `secret:provider:<id>:oauth`, serializing `modify` per provider for locked refresh. `auth_kind` gains `oauth`, `has_secret` widens to "api key **or** oauth", and a new `has_oauth` plus a non-secret `oauthAccountLabel` drive badges and hide the key input; host protocol and storage schema are unchanged. The vendor card list is derived from `models.getProviders().filter(p => p.auth.oauth)`, and login upserts one row per `vendorKey`. The sidecar's launch payload for an OAuth row carries `apiKey: ""`; the runtime injects a `resolveAuth` callback that calls the new host-proxy method `provider.resolveAuth`, which Electron main answers itself — never forwarding to host-core — after checking the `(sessionId, providerId)` pair against the per-launch binding table. The reply is a short-lived `ModelAuth` (`apiKey`/`headers`/`baseUrl`), so a refresh token never leaves main and `matches()` keeps a vendor runtime warm across turns. `providers.listModels` and the connection test go through the authenticated account instead of probing `/models`; apiStyle follows the selected model and gains `openai_codex_responses` and `pi_messages`. Five invoke channels plus one event channel under `pi-desktop/providers/oauth/*` carry the interaction.** | Subscribers of Claude Pro/Max, ChatGPT Plus/Pro and Copilot had to buy separate API credit to use the app. pi-ai ships the flows but declares login orchestration app-owned. Vendor tokens expire in about an hour, so resolving once at launch would break long sessions and churn `matches()` every turn; per-request resolution keeps the runtime stable while giving the model-directed process only a revocable token for the provider its session is bound to — strictly less than the long-lived API key it receives today (ADR 0095). |
+| D239 | 将全局默认项归入全局 AI | **八项设置目的地保持不变。基础拥有外观和平台支持的关闭行为。全局 AI / AI 拥有权限和默认项卡，包含默认运行模式（Agent / Plan / Goal）、命令 Shell 选择/回退状态和回车发送。模型配置保留默认提供商/模型选择器。只移动渲染器内容和设置搜索归属；持久化设置、主机 API、运行时语义和深层链接契约保持不变（ADR 0097）。** | 默认模式、命令 Shell 和回车发送改变全局智能体行为，将它们放在外观旁边混合了无关内容，也让全局 AI 目的地不完整。 |
 
-| D238 | Flat Settings directory and marketplace context ownership | **Settings renders one flat searchable directory in the exact order Basics / AI / Shortcuts / Instructions / Model configuration / Import / Project archive / Info. Personal, Integrations, Coding, and other group headings are removed. The Settings Extensions destination is removed; its official/mirror/custom marketplace source selector moves into Extensions → Marketplace beside the catalog and retains the same persisted settings and refresh behavior. No IPC, host protocol, storage, provider, permission, or project ownership contract changes.** | The nine-entry Settings rail repeated its own navigation hierarchy and used the same Extensions label as the app-shell plugin destination. Putting marketplace source selection beside marketplace browsing removes the duplicate entry while preserving the mirror/custom-source workflow (ADR 0096). |
+| D240 | 独立的厂商 OAuth 账户与设置归属 | **修订 D237 / ADR 0095：每次 OAuth 登录都创建新的提供商行和行级 `CredentialStore`，即使 `vendorKey` 与已有账户相同。Vendor accounts 卡片拥有完整的 OAuth 行生命周期并通过 `providers.delete` 删除；AI services 列表排除 OAuth 行，但默认选择器仍可选择它们。厂商认证绑定和解析使用精确的 `providerId`；子智能体的含糊厂商/名称别名会安全失败。** | 一个厂商全局行会让第二个账户覆盖或复用第一个凭据，而退出登录还会留下过时的 AI 服务行。行 ID 是唯一明确的账户身份，可精确删除单个凭据和配置（ADR 0098）。 |
+| D339 | 按提供商覆盖 User-Agent | **已被 D341 取代。** 每个 AI 服务和 OAuth 行可存可选 `config_json.userAgent`。空值保留适配器默认。非空值作为该行出站 HTTP 的最后写入 User-Agent。** | 用户需要覆盖默认 UA，但任意请求头随后由 D341 承接。 |
+| D341 | 按提供商自定义 HTTP 请求头 | **修订 D339 / ADR 0176：每个 AI 服务和 OAuth 行存可选 `config_json.headers`。空或 `{}` 保留适配器默认。非空映射对该行出站 HTTP 最后写入。残留 `userAgent` 迁到 `headers["User-Agent"]`。最多 32 个头；键值有长度和保留键限制。见 ADR 0178 与 E2E-005G。** | 用户需要的是任意非密钥请求头，而不只是 User-Agent。 |
 
-| D239 | Place global defaults under AI | **The eight-destination Settings directory remains unchanged. Basics owns Appearance and platform-supported close behavior. 全局 AI / AI owns Permissions and the Defaults card containing default operating mode (Agent / Plan / Goal), command shell selection/fallback status, and Enter-to-send. Model configuration retains the default provider/model selector. Only renderer content and Settings search ownership move; persisted settings, host APIs, runtime semantics, and deep-link contracts remain unchanged (ADR 0097).** | Default mode, command shell, and Enter-to-send change global agent behavior, so placing them beside appearance mixed unrelated concerns and made the AI destination incomplete. |
-| D240 | Independent vendor OAuth accounts and settings ownership | **Amend D237 / ADR 0095: every OAuth login creates a fresh provider row and row-scoped `CredentialStore`, even when `vendorKey` matches an existing account. The Vendor accounts card owns the full OAuth row lifecycle and deletes through `providers.delete`; the AI services list excludes OAuth rows but the default selector may still choose them. Vendor auth bindings and resolution use the exact `providerId`; ambiguous vendor/name aliases for subagents fail closed.** | One vendor-global row made a second account overwrite or reuse the first credential, while sign-out left a stale AI-service row. The row id is the only unambiguous account identity and lets deletion remove exactly one credential and configuration. See ADR 0098. |
-| D339 | Per-provider User-Agent override | **Superseded by D341.** Each AI-service and OAuth provider row may store optional `config_json.userAgent`. Empty keeps adapter defaults (pi-ai / `claude-cli` / OpenCode). A non-empty value is last-writer `User-Agent` on that row's outbound HTTP (turns, subagents, one-shots, discovery, connection test, OAuth refresh) via a fetch wrapper plus stream-option headers. Update `""` clears. Max 256 bytes; no CR/LF. Advanced UI only; first OAuth login does not collect it. `matches()` includes `userAgent`. The unused `headers` map stays unimplemented. No schema/protocol bump. | Gateways and vendor subscriptions inspect User-Agent; Codex overwrites it after extra headers. See ADR 0176 and E2E-005G. |
-| D341 | Per-provider custom HTTP headers | **Amend D339 / ADR 0176: each AI-service and OAuth row stores optional `config_json.headers`. Empty / `{}` keeps adapter defaults. A non-empty map is last-writer on that row's outbound HTTP (turns, subagents, one-shots, discovery, connection test, OAuth refresh) via a fetch wrapper plus stream-option headers. Leftover `userAgent` migrates to `headers["User-Agent"]`. Max 32 headers; key ≤ 256 bytes; value ≤ 4096 bytes; no CR/LF; reserved auth/hop-by-hop/routing keys rejected. Compact KeyValueRows Advanced UI; first OAuth login does not collect headers. `matches()` includes the map. No schema/protocol bump.** | Users needed arbitrary non-secret headers, not only User-Agent. See ADR 0178 and E2E-005G. |
-| D242 | Builtin subagents inherit the parent permission mode | **Builtin subagents use the default `permission: inherit` behavior. The builtin `fixer` no longer overrides the parent session, so `auto` covers its in-root and explicit external-path calls without a second authorization card; explicit non-`inherit` scopes on eligible builtin or user definitions remain intentional overrides.** | The observed popup came from the builtin `fixer` replacing an `auto` parent with `accept-edits`; inheriting the parent fixes the UX without weakening host-core containment or external-path permission rules (ADR 0100). |
-| D241 | Titled Settings navigation clusters | **Keep the eight-destination Settings directory flat and searchable, but render four non-interactive localized group headings — Personal / 个人 (Basics, AI, Shortcuts), Agent / 智能体 (Instructions, Model configuration), Workspace / 工作区 (Import, Project archive), and About / 关于 (Info). Headings use whitespace for separation and no divider lines. Empty groups disappear with filtered search. This supersedes only D238's prohibition on group headings; destination order, IDs, search ownership, and marketplace placement remain unchanged.** | The flat rows became visually dense without scan landmarks. Muted headings restore grouping while preserving one-level navigation and the existing destination ownership. |
-| D442 | Marketplace download requests carry a device identifier | **Amend D238: the official plugin channel resolves every install and update through `POST /api/v1/download/resolve` and sends a stable `deviceId` — the SHA-256 digest of a platform machine identifier, or a locally persisted random id when none is readable. The client tries the returned mirrors in order, verifies `sha256` and `sizeBytes` before extracting, never caches the answer, and falls back to the catalog's own package URL only when the platform could not be reached. The GitHub and CNB backup channels and `custom` keep the existing static relative-URL resolution. See ADR 0276 and E2E-PLUGIN-official-channel-resolves-through-the-platform.** | The platform needs one stable installation identity to count a download once and to rate-limit per device instead of per source address; the value is a digest, so no machine code leaves the machine, and no new UI surface is introduced. |
+| D242 | 内置子智能体继承父会话权限模式 | **内置子智能体默认使用 `permission: inherit`。内置 `fixer` 不再覆盖父会话，因此 `auto` 会覆盖其工作区内和明确外部路径调用，避免第二张授权卡；合格的内置或用户定义仍可显式声明非 `inherit` scope。** | 观察到的弹窗来自内置 `fixer` 将 `auto` 父会话替换为 `accept-edits`；继承父会话可以修复体验，同时不削弱 host-core 的 containment 和外部路径权限规则（ADR 0100）。 |
+| D241 | 带标题的设置导航视觉分组 | **设置目录保持八个目的地、扁平且可搜索，但显示四个非交互式本地化分组标题：Personal / 个人（基础、全局 AI、快捷键）、Agent / 智能体（说明、模型配置）、Workspace / 工作区（导入、项目存档）和 About / 关于（信息）。标题之间使用留白，不绘制分割线。搜索过滤时，空分组及其标题一并消失。本决策仅覆盖 D238 对分组标题的禁止，不改变目的地顺序、ID、搜索归属或市场位置。** | 扁平行缺少扫描锚点，视觉上过于紧密。柔和标题可以恢复分组，同时保持单层导航和既有目的地归属。 |
+| D442 | 市场下载请求携带设备标识 | **修订 D238：官方插件渠道的每次安装与更新都通过 `POST /api/v1/download/resolve` 解析并携带稳定的 `deviceId` —— 平台机器标识的 SHA-256 摘要，读不到机器标识时为本地持久化的随机 ID。客户端按顺序尝试返回的镜像，解压前校验 `sha256` 与 `sizeBytes`，从不缓存响应，只在平台不可达时回退到目录自身的包地址。GitHub 与 CNB 两个备份渠道以及 `custom` 继续沿用现有的静态相对 URL 解析。见 ADR 0276 与 E2E-PLUGIN-official-channel-resolves-through-the-platform。** | 平台需要一个稳定的安装标识，才能把一次下载只计一次，并按设备而不是按来源地址限流；上报的是摘要，因此机器码不出本机，也不新增任何界面入口。 |
 
-## D. Codex visual parity decisions (0.3.5+)
+## D. 法典视觉平等决策 (0.3.5+)
 
-Gold source: local Codex electron captures; latest row wins where rows conflict.
+黄金来源：当地 Codex 电子捕获；当行发生冲突时，最新行获胜。
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D034 | Desktop visual baseline | **Codex electron-dark 1:1 shell (charcoal gray, floating composer, ~275px sidebar)** | Match local Codex usability and density; keep PI-Desktop product branding |
-| D035 | Shell display name | *(superseded by D094)* **UI chrome uses shellName "Codex"; product/about remains PI-Desktop** | Satisfy visual 1:1 replica goal while preserving product identity in about/settings |
-| D036 | Theme chrome tokens | **All shell chrome (nav, threads, chips, title buttons) uses semantic `--ds-*` text/surface tokens; no raw gray-0 text in light mode** | Light macOS default was unusable when nav used white ink on `#f3f3f3` |
-| D037 | Dark sidebar surface | **Dark sidebar uses `#000000` (Codex `surface-under`); main pane stays `#181818` (`gray-900`)** | Match electron-dark sideBar vs main surface separation |
-| D038 | Dark composer plate | *(superseded by D047, then D061)* Dark floating composer uses solid `#212121` with stronger elevation shadow than light | Codex elevated-primary must read as a box against `#181818`; transparent mix alone looks flat |
-| D039 | Stage Manager bounds | **Permanent host watchdog restores footprint while width/height remain collapsed** | 20s burst was insufficient under Stage Manager thrash |
-| D040 | Composer intelligence control | *(superseded by D091)* Custom effort chip opens a popover (effort radio + model heading + settings) instead of cycling on click | Replaced because the control changed labels without configuring pi |
-| D041 | Profile footer | *(superseded by D113)* **Custom footer opens profile menu (Settings / Logs / Theme); cloud badge remains update stand-in** | D113 replaces the cloud/update stand-in and generic gear row with a truthful local-profile footer |
-| D042 | Projects page | *(superseded by D066 index table)* Projects is a card grid of recent/active local workspaces with pin + glyph color (localStorage recents) | Match Codex Projects destination density without cloud project backend |
-| D043 | Settings shell | *(superseded by D062/D063 full-page shell)* Settings uses left nav rail on sidebar surface + content pane (General/Providers/Plugins/About) | Closer to Codex settings IA than a top-only tab strip |
-| D044 | Destination list chrome | **PRs/Scheduled/Plugins use shared dest-row list + filter chips; light cards white elevated** | Match Codex destination density without full cloud backends |
-| D045 | Home empty stack | **Empty chat keeps composer in home flow (not absolute bottom-only dock); refined by D047 split grow** | Initial fix for large empty gap; D047 corrects dual-grow vertical model |
-| D046 | Composer placeholder | *(superseded by D094)* **Empty draft uses Codex placeholder (EN/zh-CN) instead of blank** | Empty white plate read as broken without ink; match the earlier visual gold copy |
-| D047 | Home split grow | *(geometry superseded by D111)* **Empty home used upper/lower grow regions (hero items-end + composer justify-end); dark box uses Codex elevation-prominent** | Match electron dual grow; D111 replaces dual-grow portal with a scrollable flow stack to stop composer/card collisions |
-| D048 | Sidebar recents label | *(superseded by D088)* **Recents section uses live Codex gold label EN `Recents` / zh-CN `最近` (not asar-only `Tasks`/`任务`)** | Visual gold + live coding shell section heading between plugins and thread list |
-| D049 | Home suggestion cards | *(superseded by D131)* **Empty home shows 4 ambient cards under hero (auto-fit row) and prefills starter prompts on click** | D131 removes the card row and prompt-prefill entry points from the empty home |
-| D050 | Empty composer plate height | *(superseded by D055, then D061)* Home empty composer min-height ~112px (compact); model chip shows model id (effort stays in menu) | Match Codex empty plate density; model chip chrome closer to electron model picker trigger |
-| D051 | Sidebar nav density | *(session-list IA superseded by D088; row density retained)* **Nav rows ~32px pitch, recents rows ~28–31px, section label `最近`/`Recents`** | Close light-home sidebar residual vs cx-home-clean |
-| D052 | Home vertical + night box polish | *(workspace-chip surface superseded by D095; remaining guidance retained)* **Upper pb ~62px (hero first-ink ~y305); light chips `#f3f3f3`; light composer elevation stronger; dark home composer solid `#212121`; toolbar controls 28px** | Close residual heat at hero y≈300 and composer band; night plate must not flatten into `#181818` |
-| D053 | Stage Manager CG detection | **CG bounds helper matches any window layer by pid; missing-CG needs streak≥3 before shelf recovery; avoid permanent alwaysOnTop** | alwaysOnTop floating layer broke layer-0 helpers and caused restore thrash |
-| D054 | Empty draft row + infinity cue | *(∞ cue superseded by D094; leading brand cue superseded by D160)* **Composer auto-resize must never collapse empty textarea height (<28px); keep a visible brand cue left of draft; solid disabled send (`#bdbdbd` light); denser placeholder ink; night plate solid `#212121`** | Empty `height:0` auto-resize hid placeholder and read as broken night/light box; gold draft row needs visible mark + ink density |
-| D055 | Empty plate draft Y | *(plate-height guidance superseded by D061; workspace-chip density superseded by D095)* Home empty shell min-height ~148px (bottom-aligned) so draft densest ink ≈y556 vs gold; chips compact 28px | 112px plate left draft ~30px low; grow plate upward without moving toolbar footing |
-| D056 | Empty-home workspace chips | *(superseded by D095)* **Hide project/Local/branch capsule on empty home always; show only in thread-docked composer** | cx-home-clean empty gold has no capsule band above the plate even with project title |
-| D057 | Home mark + hero title optical | *(home mark superseded by D094; title guidance retained)* **Empty-home Codex mark uses denser stroke; short workspace basenames display as `PI-Desktop` for gold title span** | Hero residual was thin mark + short project label under-inking title vs Codex gold |
-| D058 | Home content width + dark ink tokens | **Home dual-grow max width uses `768px` (not `48rem` under 14px root); home horizontal pad 12px; hero title/night controls use theme tokens; night home plate scoped to dark only** | `48rem` at 14px root shrank plate ~120px vs Codex gold; hardcoded light hero ink made night title unreadable |
-| D059 | Light disabled send ink | **Disabled send chip `#8e8e90` + white arrow (not `#bdbdbd`)** | Pixel-match cx-home-clean empty send control |
-| D060 | Light New task ghost row | **Light empty-home New task is transparent (no solid chip); only hover wash** | Gold has icon+label without filled pill; filled `#e8` chip was main nav residual |
-| D061 | Empty plate Y + night elevated-primary | **Home empty plate min-height 140px + wrap bottom pad 16px (top ~y536–538 / draft ~y552 / foot shadow ~y674); light+dark home plates use elevated-primary fill and downward elevation (no upward omni glow); dark fill `#212121f5`** | Plate was high with pre-plate halo; solid night plate + heavy omni shadow diverged from Codex elevated-primary and gold foot band |
-| D062 | Settings Codex shell | **Settings uses Codex grouped rail (Personal/Integrations) + search + Back to app; content is elevated row panels; Providers/Plugins retained for local-first; MCP empty state under Integrations** | Destination parity gap; prior 4-item flat rail diverged from Codex settings IA |
-| D063 | Settings full-page takeover | **Settings replaces app sidebar with Codex full-page shell: back+search+icon groups (Personal/Integrations/Coding), elevated permission/general cards, local Providers/Plugins retained** | Nested settings-inside-main-pane diverged from live Codex settings gold |
-| D064 | Settings general content parity | **Basics card rows match Codex: default open target, language, menu bar, bottom panel; nav adds Pets/Appshots; sun/pet/snapshot icons; pill selects** | Closer 1:1 to live Codex settings gold content band |
-| D065 | Settings general gold polish | **Permission rows include blue Learn more links + full-access risk copy; open-target pill shows VS Code glyph; Agent uses circular-arrow icon; Integrations order Appshots→Plugins→Browser→Computer→MCP; Enter-to-send moves to Agent** | Residual gaps vs cx-settings-try after full-page shell |
-| D066 | Home-with-project chrome + projects index | *(composer intelligence label superseded by D091; workspace-chip portion superseded by D095)* Home shows workspace chips when project open (no ∞); home placeholder 随心输入/Ask anything; footer gear+help; Projects page is Codex index (search/columns/expand/actions) using setProject | Gold cx-home-clean with project + projects-index-page parity |
-| D067 | Home suggestion glyphs + chip gap | *(suggestion-glyph portion superseded by D131; composer chip-gap portion superseded by D095)* **Suggestion icons match Codex (code/hammer/refresh/bug) with blue/purple/green/orange tones; composer chip gap 8px and denser capsule** | D131 removes the cards; D095 remains authoritative for composer spacing |
-| D068 | Recents row actions + fixture titles | *(sidebar actions superseded by D088, then reorganized by D093; fixture-title guidance retained)* **Active/hover recent rows show pin + panel trailing actions; capture/fixtures prefer Chinese titled empty sessions (同步代码) over bare New task** | Gold sidebar selected row chrome; reduce selection residual |
-| D069 | Destination title scale + dark New task ghost | **Destination page titles use Codex 28px/560 weight; New task is transparent ghost in dark too; capture drops English noise fixtures and pins 同步代码** | PR/Projects title mismatch; dark New task read as selected chip |
-| D070 | Settings gold metric polish | **Settings rail 275px/#f4f4f4; denser nav; content title offset; 32×20 accent toggles; Account arrow-up-right; 14px cards; 720px content band** | Residual vs cx-settings-try (rail width, toggle size, title Y, external mark) |
-| D071 | Transcript interaction parity | **Tool calls render as Codex-style lightweight disclosure rows (caret + name + mono arg hint + spinner/status, clamped inset body) replacing boxed cards; auto-scroll only while pinned to bottom with floating jump-to-latest pill (send / retry / regenerate re-pin per D151); readable Working… line with elapsed time and a compact running marker (amended by D290); hover copy on messages and code blocks** | Boxed tool cards and forced scrollIntoView diverged from Codex transcript feel; spec 7.4 scroll pause was unimplemented |
-| D072 | Typography/radius token enforcement | **All font-size/weight/line-height/letter-spacing/border-radius values must use `@theme` token vars (`--text-*` ramp with `-plus` half-steps, `--font-weight-*` incl. 520/560, `--leading-*`, `--tracking-*`, 12-step `--radius-*`); raw literals in CSS and TSX arbitrary utilities are blocked by `scripts/check-style-tokens.mjs` wired into `pnpm lint`; pixel values preserved exactly (no visual change)** | ~130 scattered literals drifted from any scale; design-system doc §5.2/§6.2 tables were stale vs implementation |
-| D073 | Full renderer i18n coverage | **Every user-visible renderer string flows through i18next (`en` source of truth, `zh-CN` via `satisfies EnglishCatalog`): ContextPanel/CommandPalette/PermissionDialog wired; toast/aria/title/placeholder literals keyed; session default titles come from `i18n.t` with a shared case-insensitive `isDefaultSessionTitle` matcher covering legacy titles across locales; proper nouns (VS Code, Finder) and native language names stay untranslated** | Six components bypassed i18n entirely; default-title matching was duplicated in store and Sidebar and missed zh "新对话" |
-| D131 | Empty home without suggestion cards | *(starter-grid clause amended by D205, then superseded by D206)* **The empty chat home temporarily rendered only the hero, optional first-run checklist, and composer; the original four Explore / Build / Review / Fix cards, their colored glyphs, and their prompt-prefill actions were removed. This superseded D049/D067 and the original card-specific clauses of D111 while retaining its single scrollable flow layout.** | The direct composer remained the primary task entry; removing the original decorative starter row addressed noisy card treatment. D205 briefly reintroduced a quieter, non-submitting developer grid before D206 returned the empty state to direct entry. |
-| D133 | Project index moves to Settings archive | *(five-destination count/order superseded by D166; flat-list presentation superseded by D168)* **The home sidebar no longer has a standalone Projects destination. Settings adds Project archive (zh-CN: 项目归档) after Import and before Info, bringing the compact directory to Basics / Model configuration / Import / Project archive / Info. The archive reuses the durable Projects index and always includes archived records, with search, add, activate, task expansion, pin, archive/restore, and close actions. Project and session groups remain in the home sidebar for active work. Global search exposes the archive as a Settings result, not a standalone page. This supersedes the standalone-destination clauses of D042/D066 and D090's four-destination limit without changing project storage or activation semantics.** | Active project work already lives in retained sidebar groups; moving historical project management into Settings reduces primary navigation while keeping recovery and archive controls discoverable. |
-| D168 | Project archive presentation redesign | *(band layout and per-section panels superseded by D267)* **Project archive renders three stacked bands: an overview banner (intent sentence, primary Add project, and four derived counters for projects, open, archived, sessions), a toolbar (search with clear affordance and live match count, plus a Recent/Name sort segmented control), and a grouped index whose always-visible sections run Pinned / All projects / Archived with per-section counts, one settings panel per section, and hairline row separators. Rows carry a disclosure control, glyph, name with Active/Open/pinned/Archived tags, one meta line (shortened monospace path, branch, session count), relative last-active time, and hover/focus-revealed New task plus row menu; the menu groups create/edit above pin, archive/restore, and destructive Close, and dismisses on Escape or outside press. Archived rows are grouped and softened, never hidden or filtered, so D133's no-visibility-toggle rule still holds. This supersedes D133's flat-list presentation without changing project storage, search matching, session batching, or activation semantics.** | The flat single-list archive gave equal weight to pinned, working, and archived records and hid its disclosure and row actions behind hover, so scanning a long durable index meant reading every row. Grouping with derived counters and an explicit sort makes state legible at a glance while keeping archived history permanently reachable. |
-| D267 | Project archive is one workbench, not three bands | *(row anatomy and inline expansion superseded by D455)* **Revise D168's band layout: Settings → Project archive renders the D257 one-workbench composition — a quiet intro line carrying only the page description, one toolbar (Recent/Name sort on the shared `settings-segment` primitive, search with clear affordance and live match count, primary Add project), and one settings panel whose always-visible Pinned / All projects / Archived groups are non-interactive in-panel header strips with per-section counts instead of one panel per section. The decorative gradient hero band is removed together with the four page-level overview counters it carried, retiring the `project.statProjects`, `project.statOpen`, `project.statArchived`, and `project.statSessions` keys; the per-group counts on the panel's header strips are now the only totals. The external uppercase section labels are removed as well; row geometry matches the capability rows (32px controls, 14px list gap, 28px row glyph). Beyond dropping the four retired counter keys this is presentation only: D168's row anatomy, row menu grouping, search matching, session batching, activation semantics, and accessibility semantics are unchanged, and no ADR is required.** | D168's overview banner used a decorative gradient and `--text-xl` counter tiles, which the design system forbids, and its per-section panels repeated the same elevated frame three times. Demoting the counters to an inline run kept the clutter without earning it: every total they showed is already legible from the per-group strip counts, so restating them above the toolbar duplicated numbers and gave the destination a header no sibling page has. Dropping them leaves the durable index looking and behaving like the agent capability pages. |
-| D455 | Project archive is a list + inspector | *(row anatomy superseded by the same-day "Project archive reads as an inset grouped card list" entry)* **Revise D267's expanding rows: Settings → Project archive keeps the quiet intro and toolbar, then a one-column workbench. The index remains Pinned / All projects / Archived with per-section counts and no visibility toggle (D133). Compact rows show glyph, name, one status tag, session count, and relative time. A click selects and stays in Settings; double-click, Enter, or the inspector Open action activates and returns to chat. Folders, chats (batches of eight), and the row menu open under the selected row at full width. Search still matches session titles and selects the owning project. Presentation only: no IPC, storage, or host change. See ADR 0294 and E2E-038.** | Inline expansion and per-row menus made a long durable index hard to scan, and clicking a name left Settings instead of managing the project. |
-| D456 | Session thinking-parameter omission | **Amend ADR 0194 / ADR 0144 / ADR 0221: session `thinkingLevel` accepts `omit` in addition to the seven canonical levels. Composer prepends `omit` on a reasoning model. Runtime bookkeeping stays `off` and uses the low-level provider stream so no thinking override is synthesized. Binding/catalog capability lists stay canonical. Schema v19 widens the session CHECK to include `omit`. Handshake protocol version is unchanged. See ADR 0295 and E2E-203a.** | Explicit `off` still serializes a disable; users need a session-level do-not-send matching subagents. |
+| D034 | 桌面视觉基线 | **Codex electro-dark 1:1 外壳（炭灰色，浮动输入框，~275px 侧边栏）** | 匹配当地法典的可用性和密度；保留 PI-Desktop 产品品牌 |
+| D035 | 外壳显示名称 | *（被 D094 取代）* **UI chrome 使用 shellName“Codex”； product/about 仍为 PI-Desktop** | 满足视觉 1:1 复制品目标，同时保留 about/settings 中的产品标识 |
+| D036 | 主题 chrome 令牌 | **所有 shell chrome（导航、线程、芯片、标题按钮）均使用语义 `--ds-*` text/surface 令牌；浅色模式下没有原始的gray-0文本** | 当导航在 `#f3f3f3` 上使用白色墨水时，浅色 macOS 默认不可用 |
+| D037 | 深色侧边栏表面 | **深色侧边栏使用 `#000000`（Codex `surface-under`）；主窗格保持 `#181818` (`gray-900`)** | 匹配电子暗侧条与主表面分离 |
+| D038 | 黑暗输入框板 | *（被 D047 取代，然后是 D061）* 深色浮动输入框使用实心 `#212121`，其仰角阴影比光强 | Codexleved-primary 必须读作 `#181818` 的方框；单独的透明混合看起来很平坦 |
+| D039 | 舞台经理界限 | **永久主机看门狗恢复足迹，而 width/height 保持折叠状态** | 在舞台监督的猛烈攻击下，20 秒的爆发力不够 |
+| D040 | 输入框智能控制 | *（被 D091 取代）* 自定义努力芯片会打开一个弹出窗口（努力无线电 + 模型标题 + 设置），而不是点击循环 | 替换是因为控件在没有配置pi的情况下改变了标签 |
+| D041 | 个人资料页脚 | *（由 D113 取代）* **自定义页脚打开配置文件菜单（设置/日志/主题）；云徽章仍然是更新替代品** | D113 使用真实的本地轮廓页脚替换了 cloud/update 替代品和通用齿轮排 |
+| D042 | 项目页面 | *（被 D066 索引表取代）* 项目是 recent/active 本地工作空间的卡片网格，带有引脚 + 字形颜色（localStorage 最近） | 无需云项目后端即可匹配 Codex 项目目标密度 |
+| D043 | 设置外壳 | *（被 D062/D063 全页 shell 取代）* 设置在侧边栏表面 + 内容窗格上使用左侧导航栏 (General/Providers/Plugins/About) | 比仅顶部的选项卡条更接近 Codex 设置 IA |
+| D044 | 目的地列表镀铬 | **PRs/Scheduled/Plugins使用共享目标行列表+过滤芯片；光卡白色高架** | 无需完整的云后端即可匹配 Codex 目标密度 |
+| D045 | 首页空栈 | **空聊天使输入框保持在主流程中（不是绝对仅位于底部的码头）；由 D047 分裂生长精制** | 初步修复大空间隙； D047 修正双生长垂直模型 |
+| D046 | 输入框占位符 | *（被 D094 取代）* **空草稿使用 Codex 占位符 (EN/zh-CN) 而不是空白** | 空白的白板没有墨水，读起来就像是破损的；与早期的视觉金色副本相匹配 |
+| D047 | 家庭分裂种植 | *（被 D111 取代的几何）* **空置家庭使用 upper/lower 生长区域（英雄项目结束 + 输入框调整结束）；暗盒使用 Codex 海拔突出** | 匹配电子双生长； D111 用可滚动流堆栈替换双增长门户以阻止 composer/card 冲突 |
+| D048 | 侧边栏最近标签 | *（由 D088 取代）* **近期部分使用实时 Codex 黄金标签 EN `Recents` / zh-CN `最近`（并非仅限 asar 的 `Tasks`/`任务`）** | 视觉黄金 + 插件和线程列表之间的实时编码 shell 部分标题 |
+| D049 | 家庭建议卡 | *（被 D131 取代）* **空的主页在英雄下方显示 4 张环境卡（自动调整行），并在点击时预填充启动提示** | D131 从空置中删除卡行和提示预填充入口点 |
+| D050 | 空作曲器板高度 | *（被 D055 取代，然后是 D061）* Home 空输入框 min-height ~112px（紧凑）；模型芯片显示模型 ID（操作保留在菜单中） | 匹配 Codex 空板密度；模型芯片镀铬更接近电子模型选择器触发器 |
+| D051 | 侧边栏导航密度 | *（会话列表 IA 被 D088 取代；保留行密度）* **导航行 ~32 像素间距，最近行 ~28–31 像素，部分标签 `Recents`/`最近`** | 关闭 light-home 侧边栏残留 vs cx-home-clean |
+| D052 | 家用立式+夜箱抛光 | *（工作区芯片表面被 D095 取代；保留剩余指导）* **上部 pb ~62px（英雄第一墨水 ~y305）；光芯片`#f3f3f3`；灯光输入框海拔更强；黑暗家庭输入框固体 `#212121`；工具栏控件 28px** | 关闭英雄y≈300和输入框乐队的余热；夜板不得压平至 `#181818` |
+| D053 | 舞台监督CG检测 | **CG边界助手通过pid匹配任何窗口层；上架恢复前，missing-CG需要streak≥3；避免永久的alwaysOnTop** | AlwaysOnTop 浮动层破坏了第 0 层帮助器并导致恢复抖动 |
+| D054 | 空草稿行+无限提示 | *（∞ 提示被 D094 取代；领先品牌提示被 D160 取代）* **Composer 自动调整大小绝不能折叠空文本区域高度 (<28px)；在草稿左侧保留明显的品牌提示；常亮禁用发送（`#bdbdbd` 灯亮）；更密集的占位符墨水；实心夜板 `#212121`** | 清空 `height:0` 自动调整大小隐藏占位符并读取为损坏的 night/light 框；金色草稿行需要可见标记+油墨密度 |
+| D055 | 空板吃水Y | *（印版高度指导被 D061 取代；工作空间芯片密度被 D095 取代）* 主页空壳最小高度 ~148px（底部对齐），因此草稿最密集的墨水 ≈y556 与金；芯片紧凑型 28px | 112px 板左草稿 ~30px 低；在不移动工具栏基础的情况下向上生长板 |
+| D056 | 空置的家庭工作区芯片 | *（由 D095 取代）* **始终将 project/Local/branch 胶囊隐藏在空置的家中；仅在线程对接的输入框中显示** | 即使有项目标题，cx-home-clean 空金在盘子上方也没有胶囊带 |
+| D057 | 主队标记+英雄称号光学 | *（主页标记被 D094 取代；保留标题指导）* **空主页 Codex 标记使用较粗的笔画；短工作区基本名称显示为 `PI-Desktop` 以获得黄金标题跨度** | 英雄残差是细标记+短项目标签下墨标题 vs Codex 黄金 |
+| D058 | 首页内容宽度+深色墨水标记 | **家庭双生长最大宽度使用`768px`（不是14px根下的`48rem`）；首页水平垫12px；英雄 title/night 控件使用主题令牌；夜间本垒板范围仅限于黑暗** | `48rem` 在 14px 根部收缩板 ~120px 与 Codex gold 相比；硬编码的光英雄墨水使夜间标题无法读取 |
+| D059 | 光禁用发送墨水 | **禁用发送芯片 `#8e8e90` + 白色箭头（不是 `#bdbdbd`）** | 像素匹配 cx-home-clean 空发送控制 |
+| D060 | 轻新任务鬼行 | **轻空置新任务透明（无固态芯片）；仅悬停清洗** | 金色有图标+标签，无填充药丸；填充的 `#e8` 芯片是主要导航残留 |
+| D061 | 空盘Y+夜高架-初级 | **首页空板最小高度140px + 包裹底垫16px（顶部〜y536–538 /草案〜y552 /脚部阴影〜y674）；浅色+深色本垒板使用升高的主填充和向下的高度（无向上的全向发光）；深色填充 `#212121f5`** | 板高有板前光晕；实心夜板 + 重型全向阴影，与 Codex 高架主色和金色脚带不同 |
+| D062 | 设置 Codex shell | **设置使用Codex分组导轨（Personal/Integrations）+搜索+返回应用程序；内容是升高的行面板； Providers/Plugins 保留为本地优先；集成下的 MCP 空状态** | 目的地奇偶校验差距；先前的 4 项扁平导轨与 Codex 设置 IA 不同 |
+| D063 | 设置全页接管 | **设置用 Codex 全页 shell 替换应用侧边栏：后退+搜索+图标组 (Personal/Integrations/Coding)、提升的 permission/general 卡、保留本地 Providers/Plugins** | 主窗格内的嵌套设置与实时 Codex 设置黄金不同 |
+| D064 | 设置常规内容奇偶校验 | **基本卡行匹配 Codex：默认打开目标、语言、菜单栏、底部面板； nav 添加 Pets/Appshots； sun/pet/snapshot 图标；药丸选择** | 与实时 Codex 设置黄金含量带更接近 1:1 |
+| D065 | 设置一般金色抛光 | **权限行包括蓝色了解更多链接+完全访问风险副本；开放目标药丸显示 VS Code 字形； Agent 使用圆形箭头图标；集成顺序Appshots→插件→浏览器→计算机→MCP；输入发送至 Agent** | 全页 shell 后的剩余间隙与 cx-settings-try |
+| D066 | 带有项目的主页 chrome + 项目索引 | *（输入框智能标签由 D091 取代；工作区芯片部分由 D095 取代）* 项目打开时主页显示工作区芯片（无 ∞）； home placeholder 随心输入/询问任何事情；页脚齿轮+帮助；项目页面是使用 setProject 的 Codex 索引 (search/columns/expand/actions) | 黄金级 cx-home-clean 与项目 + 项目索引页奇偶校验 |
+| D067 | 首页建议字形+芯片间隙 | *（建议字形部分由 D131 取代；输入框芯片间隙部分由 D095 取代）* **建议图标与 Codex (code/hammer/refresh/bug) 和 blue/purple/green/orange 音调相匹配；输入框芯片间隙 8px 和更密集的胶囊** | D131 取出牌； D095 仍然是输入框间距的权威 |
+| D068 | 最近的行操作 + 灯具标题 | *（侧边栏操作被 D088 取代，然后由 D093 重新组织；保留夹具标题指导）* **Active/hover 最近的行显示图钉 + 面板尾随操作； capture/fixtures 更喜欢中文标题的空会话（同步代码）而不是裸新任务** | 金色侧边栏选排镀铬；减少选择残差 |
+| D069 | 目的地标题刻度+黑暗新任务幽灵 | **目标页面标题使用 Codex 28px/560 权重；新任务也是黑暗中的透明幽灵；捕获下降英语噪音固定装置和引脚同步代码** | PR/Projects 标题不匹配；深色 新任务读取为选定芯片 |
+| D070 | 设置金色公制抛光 | **设置导轨275px/#f4f4f4；更密集的导航；内容标题偏移量； 32×20 重音切换；帐户右上箭头； 14 像素卡片； 720 像素内容带** | Residual 与 cx-settings-try（导轨宽度、切换尺寸、标题 Y、外部标记） |
+| D071 | 转录本相互作用奇偶校验 | **工具调用渲染为 Codex 风格的轻量级披露行（脱字号 + 名称 + 单参数提示 + spinner/status，夹紧的插入正文）替换盒装卡片；仅在通过浮动跳转到最新药丸固定到底部时自动滚动（根据 D151 发送/重试/重新生成重新固定）；闪烁工作…与经过的时间线；将副本悬停在消息和代码块上** | 盒装工具卡和强制滚动到视图与 Codex 转录本的感觉不同；规范 7.4 滚动暂停未实现 |
+| D072 | Typography/radius 令牌强制执行 | **所有 font-size/weight/line-height/letter-spacing/border-radius 值必须使用 `@theme` 令牌变量（具有 `-plus` 半步的 `--text-*` 斜坡、`--font-weight-*` 包括 520/560、`--leading-*`、`--tracking-*`、12 步 `--radius-*`）； CSS 和 TSX 任意实用程序中的原始文字被连接到 `pnpm lint` 的 `scripts/check-style-tokens.mjs` 阻止；准确保留像素值（无视觉变化）** | 约 130 个分散的文字从任何比例上漂移；设计系统文档 §5.2/§6.2 表与实现相比已过时 |
+| D073 | 完整渲染器 i18n 覆盖 | **每个用户可见的渲染器字符串都流经 i18next（`en` 事实来源，`zh-CN` 通过 `satisfies EnglishCatalog`）：ContextPanel/CommandPalette/PermissionDialog 有线； toast/aria/title/placeholder 文字键控；会话默认标题来自 `i18n.t`，具有共享的不区分大小写的 `isDefaultSessionTitle` 匹配器，涵盖跨区域设置的旧标题；专有名词（VS Code、Finder）和母语名称保持未翻译** | 六个组件完全绕过了 i18n；默认标题匹配在商店和侧边栏中重复，并且错过了 zh“新对话” |
+| D131 | 空荡荡的家，没有建议卡 | *（starter-grid 条款由 D205 修改，然后由 D206 取代）* **空的聊天主页暂时仅呈现英雄、可选的首次运行清单和输入框；原来的四张探索/构建/审查/修复卡、它们的彩色字形以及它们的提示预填充操作被删除。这取代了 D049/D067 和 D111 的原始卡特定条款，同时保留其单一可滚动流布局。** | 直接输入框仍然是主要任务条目；去掉了原来的装饰起始行，解决了噪音卡的处理。在 D206 将空状态返回到直接进入之前，D205 短暂地重新引入了一个更安静、非提交的开发者网格。 |
+| D133 | 项目索引移至设置存档 | *（五个目的地 count/order 被 D166 取代；平面列表演示被 D168 取代）* **主页侧边栏不再具有独立的项目目的地。设置在导入之后、信息之前添加项目归档（zh-CN: 项目归档），将压缩目录带到基础/模型配置/导入/项目归档/信息。存档重用持久的项目索引，并且始终包含存档记录，包括搜索、添加、激活、任务扩展、固定、archive/restore 和关闭操作。项目和会话组仍保留在主侧边栏中以进行积极的工作。全局搜索将存档公开为“设置”结果，而不是独立页面。这取代了 D042/D066 的独立目标子句和 D090 的四个目标限制，而不更改项目存储或激活语义。** | 活跃的项目工作已经存在于保留的侧边栏组中；将历史项目管理移至“设置”可减少主要导航，同时保持恢复和存档控件可发现。 |
+| D168 | 项目档案演示重新设计 | *（堆叠带布局与每部分面板被 D267 取代）* **项目存档呈现三个堆叠带：一个概述横幅（意图句、主要添加项目以及用于项目、打开、存档、会话的四个派生计数器）、一个工具栏（具有清晰的可见性和实时匹配计数的搜索，以及 Recent/Name 排序分段控件），以及一个分组索引，其始终可见的部分运行“固定/所有项目/存档”，每个部分计数、每个部分一个设置面板和细线行分隔符。行包含公开控件、字形、带有 Active/Open/pinned/Archived 标签的名称、一条元行（缩短的等宽路径、分支、会话计数）、相对最后活动时间和 hover/focus-revealed 新任务加行菜单；菜单将 create/edit 置于引脚上方、archive/restore 和破坏性关闭中，并在 Escape 或外部按下时关闭。存档的行被分组和软化，从不隐藏或过滤，因此 D133 的不可见性切换规则仍然有效。这取代了 D133 的平面列表演示，而无需更改项目存储、搜索匹配、会话批处理或激活语义。** | 平面单列表存档对固定、工作和存档记录给予同等重视，并将其披露和行操作隐藏在悬停后面，因此扫描长期持久索引意味着读取每一行。使用派生计数器进行分组并进行显式排序，使状态一目了然，同时保持存档历史记录永久可访问。 |
+| D267 | 项目存档是一个工作台，而不是三个堆叠带 | *（行剖析与行内展开被 D455 取代）* **修订 D168 的堆叠带布局：设置 → 项目存档改为呈现 D257 的一个工作台构成 —— 一条仅承载页面说明的安静引导行、一个工具栏（使用共享 `settings-segment` 基元的“最近/名称”排序、带清除可供性与实时匹配计数的搜索、主要“添加项目”），以及一个设置面板，其始终可见的固定/所有项目/存档分组是面板内带每部分计数的非交互标题条，而不是每部分一个面板。装饰渐变英雄带被移除，它承载的四个页面级概览计数器也一并移除，并停用 `project.statProjects`、`project.statOpen`、`project.statArchived` 和 `project.statSessions` 键；面板标题条上的分组计数现在是唯一的总计。外部大写部分标签也被移除；行几何与能力页面行一致（32px 控件、14px 列表间距、28px 行字形）。除停用上述四个计数器键外，其余仅为演示层变更：D168 的行剖析、行菜单分组、搜索匹配、会话批处理、激活语义和无障碍语义均不变，且不需要新的 ADR。** | D168 的概述横幅使用了装饰渐变和 `--text-xl` 计数器格，而设计系统明确禁止两者，且其每部分面板把同一个高架框重复了三次。把计数器降级为内联串只是保留了杂乱而没有换来价值：它们展示的每个总计都已能从分组条计数中读出，因此在工具栏上方重述这些数字既重复了数字，也让该目的地拥有了兄弟页面都没有的页头。移除它们后，持久索引在外观和行为上都与智能体能力页面一致。 |
+| D455 | 项目存档改为列表 + 检查器 | *（行剖析被同日的「项目档案呈现为内嵌分组卡片列表」条目取代）* **修订 D267 的展开行：设置 → 项目存档保留安静引导行和工具栏，随后是单列工作台。索引仍按已置顶 / 全部项目 / 已归档分组并显示计数，且没有可见性开关（D133）。精简行显示字形、名称、一个状态标签、会话计数和相对时间。单击选中并留在设置页；双击、Enter 或检查器的打开操作激活项目并返回聊天。文件夹、对话（每批 8 条）和行菜单在选中行下方铺满宽度打开。搜索仍匹配会话标题并选中所属项目。仅演示层：无 IPC、存储或宿主改动。见 ADR 0294 与 E2E-038。** | 行内展开和行菜单让长索引难以扫读，单击名称还会离开设置页，不利于管理。 |
+| D456 | 会话思考参数不发送 | **修订 ADR 0194 / ADR 0144 / ADR 0221：会话 `thinkingLevel` 在七个规范档位之外接受 `omit`。Composer 在推理模型上把 `omit` 放在菜单最前。运行时记账仍为 `off`，走低层 provider 流，不合成思考覆盖。绑定/目录能力列表保持规范档位。Schema v19 把会话 CHECK 扩到包含 `omit`。握手协议版本不变。见 ADR 0295 与 E2E-203a。** | 显式 `off` 仍会序列化为关闭思考；用户需要与子智能体一致的会话级不发送。 |
 
-## E. M5 hardening decisions (0.4.0)
+## E.M5 强化决策 (0.4.0)
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D078 | macOS signing lanes | *(amended by D450 / ADR 0289)* **Static configuration does not embed a certificate identity, so local builds without a configured certificate remain unsigned. Official GitHub tag releases require Developer ID signing and Apple notarization; CI receives certificate material through Actions secrets and rejects unstapled artifacts.** | Contributors can package without credentials while published macOS artifacts satisfy Gatekeeper. See 06-delivery/06-release-runbook. |
-| D079 | App icon / brand mark v1 | *(renderer asset path refined by D221)* **`build/icon_1024.png` is the canonical PI-Desktop logo; `scripts/make-icon.py` derives `build/icon.icns` without overwriting the PNG; packaged macOS builds, `pnpm dev`, and renderer chrome reuse those assets** | Keep one visual identity across development, renderer, and packaged lanes while preventing the derivation script from restoring the obsolete generated mark |
-| D080 | Backend supervision | **Child exit rejects in-flight RPCs immediately; backoff restarts (0.5s→4s, max 3 per 2min); `hostStatus` events drive renderer degradation UI** | Crash recovery without hangs; fail visible, not silent |
-| D081 | Renderer sandbox | **`sandbox: true` with fully bundled CJS preload; production CSP drops `unsafe-eval` and localhost connect-src** | Electron security baseline; verified by `test:e2e:boot` |
-| D082 | Log channels | *(superseded in part by D182)* **app/host/agent NDJSON files with 5MB rotation (keep 2 rotated) via main-process Logger; audit channel stays in host-core SQLite** | Diagnosable failures without unbounded growth; audit needs queryability |
-| D083 | Window state | **Persist last good bounds to `window-state.json` (min 960×640 to restore); Stage Manager shelf recovery keeps the Codex footprint; capture runs force deterministic bounds** | Users keep their window; shelf recovery and pixel captures stay deterministic |
-| D084 | Cross-platform shell strategy | *(superseded by D190)* **The Bash tool runs bash on every platform, resolved once per process: `PI_DESKTOP_BASH` override → Unix well-known paths + PATH → Windows `bash.exe` derived from Git for Windows (git on PATH, standard install dirs, then PATH minus the WSL `System32` launcher); Unix uses `bash -lc`, Windows `bash -c` + `CREATE_NO_WINDOW`; no bash bundled in installers; missing shell surfaces stable `SHELL_NOT_FOUND` with install guidance** | Superseded by the selectable shell catalog and stable execution identity in D190 |
-| D085 | Toast system v2 | **Single global toast stack (`ToastHost` + store queue) replaces the string `setToast`: `showToast(message, {variant, duration})` with info/success/warning/error variants (Lucide icon tinted by semantic token on a neutral elevated plate), auto-dismiss 4s / error 8s / 0 sticky owned by the system (no caller timers), hover pause, max 4 with dedupe, enter/exit motion + reduced-motion-safe removal, `aria-live` + role status/alert; usage rules in 08-component-spec §17** | Old toast was a bare fixed div: no variants or stacking, and most call sites never cleared it so messages persisted forever; callers hand-rolled timeouts |
-| D086 | Storage schema v2 | **Single `pi.sqlite` (host-core exclusive) rebuilt per 03-runtime/04: `kv` namespaces replace `meta`/`settings` and host plugin settings; `projects` replaces the workspace singleton; transcripts become canonical block arrays (`messages.content_json` + extracted `text`, ms-integer times, O(1) per-session `seq`, stable `mid` rowid) with `turns` carrying state-machine status + usage rollups and FTS5 trigram search; new `models` catalog, `artifacts`, `scheduled_tasks`+`task_runs` (moved out of Electron's JSON, fixing a D002 violation); indexed prunable `audit_log`; `PRAGMA user_version` migrations with pre-migration `.bak`; dead `plugins`/`provider_models` tables dropped (registry.json stays authoritative)** | v1 schema was a lossy UI projection (no turns/usage/blocks/attachments), ordered by `MAX+1` scans, had zero secondary indexes, two dead tables, RFC3339 text times, and scheduled tasks bypassing host ownership; spec'd features (artifacts view, cost chips, run history, project grouping, global search, catalog refresh) had no storage to land on |
-| D087 | Immersive composer context rail | *(superseded by D095)* **Project / Local / branch remain one rail, but the rail now attaches directly to the composer shell, shares its theme surface and sole elevation, and drops the visible 8px gap plus independent capsule shadow; supersedes the gap portion of D067** | The detached capsule and differently colored plate made context and prompt input read as unrelated controls instead of one Codex-style immersive composer |
-| D089 | Composer draft height | **The prompt textarea shows one visible line by default, auto-grows from wrapped content through seven visible lines, scrolls internally beyond line seven, and contracts as content is removed; the home shell is content-driven instead of keeping D061's fixed 140px minimum** | Preserve transcript space and Codex-like density while keeping multiline editing usable |
-| D088 | Scoped home sidebar sessions | *(superseded by D093 only for the one-current-project and no-row-actions limitations)* **Replace the Recents aggregate with one current-project session group plus persistent path-less Temporary sessions; keep other projects in the Projects index; remove Recents pin/panel row actions; scope empty-draft reuse and explicit `+` creation by project context** | D093 retains exact-path grouping, scoped draft reuse, and the Temporary boundary while allowing several retained project groups and scoped organization actions |
+| D078 | macOS 签名通道 | *（由 D450 / ADR 0289 修订）* **静态配置不嵌入证书身份，因此未配置证书的本地构建保持未签名。正式 GitHub tag 发布需要 Developer ID 签名和 Apple 公证；CI 通过 Actions 密钥接收证书材料，并拒绝未装订的工件。** | 贡献者无需证书即可打包，同时已发布的 macOS 工件满足 Gatekeeper 要求。参见 06-delivery/06-release-runbook。 |
+| D079 | 应用程序图标/品牌标记 v1 | *（渲染器资源路径由 D221 细化）* **`build/icon_1024.png` 是规范的 PI-Desktop 徽标； `scripts/make-icon.py` 派生 `build/icon.icns` 而不覆盖 PNG；打包的 macOS 构建、`pnpm dev` 和渲染器 chrome 重用这些资源** | 在开发、渲染器和打包通道中保持一种视觉标识，同时防止派生脚本恢复过时的生成标记 |
+| D080 | 后台监管 | **子出口立即拒绝正在进行的 RPC；退避重新启动（0.5s→4s，每2分钟最多3次）； `hostStatus` 事件导致渲染器性能下降 UI** | 崩溃恢复，无挂起；失败是可见的，而不是沉默的 |
+| D081 | Renderer 沙箱 | **`sandbox: true` 与完全捆绑的 CJS preload；生产 CSP 删除 `unsafe-eval` 和 localhost connect-src** | Electron 安全基线；由 `test:e2e:boot` 验证 |
+| D082 | 日志通道 | *（部分被 D182 取代）* **app/host/agent NDJSON 文件，通过主进程记录器进行 5MB 循环（保持 2 循环）；审核通道停留在 host-core SQLite** | 可诊断故障，无无限增长；审计需要可查询性 |
+| D083 | 窗口状态 | **保持 `window-state.json` 的最后良好边界（恢复最小 960×640）； Stage Manager 架子恢复保留了 Codex 的足迹；捕获运行强制确定性边界** | 用户保留他们的窗口；货架恢复和像素捕获保持确定性 |
+| D084 | 跨平台shell策略 | *（被 D190 取代）* **Bash 工具在每个平台上运行 bash，每个进程解析一次：`PI_DESKTOP_BASH` 覆盖 → Unix 众所周知的路径 + PATH → Windows Windows `bash.exe` 源自 Windows 的 Git（git 在 PATH 上，标准安装目录，然后 PATH 减去 WSL `System32` 启动器）； Unix 使用 `bash -lc`、Windows `bash -c` + `CREATE_NO_WINDOW`；安装程序中没有捆绑 bash；缺少外壳表面稳定 `SHELL_NOT_FOUND` 并附有安装指南** | 被 D190 中的可选 shell 目录和稳定执行标识取代 |
+| D085 | Toast系统v2 | **单个全局 Toast 堆栈（`ToastHost` + 存储队列）将字符串 `setToast`: `showToast(message, {variant, duration})` 替换为 info/success/warning/error 变体（中性升高板上的语义标记着色的 Lucide 图标）、自动消除 4 秒/错误 8 秒/系统拥有的 0 粘性（无呼叫者计时器）、悬停暂停、最多 4 个重复数据删除、 enter/exit 运动 + 简化运动安全移除，`aria-live` + 角色 status/alert； 08-组件规范 §17** 中的使用规则 | 旧的 toast 是一个裸露的固定 div：没有变体或堆叠，并且大多数调用站点从未清除它，因此消息永远存在；呼叫者手动超时 |
+| D086 | 存储架构 v2 | **根据 03-runtime/04 重建单个 `pi.sqlite`（host-core 独有）：`kv` 命名空间替换 SQLite/NDJSON 并托管插件设置； `projects` 替换工作区单例；转录本成为规范块数组（`messages.content_json` + 提取的 `text`、ms 整数时间、O(1) 每个会话 `seq`、稳定的 `mid` rowid），其中 `turns` 携带状态机状态 + 使用情况汇总和 FTS5 trigram 搜索；新的 `models` 目录、`artifacts`、`scheduled_tasks`+`task_runs`（移出 Electron 的 JSON，修复了 D002 违规）；索引可修剪 `audit_log`； `PRAGMA user_version` 迁移与预迁移 `.bak`；已删除的 `showToast(message, {variant, duration})`/`aria-live` 表已删除（registry.json 保持权威）** | v1 模式是一个有损的 UI 投影（无 turns/usage/blocks/attachments），按 `MAX+1` 扫描排序，具有零二级索引、两个死表、RFC3339 文本时间以及绕过主机所有权的计划任务；规范的功能（工件视图、成本芯片、运行历史记录、项目分组、全局搜索、目录刷新）没有存储空间 |
+| D087 | 沉浸式输入框上下文轨道 | *（被 D095 取代）* **项目/本地/分支仍然是一根导轨，但该导轨现在直接连接到输入框外壳，共享其主题表面和底部标高，并删除可见的 8px 间隙和独立的胶囊阴影；取代 D067** 的间隙部分 | 分离的胶囊和不同颜色的板使得上下文和提示输入被解读为不相关的控件，而不是 Codex 风格的沉浸式输入框 |
+| D089 | 输入框草稿高度 | **提示文本区域默认显示一行可见行，从包装内容自动增长到七行可见行，内部滚动超出第七行，并在内容被删除时收缩； home shell 是内容驱动的，而不是保持 D061 的固定最小 140px** | 保留转录空间和类似 Codex 的密度，同时保持多行编辑可用 |
+| D088 | 范围内的主页侧边栏会话 | *（仅针对一个当前项目和无行操作限制由 D093 取代）* **将“最近”聚合替换为一个当前项目会话组加上持久无路径临时会话；将其他项目保留在项目索引中；删除最近的 pin/panel 行操作；范围空草稿重用和项目上下文显式 `+` 创建** | D093 保留精确路径分组、范围草稿重用和临时边界，同时允许多个保留的项目组和范围组织操作 |
 
-## F. Baseline 0.4.2 product decisions
+## F. 基线 0.4.2 产品决策
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D090 | Compact settings directory | *(four-destination count and order superseded by D133)* **Settings retains the D063 full-page shell and D070 visual metrics, but its rail contains exactly Basics, Agent, Import, and Info in that order. Appearance moves into Basics; Providers moves into Agent. Plugin management remains in the app shell's existing Plugins destination, with load/enable/disable/uninstall available there, and is not duplicated in Settings. This supersedes the broader grouped navigation and standalone Appearance/Providers/Plugins placements in D062–D065, plus D070's Account-specific rail metric.** | Remove empty, low-value, and duplicate destinations while keeping every shipped workflow reachable and making the local-first settings surface easier to scan |
-| D091 | Composer runtime configuration | **Mode and provider/model controls update the active session and are read from that session by the pi prompt path; controls without an end-to-end runtime implementation are not rendered.** | Prevent decorative effort/attachment controls and keep every visible composer action operational |
-| D092 | Responsive settings content | **The settings content fills the width available after the fixed 275px rail and pane gutters, resizing through CSS flex layout with the native window. This supersedes only D070's fixed 720px content band and the corresponding visual-metric retention in D090.** | Use wide desktop windows efficiently without adding renderer resize state or changing the compact settings directory |
-| D104 | Settings rail menu rename | *(Agent label superseded by D110; directory order superseded by D133)* **Settings rail destination labels are Basics / Agent / Import / Info (zh-CN: 基础 / 智能体 / 导入 / 信息). Destination IDs remain general / agent / import / about; only user-facing labels change. This renames the D090 compact directory labels without changing order, contents, or deep-link targets.** | Shorter, action-oriented labels scan faster while preserving the compact directory |
+| D090 | 紧凑的设置目录 | *（由 D133 取代的四个目的地计数和顺序）* **设置保留了 D063 全页 shell 和 D070 视觉指标，但其栏完全按该顺序包含基础知识、Agent、导入和信息。外观转向基础；提供商进入 Agent。插件管理保留在应用程序外壳的现有插件目标中，其中有可用的 load/enable/disable/uninstall，并且不会在“设置”中重复。这取代了 D062–D065 中更广泛的分组导航和独立 Appearance/Providers/Plugins 展示位置，以及 D070 的特定于客户的轨道指标。** | 删除空的、低价值的和重复的目标，同时保持每个已交付的工作流程均可访问，并使本地优先设置表面更易于扫描 |
+| D091 | Composer 运行时配置 | **Mode 和 provider/model 控件更新活动会话并通过 pi 提示符路径从该会话中读取；没有端到端运行时实现的控件不会被渲染。** | 防止装饰性 effort/attachment 控件并保持每个可见的输入框动作可运行 |
+| D092 | 响应式设置内容 | **设置内容填充固定 275px 导轨和窗格装订线后的可用宽度，通过本机窗口的 CSS 弹性布局调整大小。这仅取代 D070 的固定 720 像素内容带以及 D090 中相应的视觉指标保留。** | 高效使用宽桌面窗口，无需添加渲染器调整大小状态或更改紧凑设置目录 |
+| D104 | 设置轨道菜单重命名 | *（Agent 标签由 D110 取代；目录顺序由 D133 取代）* **设置轨道目标标签为 Basics / Agent / Import / Info（zh-CN：基础 / 智能体 / 导入 / 信息）。目的地 ID 保持为常规/代理/导入/关于；只有面向用户的标签会发生变化。这将重命名 D090 紧凑目录标签，而不更改顺序、内容或深层链接目标。** | 更短、面向操作的标签扫描速度更快，同时保留紧凑的目录 |
 
-## G. Baseline 0.4.3 sidebar and project decisions
+## G. 基线 0.4.3 侧边栏和项目决策
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D093 | Sidebar organization, retained project tabs, and session workspace isolation | **The renderer retains normalized open-project paths and local project/session presentation metadata for pin, archive, collapse, sort, and manual order. The sidebar renders one independently collapsible group per retained path plus Temporary sessions. User-facing sort modes are recent, created, oldest, and name; project groups can opt into `manual` by dragging the project title after a small pointer movement or with ArrowUp/ArrowDown on that title, while session `manual` remains a compatibility value. Activating a group reuses `project.set`, so the shell still has one selected host workspace. Tool execution resolves its root from the durable session project, and per-session turns/grants remain independent when another tab becomes active. Archive, close, and reorder are renderer-local and non-destructive.** | Preserve a multi-repository working set and make long conversation lists manageable without creating multiple host workspace singletons or allowing an active-tab switch to redirect a background session's tools |
-| D094 | Renderer product branding | *(docked composer logo superseded by D160)* **All user-visible shell identity uses `PI-Desktop`: the sidebar shell name, composer placeholder, and settings copy. `BrandLogo` imports the marks derived from `build/icon_1024.png` through Vite (see D221) for the home hero, expanded/collapsed sidebar, and docked composer; new-session controls use a dedicated message-plus icon. `Codex` remains only where it identifies an external import source or a design reference.** | Remove accidental third-party branding and vector approximations from the product surface while preserving import compatibility and the Codex-derived layout system |
-| D135 | Distinct sidebar task status indicators | **Conversation rows reserve one compact leading status slot with semantic, shape-distinct states: neutral-accent outlined ring for selected, warning-orange breathing dot for in progress, success-green check for completed, and error-red circled alert for failed. Precedence is in progress, selected, then latest terminal outcome. Starting a new turn clears the prior outcome; abort produces no failure. Every state has localized accessible text and reduced motion makes the in-progress dot static.** | The prior running dot reused the accent token and disappeared when idle, making selected, active work, completion, and failure difficult to scan or distinguish by more than row background |
+| D093 | 侧边栏组织、保留的项目选项卡和会话工作区隔离 | **渲染器保留标准化的开放项目路径和本地 project/session 演示元数据，用于固定、存档、折叠、排序和手动顺序。侧边栏为每个保留路径和临时会话呈现一个独立的可折叠组。面向用户的排序模式有最近的、创建的、最旧的和名称；项目组可通过拖动标题（小幅移动后）或在该标题上按 `ArrowUp`/`ArrowDown` 选择 `manual`，而会话 `manual` 仍是兼容性值。激活组会重用 `project.set`，因此 shell 仍具有一个选定的主机工作区。工具执行从持久会话项目中解析其根，并且当另一个选项卡变为活动状态时，每个会话 turns/grants 保持独立。存档、关闭和重排均为渲染器本地且非破坏性的。** | 保留多存储库工作集并使长对话列表易于管理，而无需创建多个主机工作区单例或允许活动选项卡开关重定向后台会话的工具 |
+| D094 | Renderer 产品品牌 | *（停靠的 Composer 徽标由 D160 取代）* **所有用户可见的 shell 标识都使用 `PI-Desktop`：侧边栏 shell 名称、composer 占位符和设置副本。 `BrandLogo` 通过 Vite 导入由 `build/icon_1024.png` 派生的标记（参见 D221），用于首页英雄、expanded/collapsed 侧边栏和停靠的输入框；新会话控件使用专用的消息加号图标。 `Codex` 仅保留在标识外部导入源或设计参考的位置。** | 从产品表面删除意外的第三方品牌和矢量近似，同时保留导入兼容性和 Codex 派生的布局系统 |
+| D135 | 独特的侧边栏任务状态指示器 | **对话行保留一个紧凑的前导状态槽，具有语义、形状不同的状态：中性重音轮廓环表示选定，警告橙色呼吸点表示正在进行，成功绿色检查表示已完成，错误红色圆圈警报表示失败。优先级是进行中、选择，然后是最新的最终结果。开始新的回合会清除之前的结果；中止不会产生失败。每个状态都有本地化的可访问文本，并且减少的运动使正在进行的点静态。** | 先前的运行点重复使用了重音标记，并在空闲时消失，使得选定的、活动的工作、完成和失败难以通过超过行背景来扫描或区分 |
 
-## H. Baseline 0.4.4 composer decisions
+## H. 基线 0.4.4 输入框决定
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D095 | Remove composer workspace context rail | **The home and thread-docked composer variants never render the passive project / Local / branch rail or reserve layout/elevation for it. Project selection, session binding, branch metadata, and workspace-scoped tools remain available through non-composer surfaces. This supersedes the context-rail portions of D052, D055, D056, D066, D067, and D087.** | The rail duplicated navigation, showed two passive values, and could display misleading fallback branch metadata while consuming prompt space |
+| D095 | 删除输入框工作区上下文栏 | **主目录和线程对接的输入框变体永远不会渲染被动项目/本地/分支轨道或为其保留 layout/elevation。项目选择、会话绑定、分支元数据和工作区范围的工具仍然可以通过非编写器界面使用。这取代了 D052、D055、D056、D066、D067 和 D087 的上下文轨道部分。** | 轨道重复导航，显示两个被动值，并且可以在消耗提示空间的同时显示误导性的后备分支元数据 |
 
-## I. Baseline 0.4.5 thinking-mode decisions
+## 一、基线0.4.5思维模式决策
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D096 | End-to-end thinking mode | **Thinking level is session-scoped with canonical values `off|minimal|low|medium|high|xhigh|max`; capability resolution and nearest-level clamping drive the Composer and pi request; thinking streams and persists separately from final answer text; schema v3 and protocol v2 carry the new fields.** | Restore reasoning controls only after model capability, persistence, IPC, sidecar, pi runtime, event, storage, and transcript paths are all operational |
-| D102 | Custom provider thinking presets | **Settings expose Off / On-off only / Graded (plus advanced custom lists). On-off only persists `supportedThinkingLevels: ["off","high"]`; Graded clears the sparse override and uses the conservative default set; Composer renders only the resolved set and never invents graded options for boolean-like models such as mimo.** | Custom OpenAI-compatible endpoints often expose boolean thinking rather than a full effort ladder |
+| D096 | 端到端的思维模式 | **思维水平是会话范围的，规范值“off” \| 最小的 \| 低 \| 中等 \| 高 \| 高 \| 最大`;能力分辨率和最近级别钳位驱动 Composer 和 pi 请求；思维与最终答案文本分开并持续存在；模式 v3 和协议 v2 携带新字段。** | 仅在模型功能、持久性、IPC、sidecar、pi 运行时、事件、存储和转录路径全部可操作后恢复推理控制 |
+| D102 | 自定义提供商思维预设 | **设置显示“关闭”/“仅限开关”/“分级”（以及高级自定义列表）。开关仅持续 `supportedThinkingLevels: ["off","high"]`； Graded 清除稀疏覆盖并使用保守的默认集； Composer 仅渲染已解析的集合，并且从不为类似布尔的模型（例如 mimo）发明分级选项。** | 与 OpenAI 兼容的自定义端点通常会暴露布尔思维，而不是完整的努力阶梯 |
 
-## K. Work panel decisions
+## K. 工作小组的决定
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D097 | Docked work panel replaces context panel | **The right side hosts a docked, drag-resizable (320–min(720px, 60vw)) work panel with Review / Terminal / Browser / Files tabs, toggled by the titlebar button or Cmd/Ctrl+J; `{open, tab, width}` persist in localStorage. The former ContextPanel overlay and its `context.*` copy are removed; workspace/model/status live in composer chips and Settings.** | Codex-parity working surface for inspecting agent output; the info-only overlay duplicated data available elsewhere |
-| D098 | Review tab reads the git working tree *(superseded by D180)* | **Historical decision: Review rendered the workspace's uncommitted state through the git CLI.** | Superseded because commits erased message-level evidence and could not support safe per-message rollback |
-| D099 | Terminal tab is a real PTY *(superseded by D251)* | **Historical decision: the former work panel exposed an interactive shell as a session-scoped terminal tab.** | The current product removes that separate shell surface; Agent Bash remains non-interactive and transcript-owned |
-| D100 | Browser tab embeds a WebContentsView | **The preview browser is a main-process WebContentsView with renderer-driven bounds sync, hardened (deny popups→external, deny permission requests, http(s)-only navigation, isolated persist partition); it hides while blocking overlays (palette, permission dialog, settings) are open. The user drives it; the agent does not.** | Recommended modern embedding without webview-tag caveats; hide rules resolve its compositor z-order over renderer overlays |
-| D138 | Session-scoped inline permission requests | **Tool approval is an inline PermissionCard owned by its originating `sessionId`, never a global dialog. Different sessions retain independent pending requests and absolute timeout deadlines; background message/tool/permission events update only scoped state and never activate, cover, or focus another conversation. Resolution and cleanup match both session and request identity. This supersedes only D100's permission-dialog overlay/hide clause; palette, search, settings, and other blocking surfaces retain their existing browser hide behavior.** | Concurrent agents must not steal the active workflow or overwrite each other's approval requests; the existing protocol already carries the required session/request identity. |
-| D139 | Navigation intent and shortcut event guards | **Every explicit session, project, page, fork, or history navigation begins or reuses one renderer navigation intent; asynchronous work commits visible state only while that intent remains current. Global shortcuts ignore modifier-only and IME composition events, while history navigation also ignores key-repeat events.** | Late session/project loads and incomplete keyboard events must not cause unexplained page or history jumps. |
-| D128 | Artifact-driven work panel tabs (shortcut clause superseded by D207) | **The work panel has no empty manual entry point, welcome chooser, titlebar/menu command, or Cmd/Ctrl+J shortcut. A file/URL/BrowserPreview/successful-command artifact creates and activates a closeable top tab; successful active-session workspace Write/Edit artifacts create and activate the singleton Review tab. File tabs are keyed by lexically normalized path, singleton tool tabs deduplicate, closing the active tab selects its right neighbor then left, closing the last tab hides the panel, and the sole panel-level control collapses it without deleting retained runtime tabs. Changing the visible session or workspace closes and clears tabs so relative resources never cross context boundaries. Startup is closed with no tabs; only panel width persists, while temporary OS-window expansion is excluded from launch bounds. Background-session, failed, and scratch writes do not steal focus. This supersedes D097's fixed tab entry points and `{open, tab}` persistence, refines D098's automatic refresh, and supersedes only D112's welcome-chooser clause.** | Match Codex's output-driven work surface, avoid an empty tool launcher, and make each visible tab correspond to work the session actually produced or explicitly previewed. D128 corrects the initially duplicated D119 identifier; D119 remains the transcript file-store decision. |
-| D140 | Session-owned dirty-workspace transcript review entry *(superseded by D179)* | **After a session produces a successful workspace Write/Edit, its transcript ends with one explicit Review changes command outside collapsed activity groups while that Git working tree remains dirty; other sessions in the same project do not inherit the command. It reports the capped file count and addition/deletion totals and creates, reopens, or activates D128's singleton Review tab. The entry and Review share one workspace-keyed diff refreshed on workspace activation, successful Write/Edit/Bash completion (500ms debounce), explicit Review refresh, and window focus; sequenced requests discard prior-workspace responses. Clean and non-Git results clear review ownership for that workspace; clean, non-Git, missing-workspace, and failed-refresh states hide the entry. Review ownership is renderer-memory state discarded on relaunch with D142's work-panel contexts. This is a contextual artifact/status entry, not the empty manual launcher forbidden by D128.** | Automatic panel opening alone leaves no discoverable return path after collapse or tab close, while session ownership prevents unrelated conversations from claiming project-wide edits. Sharing the real diff makes the conversation entry accurate and keeps Review deduplicated. |
-| D179 | Message-scoped inline review cards *(superseded by D180)* | **Historical decision: each successful workspace Write/Edit row rendered a card by matching the current workspace diff.** | Superseded because current Git state disappears after commit and cannot provide message-owned rollback |
-| D180 | Message-owned review snapshots and guarded rollback | **Successful workspace Write/Edit results carry bounded `details.review` evidence: snapshot id, message/tool id, path, operation, added/modified/deleted status, +/− counts, hunks, and rollback state. The host stores pre-tool bytes and before/after hashes outside the workspace under the session, and the renderer derives the adjacent card and chronological Review history from transcript messages only. `review.rollback` verifies the current post-tool hash before restoring prior bytes or removing a newly-created file; conflicts never overwrite later edits. Session deletion and startup cleanup remove snapshots; forked evidence is visible but non-reversible.** | A message-owned snapshot survives Git commits, separates same-path edits, and makes rollback explicit without trusting mutable repository state |
-| D142 | Session-scoped work-panel runtime contexts (no-launcher clause amended by D207) | **Each conversation owns an in-memory work-panel context containing open state, ordered tabs, active tab, and Browser resource. Session selection atomically projects that context, switching away never deletes it, and switching back restores it. File/URL/BrowserPreview/command/Review artifacts are recorded against their originating `sessionId`; BrowserPreview renderer events therefore carry `sessionId`. Background artifacts may update their retained context but never open, activate, resize, navigate, or focus the visible panel. A workspace selection without an active conversation hides the panel, and relative resources remain bound to their session/workspace. Relaunch discards every context and Browser resource; only panel width persists. This supersedes only D128's requirement to close and clear tabs when the visible session or workspace changes; D128's artifact triggers, deduplication, and close/collapse behavior remain unchanged, while D207 adds an active-session shortcut that only reveals the retained context. No process ownership boundary changes.** | Permission-gated tools can finish while another conversation is loading or visible. A global destructive tab set either flashes open before being cleared or loses the originating conversation's tools; session-keyed renderer state preserves continuity without allowing background work to steal focus or making transient resources durable. |
-| D154 | Work-panel activity rail and resource switcher | **Once an artifact has opened the work panel, a 44px activity rail exposes Review, Terminal, and Browser as one-click 32px tool buttons; opening a missing tool still uses D128's `openWorkPanelTab` path. The 46px content header shows and closes the active resource and exposes a bounded keyboard-operable switcher for every open tool/file resource. The panel minimum becomes 364px so the rail preserves the previous 320px content floor *(width clamp superseded by D167)*. This replaces the horizontally scrolling top tabs and hidden empty-header context menu while preserving D128's artifact-driven panel entry, resource deduplication/order, close-neighbor behavior, and session-scoped runtime ownership.** | High-frequency tools should be visible and spatially stable, while long or numerous file names need a labeled overflow surface rather than compressing every action into one titlebar row. |
-| D157 | One visual assistant turn per user turn | **Provider-level assistant messages separated by thinking/tool activity remain distinct canonical transcript records, but ChatTranscript composes all records after one user message and before the next into one `role=article` assistant turn. Ordered markdown fragments and activity disclosures remain visible; only the composed turn owns the trailing aggregate model/usage row and Copy/Fork/Retry toolbar. Copy joins all contentful fragments with paragraph breaks; Fork and Retry use the last contentful assistant record as their durable boundary.** | Tool-capable providers close and reopen assistant messages around every tool call. Rendering those transport boundaries as separate responses duplicated action toolbars and made one agent run look like many AI replies. |
-| D162 | Latest-wins cached session switching | **The renderer marks the newest selected row immediately, coalesces session-detail prefetch/load work, retains an LRU-style five-transcript memory cache, and starts the newest transcript read without waiting for superseded reads. Workspace alignment may overlap transcript IO; navigation generations gate the atomic visible commit. ChatSurface keeps the previous complete view non-interactive while React defers a changed session tree, then paints the destination at its final record. Cached snapshots are always revalidated.** | The former global selection promise queue made every click wait behind obsolete full-transcript JSONL reads, while one synchronous long Markdown commit delayed visible feedback. Latest-wins IO plus a stable deferred frame matches Codex-style navigation without weakening session/workspace isolation. |
-| D156 | Independent native-window and work-panel resize ownership | *(responsive-clamp and no-native-reservation clauses superseded by D163)* **Electron Main exclusively owns BrowserWindow bounds at a 1040x700 minimum, while the renderer owns a persisted preferred work-panel width. The divider uses anchored, frame-coalesced preview and commit-on-release; Escape, pointer cancellation, and lost capture roll back. Native window-edge resize never rewrites the panel preference. This supersedes D083's restore minimum and removes the `window/resizeBy` delta channel and resize-attribution heuristic.** | Circular ownership made divider release resize the OS window a second time, introduced async races and platform differences, moved windows near display edges, and rewrote a panel preference during unrelated native resize. |
-| D163 | Native width reservation for the fixed work panel | *(width range superseded by D167)* **An open docked panel keeps one committed fixed width in `364..720`; native window/sidebar changes never clamp it. Renderer sets the visible target through idempotent `window/setWorkPanelReservation({width: 0 | 364..720}) -> {requested, reserved}`: open requests the committed width, collapse/final close requests zero, and divider commit updates it. In normal state Main adds available native work-area width and reverses it symmetrically, so chat stays stable when the full target fits; otherwise the panel remains fixed and chat absorbs `requested - reserved`. Native edges resize chat only. Maximized/fullscreen requests defer until normal; display/work-area changes reconcile the target against current available width without reapplying it during ordinary same-display movement. Persisted base bounds exclude reservation width and its x shift, and background artifacts cannot alter the visible reservation. This supersedes ADR 0029/D156 clauses that clamp the panel inside current client width or prohibit panel-driven target geometry, while preserving Main bounds ownership and divider gesture rules (ADR 0032).** | A docked tool should not take width from chat when the display can extend the normal window, and resizing chat should never squeeze the tool. A bounded target-state reservation provides Codex-like behavior without restoring non-idempotent deltas or circular preference updates. |
-| D167 | Slimmer default work-panel width | **The docked work panel opens at a 280px committed default (one third narrower than D163's 420px) and clamps to `244..720px`; the renderer constant, the Electron reservation validator, and the `.work-panel` CSS floor share those bounds. Double-click on the divider restores 280px. The 44px-rail-plus-320px-content rationale behind D154's 364px floor no longer applies now that tools live in the header switcher, so the floor scales with the default. Persisted wider widths stay valid and are unchanged on upgrade; the 720px maximum, divider gesture rules, and native reservation lifecycle are unchanged (D255, ADR 0122).** | The panel opened wider than most review/terminal/file content needs, taking readable width from chat inside the fixed client area, and the old 364px floor made a narrower default unreachable. |
-| D255 | Restore native reservation while the work panel is visible | **Keep the work panel as an in-flow fixed-width renderer column, but request its committed width through `window/setWorkPanelReservation` before presenting it. Keep the panel mounted during exit, then request zero and unmount only after the reservation succeeds. The native window therefore grows to preserve MainChat width while the panel is visible when the display work area allows it, and collapses symmetrically back to the base bounds when the panel is folded or closed. Constrained work areas retain the existing capped reservation and chat shortfall; persisted bounds exclude temporary reservation geometry. This supersedes ADR 0033's no-native-expansion decision without changing the IPC shape, Browser measured-bounds path, Main-owned edge resize, or session-scoped panel state.** | The fixed-window dock left the application window wider after the user collapsed the panel, causing MainChat to occupy the released right-column width instead of returning to the chat-only window bounds. |
-| D256 | Native taskbar minimize for Windows/Linux window controls | **Amend D216 / D252 and ADR 0078 / ADR 0117: Windows/Linux renderer and native-menu `minimize` actions call Electron's native minimize transition, and their `minimize` event is not converted to `hide()`, so the taskbar entry remains available. macOS native minimize remains tray-resident. Windows/Linux close behavior remains D230 / ADR 0090: the close button hides to the tray only for `tray` and exits for `quit`. No IPC action, storage, host protocol, or background-process contract changes.** | The custom top-right minimize button was using the same tray-hide effect as close-to-tray, so users lost the normal taskbar restore path even though close behavior was already configurable. |
-| D258 | Transcript layout index, one window coordinate space, and identity truncation | **Refine ADR 0120: host-core keeps a per-session transcript layout (byte offset of every message and compaction line plus the `file_len` those offsets were recorded against) and serves a bounded window by seeking to its first selected line, so opening a session costs the window instead of the whole history. The layout is an in-memory cache of derived data: growth scans only the tail, shrink or replacement rescans, and every rewrite/delete path drops the entry; a torn trailing line stays outside both the offsets and `file_len`. Lines are classified by one depth-aware scan for the top-level `type` key rather than parsed, so a nested `type` inside an open-ended tool result or checkpoint detail cannot decide a line kind; `type` is now written first so the scan usually stops at the first key, and legacy lines that carry it after their payload are read by the same scan. Read windows are physical message-line positions clamped against the layout and never against `last_seq`, whose deduplicated count sits permanently below the file whenever an append's index commit was lost - which had been cutting the newest messages out of the tail. The compaction chain is still returned whole with any window. `agent/prompt` gains `truncateFromMessageId`, resolved by the host against its own transcript and rejected with `NOT_FOUND` when unknown, replacing a `messageStart + userIndex` sum that mixed file offsets with renderer array indices. Recording a forked child (list row, cached transcript, checkpoint marks) becomes unconditional while only the visible switch stays gated on the D139 navigation intent.** | ADR 0120 bounded the payload but left a full sequential scan to locate each page, so long sessions still opened slowly and degraded as they grew; and two coordinate-space confusions were silently losing the newest messages and truncating the wrong turn on a paged transcript (ADR 0127) |
-| D259 | Bounded shared budget for transient provider failures | **Amend D186 / D245 and ADR 0050 / ADR 0091: non-429 transient provider failures share one bounded logical-turn budget of four retries after the initial attempt, for five provider attempts total, shared across request setup and stream delivery. The budget admits exactly `NETWORK_ERROR`, `TIMEOUT`, `STREAM_FAILED`, and retryable `PROVIDER_ERROR`; `PROVIDER_ERROR` is now retried in the stream phase as well as during setup, so an upstream gateway 502/503/504 recovers wherever it lands. Non-429 delay honors `retry-after-ms`, `retry-after` seconds, then HTTP-date before a deterministic 1s/2s/4s/8s schedule, capped at 8 seconds, and captured headers are retained for every status that can state a delay (429, 408, 409, 5xx). Only the failed request is replayed; the session, transcript, and completed tool calls are untouched. The main session, builtin subagents, and one-shot composer enhancement share the same codes, budget size, and precedence. The 429 five-retry budget stays separate and the two do not draw from each other. Exhaustion records `retryAttempt: 4`. No IPC, storage, host protocol, or provider-config change.** | A relay answering `OpenAI API error (502): {"type":"api_error","message":"Upstream API request failed."}` reports a momentary upstream outage, but the split one-retry-per-phase policy turned a second 502 into a terminal error card and never replayed a mid-stream 502 at all, while subagents refused any non-request-phase transient retry. One shared bounded budget recovers ordinary gateway flapping without hiding a persistent outage. |
-| D164 | Dual-locale in-app product changelog | **Product "what's new" text for app updates is maintained as a dual EN/zh-CN catalog in `packages/shared` (`CHANGELOG`). Electron Main formats notes for the discovered `availableVersion` using the product UI locale and attaches them as optional `UpdateState.releaseNotes` plain text on the existing updates IPC/event path. The ambient banner and Settings → Info Updates row show a compact What's new section when notes exist. English is the source of truth; zh-CN mirrors versions and highlight counts. GitHub auto-generated release bodies remain web-only and are not the in-app source. No new feed URL, notes channel, or renderer-owned remote fetch is introduced (extends D120 / ADR 0022).** | Users need bilingual release highlights at update time without a second network surface or weakening Main's sole ownership of update delivery. |
-| D357 | Viewport-fixed work panel toggle | **Amend D128 / D207 / D221 and ADR 0068 / ADR 0085: AppShell owns one viewport-fixed toggle at the top-right of every non-Settings route. It is the pointer equivalent of `Cmd/Ctrl + J` — reveal the active session's retained context without creating a tab, collapse a visible panel without deleting tabs, disabled with no session. It is the sole panel-level collapse control. Windows/Linux window controls stay viewport-fixed; while the panel is open the header reserves that band plus the toggle. No host protocol, IPC channel, or native application-menu command. Artifact-driven tabs and session-scoped contexts are unchanged.** | The shortcut-only entry left the panel undiscoverable for pointer users. A Cmd/Ctrl+J equivalent is not D097's empty fixed-tab launcher. See ADR 0195 and E2E-056. |
+| D097 | 停靠的工作面板取代了上下文面板 | **右侧托管一个停靠的、可拖动调整大小（320 分钟（720px，60vw））的工作面板，其中包含“审阅”/“终端”/“浏览器”/“文件”选项卡，可通过标题栏按钮或 Cmd/Ctrl+J 进行切换； `{open, tab, width}` 保留在 localStorage 中。以前的 ContextPanel 覆盖层及其 `context.*` 副本被删除； workspace/model/status 存在于输入框芯片和设置中。** | 用于检查药剂输出的 Codex 同等工作表面；仅提供信息，覆盖其他地方可用的重复数据 |
+| D098 | Review 选项卡读取 git 工作树 *（由 D180 取代）* | **历史性决定：通过 git CLI 审核呈现工作区的未提交状态。** | 被取代，因为提交删除了消息级证据并且无法支持安全的每消息回滚 |
+| D099 | 终端选项卡是真正的 PTY（已由 D251 取代） | **历史决策：旧版工作面板曾提供按会话范围保留的交互式 shell 选项卡。** | 当前产品移除了独立 shell 表面；Agent Bash 仍是非交互式并归对话所有 |
+| D100 | 浏览器选项卡嵌入 WebContentsView | **预览浏览器是一个主进程 WebContentsView，具有渲染器驱动的边界同步、强化（拒绝弹出窗口→外部、拒绝权限请求、仅限 http(s) 导航、隔离持久分区）；当阻止覆盖（调色板、权限对话框、设置）打开时它会隐藏。用户驾驶它；代理没有。** | 推荐现代嵌入，无需 webview-tag 警告；隐藏规则通过渲染器覆盖解析其合成器 z 顺序 |
+| D138 | 会话范围的内联权限请求 | **工具批准是其原始 `sessionId` 拥有的内联 PermissionCard，而不是全局对话框。不同的会话保留独立的待处理请求和绝对的超时期限；后台 message/tool/permission 事件仅更新范围内的状态，并且从不激活、覆盖或聚焦其他对话。解析和清理与会话和请求身份相匹配。这仅取代 D100 的权限对话框 overlay/hide 子句；调色板、搜索、设置和其他阻塞表面保留其现有的浏览器隐藏行为。** | 并发代理不得窃取活动工作流程或覆盖彼此的批准请求；现有协议已携带所需的 session/request 身份。 |
+| D139 | 导航意图和快捷方式事件防护 | **每个显式会话、项目、页面、分支或历史导航都开始或重用一个渲染器导航意图；异步工作仅在该意图保持当前状态时提交可见状态。全局快捷键忽略仅修饰符和 IME 组合事件，而历史导航也忽略按键重复事件。** | 延迟的 session/project 加载和不完整的键盘事件不得导致无法解释的页面或历史跳转。 |
+| D128 | 工件驱动的工作面板选项卡（由 D207 取代的快捷方式子句） | **工作面板没有空的手动入口点、欢迎选择器、titlebar/menu 命令或 Cmd/Ctrl+J 快捷方式。 file/URL/BrowserPreview/successful-command 工件创建并激活可关闭的顶部选项卡；成功的活动会话工作区 Write/Edit 工件创建并激活单例“审阅”选项卡。文件选项卡由词法规范化路径键入，单例工具选项卡重复数据删除，关闭活动选项卡选择其右侧邻居然后选择左侧，关闭最后一个选项卡隐藏面板，唯一的面板级控件将其折叠，而不删除保留的运行时选项卡。更改可见会话或工作区会关闭并清除选项卡，因此相关资源永远不会跨越上下文边界。启动关闭，没有任何选项卡；只有面板宽度仍然存在，而临时操作系统窗口扩展被排除在启动范围之外。后台会话、失败和临时写入不会抢走焦点。这取代了 D097 的固定选项卡入口点和 `{open, tab}` 持久性，改进了 D098 的自动刷新，并且仅取代了 D112 的welcome-chooser 子句。** | 匹配 Codex 的输出驱动工作界面，避免空工具启动器，并使每个可见选项卡对应于会话实际生成或显式预览的工作。 D128 纠正最初重复的 D119 标识符； D119 仍然是记录文件存储决策。 |
+| D140 | 会话拥有的脏工作区成绩单审核条目*（由 D179 取代）* | **会话成功生成工作区 Write/Edit 后，其记录以折叠活动组之外的一个明确的“审阅更改”命令结束，而 Git 工作树仍然是脏的；同一项目中的其他会话不会继承该命令。它报告上限文件计数和 addition/deletion 总数，并创建、重新打开或激活 D128 的单个“审阅”选项卡。条目和审阅共享一个工作区键控差异，在工作区激活、成功 Write/Edit/Bash 完成（500 毫秒去抖）、显式审阅刷新和窗口焦点时刷新；排序的请求会丢弃先前的工作空间响应。干净和非 Git 结果明确了该工作区的审查所有权； clean、non-Git、missing-workspace 和 failed-refresh 状态会隐藏该条目。审查所有权是在使用 D142 工作面板上下文重新启动时丢弃的渲染器内存状态。这是上下文 artifact/status 条目，而不是 D128 禁止的空手动启动器。** | 自动面板打开在折叠或选项卡关闭后不会留下可发现的返回路径，而会话所有权可防止不相关的对话声明项目范围的编辑。共享真实的差异可以使对话条目准确并保持评论的重复数据。 |
+| D179 | 消息范围内联审核卡*（由 D180 取代）* | **历史决策：每个成功的工作区 Write/Edit 行通过匹配当前工作区差异来呈现一张卡片。** | 已被取代，因为当前的 Git 状态在提交后消失并且无法提供消息拥有的回滚 |
+| D180 | 消息拥有的审查快照和受保护的回滚 | **成功的工作区 Write/Edit 结果携带有界 `details.review` 证据：快照 id、message/tool id、路径、操作、added/modified/deleted 状态、+/- 计数、块和回滚状态。主机在会话下的工作区之外存储工具前字节和 before/after 哈希值，渲染器仅从转录消息中导出相邻卡片和按时间顺序排列的查看历史记录。 `review.rollback` 在恢复之前的字节或删除新创建的文件之前验证当前的后工具哈希；冲突永远不会覆盖以后的编辑。会话删除和启动清理删除快照；分叉证据是可见的，但不可逆。** | 消息拥有的快照在 Git 提交后仍然存在，分离相同路径的编辑，并在不信任可变存储库状态的情况下显式回滚 |
+| D142 | 会话范围的工作面板运行时上下文（D207 修订的无启动器条款） | **每个对话都拥有一个内存中的工作面板上下文，其中包含打开状态、有序选项卡、活动选项卡和浏览器资源。会话选择自动投影该上下文，切换不会删除它，切换回来会恢复它。 File/URL/BrowserPreview/command/Review 工件是根据其原始 `sessionId` 记录的；因此，BrowserPreview 渲染器事件携带 `sessionId`。背景工件可能会更新其保留的上下文，但永远不会打开、激活、调整大小、导航或聚焦可见面板。没有活动对话的工作区选择会隐藏面板，并且相关资源仍然绑定到其 session/workspace。重新启动会丢弃所有上下文和浏览器资源；只有面板宽度仍然存在。这仅取代了 D128 在可见会话或工作区更改时关闭和清除选项卡的要求； D128 的工件触发器、重复数据删除和 close/collapse 行为保持不变，而 D207 添加了一个仅显示保留上下文的活动会话快捷方式。没有流程所有权边界变化。** | 权限控制工具可以在另一个对话正在加载或可见时完成。全局破坏性选项卡集要么在被清除之前闪烁打开，要么丢失原始对话的工具；会话键控渲染器状态可保持连续性，而不会允许后台工作窃取焦点或使瞬态资源持久。 |
+| D154 | 工作面板活动导轨和资源切换器 | **一旦工件打开工作面板，44px 活动栏就会将“审阅”、“终端”和“浏览器”显示为一键式 32px 工具按钮；打开丢失的工具仍使用 D128 的 `openWorkPanelTab` 路径。 46px 内容标题显示并关闭活动资源，并为每个打开的 tool/file 资源公开一个有界的键盘可操作切换器。面板最小值变为 364 像素，因此导轨保留了之前的 320 像素内容地板*（宽度夹被 D167 取代）*。这取代了水平滚动的顶部选项卡和隐藏的空标题上下文菜单，同时保留了 D128 的工件驱动面板条目、资源 deduplication/order、近邻行为和会话范围的运行时所有权。** | 高频工具应该是可见的并且空间稳定，而长或大量的文件名需要一个带标签的溢出表面，而不是将每个操作压缩到一个标题栏行中。 |
+| D157 | 每个用户轮一次视觉助理轮 | **由 thinking/tool 活动分隔的提供商级助理消息仍然是不同的规范转录记录，但 ChatTranscript 将一条用户消息之后和下一条消息之前的所有记录组成一个 `role=article` 助理轮次。有序的降价片段和活动披露仍然可见；只有组合回合拥有尾随聚合 model/usage 行和 Copy/Fork/Retry 工具栏。复制用段落分隔符连接所有内容丰富的片段； Fork 和 Retry 使用最后一个内容丰富的辅助记录作为其持久边界。** | 具有工具功能的提供商会关闭并重新打开每次工具调用时的辅助消息。将这些传输边界渲染为单独的响应会重复操作工具栏，并使一个代理运行看起来像许多 AI 回复。 |
+| D162 | 最新胜出的缓存会话切换 | **渲染器立即标记最新选定的行，合并会话详细信息 prefetch/load 工作，保留 LRU 样式的五转录本内存缓存，并开始最新的转录本读取，而无需等待被取代的读取。工作区对齐可能与转录本 IO 重叠；导航世代门控原子可见提交。 ChatSurface 保持先前的完整视图为非交互式，而 React 推迟更改的会话树，然后在其最终记录处绘制目的地。缓存的快照始终会重新验证。** | 以前的全局选择承诺队列使每次点击都在过时的完整转录 JSONL 读取后面等待，而一次同步长 Markdown 提交会延迟可见反馈。最新获胜的 IO 加上稳定的延迟帧与 Codex 风格的导航相匹配，而不会削弱 session/workspace 隔离。 |
+| D156 | 独立的本机窗口和工作面板调整所有权大小 | *（responsive-clamp 和 no-native-reservation 子句被 D163 取代）* **Electron Main 独家拥有最小 1040x700 的 BrowserWindow 边界，而渲染器拥有持久的首选工作面板宽度。分隔线使用锚定、帧合并预览和发布时提交；转义、指针取消和丢失捕获回滚。本机窗口边缘大小调整永远不会重写面板首选项。这取代了 D083 的恢复最小值并删除了 `window/resizeBy` 增量通道和调整大小属性启发式。** | 循环所有权使分隔符释放第二次调整操作系统窗口大小，引入异步竞争和平台差异，将窗口移动到显示边缘附近，并在不相关的本机调整大小期间重写面板首选项。 |
+| D163 | 固定工作面板的原始宽度预留 | *（由 D167 取代的宽度范围）* **开放式对接面板在 `364..720` 中保留一个承诺的固定宽度；本机 window/sidebar 更改永远不会限制它。 Renderer 通过幂等`window/setWorkPanelReservation({width: 0 | 364..720}) -> {请求，保留}`: open requests the committed width, collapse/final close requests zero, and divider commit updates it. In normal state Main adds available native work-area width and reverses it symmetrically, so chat stays stable when the full target fits; otherwise the panel remains fixed and chat absorbs `请求 - 保留`。本机边缘仅调整聊天大小。 Maximized/fullscreen 请求推迟到正常； display/work-area 更改可根据当前可用宽度协调目标，而无需在普通的同一显示移动期间重新应用它。持久基址边界不包括预留宽度及其 x 偏移，并且背景伪影无法更改可见预留。这取代了 ADR 0029/D156 子句，这些子句将面板固定在当前客户端宽度内或禁止面板驱动的目标几何图形，同时保留主边界所有权和分隔符手势规则 (ADR 0032)。** | 当显示可以扩展正常窗口时，停靠的工具不应占用聊天的宽度，并且调整聊天大小不应挤压该工具。有界目标状态保留提供类似 Codex 的行为，无需恢复非幂等增量或循环偏好更新。 |
+| D167 | 更窄的默认工作面板宽度 | **停靠的工作面板以 280px 承诺默认值打开（比 D163 的 420px 窄三分之一）并固定到 `244..720px`；渲染器常量、Electron 预留验证器和 `.work-panel` CSS 底层共享这些边界。双击分隔线可恢复 280 像素。由于工具位于标题切换器中，D154 的 364px 底面背后的 44px-rail-plus-320px-content 基本原理不再适用，因此底面按默认比例缩放。持续更宽的宽度仍然有效，并且在升级时保持不变；最大 720 像素、分隔符手势规则和惰性保留行为 (ADR 0033) 保持不变。** | 该面板的打开范围比大多数 review/terminal/file 内容需求更宽，从固定客户区域内的聊天中获取可读宽度，而旧的 364px 地板使得较窄的默认值无法到达。 |
+| D255 | 工作面板可见期间恢复原生预留 | **工作面板仍然是一个在流内、固定宽度的渲染器列，但在展示它之前先通过 `window/setWorkPanelReservation` 请求它已提交的宽度。退出期间保持面板挂载，等预留请求成功之后再请求零宽并卸载。因此在显示工作区域允许时，原生窗口会增长以在面板可见期间保住 MainChat 的宽度，并在面板折叠或关闭时对称地收回到基准边界。受限的工作区域保留既有的封顶预留和聊天区不足量；持久化的边界不含临时预留几何。这取代了 ADR 0033 的「不做原生扩展」决定，但不改变 IPC 形状、浏览器测量边界路径、Main 拥有的边缘拖拽，或会话范围的面板状态。** | 固定窗口的停靠方式在用户折叠面板之后让应用窗口仍然更宽，导致 MainChat 占用了让出的右列宽度，而不是回到只有聊天时的窗口边界。 |
+| D256 | Windows/Linux 窗口控件走原生任务栏最小化 | **修订 D216 / D252 与 ADR 0078 / ADR 0117：Windows/Linux 的渲染器与原生菜单 `minimize` 操作调用 Electron 的原生最小化过渡，且它们的 `minimize` 事件不再转换为 `hide()`，因此任务栏条目保持可用。macOS 的原生最小化仍然驻留托盘。Windows/Linux 的关闭行为仍遵循 D230 / ADR 0090：关闭按钮仅在 `tray` 时隐藏到托盘，在 `quit` 时退出。不改动 IPC 动作、存储、主机协议或后台进程约定。** | 自定义的右上角最小化按钮使用了与「关闭到托盘」相同的托盘隐藏效果，即使关闭行为本来就可配置，用户仍然失去了正常的任务栏恢复路径。 |
+| D258 | 记录布局索引、统一的窗口坐标系与身份截断 | **细化 ADR 0120：host-core 为每个会话维护一份记录布局（每条消息和压缩行的字节偏移，以及这些偏移所基于的 `file_len`），并通过定位到所选的第一行来提供有界窗口，因此打开会话的代价是窗口而不是整段历史。该布局是派生数据的内存缓存：增长只扫描尾部，收缩或替换则重扫，任何重写/删除路径都会丢弃条目；被截断的尾行同时排除在偏移和 `file_len` 之外。行的分类依靠一次感知深度的扫描来找顶层 `type` 键而不是解析整行，因此开放式工具结果或检查点细节里嵌套的 `type` 无法决定行类型；`type` 现在写在最前面，扫描通常在第一个键就停止，而把它写在负载之后的旧行由同一次扫描读取。读窗口是物理消息行位置，按布局而不是按 `last_seq` 夹取——只要某次追加的索引提交丢失，去重后的计数就会永久低于文件实际内容，而这一直在把最新消息从尾部切掉。压缩链仍然随任意窗口整体返回。`agent/prompt` 新增 `truncateFromMessageId`，由主机对自己的记录解析、未知时以 `NOT_FOUND` 拒绝，取代了把文件偏移与渲染器数组下标混在一起的 `messageStart + userIndex` 求和。记录一个分叉出的子会话（列表行、缓存记录、检查点标记）变为无条件执行，只有可见的切换仍受 D139 的导航意图约束。** | ADR 0120 限定了负载大小，但仍然留下一次完整的顺序扫描来定位每一页，因此长会话打开依然缓慢并随增长而恶化；而两处坐标系混淆一直在静默丢失最新消息，并在分页记录上截断了错误的回合（ADR 0127） |
+| D259 | 瞬时提供商故障的有界共享预算 | **修订 D186 / D245 与 ADR 0050 / ADR 0091：非 429 的瞬时提供商故障共享一份有界的逻辑回合预算，即首次尝试之后四次重试、总计五次提供商尝试，由请求建立与流传输共享。该预算只接纳 `NETWORK_ERROR`、`TIMEOUT`、`STREAM_FAILED` 和可重试的 `PROVIDER_ERROR`；`PROVIDER_ERROR` 现在在流阶段也会重试而不只是建立阶段，因此上游网关的 502/503/504 无论落在哪里都能恢复。非 429 的延迟依次遵循 `retry-after-ms`、`retry-after` 秒数、HTTP 日期，然后走确定性的 1s/2s/4s/8s 时间表，上限 8 秒；任何能声明延迟的状态（429、408、409、5xx）都会保留捕获到的头部。只重放失败的那次请求；会话、记录和已完成的工具调用不受影响。主会话、内置子代理和一次性输入框增强共享同一套错误码、预算大小与优先级。429 的五次重试预算保持独立，两者互不占用。耗尽时记录 `retryAttempt: 4`。不改动 IPC、存储、主机协议或提供商配置。** | 一个中继返回 `OpenAI API error (502): {"type":"api_error","message":"Upstream API request failed."}` 说明的是上游短暂中断，但按阶段各自一次重试的策略把第二个 502 变成了终止性错误卡，而且完全不会重放流中的 502，子代理则拒绝任何非请求阶段的瞬时重试。一份共享的有界预算能从普通的网关抖动中恢复，同时不隐藏持续性中断。 |
+| D164 | 双区域设置应用内产品变更日志 | **应用程序更新的产品“新增功能”文本作为 `packages/shared` (`CHANGELOG`) 中的双 EN/zh-CN 目录进行维护。 Electron 使用产品 UI 区域设置对发现的 `availableVersion` 进行主要格式注释，并将其作为可选 `UpdateState.releaseNotes` 纯文本附加到现有更新 IPC/event 路径上。当注释存在时，环境横幅和“设置”→“信息更新”行会显示一个紧凑的“新增功能”部分。英语是真理的源泉； zh-CN 镜像版本和突出显示计数。 GitHub 自动生成的发布主体仍然仅限于网络，而不是应用程序内源。未引入新的提要 URL、注释通道或渲染器拥有的远程获取（扩展 D120 / ADR 0022）。** | 用户在更新时需要双语发布亮点，而无需第二个网络表面或削弱 Main 对更新交付的唯一所有权。 |
+| D357 | 视口固定的工作面板开关 | **修订 D128 / D207 / D221 与 ADR 0068 / ADR 0085：AppShell 在每个非设置路由右上角拥有一个视口固定开关，等价于 Cmd/Ctrl+J：显示活动会话保留的面板上下文、收起可见面板、无会话时禁用。它是唯一的面板级收起控件。Windows/Linux 窗口控件保持视口固定。不改主机协议或 IPC。见 ADR 0195 与 E2E-056。** | 仅快捷键入口让指针用户发现不了面板。 |
 
-## L. Transcript presentation decisions
+## L. 成绩单呈现决策
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D101 | WorkBuddy-inspired transcript density | **User turns render as compact right-aligned soft plates (`min(78%, 560px)`, subtle border + hairline shadow). Assistant turns stay transparent full-width prose (max 720px). Message row vertical padding tightens to 10px. Hover/focus-within reveals quiet copy chips under each turn (right-aligned for user, left-aligned for assistant). Streaming assistant answers use a thin accent left rule. No mascot, reactions, or cost-chip UI yet.** *(amended by D323)* | Current right-aligned user bubbles were underspec'd and visually sparse versus WorkBuddy's task chat; denser plates improve scanability without abandoning the Codex/developer restraint |
-| D103 | Per-message model + token meta and retry | **Completed assistant turns surface modelId + token usage chips under the answer (tokens-only; hover breakdown for input/output/cache/reasoning). Usage is attached on runtime message_end from pi-ai Usage, persisted in message meta_json, and reloaded with the transcript. Action row adds Retry, which re-sends the nearest preceding user prompt. No currency pricing and no like/dislike.** | WorkBuddy per-message meta improves trust/scanability; token totals already flow from the provider while priced cost still needs a catalog |
-| D105 | In-place regenerate for assistant turns | **Regenerate truncates the session transcript to the nearest preceding user prompt (exclusive of that prompt and everything after), disposes the live pi-agent for the session, and re-sends the prompt so the new assistant/tool tail replaces the discarded branch instead of stacking a duplicate turn.** | Users expect regenerate to rewrite the current turn; append-only retry polluted long sessions and left stale answers above the redo |
-| D106 | Preserve user hard newlines in transcript | **User bubbles render plaintext with hard newlines intact. Composer only trims leading/trailing whitespace; transcript uses `message-user-text` with `white-space: pre-wrap` (no forced mid-glyph word-break) so multi-line prompts never collapse into one paragraph. Copy and session reload keep the original line breaks.** | Multi-line prompts (code snippets, lists, pasted blocks) are common in coding agents; collapsing newlines makes the transcript hard to re-read and re-edit |
-| D107 | Configuration provider studio | **Settings → Agent uses a compact provider studio: a Defaults card, separate vendor-account rows with edit/test/remove actions, modal add/edit dialogs, and card-based AI-service management with secret badges, test connection, and make-default/delete actions. This refines the Providers presentation inside the compact settings directory without adding rail destinations.** | Dense stacked forms, a redundant summary hero, and cramped list rows made multi-provider setup hard to scan and over-emphasized secondary fields |
-| D110 | Model configuration label + add-provider dialog | **Settings rail label for the agent destination is Model configuration (zh-CN: 模型配置). Adding a provider opens a modal dialog instead of an inline collapsible composer; the destination id remains `agent`.** | Clarify the model-setup purpose of the tab and reduce page churn while editing provider credentials |
-| D108 | Conversation minimap only when overflowing | **The left-edge conversation minimap rail renders only when at least two visible user/assistant messages exist and the transcript overflows one viewport (`scrollHeight > clientHeight`). Short one-page threads hide the rail; streaming growth, content resize, and window resize re-evaluate visibility.** | A navigation rail is noise when every message already fits on screen; overflow is the signal that jump/preview navigation is useful |
-| D109 | ChatGPT-style regenerate revision history | **Regenerate archives the discarded assistant/tool tail under a stable `revisionRootId` family in `message_revisions` (schema v4). The live root user turn carries `revisionCount` / `activeRevision` and a quiet `current / total` pager switches linear variants in place. First regenerate stores the original branch as revision 1; later regenerates append new branches and mark the newest active. No free-form branch tree.** *(amended by D307)* | Users expect regenerate to keep prior answers reachable like ChatGPT; D105 in-place rewrite alone deleted history that was still useful for comparison |
-| D111 | Empty home scroll stack | *(card-specific clauses superseded by D131)* **Empty chat home is a single scrollable vertical stack inside `home-main-content`. Short windows top-align and scroll; content stays in document flow and the home composer remains non-docked.** | Dual-grow + absolute portal let the home composer overlap guidance on shorter windows; flow layout preserves every remaining block without collision |
-| D112 | Readable chat beside the work panel | *(dynamic width clamp superseded by D163; welcome chooser superseded by D128)* **MainChat has a 360px readability target beside the panel. D163 preserves it through native width reservation whenever the display work area can supply the complete committed panel width; otherwise MainChat absorbs the unavoidable shortfall while the panel remains fixed.** | A panel-only width cap could leave roughly 109–205px for chat at supported window sizes; native reservation now preserves chat without compressing the tool surface. |
-| D113 | WorkBuddy-inspired local profile footer | **The expanded sidebar ends in a transparent 58px footer. Its 44px profile trigger contains a 30px circular local-user glyph, two-line `Custom` + `Local profile` / `本地配置` identity, and a chevron; a separate 32px Help shortcut opens Settings → Info. The 280px profile menu opens 8px above the footer with a repeated identity header, divider, and Settings / Logs / Theme actions, preserving Escape, outside-click, arrow-key, and focus-restore behavior. This supersedes D041; no cloud account, notification, share, or update capability is implied.** | Adapt WorkBuddy's avatar-and-actions footer grammar to PI-Desktop's truthful local-only capabilities while improving identity hierarchy and eliminating the stale cloud stand-in |
-| D137 | Glyph-only message toolbars; edit means edit-the-prompt | **Message toolbars carry icons only: the label lives in a CSS hover/focus tooltip (`data-tip`) plus `aria-label`, never as a visible chip caption (worded buttons stay only on error surfaces). Edit moves off the assistant answer onto the user turn: it opens the prompt in an inline textarea (slash turns seed the typed `command` form so the resend re-expands the template) and saving replays the D105/D109 regenerate path with the new text in the same session — the replaced prompt and its whole answer tail are archived as a revision, so the existing `current / total` pager walks back to the original. Editing the assistant's own text and its fork-into-a-child-session variant (D134) are dropped; Fork stays as the explicit divergence action.** | Four worded chips under every answer read as a sentence and crowded the transcript; and the useful correction is almost always "I asked it wrong", which users expect to re-run in place with history intact (ChatGPT semantics) rather than to hand-edit the model's words in a new session |
-| D165 | Safe lazy Mermaid diagrams in assistant answers | **A completed `mermaid` fence in assistant answer prose renders as a theme-aware SVG after entering the near-viewport band. Partial stream fences and all thinking prose stay source code. The renderer dynamically loads official Mermaid, serializes its global theme renders, caps source at 20,000 characters and edges at 500, locks strict/no-HTML/no-link configuration, and applies a second SVG-profile sanitizer. Invalid or oversized diagrams fall back to visible copyable source; the diagram toolbar toggles source and copies it.** | Diagrams improve architecture and flow explanations, but parsing partial streams or every offscreen historical fence would undermine direct-stream and fast-session-switch behavior. Strict bounded local rendering adds the capability without a new protocol, network, or Electron privilege boundary. |
-| D261 | The mounted transcript is a window, not the loaded history | **Refine ADR 0120 / D258 in the renderer: the mounted history is a trailing window over the loaded history — 15 rows in the first commit after a session switch, a 60-row steady state, grown 40 rows at a time. Reaching the top escalates in two stages: grow the window while it is partial, and call `loadOlder` only once the window covers all loaded history. Window growth and a fetched page take the same pre-paint scroll anchor, because both add height above the reading position. The window resets per session and is clamped to the loaded history, so a stale budget from the previous session cannot over-mount. The hydration spacer stays scoped to the first commit. The conversation minimap is built from the mounted entries rather than from every loaded message. No IPC, storage, host protocol, or pagination change.** | ADR 0120 bounded what crossed the IPC boundary and D258 bounded the cost of locating a page, but the renderer still mounted every row it had ever paged in and kept it mounted for the life of the session. `content-visibility: auto` skips layout and paint for those rows while retaining their React trees, Markdown ASTs, and Shiki token arrays — the wrong resource on a low-memory Windows machine, where the reported symptom was the chat area getting progressively less responsive in a long session. Windowing bounds retained memory and per-frame reconciliation together; feeding the minimap the full set would have drawn dashes whose click target no longer exists. |
-| D317 | Live/durable transcript merge keeps chronological order | **Amend ADR 0120 / D261 / ADR 0137 in the renderer: `mergeLiveSessionMessages` stitches a bounded durable `session.get` page onto the live snapshot in chronological order. Live rows older than the page stay before it; an optimistic user row or in-flight assistant/tool tail stays after it. Completed overlapping ids still prefer the durable row. Live-only rows are never appended after the durable page. A previously appended older prefix is healed back in front when its `createdAt` precedes the page. Renderer only: no IPC, storage, host-protocol, or pagination change.** *(amended by D324)* | A session that stayed open past the newest-100 page accumulated hundreds of live rows. Revalidation used the durable page as the array prefix and appended the rest, so D261's trailing mounted window painted old history and hid the just-sent prompt while the turn kept running. Abort then idle reload showed only the durable page, which is why the messages appeared to come back after Stop plus another switch. |
-| D324 | Idle session switch keeps a not-yet-flushed completed tail | **Amend D317 / ADR 0137 in the renderer: `selectSession` stitches the bounded durable page onto the live snapshot whenever the session is running or still has live provenance (`liveSessionTranscripts`). A completed assistant/tool row that the durable page does not yet contain stays. Live provenance is cleared only once that page already contains every live id, not merely because the turn ended. Renderer only: no IPC, storage, host-protocol, or pagination change.** | User prompts persist before the model runs; assistant/tool rows go through the async outbox and land after `message_end`. After `agent_end`, idle revalidation used the durable page only and dropped replies that were already on screen (issue #41). |
-| D327 | Completed replies survive process restart | **Amend D299 / ADR 0153 / ADR 0041: the finished `message_end` snapshot is checkpointed before the outbox append; `completed`/`error` `session.endTurn` deletes `.inflight.json` only when that id is already indexed; boot recovery skips completed leftovers so the outbox can append first; handshake awaits that drain then `session.recoverInflightMessages` promotes any leftover as `complete`. Additive RPC, no protocol or schema version change.** | The same user-only transcript as issue #41 after a full quit (issue #42): user rows are durable before the model runs, assistant/tool rows sit in the outbox, and D324's live merge does not survive process teardown. |
-| D444 | Cross-session message id collision remaps; outbox UNIQUE is not a pause | **Amend ADR 0041 / D327: `session.appendMessage` still treats an id already indexed in the same session as a no-op (or a terminal-assistant replacement of a streaming row). If that globally unique `messages.id` already belongs to another session, the host remaps to `{sessionId}:{id}` before writing JSONL or the index, and a later replay of the original id is also a no-op against the remapped row. Electron's persistence outbox treats `UNIQUE constraint failed: messages.id` as an idempotent ack and continues draining, so one colliding toolCallId cannot stall every later assistant/tool row or fill the 1024-entry cap. No protocol or schema version change.** | Provider tool rows used `toolCallId` (e.g. `call_421522`) as `messages.id`. Those ids are not globally unique. A collision failed SQLite after the JSONL write, the FIFO outbox paused on that head, later rows from every session never persisted, and a quit showed earlier history as gone (issue #523). |
-| D597 | Drain poison outbox entries; accept steering into a delivery turn | **Amend ADR 0041 / ADR 0239 / ADR active-turn-steering / D444: Electron's persistence outbox treats a host append whose message carries a `PERMISSION_DENIED:` prefix as a permanent rejection, drops that row, and keeps draining. `PLUGIN_PERMISSION_DENIED` and other failures still pause. Host provenance accepts `UiMessage.steering` into a claimed collaboration delivery turn when the target session matches, without stamping the delivery origin and after stripping any client-supplied `session_message`. Cross-session steering is still `PERMISSION_DENIED`. No protocol or schema version change.** | Alt+Enter into a session-collaboration delivery turn was rejected as a delivery mismatch, the outbox retried that head forever, filled to 1024, and later assistant/tool rows were discarded so the transcript kept only user messages. |
-| D328 | Parent-judged subagent lifetime | **Amend ADR 0089 / ADR 0119 / ADR 0129: idle and duration watchdogs are not armed; parent `agent_end` does not abort running delegates; the runtime keeps the durable turn open and prompts the parent with reports when they finish. `TaskWait` timeout and `TaskList` return a heartbeat (agent, status, elapsed, turns, last tool). Only `TaskStop` and user Stop abort a delegate. Explicit `maxTurns` and the concurrency cap of 10 stay. Runtime only: no IPC, storage, or host-protocol change.** *(amended by D352: a terminal parent error does abort leftover delegates and returns the session to idle)* | The parent cannot see live delegate work and treats `TaskWait` expiry as permission to finish, after which abort-on-end killed the unfinished job. Waiting is an event loop; models are not. |
-| D352 | Parent fatal error aborts leftover delegates | **Amend D328 / ADR 0166: parent idle still keeps the durable turn open and does not abort running delegates. A terminal parent provider/stream error (including exhausted HTTP 429), overflow-recovery failure, mutation-budget termination, or rejected prompt aborts leftover delegates, skips the D328 resume prompt, and emits `agent_end`. `isRunning` does not count leftover delegates after that error, so Continue is not `AGENT_BUSY`. A later `agent_end` must not overwrite the failed TurnOutcomeCard. Each new parent prompt bumps a turn epoch and only auto-resumes delegates started in that turn. Runtime and renderer only: no IPC, storage, or host-protocol change.** | After a parent 429 the UI showed Continue while a Gemini (or other) subagent kept the sidecar busy, so the next prompt was `session already has an active turn`. See ADR 0189 and E2E-155. |
-| D354 | Label both macOS release architectures | **Amend D353 / ADR 0145: both native macOS release lanes pass target-specific electron-builder patterns. Public assets are `PI-Desktop-<version>-arm64.dmg` / `PI-Desktop-<version>-arm64-mac.zip` and `PI-Desktop-<version>-x64.dmg` / `PI-Desktop-<version>-x64-mac.zip`. Generated per-architecture updater feeds retain these URLs and checksums. This changes release asset naming only; updater ownership, signing, and delivery mode remain unchanged.** | The arm64 asset `PI-Desktop-0.14.4.dmg` did not identify its architecture, while the x64 lane used a different `Intel` convention. Both public architectures need self-describing, standard labels. |
-| D353 | Disambiguate Intel macOS release artifacts | **Amend D285 / ADR 0145: the native macOS x64 release lane passes target-specific electron-builder patterns so its public assets are `PI-Desktop-<version>-Intel.dmg` and `PI-Desktop-<version>-Intel-mac.zip`. The generated `latest-mac-x64.yml` retains those URLs and checksums. The arm64 lane keeps the generic `PI-Desktop-<version>.dmg` and `PI-Desktop-<version>-mac.zip` names. This changes release asset naming only; updater ownership, signing, and delivery mode remain unchanged.** | Users could not reliably distinguish the Intel download from the arm64 download when both used generic version names. Naming the x64 assets at build time also prevents the updater feed from retaining stale pre-rename URLs. |
-| D329 | Agent-chosen Bash timeout | **Amend D190 / D273 / ADR 0054: Bash still defaults to 60 seconds. An explicit `timeout` is 1–21,600 seconds. A value above 21,600 is read as milliseconds, converted, and clamped to 21,600 seconds. In-range values including 600 and 1800 are seconds. Out-of-range values still fail before spawn. Timeout/abort still kills the process tree. Host-core `MAX_BASH_TIMEOUT_MS` matches. No protocol-version bump.** | The 300-second ceiling killed legitimate builds and rejected `timeout: 600` / `1800` (issue #44). A finite host bound remains so RPC cannot hang forever. |
-| D331 | Host-owned completed-turn token history | **Amend D103: parent `message.usage` stays pi-ai Usage for that assistant message. Subagent spend accumulates on the durable turn only. Electron sums parent `message_end` usages plus `turn_end.subagentUsage` into `session.endTurn.usage`. `stats.getTokenUsageHistory` rolls up completed turns over a bounded local-calendar window with filled `day` / ISO `week` / `month` buckets. Additive IPC/RPC and `idx_turns_ended_at`; no protocol or schema version bump. No currency pricing. The user-facing dashboard is plugin `pi.token-insights` (D335).** | The turns table was already the usage rollup, but Electron never sent `usage`, and merging subagent tokens into message chips would lie to the context inspector. |
-| D335 | Plugin-owned token usage dashboard | **Amend D331 / ADR 0171: Settings has no Usage destination. Global token history is marketplace plugin `pi.token-insights`. Host still persists `session.endTurn.usage` and exposes `stats.getTokenUsageHistory`. The plugin may fold host completed-turn remainders (including subagents) into its PI-Desktop fact cube without rewriting `message.usage`. No protocol or schema version bump.** | Settings duplicated a weaker heatmap the plugin already ships. See ADR 0173 and E2E-186. |
-| D326 | Withdraw A2A and Peer coordination | **Remove the Agent2Agent broker, `a2a.*` RPC domain, leftover `SubagentMailbox` / `Peer` tool, and parent/delegate `A2A` tools. Concurrent delegates coordinate only through parent `Task*` reports. Handshake `PROTOCOL_VERSION` 10→11 (no `"a2a"` capability). Storage `SCHEMA_VERSION` 12→13 drops the `a2a_*` tables. ADR 0165 supersedes 0147 / 0162 / 0164.** | The sibling and parent-to-parent channels sat beside `Task*` without a product need, and the model could miss or misuse them. |
-| D318 | Restore a missing sessions row from its transcript / outbox | **Amend ADR 0041 / D119 in host-core and Electron main: a live `sessions/<id>.jsonl` whose SQLite sessions row is gone is restored at host boot (`recover_orphaned_sessions`) and on `session.appendMessage`. Restore reinserts the row and rebuilds the search index from the file so append stays idempotent. If both the row and the file are gone, append inserts a stub row under the existing id so a queued outbox can drain. `session.delete` drops that session's outbox entries so a stub recreate cannot resurrect a user-deleted conversation. No protocol version, schema, or renderer change.** | A long running session could lose its `sessions` row (WAL/index loss) while turns stayed in `session-message-outbox.json`. `appendMessage` then failed `session not found`, the outbox paused at the head, the sidebar listed nothing, and the chat showed only the first flushed user row. Re-inserting the row let the outbox drain (issue #39). |
-| D262 | Spill large composer text pastes into session scratch | **Text-only composer pastes at or below the persisted `largePasteThreshold` remain native textarea input; the default is 600 characters and valid values are integers from 1 through 1,000,000. Above the threshold, the renderer sends exact UTF-8 `text/plain` bytes through the existing session paste bridge, Electron stores them under `<data_dir>/scratch/<sessionId>/pasted/`, and the Composer inserts a generated `@<temporary-name> ` token at the original selection. The renderer retains a session-scoped token-to-canonical-path mapping, resolves it in place exactly once before dispatch, and excludes it from duplicate attachment/fallback serialization. Existing clipboard file/image chips and bridge bounds remain unchanged; no workspace, artifact-store, host-protocol, or schema change.** | Very large native pastes are hard to edit and visually overwhelm the composer, while the existing session scratch flow already provides bounded, isolated storage and canonical path semantics without dirtying a project (ADR 0131).** |
-| D265 | One delegation reads as a card, like a fan-out | **Amends D201 / ADR 0062 in the renderer: every `Task` call in an activity group renders as a full-width delegation card — main-agent root, connector, one node per delegate — a lone delegation included, instead of falling back to a compact tool row. The aggregate header takes a count, so a single delegation is not announced in the plural: English gains `_one` forms and Chinese, which has one plural category, drops the English plural marker. Nothing else about the card changes, and no IPC, storage, host-protocol, or delegation-runtime change is implied.** *(amended by D319)* | Reserving the card for two or more delegates made the same work look like two different features, and the single case — the common one — was the one that lost the outcome, the recorded runtime and the delegate's step count (ADR 0062 §6). |
-| D319 | A delegation card is only the Task fan-out | **Amends D201 / D265 / ADR 0062 in the renderer: consecutive `Task` starts form their own activity group and are the only rows inside the delegation card. Parent thinking, workspace tools, and lifecycle rows (`TaskWait`/`TaskList`/`TaskStop`) stay in ordinary processing groups before and/or after that card, never on the topology tile. The card keeps 16px inset from its tile edge. A topology group stays live (open once, ticking elapsed from its own delegation timestamps) while any of its delegates is still running, even when the parent has already moved on to a later processing group in the same turn. Renderer only: no IPC, storage, host-protocol, or delegation-runtime change.** | Consecutive thinking and tool rows used to share one activity group, so a parent that kept working after `Task` painted its own Read/Grep/thinking flush against the subagent tile and labelled them “Subagent working”. The topology already names the main agent; the parent's later work belongs in the turn stream, not inside the card. |
-| D320 | Sent file references stay chips and open on click | **Amend D209 / ADR 0070 in the renderer and Electron main: a sent user turn parses serialized `@path` / `@"quoted path"` tokens and paints each as a composer-matching leaf-name chip (icon, ellipsized name, canonical path in tooltip/name). Workspace `.html`/`.htm` chips open the work-panel browser; every other allowed file opens with the OS default handler through `pi-desktop/fs/open`. That channel contains relative paths to the workspace and absolute paths to the workspace, `<data_dir>/scratch/`, or `<data_dir>/attachments/`. HTTP(S) URLs stay text links. Tool-row previews are unchanged. No host-protocol or storage schema change.** | Serialized full paths undid the compact composer node the moment the user sent, and the files tab cannot preview HTML as a page or open suffix-specific OS apps (ADR 0163). |
-| D322 | Relative transcript paths preview and open | **Amend the chat/markdown file-link resolver: unprefixed relative paths stay workspace-rooted; `./` and `../` resolve against the workspace root in chat and against the viewed file's directory when previewing a markdown document. `.` / `..` normalize in place; a walk that leaves the workspace stays inert. Assistant markdown linkifies bare file tokens (known extension) in addition to inline code, links, and images. The linkify pass is a unified attacher that returns a transformer; it is never the transformer itself, so freeze does not invoke it with a missing tree. No host-protocol, IPC, or storage schema change.** | Agents write workspace-relative paths in prose and markdown files use `./` / `../` links; those were either not clickable or resolved as if they lived at the workspace root, so preview/open failed. Passing the transformer to `remarkPlugins` made unified call it at freeze with `tree === undefined`, crashing session open on `tree.type`. |
-| D323 | Live parent turns stay transparent | **Amends D101 / D297 in the renderer: a streaming assistant turn does not sit on a `--ds-tile` and does not reserve a 14px inset or left rail. Thinking, workspace tools, and answer fragments stay on the page background like a completed turn. The tile remains only on the delegation card (D319) and the nested `.subagent-run`. Renderer only: no IPC, storage, host-protocol, or runtime change.** | D297 replaced the streaming rail with a whole-turn tile so the tint would not reflow. That boxed ordinary answers the same way as a subagent card. D101 already required transparent assistant prose; D319 already assigned the tile to the Task group. |
-| D268 | A lifecycle row is a subagent row | **Refines D201 / D265 / ADR 0062 and ADR 0089 in the renderer: the delegation lifecycle rows (`TaskWait`/`TaskList`/`TaskStop`) stay compact tool rows and stay out of the topology counts, but are presented as subagent rows. They summarize from the roster the runtime returned — agent names read from `details.delegations[]` or `details.stopped[]`, a repeat counted rather than listed twice — never from their own `delegationIds` argument; their badge rolls that roster up using the existing `chat.subagentStatus.*` vocabulary; their label names the action taken on subagents instead of "Delegated"; and their body is the roster as a named table led by the joined reports, instead of the raw `delegations[]` JSON. No IPC, storage, host-protocol, or delegation-runtime change is implied.** | The lifecycle rows carry the settled outcome the `Task` card cannot know (ADR 0089), yet they rendered as generic tool calls whose summary was a bare UUID and whose body was a JSON dump — the least readable part of a feature whose card is otherwise the most readable. Reading the roster it already returns costs nothing and makes the whole delegation scan as one thing. |
-| D263 | A cross-display drag is user intent, not an OS adjustment | **Amend D255 / ADR 0122 in Main: the work-panel reservation reconcile no longer treats every display change alike. `os-adjusted` (the window manager re-fitting bounds we asked for, or a topology change) preserves ADR 0122 verbatim; `user-moved` (the user dragging the window to another display) takes the current position as the new base bounds, normalizing only the origin into the target work area and keeping the size. Attribution keys off an unaccounted native `move` stream rather than a deadline, and reconciliation is deferred until that stream goes quiet, so no bounds are re-planned mid-drag. A cross-display drag advances the remembered display key and is persisted. No IPC, storage, or host-protocol change.** | The old logic re-planned from the origin display's base bounds and was then clamped to the target work area's edge, so the window jumped on pointer release and stale coordinates were written to `window-state.json` (issue #18, ADR 0132). |
-| D269 | History continuation keeps the conversation outline reachable | **Amend D108 / D261 / ADR 0130 in the renderer: when loaded rows are withheld above the mounted window or the host reports an older page, the conversation outline remains present with one dotted earlier-history continuation even if the mounted tail has fewer than two markers or does not overflow. The continuation runs the same two-stage grow-then-fetch path and ordinary message dashes still come only from mounted rows, so every message dash has a real DOM target. The transcript's top loading boundary is observed as well as checked on scroll; while that boundary remains visible after an underfilled tail, a fetched-but-withheld page, or a window transition, history advances again without waiting for a native scroll event. Once no earlier history remains, D108's two-marker-plus-overflow visibility rule applies unchanged. No IPC, storage, host protocol, or pagination change.** | A bounded tail can contain one tool-heavy turn that collapses below one viewport, and fetching an older page can leave every new row outside the trailing mounted window. Neither transition necessarily changes `scrollTop`, so the scroll-only trigger stranded older history and left the outline absent. An explicit continuation represents unavailable navigation honestly, while boundary visibility closes the progress loop without inventing phantom message markers or eagerly loading the whole transcript. |
-| D270 | One model picker for both credential kinds | **Refines D237 / D240 in the renderer: the model picker is one shared renderer component rendered by both the AI service dialog and the vendor account dialog. A vendor account therefore gets the same discovered model list, the same `ModelBinding` shape, the same per-model context-window and max-output editing, the same thinking-level controls, and the same explicit binding persistence. Only the left pane heading differs between the two dialogs. The thinking-level catalog-gating clauses are superseded by D283. Renderer only: no IPC, storage, host-protocol, or provider-config schema change is implied, and no ADR is required.** | The two surfaces were copies of one picker, and the copy silently lost the advanced controls, so a vendor-account binding could not edit the same model settings as an AI service. One component makes the guarantee structural instead of a convention two files had to remember. |
-| D271 | An expanded delegate run scrolls in place | **Refines D201 / D268 / ADR 0062 in the renderer: a delegate's nested rows render in a bounded `.subagent-run-rows` scroll area of `min(420px, 48dvh)` with `overscroll-behavior-y: contain`, placed on that inner wrapper rather than on `.subagent-run` so the absolutely positioned collapse rail is not clipped. The run heading stays outside the scroll area and the area is a labelled, focusable group. `fields` tables gain the same 260px cap the other detail blocks already had, and a lifecycle row's joined reports render as a bounded `output` block instead of an unbounded note. Presentation only: no IPC, storage, host-protocol, or runtime change.** | Expanding one delegation could add dozens of rows in a single commit — a delegate that made forty tool calls grew the transcript by forty rows — so the reading position jumped and the parent's own next row was pushed out of view. `fields` was the one detail block with no height limit, and D268 had routed up to 50k characters of joined reports into a `note`, which has none either. |
-| D302 | An expanded delegate run follows its latest output | **Refines D271 / D071 in the renderer: the bounded `.subagent-run-rows` scroller uses the parent transcript's pinned-follow contract independently. Expanding pins to the newest row; content growth follows the bottom while pinned; the first real upward gesture (wheel / trackpad / touch / scrollbar / keyboard) pauses follow and shows a nested jump-to-latest control; layout clamps and programmatic `scrollTo` never release follow. Native overflow anchoring is disabled on the nested scroller. The jump control overlays a relative wrapper around `.subagent-run-rows`, never on `.subagent-run`, so the collapse rail stays unclipped. Presentation only: no IPC, storage, host-protocol, or runtime change, and no ADR is required.** | D271 capped the nested run so it would not grow the transcript, but left that scroller without stick-to-bottom. A live delegate's new thinking, tool, and answer rows therefore appended below the viewport of an expanded card, and the user had to scroll by hand to see progress (issue #37). |
-| D272 | Quitting stops plugins as a shutdown, not as a crash | **Refines spec 07 §3.1 in the main process: `before-quit` calls `PluginRuntime.disposeAll()` instead of `disposeWatchers()`. It marks every loaded plugin as disposing and cancels its pending restarts before anything else, disposes watchers, then stops services and runs `onUnload` in parallel — 1.5s per plugin, 3s for the whole sequence, after which the children are killed. `onPluginCrash` no longer sends its own toast, since the runtime already raised one on that path. Main process only: no IPC, storage, host-protocol, or manifest change, and no ADR is required.** | Quit left the plugin children to be killed by the process teardown, and an unmarked exit is indistinguishable from a crash: `handleChildExit`'s `disposing` guard never applied, so every quit logged `PLUGIN_CRASHED` per plugin at `exitCode: 0`, toasted "stopped unexpectedly" twice, and scheduled restarts into a closing app. 613 of 633 crash reports in one local log were this, which is what made the real crashes hard to see. |
-| D273 | A model's habitual argument name is accepted, not corrected | **Refines spec 03 §4 in the agent runtime: `Read`/`Write`/`Edit`/`BrowserPreview` accept `file_path` beside `path`, and `Glob`/`Grep` accept `query` beside `pattern`. Both spellings are optional in the schema so either validates; the runtime folds the alias onto the canonical name before the write lock, the host call, and the transcript, requires exactly one of the pair, and lets the canonical name win when both arrive. `Bash.timeout` widens its schema maximum to 3600000 so a millisecond value validates, and the runtime reads a value of at least 1000 as milliseconds, clamped to the honoured 300-second ceiling, while 301 to 999 stays an out-of-range seconds value. Runtime only: no IPC, storage, or host-protocol change, and host-core's schemas are unchanged.** | Argument names are pretraining habits, not instructions a schema can correct. 852 of 1679 failed tool calls in one local month were a parameter-name miss, 724 of them `Read` sent with `file_path`, which alone was 87% of `Read`'s failures and put its error rate at 11%. Another 69 were a `timeout` in milliseconds. Each cost a turn on an error the model could not see itself making. |
-| D274 | Retry an unchanged edited prompt | **Amends D137 in the renderer: confirming a valid user-prompt edit always dispatches the existing edit-resend/Regenerate path, even when the trimmed text matches the original. The inline controls are localized Retry and Cancel actions; Retry retains the existing revision archive, identity-based truncation, slash-command expansion, and attachment behavior. Renderer and i18n only: no IPC, storage, host-protocol, or runtime contract change.** | Treating an unchanged confirmation as a no-op made the “Edit and resend” action appear broken (issue #23), while the old Send label suggested a new ordinary prompt rather than replaying the selected turn. |
-| D275 | Preserve the active task boundary across context compaction | **Amends D203 / ADR 0064 in the agent runtime: checkpoints record opaque `details.retainedTailMode`. An active-turn checkpoint retains only the latest user message (up to the existing 20,000-token cap) when the provider must continue after a tool result, `toolUse`, or overflow recovery. A completed-turn checkpoint has an empty retained tail at terminal boundaries, before a new prompt, and for manual compaction; its summary is authoritative for completed work. Legacy records without the mode normalize to their latest user message. No visible transcript, storage schema, host ownership, or protocol shape changes.** | Keeping several recent user prompts while compacting away completion messages made the next prompt look like a continuation of an old task (issue #22). The boundary must be explicit at restore time while active tool loops still retain the prompt needed to continue. |
-| D278 | Subagent model selection | **Task.model overrides definition pin; only models with `availableForSubagents` appear in the delegation catalog; on-demand RPC resolves models not pre-resolved at launch** | The parent agent needs per-task model choice without exposing the full provider configuration. An opt-in flag keeps the delegation catalog bounded and intentional, and on-demand resolution avoids stale bindings for models added after sidecar launch. See §3/02 §5f, §3/11 §7, and E2E-166. |
-| D365 | Named quiet intervals on the live activity row | **Amend D338 / ADR 0175: `AgentActivity` adds `preparing`, `compacting`, and `recovering`; `starting` shows its own label; `waiting-subagents` carries a live running snapshot (`name`, `lastPhase`, `lastToolName`) that updates on child tool/thinking changes, not on every token. The row stays one compact inline status and does not restore an activity-group capsule.** | Compaction, silent-turn recovery, the post-tool gap, and startup all looked like a stuck generic wait, and a parent wait hid what its delegates were doing (ADR 0198, E2E-008c / E2E-094) |
+| D101 | 受 WorkBuddy 启发的转录本密度 | **用户将渲染为紧凑的右对齐软板（`min(78%, 560px)`，微妙的边框+细线阴影）。助手将保持透明全角散文（最大 720 像素）。消息行垂直内边距收紧至 10 像素。 Hover/focus-within 在每圈下显示安静的复制芯片（用户右对齐，助理左对齐）。流媒体助理的答案使用左重音规则。还没有吉祥物、反应或成本芯片 UI。** | 与 WorkBuddy 的任务聊天相比，当前的右对齐用户气泡规格不足且视觉上稀疏；更密集的板提高了可扫描性，同时又不放弃 Codex/developer 约束 |
+| D103 | 每条消息模型+令牌元和重试 | **完成的助手在答案下转动表面 modelId + 令牌使用芯片（仅限令牌；悬停细分为 input/output/cache/reasoning）。用法附加在来自 pi-ai 用法的运行时 message_end 上，保留在消息 meta_json 中，并随记录一起重新加载。操作行添加了重试，这会重新发送最近的前面的用户提示。没有货币定价，也没有 like/dislike。** | WorkBuddy 每条消息元数据改进了 trust/scanability；代币总数已从提供商流出，而定价成本仍需要目录 |
+| D105 | 辅助回合的就地再生 | **重新生成将会话记录截断为最近的前面的用户提示（不包括该提示及其后的所有内容），处置会话的实时 pi-agent，并重新发送提示，以便新的 assistant/tool 尾部替换丢弃的分支，而不是堆叠重复的回合。** | 用户期望regenerate重写当前回合；仅附加重试污染了长会话并在重做之上留下了陈旧的答案 |
+| D106 | 在转录中保留用户硬换行符 | **用户气泡将纯文本与硬换行符完好无损地呈现。 Composer 仅修剪 leading/trailing 空白；转录本使用 `message-user-text` 和 `white-space: pre-wrap`（无强制中间字形断字），因此多行提示永远不会折叠成一个段落。复制和会话重新加载保留原始换行符。** | 多行提示（代码片段、列表、粘贴块）在编码代理中很常见；折叠换行符使得文本难以重新阅读和重新编辑 |
+| D107 | 配置提供商工作室 | **设置 → Agent 使用提供商工作室：摘要英雄、分段默认值、可折叠的 OpenAI 兼容编辑器以及带有秘密徽章、思维预设、测试连接和 make-default/delete 操作的基于卡片的提供商管理。这改进了紧凑设置目录中的提供商演示，而无需添加铁路目的地。 ** | 密集堆叠的表单和狭窄的列表行使得多提供商设置难以扫描并且过度强调次要字段 |
+| D110 | 模型配置标签+添加提供商对话框 | **代理目标的设置导轨标签是模型配置（zh-CN：模型配置）。添加提供程序会打开模式对话框，而不是内联可折叠编辑器；目标 ID 仍为 `agent`。** | 阐明该选项卡的模型设置目的并减少编辑提供商凭据时的页面流失 |
+| D108 | 仅在溢出时对话小地图 | **仅当存在至少两条可见的 user/assistant 消息且副本溢出一个视口 (`scrollHeight > clientHeight`) 时，才会呈现左侧边缘对话小地图轨道。短的一页螺纹隐藏了导轨；流增长、内容大小调整和窗口大小调整重新评估可见性。** | 当每条消息都已经适合屏幕时，导航栏就是噪音。溢出是 jump/preview 导航有用的信号 |
+| D109 | ChatGPT 风格重新生成修订历史记录 | **在 `message_revisions`（架构 v4）中的稳定 `revisionRootId` 系列下重新生成已丢弃的 assistant/tool 尾部的存档。实时 root 用户轮流携带 `revisionCount` / `activeRevision` 和安静的 `current / total` 寻呼机在适当位置切换线性变体。首先重新生成将原始分支存储为修订版 1；稍后重新生成追加新分支并标记最新的活动分支。没有自由形状的分支树。** *（由 D307 修订）* | 用户希望重新生成能够像 ChatGPT 一样保持先前的答案可达； D105 就地重写单独删除了对比较仍然有用的历史记录 |
+| D111 | 空的主页滚动堆栈 | *（由 D131 取代的特定于卡片的条款）* **空聊天主页是 `home-main-content` 内的单个可滚动垂直堆栈。短窗口顶部对齐和滚动；内容保留在文档流中，并且家庭输入框保持非停靠状态。** | 双增长+绝对门户让家庭输入框在较短的窗户上重叠引导；流布局保留每个剩余的块而不会发生冲突 |
+| D112 | 工作面板旁边的可读聊天 | *（动态宽度夹被 D163 取代；欢迎选择器被 D128 取代）* **MainChat 在面板旁边有一个 360 像素的可读目标。只要显示工作区域可以提供完整的承诺面板宽度，D163 就会通过本机宽度保留来保留它；否则，MainChat 会吸收不可避免的不足，同时面板保持固定。** | 仅面板宽度上限可能会在支持的窗口尺寸下为聊天留下大约 109-205 像素；本机保留现在可以保留聊天而不压缩工具表面。 |
+| D113 | 受 WorkBuddy 启发的本地个人资料页脚 | **展开的侧边栏以透明的 58 像素页脚结束。其 44 像素配置文件触发器包含 30 像素圆形本地用户字形、两行 `Custom` + `Local profile` / `本地配置` 标识和 V 形；单独的 32px 帮助快捷方式可打开“设置”→“信息”。 280 像素的配置文件菜单在页脚上方 8 像素处打开，带有重复的身份标题、分隔线和设置/日志/主题操作，保留退出、外部单击、箭头键和焦点恢复行为。这取代了 D041；不暗示云帐户、通知、共享或更新功能。** | 将 WorkBuddy 的头像和操作页脚语法调整为 PI-Desktop 真实的仅限本地功能，同时改进身份层次结构并消除陈旧的云替代 |
+| D137 | 仅字形消息工具栏； edit 表示编辑提示 | **消息工具栏仅包含图标：标签位于 CSS hover/focus 工具提示 (`data-tip`) 和 `aria-label` 中，从不作为可见的芯片标题（文字按钮仅保留在错误表面上）。编辑将助理答案移至用户回合：它在内联文本区域中打开提示（斜杠将键入键入的 `command` 表单的种子，以便重新发送重新扩展模板），并在同一会话中使用新文本保存重播 D105/D109 重新生成路径 — 替换的提示及其整个答案尾部被存档为修订版本，因此现有的 `current / total` 寻呼机会返回到原创。编辑助手自己的文本及其 fork-into-a-child-session 变体 (D134) 被删除；分叉仍作为显式分歧操作。** | 每个答案下面有四个字片，读起来就像一个句子，挤满了文字记录；有用的更正几乎总是“我问错了”，用户希望在历史记录完好无损的情况下重新运行（ChatGPT 语义），而不是在新会话中手动编辑模型的单词 |
+| D165 | 助理答案中的安全懒人美人鱼图 | **助理答案散文中的完整 `mermaid` 栅栏在进入近视口带后呈现为主题感知的 SVG。部分溪流围栏和所有思考散文都保留源代码。渲染器动态加载官方 Mermaid，序列化其全局主题渲染，将源字符上限限制为 20,000 个字符，将边缘限制为 500 个字符，锁定 strict/no-HTML/no-link 配置，并应用第二个 SVG 配置文件清理程序。无效或过大的图表会退回到可见的可复制源；图表工具栏切换源并复制它。** | 图表改进了架构和流程解释，但解析部分流或每个屏幕外的历史栅栏会破坏直接流和快速会话切换行为。严格有界本地渲染增加了无需新协议、网络或 Electron 特权边界的功能。 |
 
-## M0. Model catalog decisions
+| D261 | 挂载的记录是一个窗口，而不是已加载的历史 | **在渲染器中细化 ADR 0120 / D258：挂载的历史是已加载历史上的一个尾部窗口——会话切换后的首次提交挂载 15 行，稳定态 60 行，每次增长 40 行。到达顶部分两级升级：窗口仍是局部时先扩大窗口，只有当窗口覆盖了全部已加载历史时才调用 `loadOlder`。窗口增长与取回一页使用同一个绘制前滚动锚点，因为两者都在阅读位置之上增加高度。窗口按会话重置并夹到已加载历史，因此上一个会话留下的过期预算不会导致过量挂载。水合占位仍然只作用于首次提交。会话缩略图由已挂载条目构建，而不是由每条已加载消息构建。不改动 IPC、存储、主机协议或分页。** | ADR 0120 限定了跨越 IPC 边界的数据量，D258 限定了定位一页的代价，但渲染器仍然挂载它曾经翻到过的每一行，并在整个会话生命周期内保持挂载。`content-visibility: auto` 会跳过这些行的布局和绘制，但保留它们的 React 树、Markdown AST 和 Shiki 令牌数组——在低内存的 Windows 机器上这正是不该占用的资源，报告的症状就是长会话中聊天区越来越不流畅。窗口化同时限定了保留内存和每帧的协调开销；而把完整集合喂给缩略图会画出点击目标已不存在的刻度。 |
+| D317 | 实时/持久化记录合并保持时间顺序 | **在渲染器中修订 ADR 0120 / D261 / ADR 0137：`mergeLiveSessionMessages` 把有界的持久化 `session.get` 页按时间顺序缝到实时快照上。早于该页的实时行留在它前面；乐观用户行或进行中的助手/工具尾巴留在它后面。重叠的已完成 id 仍以持久化行为准。实时独有的行绝不能追加到持久化页之后。若更早的前缀曾被错误追加到页后，当其 `createdAt` 早于该页时把它治回前面。仅渲染器：不改动 IPC、存储、主机协议或分页。** *（由 D324 修订）* | 一直开着的会话会在最新 100 条页之外再积累数百行实时记录。再验证曾把持久化页当作数组前缀、把其余行追加在后面，于是 D261 的尾部挂载窗口画出旧历史，刚发送的提示消失，回合却仍在跑。中止后再空闲加载只显示持久化页，所以看起来像是点了停止再切换，消息才回来。 |
+| D324 | 空闲切换保留尚未刷入的已完成尾巴 | **在渲染器中修订 D317 / ADR 0137：`selectSession` 在会话仍在运行或仍有实时来源（`liveSessionTranscripts`）时，把有界持久化页缝到实时快照上。持久化页尚未包含的已完成助手/工具行予以保留。只有当该页已包含每一个实时 id 时才清掉实时来源，而不是回合一结束就清。仅渲染器：不改动 IPC、存储、主机协议或分页。** | 用户提示在模型运行前就落盘；助手/工具行走异步 outbox，在 `message_end` 之后才写入。`agent_end` 之后的空闲再验证只用持久化页，会丢掉已经显示在屏幕上的回复（issue #41）。 |
+| D327 | 已完成回复在进程重启后仍然存在 | **修订 D299 / ADR 0153 / ADR 0041：`message_end` 的完成快照在 outbox 追加之前先做检查点；`completed`/`error` 的 `session.endTurn` 仅在该 id 已索引时才删除 `.inflight.json`；启动恢复跳过已完成残留以便 outbox 先追加；握手等待排空后再用 `session.recoverInflightMessages` 把剩下的提升为 `complete`。附加 RPC，不改协议或 schema 版本。** | 与 issue #41 相同的「只剩用户消息」画面，但发生在完全退出之后（issue #42）：用户行在模型运行前就落盘，助手/工具行停在 outbox，D324 的实时缝合无法跨进程。 |
+| D444 | 跨会话消息 id 碰撞时改写；outbox 的 UNIQUE 不再停整队 | **修订 ADR 0041 / D327：`session.appendMessage` 仍把本会话已索引的 id 当作无操作（或用终态助手替换流式行）。若该全局唯一 `messages.id` 已属于另一会话，主机在写 JSONL 或索引之前改写为 `{sessionId}:{id}`，之后重放原始 id 也对改写后的行无操作。Electron 持久化 outbox 把 `UNIQUE constraint failed: messages.id` 当作幂等确认并继续排空，因此一个撞车的 toolCallId 不会卡住之后所有助手/工具行，也不会把 1024 上限填满。不改协议或 schema 版本。** | 工具行曾把 `toolCallId`（如 `call_421522`）当作 `messages.id`，这些 id 并不全局唯一。碰撞会在 JSONL 写完后 SQLite 失败，FIFO outbox 停在队头，所有会话的后续行都无法落盘，退出后再开就像前期历史丢了（issue #523）。 |
+| D597 | 丢弃 outbox 毒消息；接受投递回合内的 steering | **修订 ADR 0041 / ADR 0239 / ADR active-turn-steering / D444：Electron 持久化 outbox 把消息正文带 `PERMISSION_DENIED:` 前缀的追加当作永久拒绝，丢掉该行并继续排空。`PLUGIN_PERMISSION_DENIED` 和其他失败仍暂停。宿主 provenance 在目标会话一致时接受已认领协作投递回合上的 `UiMessage.steering`，不盖投递来源，并清掉客户端带来的 `session_message`。跨会话 steering 仍是 `PERMISSION_DENIED`。不改协议或 schema 版本。** | 向 session-collaboration 投递回合按 Alt+Enter 会被当成投递不匹配拒绝，outbox 永远重试队头，打满 1024 后丢掉后面的助手/工具行，转录只剩用户消息。 |
+| D328 | 由父级判定的子智能体寿命 | **修订 ADR 0089 / ADR 0119 / ADR 0129：不武装空闲和时长看门狗；父级 `agent_end` 不中止仍在跑的委托；运行时保持持久回合打开，完成时把报告交给父级。`TaskWait` 超时和 `TaskList` 返回心跳。只有 `TaskStop` 和用户 Stop 会中止委托。显式 `maxTurns` 和并发上限 10 保留。运行时专用，不改 IPC、存储或主机协议。** | 父级看不到实时委托工作，把 `TaskWait` 到期当成可以收工；等待是事件循环，模型不是。 |
+| D352 | 父级终态错误中止残留委托 | **修订 D328 / ADR 0166：父级空闲仍不中止委托。终端父级 provider/stream 错误（含耗尽的 HTTP 429）、溢出恢复失败、变更预算终止或拒绝的提示会中止残留委托、跳过 D328 续跑提示并发出 `agent_end`。`isRunning` 在该错误后不计残留委托，因此继续不会变成 `AGENT_BUSY`。见 ADR 0189 与 E2E-155。** | 父级 429 后 UI 显示继续，子智能体仍占 sidecar，下一条提示变成 session already has an active turn。 |
+| D354 | 同时标注两个 macOS 发布架构 | **修订 D353 / ADR 0145：两条原生 macOS 发布通道都使用带架构后缀的 electron-builder 模式。公开资产为 `PI-Desktop-<version>-arm64.dmg` / `-arm64-mac.zip` 以及 `-x64.dmg` / `-x64-mac.zip`。更新源 URL 与校验和保持一致。只改发布资产命名。** | arm64 资产原先不标明架构，x64 又用另一套 Intel 约定。 |
+| D353 | 区分 Intel macOS 发布工件 | **修订 D285 / ADR 0145：原生 macOS x64 发布通道使用目标特定 electron-builder 模式，公开资产为 `PI-Desktop-<version>-Intel.dmg` 和 `PI-Desktop-<version>-Intel-mac.zip`。生成的 `latest-mac-x64.yml` 保留这些 URL 与校验和。arm64 通道仍用通用版本名。只改发布资产命名。** | 两个架构都用通用版本名时，用户无法可靠区分 Intel 下载。 |
+| D329 | 由智能体选择的 Bash 超时 | **修订 D190 / D273 / ADR 0054：Bash 默认仍是 60 秒。显式 `timeout` 为 1 到 21600 秒。超过 21600 的值按毫秒读取、换算并钳到 21600 秒。范围内的 600 和 1800 仍是秒。超时/中止仍杀掉整棵进程树。** | 300 秒上限会杀掉合法构建，并拒绝 `timeout: 600` / `1800`。 |
+| D331 | 由宿主拥有的已完成回合 token 历史 | **修订 D103：父级 `message.usage` 仍是该助手消息的 pi-ai Usage。子智能体花费只累计在持久回合上。Electron 把父级 `message_end` 用量加上 `turn_end.subagentUsage` 写入 `session.endTurn.usage`。`stats.getTokenUsageHistory` 按本地日历窗口汇总。用户可见仪表盘是插件 `pi.token-insights`（D335）。** | turns 表已是用量汇总，但 Electron 从未发送 `usage`，把子智能体 token 并进消息芯片会误导上下文检查器。 |
+| D335 | Token 用量仪表盘由插件拥有 | **修订 D331 / ADR 0171：设置没有「用量」目的地。全局 token 历史由市场插件 `pi.token-insights` 展示。宿主仍持久化 `session.endTurn.usage` 并暴露 `stats.getTokenUsageHistory`。插件可以把宿主已完成回合中超出转录本助手 `meta.usage` 的差额（含子智能体）折入 PI-Desktop 事实立方，且不改写 `message.usage`。不升协议或 schema。** | 设置页重复了插件已有的更弱热力图。见 ADR 0173 与 E2E-186。 |
+| D326 | 撤回 A2A 与 Peer 协作栈 | **移除 Agent2Agent 代理、`a2a.*` RPC 域、残留 `SubagentMailbox` / `Peer` 工具以及父/委托 `A2A` 工具。并发委托只通过父级 `Task*` 报告协作。握手 `PROTOCOL_VERSION` 10→11，存储 `SCHEMA_VERSION` 12→13。ADR 0165 取代 0147 / 0162 / 0164。** | 兄弟通道和父到父通道与 `Task*` 并列却没有产品需求，模型也容易误用。 |
+| D318 | 从记录文件 / outbox 恢复缺失的 sessions 行 | **在 host-core 与 Electron 主进程中修订 ADR 0041 / D119：活着的 `sessions/<id>.jsonl` 若 SQLite sessions 行已不在，则在主机启动时（`recover_orphaned_sessions`）以及 `session.appendMessage` 时恢复。恢复会重新插入该行并根据文件重建搜索索引，使追加保持幂等。若行和文件都不在，append 会用同一个 id 插入占位行，以便排队的 outbox 能排空。`session.delete` 丢掉该会话的 outbox 条目，以免占位重建把用户已删除的对话救回来。不改协议版本、schema 或渲染器。** | 长会话可能丢掉 `sessions` 行（WAL/索引丢失），回合却仍堆在 `session-message-outbox.json`。`appendMessage` 于是因 `session not found` 失败，outbox 卡在队头，侧边栏列不出会话，聊天只剩第一条已刷入的用户行。把该行插回去后 outbox 才能排空（issue #39）。 |
+| D262 | 大段 Composer 文本粘贴写入会话临时目录 | **不超过持久化 `largePasteThreshold` 的纯文本 Composer 粘贴仍使用原生文本区域输入；默认值为 600 个字符，有效值为 1 至 1,000,000 的整数。超过阈值时，渲染器通过现有会话粘贴桥发送准确的 UTF-8 `text/plain` 字节，Electron 将其保存到 `<data_dir>/scratch/<sessionId>/pasted/`，Composer 在原始选择处插入生成的 `@<temporary-name> ` 标记。渲染器保留会话范围内的标记到规范路径映射，在发送前只解析一次，并排除重复附件/回退序列化。现有剪贴板文件/图像芯片和桥接边界不变；不修改工作区、工件存储、主机协议或 schema。** | 超大的原生粘贴难以编辑且会压迫输入框；现有会话临时目录已经提供有界、隔离的存储和规范路径语义，不会弄脏项目（ADR 0131）。** |
+| D265 | 单个委派也读作一张卡片，与扇出一致 | **在渲染层修订 D201 / ADR 0062：活动分组里的每个 `Task` 调用都渲染为整宽委派卡片——主智能体根节点、连接线、每个委派一个节点——单个委派同样如此，不再退回紧凑工具行。聚合标头按数量措辞，因此单个委派不会被说成复数：英文新增 `_one` 形式，中文只有一个复数类别，故去掉英文复数标记。卡片的其余部分保持不变，不涉及 IPC、存储、主机协议或委派运行时改动。** | 把卡片保留给两个及以上委派，会让同一件事看起来像两个不同功能，而单个这一常见情形恰恰丢失了结果、记录的运行时长和委派的步骤数（ADR 0062 §6）。 |
+| D319 | 委托卡只承载 Task 扇出 | **修订 D201 / D265 / ADR 0062：连续 `Task` 启动自成活动组，并且是委托卡内仅有的行。父级思考、工作区工具和生命周期行（`TaskWait`/`TaskList`/`TaskStop`）留在普通处理组，不进拓扑卡片。渲染器专用。** | 连续思考和工具行曾共用一个活动组，父级在 `Task` 之后的工作会被画进子智能体瓷砖。 |
+| D320 | 已发送的文件引用保持芯片并可点击打开 | **在渲染器和 Electron 主进程中修订 D209 / ADR 0070：已发送的用户回合解析序列化的 `@path` / `@"带空格的路径"` 标记，并把每一项画成与输入框一致的叶子名芯片（图标、省略号文件名、工具提示/无障碍名中的规范路径）。工作区内的 `.html`/`.htm` 芯片打开工作面板浏览器；其余允许的文件通过 `pi-desktop/fs/open` 用系统默认应用打开。该通道把相对路径限制在工作区，把绝对路径限制在工作区、`<data_dir>/scratch/` 或 `<data_dir>/attachments/`。HTTP(S) URL 仍是文本链接。工具行预览不变。不改主机协议或存储 schema。** | 序列化后的完整路径一发送就把输入框里的紧凑节点打散了，而且文件页既不能把 HTML 当页面预览，也不能打开按后缀走系统默认应用的文件（ADR 0163）。 |
+| D322 | 相对转录路径可预览并打开 | **修订聊天/markdown 文件链接解析：无前缀相对路径仍以工作区为根；`./` 和 `../` 在聊天中相对工作区根，预览 markdown 时相对被查看文件的目录。走出工作区的路径保持惰性。助手 markdown 会把带已知扩展名的裸文件词链接化。不改主机协议、IPC 或存储 schema。** | 智能体写工作区相对路径，markdown 文件用 `./` / `../` 链接；这些要么不可点，要么被当成工作区根下的路径。 |
+| D323 | 进行中的父级回合保持透明 | **修订 D101 / D297：流式助手回合不坐在 `--ds-tile` 上，也不预留 14px 内边或左侧栏。思考、工作区工具和回答片段像已完成回合一样铺在页面背景上。瓷砖只属于子智能体/委托卡。** | 流式父级回合成了整块瓷砖，和子智能体卡抢视觉层级。 |
+| D268 | 生命周期行就是子智能体行 | **在渲染层细化 D201 / D265 / ADR 0062 与 ADR 0089：委派生命周期行（`TaskWait`/`TaskList`/`TaskStop`）仍是紧凑工具行，仍不计入拓扑数量，但呈现为子智能体行。它们从运行时返回的名册生成摘要——子智能体名称读自 `details.delegations[]` 或 `details.stopped[]`，重复者以计数而非列两遍呈现——绝不使用自身的 `delegationIds` 参数；徽标沿用既有 `chat.subagentStatus.*` 文案汇总该名册；标签说明对子智能体采取的动作，而不是“已委派”；正文是名册构成的命名表格，前置合并后的报告，而不是 `delegations[]` 原始 JSON。不涉及 IPC、存储、主机协议或委派运行时改动。** | 生命周期行承载着 `Task` 卡片无法知道的最终结果（ADR 0089），却渲染为通用工具调用：摘要是一串裸 UUID，正文是 JSON 转储——在一个卡片本应最易读的功能里，它成了最难读的部分。读取它本就返回的名册没有额外成本，却能让整个委派作为一件事被扫读。 |
+| D263 | 跨显示器拖动是用户意图，而非系统调整 | **工作面板保留的协调不再把所有显示器变化视为同一种情况。`os-adjusted`（窗口管理器重新适配我们请求的边界，或显示器拓扑发生变化）保持 ADR 0122 的行为不变；`user-moved`（用户把窗口拖到另一块显示器）以当前位置作为新的基边界，仅将原点规范化进目标工作区域，尺寸保持不变。归属依据未被消费的本机 `move` 流而非时间期限，协调推迟到移动流稳定之后，因此拖动过程中不会重排边界。跨显示器拖动会推进记住的显示器键并被持久化。不改动 IPC、存储或主机协议。** | 旧逻辑复用原显示器的基边界，再被目标显示器工作区域夹到边缘，导致松开鼠标后窗口跳动，并把过期坐标写入 `window-state.json`（issue #18、ADR 0132）。** |
+| D269 | 历史续接让会话大纲保持可达 | **在渲染器中修订 D108 / D261 / ADR 0130：当已加载的行被扣在挂载窗口之上，或主机报告还有更早的一页时，会话大纲保持存在并带一条虚线的「更早历史」续接项，即使挂载的尾部标记少于两个或并未溢出。该续接项走同一条先扩窗再取页的两级路径，普通消息刻度仍然只来自已挂载的行，因此每个消息刻度都有真实的 DOM 目标。记录顶部的加载边界既在滚动时检查也被观察；在尾部填充不足、取回但被扣住的一页或窗口过渡之后，只要该边界仍然可见，历史就会继续推进而不必等待原生滚动事件。一旦不再有更早的历史，D108 的「两个标记加溢出」可见性规则原样生效。不改动 IPC、存储、主机协议或分页。** | 有界的尾部可能只包含一个工具密集的回合而塌缩到不足一屏，而取回更早的一页可能让所有新行都落在尾部挂载窗口之外。这两种过渡都不一定改变 `scrollTop`，因此只依赖滚动的触发器把更早的历史搁在了那里，也让大纲整体消失。一条显式的续接项诚实地表达了尚不可用的导航，而边界可见性在不编造幽灵消息刻度、也不急切加载整段记录的前提下闭合了推进循环。 |
+| D270 | 两种凭据共用一个模型选择器 | **在渲染层细化 D237 / D240：模型选择器是一个共享渲染组件，由 AI 服务对话框与厂商账户对话框共同渲染。因此厂商账户获得同一份已发现模型列表、同一种 `ModelBinding` 形状、同样的按模型上下文窗口与输出上限编辑、同样的已发布思考等级按钮，以及保存时同样把每个绑定收敛到所解析 models.dev 记录已发布等级的处理。两个对话框之间只有左栏标题不同。仅渲染层：不涉及 IPC、存储、主机协议或提供商配置架构改动，也不需要 ADR。** | 这两处界面本是同一个选择器的两份拷贝，而拷贝那一份悄悄丢掉了高级设置与收敛处理，于是厂商账户的绑定可能保留运行时会丢弃的思考等级，而对话框却仍把它算作已启用。用一个组件让这项保证成为结构性的，而不是两个文件都得记住的约定。 |
+| D271 | 展开的委托运行过程在原处滚动 | **在渲染层细化 D201 / D268 / ADR 0062：委托的嵌套行渲染在高度受限的 `.subagent-run-rows` 滚动区内，高度 `min(420px, 48dvh)`，并设 `overscroll-behavior-y: contain`；滚动挂在该内层容器而非 `.subagent-run` 上，以免裁掉绝对定位的折叠导轨。运行标题留在滚动区之外，该区域为带标签、可获焦的分组。`fields` 表格获得其他细节块早已具备的 260px 上限；生命周期行合并后的报告渲染为受限的 `output` 块，而不是无上限的提示块。仅涉及呈现：不改动 IPC、存储、主机协议或运行时。** | 展开一个委派可能在一次提交中新增数十行——执行了四十次工具调用的委托会让转录长出四十行——阅读位置因此跳动，父级自己的下一行被顶出视野。`fields` 是唯一没有高度上限的细节块，而 D268 把最多 50k 字符的合并报告放进了同样没有上限的 `note`。 |
+| D302 | 展开的委托运行过程跟随最新输出 | **在渲染层细化 D271 / D071：有界的 `.subagent-run-rows` 滚动区独立使用父级转录的吸底跟随契约。展开时钉在最新一行；钉住时内容增长跟随底部；第一次真正的向上手势（滚轮 / 触控板 / 触摸 / 滚动条 / 键盘）暂停跟随并显示嵌套的「回到最新」控件；布局夹持和程序性 `scrollTo` 不会解除跟随。嵌套滚动区关闭原生 overflow anchoring。跳转控件叠在 `.subagent-run-rows` 外层的相对定位包装上，绝不放在 `.subagent-run` 上，因此折叠导轨不会被裁掉。仅涉及呈现：不改动 IPC、存储、主机协议或运行时，也不需要 ADR。** | D271 限制了嵌套运行过程以免撑高转录，但没有给该滚动区吸底。实时委托的新思考、工具和回答行因此追加在已展开卡片的视口下方，用户必须手动往下滚才能看到进展（issue #37）。 |
+| D272 | 退出时插件按关闭停止，而不是按崩溃 | **在主进程细化规格 07 §3.1：`before-quit` 调用 `PluginRuntime.disposeAll()` 而不是 `disposeWatchers()`。它先把每个已加载插件标记为正在释放并取消其待处理的重启，释放监听，然后并行停止服务并运行 `onUnload`——每个插件 1.5s，整体 3s，超时后杀掉子进程。`onPluginCrash` 不再自己发提示，因为运行时在同一条路径上已经发过一次。仅主进程：不涉及 IPC、存储、主机协议或清单改动，因此不需要 ADR。** | 退出把插件子进程留给随后的进程拆除去杀，而一个没有被标记的退出与崩溃无法区分：`handleChildExit` 的 `disposing` 守卫从未生效，于是每次退出都按插件记一条 `exitCode: 0` 的 `PLUGIN_CRASHED`、弹两次"意外停止"提示，并把重启排进正在关闭的应用。某个本地日志里 633 条崩溃上报有 613 条属于此类，真正的崩溃因此难以看见。 |
+| D273 | 模型习惯的参数名被接受，而不是被纠正 | **在 Agent 运行时细化规格 03 §4：`Read`/`Write`/`Edit`/`BrowserPreview` 在 `path` 之外接受 `file_path`，`Glob`/`Grep` 在 `pattern` 之外接受 `query`。两种拼写在 schema 中都是可选的，因此任一都能通过校验；运行时在写锁、主机调用和转录之前把别名折叠到规范名上，要求二者恰好提供其一，两个都给时规范名胜出。`Bash.timeout` 的 schema 上限放宽到 3600000，好让毫秒值先通过校验，运行时把不小于 1000 的值按毫秒读取并夹到实际生效的 300 秒上限，而 301 到 999 仍是超出范围的秒值。仅运行时：不涉及 IPC、存储或主机协议改动，host-core 的 schema 保持不变。** | 参数名是预训练习惯，不是 schema 能纠正的指令。某个本地月份里 1679 次失败的工具调用有 852 次是参数名不匹配，其中 724 次是 `Read` 传了 `file_path`，仅此一项就占 `Read` 失败的 87%，把它的错误率推到 11%。另有 69 次是按毫秒给的 `timeout`。每一次都为一个模型自己看不见的错误付掉一个回合。 |
+| D274 | 不变的已编辑提示也执行重试 | **修订 D137（渲染层）：确认一个有效的用户提示编辑后，始终分派现有的编辑-重发/重新生成路径，即使修剪后的文本与原文相同。内联控件使用本地化的“重试”和“取消”；重试保留现有的修订存档、按身份截断、斜杠命令展开和附件行为。仅涉及渲染层和 i18n：不改动 IPC、存储、主机协议或运行时契约。** | 把未变化的确认视为无操作会让“编辑并重新发送”看起来像坏了（issue #23），而旧的“发送”标签暗示这是一个普通的新提示，而不是重放选中的回合。 |
+| D275 | 在上下文压缩期间保留活动任务边界 | **修订 D203 / ADR 0064（代理运行时）：检查点记录不透明的 `details.retainedTailMode`。当提供商必须在工具结果、`toolUse` 或溢出恢复后继续时，活动回合检查点只保留最新的用户消息（沿用现有 20,000 令牌上限）。在终止边界、发送新提示之前和手动压缩时，已完成回合检查点的保留尾部为空，摘要是已完成工作的权威内容。没有该模式的旧记录归一化为最新的用户消息。不改变可见转录本、存储 schema、主机所有权或协议形状。** | 压缩掉完成消息却保留多个最近用户提示，会让下一条提示看起来像旧任务的延续（issue #22）。恢复时必须显式保留任务边界，同时活动工具循环仍需保留继续当前任务所需的提示。 |
+| D278 | 子代理模型选择 | **Task.model 覆盖定义中固定的模型；只有带 `availableForSubagents` 的模型出现在委托目录中；启动时未预解析的模型由按需 RPC 解析** | 父代理需要按任务选择模型，又不能暴露完整的服务商配置。选择加入的标志让委托目录保持有界且有意为之，按需解析则避免 sidecar 启动后新增模型的绑定过期。参见 §3/02 §5f、§3/11 §7 与 E2E-166。 |
+| D365 | 为实时活动行的每个安静间隔命名 | **修订 D338 / ADR 0175：`AgentActivity` 增加 `preparing`、`compacting`、`recovering`；`starting` 显示独立标签；`waiting-subagents` 携带实时运行快照（`name`、`lastPhase`、`lastToolName`），随子级工具/思考变化更新而非逐 token 更新。该行保持为一条紧凑的内联状态，不恢复活动分组胶囊。** | 压缩、静默回合恢复、工具后间隙与启动都像卡住的通用等待，父级等待也隐藏了委托在做什么（ADR 0198，E2E-008c / E2E-094） |
 
-| ID | Topic | Decision | Rationale |
+## M0. 模型目录决策
+
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D266 | Use models.dev as the primary model catalog | **Amend D136 / ADR 0027: Electron main loads `https://models.dev/api.json` as the primary provider/model metadata source, matches by provider key or normalized API URL, and maps its limits, modalities, reasoning options, tool-call, structured-output, display-name, and cost fields into the existing model surfaces. The pinned `pi-ai` catalog remains the local fallback for unavailable/missing remote records and supplies adapter-specific compatibility data where models.dev has no equivalent. Provider endpoint discovery and explicit model IDs remain available for custom/account-specific models; no provider credential is sent to models.dev, and no host schema/protocol change is introduced.** | The pinned pi-ai catalog is accurate for runtime adapters but lags the broader market catalog. A bounded, main-process models.dev fetch gives Settings and Composer current model coverage while preserving offline/local behavior and pi-ai's transport fallback. |
+| D266 | 以 models.dev 作为主要模型目录 | **修订 D136 / ADR 0027：Electron main 加载 `https://models.dev/api.json` 作为主要的提供商/模型元数据来源，按提供商键或规范化后的 API URL 匹配，并把它的上限、模态、推理选项、工具调用、结构化输出、显示名称和成本字段映射到既有的模型界面。固定版本的 `pi-ai` 目录仍是远端记录不可用/缺失时的本地回退，并在 models.dev 没有等价物时提供适配器专有的兼容性数据。提供商端点发现和显式模型 ID 对自定义/账户专有模型仍然可用；不向 models.dev 发送任何提供商凭据，也不引入主机模式/协议变更。** | 固定的 pi-ai 目录对运行时适配器是准确的，但落后于更广泛的市场目录。一次有界的、在主进程中完成的 models.dev 抓取，让设置页和输入框拥有当前的模型覆盖面，同时保留离线/本地行为以及 pi-ai 的传输回退。 |
+## M.Agent 运行时决策
 
-## M. Agent runtime decisions
-
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D114 | Per-session scratch directory for agent temp files | **Each session gets `<data_dir>/scratch/<sessionId>/` as a second containment root for `Read`/`Write`/`Edit` (absolute paths only; relative paths stay workspace-bound). The path is advertised in the system prompt and as `PI_SCRATCH_DIR` in Bash. Scratch writes auto-allow without a permission card and are excluded from the artifacts table. Scratch is created lazily, deleted with the session, and swept at startup (orphans, >7 days stale). Glob/Grep/BrowserPreview remain workspace-only. Plan does not expose Write/Edit; Plan Bash can still mutate scratch under its resolved permission mode.** | Temp/intermediate files (one-off scripts, downloaded data, drafts) were dirtying the user's project and git status; a host-owned root with identical lexical + symlink defenses keeps the sandbox model intact while giving the model a legitimate place for scratch work |
-| D115 | Permission modes: global default + per-session override | *(composer presentation superseded by D132; checkpoint Plan clause superseded by D189)* **A permission mode governs high-risk tool approval: `ask` (confirm everything, default), `accept-edits` (auto-allow Write/Edit, confirm Bash/plugins), `auto` (auto-allow all). Global default lives in settings `defaultPermissionMode`; each session stores `permission_mode` (schema v5, default `inherit`) which overrides it when not inherit. Resolution: session override → global default → ask, enforced solely in host-core `tools.execute`. Plan retains the selector; its Write/Edit/plugin hard deny outranks every mode, while Bash follows the selected mode.** | Confirming every Write/Edit made long agent runs high-friction, but a single global toggle is too coarse — trusted scratch sessions and risky repo sessions need different postures; keeping enforcement host-side preserves the security boundary |
-| D132 | Composer permission menu shows effective modes only | **The agent-mode composer chip and menu expose only `ask`, `accept-edits`, and `auto`, with the effective mode selected directly and no global-default/inherit entry or provenance label. Choosing an item stores that explicit session override. Existing `inherit` persistence and resolution from D115 remain unchanged until the user chooses a mode. This supersedes only D115's composer-presentation clause.** | The inherited entry repeated a selectable mode and exposed storage provenance instead of the permission posture the user is choosing; presenting the three effective modes makes the control direct without changing host enforcement |
-| D116 | Provider failures as assistant messages | **Every provider/model turn failure is attached to a durable `role=assistant`, `status=error` transcript message through optional `UiMessage.error`. The message shows a localized summary and stable code, keeps redacted provider detail behind an accessible disclosure, and offers context-appropriate Retry or Settings actions. Message-bound failures never use toast/global banner presentation and never re-enter later model context.** | Errors belong to the failed turn; preserving them in the transcript makes the response diagnosable after session switches/restarts without contaminating the next model request or exposing credentials |
-| D127 | Context-preserving reseed + transport retry | **Reseeding a recreated pi runtime from the persisted transcript restores tool call/result pairs (from tool rows' `toolCallId`/`toolArgs`/`toolResult`) in addition to user/assistant text and thinking. Interrupted tool rows restore as errored results; orphaned tool rows get a synthesized call-only assistant carrier so pairs stay adjacent and well-formed. Failed assistant turns stay transcript-only. Separately, request setup uses one bounded pi-ai retry for transient transport/provider failures; post-response stream recovery is defined by D186.** | Text-only reseed collapsed a session's context after any runtime recreation (regenerate/edit, config change, restart): the model lost every tool result it had gathered and — seeing its own history answer without visible tool use — stopped calling tools, degrading agent sessions into bare chat. The incident trigger was a single un-retried provider timeout that forced the user into regenerate. D127 corrects the initially duplicated D120 identifier; D120 remains the earlier application-update decision frozen by baseline 0.4.6. |
-| D136 | pi-ai owns known-model metadata | **For every model resolved from the pinned pi-ai catalog, Electron main passes the complete pi model snapshot to the sidecar and PI-Desktop replaces only connection identity. Provider Settings and the model menu do not override reasoning support, thinking levels, context/output limits, temperature, or compatibility. Unknown free-form ids remain usable through an explicit generic text-only, non-reasoning fallback. This supersedes D102 and the provider-override clauses of D096/D107.** | A second desktop-owned model matrix discarded pi metadata, drifted from adapter behavior, and made model semantics depend on conflicting configurations; fixes for known models now belong in pi-ai or a pi-ai upgrade. |
-| D183 | Segmented tool and model latency logs *(superseded by D385 / ADR 0212; UI clause superseded by D184)* | **Every `tools.execute` call is timed in segments instead of one opaque duration: host-core emits a `tool timing` line on the `host` channel and persists `prompted`, `permissionWaitMs`, `overheadMs`, and `totalMs` next to the existing `durationMs` on `tool_execute` / `tool_denied` audit rows; the sidecar writes greppable `[timing] kind=tool …` (`hostRttMs`) and `[timing] kind=model …` (`providerWaitMs`, `streamMs`, including failed/aborted turns) lines to the `agent` channel, suppressible with `PI_DESKTOP_TIMING=0`. The original no-UI clause is superseded by D184; logging remains unchanged.** | "Executing a command is slow" was undiagnosable from the logs: approval waiting, the tool body, and the provider round trip were indistinguishable, so a 45s gap between two audit rows with 0ms durations gave no clue whether it was the user, the model, or the host. Splitting the stages makes the answer readable without reproducing the run. |
-| D158 | Turn-boundary context checkpoint compaction *(soft-boundary, model-tool, and visibility clauses superseded by D200; the model tool and visibility restored in Codex's shape by D203)* | **PI-Desktop reuses pi-agent-core's context estimation, session-context, and compaction primitives but owns the orchestration and durability. After every `turn_end`, before any next provider request, the runtime evaluates model-aware soft/hard budgets. A transient deduplicated instruction can ask the model to call the internal `CompactContext` tool; the tool's normal activity row is visible/durable, while the instruction is not. Crossing the hard budget forces checkpoint generation and blocks the request on failure. A final atomic tool batch that reaches half the hard budget is fairly head/tail-truncated only in the checkpoint copy, with explicit markers and every call/result envelope retained; original transcript rows remain complete. Exact provider overflow removes the failed assistant from model context, creates one checkpoint, and retries once. Host protocol v6 appends checkpoint records beside the untouched visible JSONL transcript; restart, late truncation, and included-boundary forks preserve the newest valid checkpoint. Disabling automatic compaction removes the tool and all automatic threshold/overflow recovery, while `/compact` remains available. OpenCode DCP is an AGPL-3.0 behavioral reference only and is neither linked nor copied (ADR 0030).** | pi's end-of-run-only behavior cannot protect long tool loops, and a model reminder alone cannot guarantee provider safety. Reusing pi's tested compaction format while adding a deterministic `turn_end` gate prevents another provider request from crossing the known window, retains user-visible history, and avoids importing an incompatible plugin/runtime and license boundary. |
-| D185 | Lazy per-turn tool activation *(the always-active `CompactContext` clause is void under D200, and holds again for `new_context` under D203; activation restoration amended by D400 / ADR 0225)* | **The sidecar keeps a complete local tool registry but sends only the mode core set and local `ToolSearch` on each new prompt. `BrowserPreview`, plugin tools, `Skill`, and plugin-development helpers appear as bounded compact catalog entries and are activated by exact-name or capability search; the next turn receives their schemas, native pi-ai deferred search is used when supported, and the in-memory set resets before the next user prompt, then restores only successful activation evidence still present in the effective context and allowed by the current catalog and mode. Host permissions, containment, timeouts, and audits are unchanged.** | Full tool schemas made simple first requests disproportionately large and repeated optional capability cost across turns. A pi-style active set preserves core coding ergonomics while making ancillary tools pay-as-you-go and provider-independent; restoring successful context evidence prevents the model from seeing a capability marker without receiving the corresponding schema. |
-| D200 | Imperceptible background context compaction *(background pre-computation, incremental trigger, silence, and no-model-tool clauses superseded by D203)* | **Compaction becomes a host-owned background activity with no user-visible surface. `contextBudget()` keeps the D158 hard limit and request headroom, derives the retained-tail target from the model window (`clamp(hardLimit * 0.2, 8k, 64k)`, still capped at half the hard budget) instead of settings, and adds `backgroundLimit = floor(hardLimit * 0.7)` as a pre-computation trigger; the soft boundary is deleted. Checkpoint generation is split from installation: `buildCheckpoint` produces one without persisting or activating it, and installation re-estimates, appends through host-core, and emits `compaction_end`. Pre-computation runs only in provider-idle windows — while a tool executes and after a run ends — and only when the context is past the background limit **and** grew by at least the retained-tail target since the newest checkpoint's baseline, so a large tail cannot trigger a summary every turn. A pre-computed checkpoint installs at the next turn boundary or prompt only if its base is still active, its `throughMessageId` anchor still exists, and it still fits the current model's budget; any miss falls through to the unchanged blocking path, and a failed background build is discarded with no event, no persistence, and no ADR 0049 fallback. The `CompactContext` tool, the `<context_management>` nudge, and the host no-confirmation allowlist entry are removed, so triggering is entirely deterministic. `compaction_start`/`compaction_end` gain an optional `phase` (`background` \| `blocking`, absent means `blocking`) and `compaction_end` gains an optional `status { generation, summaryTokens }`; both are additive inside protocol v9. A successful automatic compaction produces no toast, no run-state change, and no transcript row; only a `retained_tail` fallback, an overflow retry, and manual `/compact` still notify. The context usage inspector is the single visible trace, reading `status` and the durable `SessionDetail.compaction`, with the generation counter carried inside the checkpoint's opaque `details` so no record schema change is needed. Settings exposes no compaction controls and persisted `contextCompaction` values are ignored (ADR 0061).** | Compaction was correct but intrusive: it toasted, moved the run state, spent a model turn on a tool call, left a transcript row, and always ran at the moment the user was waiting. Codex's graded trigger and increment-scoped threshold show the summary can be paid for off the critical path, and its host-only triggering removes a class of wasted turns. Deriving budgets from the model window also fixes applying one pair of absolute token counts to both a 32k and a 1M window; keeping the hard boundary untouched means none of this trades provider safety for UX. |
-| D201 | Bounded subagents behind a `Task` tool | **Agent mode exposes `Task` when the catalog contains one of the four inline builtins or an enabled global document under `~/.agents/subagents/*.md`. The catalog is loaded by Electron main for the next prompt, is capped at 16, and keeps delegate reports out of the parent model context. There is no project-level subagent capability directory; `.pi/agents` is not scanned.** | Keeping delegation as a bounded tool preserves parent ownership of context and permissions while a global user directory makes personal delegates portable across projects (ADR 0062, ADR 0112). |
-| D202 | Managed global subagent definitions | *(Page-shape clause superseded by D257 / ADR 0126; the global-only data boundary stands)* **host-core scans global Markdown documents under `~/.agents/subagents`, stores enabled state in `<data>/agent-capabilities/subagents.json`, and exposes them through the Settings > Agent > Subagents page. The page is one fixed-height global list with no project picker or project-level source. The runtime combines enabled global documents with builtins; malformed or deleted documents produce diagnostics or disappear after scanning, and no capability state is written into the Markdown file.** | Personal delegates follow the user without creating repository changes; the explicit global-only boundary avoids a second project precedence model and keeps Extensions focused on Installed and Marketplace (ADR 0063, ADR 0112). |
-| D203 | Codex-parity context compaction | **Compaction is rebuilt to match Codex's mechanism, reversing four D200 clauses and keeping the rest. All background pre-computation and the incremental trigger scope are deleted: `prepareNextTurn()` compacts synchronously when the total context crosses `hardLimit` or the model asked for a new window. A checkpoint carries the summary plus recent **user** messages only — pi's cut point still marks the boundary, but its split-turn prefix and recent tail are folded back into the summary input so the summary covers the whole range, and the retained tail is rebuilt newest-first from user messages up to 20,000 tokens (capped at half the hard budget) with the crossing message truncated rather than dropped, then restored to chronological order. Two families run the identical lifecycle: `summary`, and a `fresh_window` rollover that requests no summary and stores a fixed marker text, selected by construction option or `PI_DESKTOP_COMPACTION_STRATEGY` and exposed in neither settings nor i18n. The model-facing `new_context` tool returns (parameterless, Codex's description verbatim, on the host no-confirmation allowlist, never assignable to a subagent) together with two per-window budget reminders appended to the current turn's system prompt — one at `clamp(hardLimit * 0.15, 8k, 32k)` remaining, one at 2,000 — each claimed once and reset on install. host-core persists the whole checkpoint chain (`read_compactions`, `write_transcript_with_compactions`, per-record fork validation, `SessionDetail.compactions`) with `compaction` kept as its newest element. `compaction_start`/`compaction_end` drop `phase`, and `compaction_end` replaces `status` with `mark { id, throughMessageId, generation, summaryTokens, summarized }`; the transcript draws one divider row per compaction after the message it covers, ending the assistant turn it lands inside and dropping a mark whose anchor is gone, and every successful compaction raises one warning toast on top of the fallback/overflow/manual toasts. Deliberate deviations from Codex: the summary precedes the retained users because `buildSessionContext` fixes that order, `hardLimit` stays "window − output reserve" instead of 90% of the window, the tool is registered in both families, and the reminders are system-prompt appends with our own thresholds and wording (ADR 0064).** | The previous round cited Codex while implementing its opposite on four counts, and its Context section claimed Codex has no model-side compaction tool when `new_context` exists. The user asked for Codex's mechanism specifically, after being told it reverses the imperceptibility goal. Parity also buys three things on its own merits: a checkpoint that keeps only user messages is far cheaper and cannot strand a tool call without its result, a visible row makes a lossy operation auditable from the transcript again, and a warning puts the "start a fresh session instead" decision where it belongs. The cost is accepted: the user waits for compaction again. |
-| D186 | Bounded provider stream recovery and diagnostics *(429 budget amended by D245)* | **Provider request setup uses one bounded retry for non-rate-limit transient failures. A transient `STREAM_FAILED`, `NETWORK_ERROR`, or `TIMEOUT` after streaming begins is replayed once in the same turn after abortable backoff; the failed assistant is removed from model context and its visible message id is reused. HTTP 429 setup and stream recovery follow D245's shared five-retry budget. Provider `AppError.details` carries only bounded phase, timing, provider status/code, and retry-attempt diagnostics. Mutation guidance uses one fresh read/regeneration after an `Edit` mismatch; a second failed `Edit` for the same path or a second failed shell patch command returns a terminating tool hint instead of repairing old patch artifacts.** | Unbounded or regenerate-driven recovery made transient stream termination expensive and made patch loops consume turns without new information; finite runtime budgets preserve context and user control while keeping failures diagnosable (ADR 0050, amended by ADR 0091 and D245). |
+| D114 | 代理临时文件的每个会话暂存目录 | **每个会话将 `<data_dir>/scratch/<sessionId>/` 作为 strict/no-HTML/no-link/Electron/`<data_dir>/scratch/<sessionId>/` 的第二个包含根（仅限绝对路径；相对路径保持工作区限制）。该路径在系统提示符中公布，并在 Bash 中公布为 `PI_SCRATCH_DIR`。 Scratch 在没有权限卡的情况下写入自动允许，并从工件表中排除。 Scratch 是惰性创建的，随会话一起删除，并在启动时清除（孤儿，>7 天陈旧）。 Glob/Grep/BrowserPreview 仍仅限工作区。 Plan 不公开 Write/Edit； Plan Bash 在其解析权限模式下仍然可以改变暂存。** | Temp/intermediate 文件（一次性脚本、下载的数据、草稿）污染了用户的项目和 git 状态；主机拥有的根具有相同的词法+符号链接防御，可以保持沙箱模型完整，同时为模型提供合法的临时工作空间 |
+| D115 | 权限模式：全局默认+每会话覆盖 | *（Composer 演示文稿被 D132 取代；检查点 Plan 子句被 D189 取代）* **权限模式管理高风险工具审批：`ask`（确认所有内容，默认）、`accept-edits`（自动允许 Write/Edit、确认 Bash/plugins）、`auto` （自动允许全部）。全局默认值位于设置 `defaultPermissionMode` 中；每个会话都存储 `permission_mode`（架构 v5，默认 `inherit`），在不继承时会覆盖它。解决方案：会话覆盖→全局默认→询问，仅在 host-core `tools.execute` 中强制执行。 Plan 保留选择器；它的 Write/Edit/plugin 硬拒绝排名高于每种模式，而 Bash 则遵循所选模式。** | 确认每个 Write/Edit 都会使长代理运行高摩擦，但单个全局切换太粗糙 - 受信任的临时会话和有风险的回购会话需要不同的姿势；保持主机端强制执行可保护安全边界 |
+| D132 | Composer权限菜单仅显示有效模式 | **代理模式 Composer 芯片和菜单仅公开 `ask`、`accept-edits` 和 `auto`，直接选择有效模式，没有 global-default/inherit 条目或出处标签。选择一个项目会存储显式会话覆盖。在用户选择模式之前，D115 中现有的 `inherit` 持久性和分辨率保持不变。这仅取代 D115 的输入框演示条款。** | 继承的条目重复了可选择的模式并暴露了存储来源，而不是用户选择的权限状态；三种有效模式的呈现，在不改变主机执行的情况下，让控制变得直接 |
+| D116 | 提供商失败作为辅助消息 | **每个 provider/model 转向失败都会通过可选的 `UiMessage.error` 附加到持久的 `role=assistant`、`status=error` 转录消息。该消息显示本地化的摘要和稳定的代码，将经过编辑的提供程序详细信息保留在可访问的披露后面，并提供适合上下文的重试或设置操作。消息绑定失败从不使用 toast/global 横幅呈现，也从不重新进入以后的模型上下文。** | 错误属于失败的回合；将它们保留在转录本中使得响应在会话 switches/restarts 之后可诊断，而不会污染下一个模型请求或暴露凭据 |
+| D127 | 上下文保留重新播种+传输重试 | **除了 user/assistant 文本和思考之外，从持久记录中重新播种重新创建的 pi 运行时还会恢复工具 call/result 对（来自工具行的 `role=assistant`/`status=error`/`UiMessage.error`）。中断的工具行恢复为错误结果；孤立的工具行获得一个合成的仅呼叫辅助载体，因此对保持相邻且格式良好。失败的助理将仅保留成绩单。另外，请求设置使用一次有界 pi-ai 重试来处理暂时的 transport/provider 失败；响应后流恢复由 D186 定义。** | 在任何运行时重新创建（regenerate/edit、配置更改、重新启动）后，纯文本重新播种会崩溃会话的上下文：模型丢失了它收集的所有工具结果，并且在没有可见工具使用的情况下看到自己的历史答案，停止调用工具，将代理会话降级为裸聊天。事件触发器是一个未重试的提供程序超时，迫使用户重新生成。 D127 更正最初重复的 D120 标识符； D120 仍然是由基线 0.4.6 冻结的早期应用程序更新决策。 |
+| D136 | pi-ai 拥有已知模型元数据 | **对于从固定 pi-ai 目录解析的每个模型，Electron main 将完整的 pi 模型快照传递到 sidecar，而 PI-Desktop 仅替换连接标识。提供商设置和模型菜单不会覆盖推理支持、思维水平、context/output 限制、温度或兼容性。通过明确的通用纯文本、非推理回退，未知的自由格式 ID 仍然可用。这取代了 D102 和 D096/D107 的提供商覆盖条款。** | 第二个桌面拥有的模型矩阵丢弃了 pi 元数据，偏离了适配器行为，并使模型语义依赖于冲突的配置；针对已知模型的修复现在属于 pi-ai 或 pi-ai 升级。 |
+| D183 | 分段工具和模型延迟日志 *（被 D385 / ADR 0212 取代；UI 子句被 D184 取代）* | **每个 `tools.execute` 调用都按分段计时，而不是一个不透明的持续时间：host-core 在 `host` 通道上发出 `tool timing` 行，并在现有通道旁边保留 `prompted`、`permissionWaitMs`、`overheadMs` 和 `totalMs` `durationMs` 在 `tool_execute` / `tool_denied` 审核行上； sidecar 将 grepable `[timing] kind=tool …` (`hostRttMs`) 和 `[timing] kind=model …` (`providerWaitMs`、`streamMs`，包括 failed/aborted 匝) 线写入 `agent` 通道，可通过 `PI_DESKTOP_TIMING=0` 进行抑制。原来的 no-UI 条款被 D184 取代；日志记录保持不变。** | 从日志中无法诊断出“执行命令很慢”：批准等待、工具主体和提供程序往返无法区分，因此两个持续时间为 0 毫秒的审核行之间的 45 秒间隙无法说明是用户、模型还是主机。拆分阶段可以使答案可读，而无需重现运行。 |
+| D158 | 回合边界上下文检查点压缩*（软边界、模型工具和可见性条款被 D200 取代；模型工具和可见性由 D203 以 Codex 的形式恢复）* | **PI-Desktop 重用 pi-agent-core 的上下文估计、会话上下文和压缩原语，但拥有编排和持久性。在每个 `turn_end` 之后，在任何下一个提供程序请求之前，运行时都会评估模型感知的 soft/hard 预算。瞬态重复数据删除指令可以要求模型调用内部`CompactContext`工具；该工具的正常活动行是 visible/durable，而指令则不是。跨越硬预算会强制生成检查点并阻止失败的请求。达到硬预算一半的最终原子工具批次仅在检查点副本中相当 head/tail-truncated，具有显式标记并保留每个 call/result 信封；原始成绩单行保持完整。精确提供程序溢出会从模型上下文中删除失败的助手，创建一个检查点，然后重试一次。主机协议 v6 在未触及的可见 JSONL 转录本旁边附加检查点记录；重新启动、后期截断和包含边界分叉保留最新的有效检查点。禁用自动压缩会删除该工具和所有自动 threshold/overflow 恢复，而 `/compact` 仍然可用。 OpenCode DCP 仅是 AGPL-3.0 行为参考，既不链接也不复制 (ADR 0030)。** | pi 的仅运行结束行为无法保护长工具循环，并且仅靠模型提醒无法保证提供程序的安全。重用 pi 的经过测试的压缩格式，同时添加确定性 `turn_end` 门，可以防止另一个提供商请求跨越已知窗口，保留用户可见的历史记录，并避免导入不兼容的 plugin/runtime 和许可证边界。 |
+| D185 | 惰性每转刀具激活 *（始终有效的 `CompactContext` 子句在 D200 下无效，在 D203 下再次适用于 `new_context`；激活恢复由 D400 / ADR 0225 修订）* | **sidecar 保留完整的本地工具注册表，但在每个新提示上仅发送模式核心集和本地 `ToolSearch`。`BrowserPreview`、插件工具、`Skill` 和插件开发助手显示为有界紧凑目录条目，并通过精确名称或功能搜索激活；下一轮接收其架构，在支持时使用本机 pi-ai 延迟搜索，并且内存中的集合在下一个用户提示之前重置，然后只恢复有效上下文中仍存在且当前目录和模式允许的成功激活证据。主机权限、遏制、超时和审核保持不变。** | 完整的工具模式使得简单的第一个请求变得不成比例地大，并且跨轮重复的可选功能成本。pi 风格的活动集保留了核心编码人体工程学，同时使辅助工具按需付费且独立于提供商；恢复成功的上下文证据可避免模型看到能力标记却收不到对应架构。 |
+| D200 | 难以察觉的后台上下文压缩*（后台预计算、增量触发、静默和由 D203 取代的无模型工具子句）* | **压缩成为主机拥有的后台活动，没有用户可见的表面。 `contextBudget()` 保留 D158 硬限制和请求余量，从模型窗口（`clamp(hardLimit * 0.2, 8k, 64k)`，仍然上限为硬预算的一半）而不是设置导出保留尾部目标，并添加 `backgroundLimit = floor(hardLimit * 0.7)` 作为预计算触发器；软边界被删除。检查点生成与安装分开：`buildCheckpoint` 生成一个而不保留或激活它，安装重新估计，通过 host-core 附加，并发出 `compaction_end`。预计算仅在提供程序空闲窗口中运行 - 当工具执行时和运行结束后 - 并且仅当上下文超过后台限制**并且**自最新检查点的基线以来至少增长了保留尾部目标，因此大尾部不能每次都触发摘要。仅当其底座仍处于活动状态、其 `throughMessageId` 锚点仍然存在且仍符合当前模型的预算时，预先计算的检查点才会安装在下一回合边界或提示处；任何未命中都会进入未更改的阻塞路径，并且失败的后台构建将被丢弃，没有事件，没有持久性，也没有 ADR 0049 回退。 `CompactContext` 工具、`<context_management>` 微移和主机无确认白名单条目均已删除，因此触发完全是确定性的。 `compaction_start`/`compaction_end` 获得可选的 `phase` (`background` \| `blocking`，缺席意味着 `blocking`)，并且 `compaction_end` 获得可选的 `status { generation, summaryTokens }`；两者都是协议 v9 中的附加内容。成功的自动压缩不会产生任何提示，不会发生运行状态更改，也不会产生转录行；只有 `retained_tail` 回退、溢出重试和手动 `/compact` 仍会通知。上下文使用检查器是单个可见跟踪，读取 `status` 和持久的 `SessionDetail.compaction`，生成计数器包含在检查点的不透明 `details` 内，因此不需要更改记录模式。设置不公开任何压缩控件，并且持久的 `contextCompaction` 值将被忽略 (ADR 0061)。** | 压缩是正确的，但具有侵入性：它进行烘烤，移动运行状态，在工具调用上花费模型转动，留下记录行，并且总是在用户等待时运行。 Codex 的分级触发和增量范围阈值显示可以在关键路径之外支付摘要，并且其仅主机触发消除了一类浪费的回合。从模型窗口导出预算还修复了将一对绝对令牌计数应用于 32k 和 1M 窗口的问题；保持硬边界不受影响意味着这一切都不会牺牲用户体验的提供商安全。 |
+| D201 | `Task` 工具背后的有界子代理 | **当目录包含四个内置函数之一或 `~/.agents/subagents/*.md` 下的已启用全局文档时，Agent 模式提供 `Task`。Electron main 为下一次提示加载目录，上限为 16，并且委托报告不会进入父级模型上下文。没有项目级子代理能力目录；不会扫描 `.pi/agents`。** | 将委托保留为有界工具可以保持父级对上下文和权限的所有权，而全局用户目录使个人委托可跨项目使用 (ADR 0062、ADR 0112)。 |
+| D202 | 管理全局子代理定义 | *(页面形态条款已由 D257 / ADR 0126 取代；全局唯一的数据边界依然有效)* **host-core 扫描 `~/.agents/subagents` 下的全局 Markdown 文档，把启用状态存入 `<data>/agent-capabilities/subagents.json`，并通过设置 > 智能体 > 子代理页面暴露。页面是固定高度的单个全局列表，没有项目选择器或项目级来源。运行时把已启用的全局文档与内置定义合并；格式错误或删除的文档产生诊断或在扫描后消失，能力状态不写入 Markdown 文件。** | 个人委托可以跟随用户而不会修改仓库；明确的全局边界避免第二套项目优先级模型，并让扩展页专注于已安装和市场 (ADR 0063、ADR 0112)。  |
+| D203 | Codex 奇偶校验上下文压缩 | **压缩被重建以匹配 Codex 的机制，反转四个 D200 条款并保留其余部分。所有后台预计算和增量触发范围都被删除：当总上下文跨越 `hardLimit` 或模型要求新窗口时，`prepareNextTurn()` 同步压缩。检查点仅携带摘要和最近的 **用户** 消息 - pi 的切割点仍然标记边界，但其分叉前缀和最近的尾部被折叠回摘要输入中，因此摘要覆盖整个范围，并且保留的尾部是从最多 20,000 个令牌（上限为硬预算的一半）的用户消息中最新先重建的，交叉消息被截断而不是丢弃，然后恢复到时间顺序。两个系列运行相同的生命周期：`summary` 和 `fresh_window` 翻转，不请求摘要并存储固定标记文本，由构造选项或 `PI_DESKTOP_COMPACTION_STRATEGY` 选择，并且既不在设置中也不在 i18n 中公开。面向模型的 `new_context` 工具返回（无参数，Codex 的逐字描述，在主机上无确认白名单，永远不可分配给子代理）以及附加到当前回合系统提示的两个每个窗口预算提醒 - 一个在 `clamp(hardLimit * 0.15, 8k, 32k)` 剩余，一个在 2,000 - 每个声明一次并在安装时重置。 host-core 保留整个检查点链（`read_compactions`、`write_transcript_with_compactions`、每条记录分叉验证、`SessionDetail.compactions`），并将 `compaction` 保留为其最新元素。 `compaction_start`/`compaction_end` 删除 `phase`，并且 `compaction_end` 将 `status` 替换为 `mark { id, throughMessageId, generation, summaryTokens, summarized }`；记录在其覆盖的消息之后为每次压缩绘制一个分隔行，结束其落在内部的辅助回合并删除锚消失的标记，并且每次成功的压缩都会在 fallback/overflow/manual toast 之上引发一个警告 toast。故意偏离 Codex：摘要位于保留用户之前，因为 `buildSessionContext` 修复了该顺序，`hardLimit` 保持“窗口 - 输出保留”而不是窗口的 90%，该工具已在两个系列中注册，并且提醒是系统提示附加我们自己的阈值和措辞 (ADR 0064)。** | 上一轮引用了 Codex，同时在四个方面实现了相反的结果，其上下文部分声称，当 `new_context` 存在时，Codex 没有模型端压缩工具。用户在被告知 Codex 的机制会逆转不可察觉目标后，特别询问了 Codex 的机制。 Parity 还根据其自身优点购买了三件东西：仅保留用户消息的检查点要便宜得多，并且在没有结果的情况下无法搁置工具调用，可见行使有损操作可以再次从记录中进行审核，并且警告将“改为开始新会话”决策放在其所属的位置。成本被接受：用户再次等待压缩。 |
+| D186 | 有界提供商流恢复和诊断 | **提供程序请求设置使用一次有界 pi-ai 重试。流式传输开始后的瞬态 `STREAM_FAILED`、`NETWORK_ERROR` 或 `TIMEOUT` 在可中止退避后的同一回合中重播一次；失败的助手将从模型上下文中删除，并重用其可见消息 ID。第二次失败是致命的。提供程序 `AppError.details` 仅携带有界阶段、计时、提供程序 status/code 和重试诊断。突变指导在 `Edit` 不匹配后使用一个新的 read/regeneration；同一路径的第二个失败的 `Edit` 或第二个失败的 shell patch 命令会返回终止工具提示，而不是修复旧的补丁工件。** | 无界或重新生成驱动的恢复使得瞬态流终止变得昂贵，并且使得补丁循环在没有新信息的情况下消耗轮次；有限的运行时间预算保留上下文和用户控制，同时保持故障可诊断（ADR 0050）。 |
 
-| D187 | Resource-isolated host RPC stdio | **host-core reads stdin and serializes stdout through one dedicated named OS thread per direction, never through Tokio's dynamic blocking pool. The threads retry interrupted and transient `EAGAIN`/`EWOULDBLOCK` errors while preserving NDJSON framing; inability to create a control thread is a structured startup failure. The login-shell PATH probe also treats helper-thread creation as best effort and falls back to the inherited PATH. RPC/tool admission limits remain unchanged.** | Tokio stdio can panic when OS thread creation returns `Resource temporarily unavailable` (errno 35 on macOS), turning temporary resource pressure into `HOST_UNAVAILABLE`; isolating the control pipe removes that process-level crash path while retaining bounded overload behavior (ADR 0051). |
-| D191 | Agent-only mode; Chat renamed to read-only | *(superseded by D188/D189: the mode selector returned as `Agent | Plan`, and `chat` migrates to `plan`)* **`agent` is the only session mode the product exposes. The former `chat` profile is renamed `read-only` and keeps its `Read`/`Glob`/`Grep` hard deny in host-core, but it has no UI surface: no top-bar toggle, no composer chip, no Settings row, no palette command or slash alias, and no localized labels. The host normalizes `chat` to `read-only` on every write path (`session.create`, `session.configure`, `session.import`) and the permission gate is negative — anything that is not `agent` gets the read-only surface — so an unknown or legacy value can never widen the tool set. Error codes become `BASH_DISABLED_IN_READ_ONLY` / `WRITE_DISABLED_IN_READ_ONLY`. A boot fix-up rewrites existing `sessions.mode = 'chat'` rows and a stored `defaultMode` of `chat` to `agent`.** | A mode switch the product never intends users to reach is a footgun and dead UI weight: sessions could be stranded on a read-only profile with no way back, and two toolsets doubled the surface every tool, prompt, and permission change had to be reasoned about. Keeping the narrow profile enforced host-side preserves the security boundary for imported and legacy rows without shipping a control for it (ADR 0055). |
-| D369 | Effective subagent thinking metadata | *(amended by D395)* **The immediate `Task` result, `SubagentRunResult`, and lifecycle snapshots carry the effective `modelId` and `thinkingLevel` passed to each child run; the topology node and side-dock header show the raw canonical non-`off` level after the model name, while `off`, `omit`, and unsupported reasoning stay model-only. No host protocol, storage schema, provider request, or lifecycle behavior change.** | Delegation cards need the level actually sent after the target model clamps it, not a value re-derived from the parent or the definition (ADR 0202, ADR 0221, E2E-219) |
+| D187 | 资源隔离主机 RPC stdio | **host-core 通过每个方向的一个专用命名操作系统线程读取 stdin 并序列化 stdout，而不是通过 Tokio 的动态阻塞池。线程重试中断和瞬态 `STREAM_FAILED`/`NETWORK_ERROR` 错误，同时保留 NDJSON 帧；无法创建控制线程是结构化启动失败。登录 shell 路径探测还将帮助程序线程创建视为尽力而为，并回退到继承的路径。 RPC/tool 入场限制保持不变。** | 当操作系统线程创建返回 `Resource temporarily unavailable`（macOS 上的错误号 35）时，Tokio stdio 可能会出现恐慌，从而将临时资源压力转变为 `HOST_UNAVAILABLE`；隔离控制管道会删除该进程级崩溃路径，同时保留有限的过载行为 (ADR 0051)。 |
+| D191 | 仅限代理模式；聊天已重命名为只读 | *（被 D188/D189 取代：模式选择器返回为 `Agent | Plan`, and `chat` migrates to `plan`)* **`agent` is the only session mode the product exposes. The former `chat` profile is renamed `只读` and keeps its `Read`/`Glob`/`Grep` hard deny in host-core, but it has no UI surface: no top-bar toggle, no composer chip, no Settings row, no palette command or slash alias, and no localized labels. The host normalizes `chat` to `只读` on every write path (`session.create`, `session.configure`, `session.import`) and the permission gate is negative — anything that is not `agent` gets the read-only surface — so an unknown or legacy value can never widen the tool set. Error codes become `BASH_DISABLED_IN_READ_ONLY` / `WRITE_DISABLED_IN_READ_ONLY`. A boot fix-up rewrites existing `sessions.mode =“聊天”` rows and a stored `defaultMode` of `chat` to `代理`。** | 该产品从来不希望用户实现的模式切换是枪炮和沉重的 UI 重量：会话可能会滞留在只读配置文件上而无法返回，并且两个工具集使每个工具、提示和权限更改的表面增加了一倍，都必须进行推理。在主机端保持窄配置文件强制执行可以保留导入行和旧行的安全边界，而无需为其提供控件 (ADR 0055)。 |
+| D369 | 有效的子智能体思考元数据 | **（由 D395 修订）** 即时 `Task` 结果、`SubagentRunResult` 与生命周期快照携带传给每个子运行的有效 `modelId` 与 `thinkingLevel`；拓扑节点与侧栏标题在模型名后显示原始规范非 `off` 级别，`off`、`omit` 与不支持推理时仅显示模型。宿主协议、存储 schema、provider 请求与生命周期行为不变。** | 委托卡片需要目标模型钳制后实际发送的级别，而不是从父级或定义重新推导的值（ADR 0202、ADR 0221、E2E-219） |
 
-| D395 | Canonical thinking-level values in the UI | **Amend D369 / ADR 0202: Composer, model configuration, and delegation surfaces render `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` directly instead of translating them. Remove these values from every locale catalog; effective metadata, clamping, provider requests, protocol, and storage remain unchanged. See ADR 0221 and E2E-219.** | Thinking levels are stable protocol values, and locale-specific labels made the same provider/runtime setting vary across the application. |
-| D445 | Compaction summary retries and is right-sized before retained-tail recovery | **Amend ADR 0049 decision 1 / D203: the automatic summary request carries a bounded pi-ai `RetryPolicy` (3 retries, 2s/4s/8s backoff, abort-aware; pi-ai classifies what is transient). The preflight guard sizes the prompt pi actually serializes (tool results capped at 2 000 chars) instead of summing raw message estimates. When that prompt still exceeds the window, exactly one reduced input is tried (tool results cut to a 500-char prefix, thinking dropped, no message removed) before the retained-tail fallback runs. `ContextCompactionMark` gains an additive `fallback?: "retained_tail"` derived from persisted `details.fallback`; the transcript row labels such checkpoints as a failed summary instead of `summary ≈N tokens`. No record schema, protocol version, or host-core change. See ADR 0282 and E2E-084.** | Issue #543: six of ten checkpoints on a real long session were the ~112-token recovery notice. The summary request had no retry, the raw-size guard skipped summaries that would have fit, and the row presented every fallback as a successful summary. |
+| D395 | UI 中的规范思考等级值 | **修订 D369 / ADR 0202：Composer、模型配置和委派界面直接显示 `off`、`minimal`、`low`、`medium`、`high`、`xhigh` 和 `max`，不再翻译。所有语言目录移除这些值；有效元数据、钳位、provider 请求、协议和存储保持不变。见 ADR 0221 与 E2E-219。** | 思考等级是稳定的协议值，本地化标签会使同一个 provider/runtime 设置在不同应用语言下显示不同。 |
+| D445 | 压缩摘要先重试并按实际提示大小预检，再回退保留尾部 | **修订 ADR 0049 第 1 条 / D203：自动摘要请求携带有界的 pi-ai `RetryPolicy`（3 次重试，2s/4s/8s 退避，可被中止；由 pi-ai 判定哪些错误是瞬时的）。预检守卫按 pi 实际序列化的提示（工具结果已截至 2 000 字符）估算大小，不再对原始消息逐条求和。若该提示仍超出窗口，先尝试恰好一次缩减输入（工具结果截为 500 字符前缀、去掉思考块、不删除任何消息），再运行保留尾部回退。`ContextCompactionMark` 新增可选 `fallback?: "retained_tail"`，由持久化的 `details.fallback` 派生；转录行将此类检查点标为摘要生成失败，而不是 `摘要 ≈N tokens`。不改记录 schema、协议版本或 host-core。见 ADR 0282 与 E2E-084。** | Issue #543：真实长会话 10 次压缩里 6 次是约 112 token 的恢复说明。摘要请求没有重试、按原始大小的守卫跳过了本可放下的摘要、转录行把每次回退都显示成成功摘要。 |
 
-## N. Notification decisions
+## N. 通知决定
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
+|---|---|---|--- |
+| D117 | 持久任务通知收件箱（本机投递条款由 D350 修订） | **Rust host-core 独占拥有 schema-v6 `notifications` 表，并且仅在 Electron 报告结果尚未可见时，当 `session.endTurn` 将运行轮移至 completed/error 时，才会自动插入一个结构化 `task.completed` / `task.failed` 行。 Renderer 通过允许列表查看上下文 IPC 提供当前聊天会话；仅当其窗口为 visible/focused 并且该会话匹配时，Main 才会抑制插入，而未知、背景、隐藏或未聚焦状态无法安全通知。 `turn_id UNIQUE` 可以防止重复，中止是静默的，会话删除级联，并且只保留最新的 200 行。标题栏响铃显示准确的未读计数、All/Unread、行 mark-read/session 激活、标记所有已读以及通过完整的 keyboard/accessibility 行为进行清除。协议 v4 添加了单数 `notification.list/markRead/markAllRead/clear`； `session.endTurn` 返回插入的记录，Electron 发出渲染器 `notification.changed`，并且仅当主窗口未聚焦时，它才会显示本机系统通知，该通知单击 restores/focuses 窗口并发出 `notification.activated`。持久化行包含结构化 kind/session/turn/error 数据以及会话名称快照，从未本地化通知 title/body 散文。任务收件箱没有权限、计划提醒、偏好、云通知或插件通知源；插件本机通知是单独的 D213 表面。 D113 的个人资料页脚保持不变。** | 通知应该恢复用户没有看到的任务结果，而不是重复当前聊天中已经可见的结果。有界主机拥有的收件箱可保持 background/unfocused 结果的持久性和可导航性，而不会侵犯 SQLite 所有权、重复事件或将每个终端事件转变为通知历史记录。 |
+
+## O. 桌面 shell 决定
+
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D117 | Durable task notification inbox | **Rust host-core exclusively owns a schema-v6 `notifications` table and atomically inserts one structured `task.completed` / `task.failed` row when `session.endTurn` moves a running turn to completed/error only if Electron reports that result was not already visible. Renderer supplies the current chat session through an allowlisted viewing-context IPC and a matching prompt-dispatch snapshot; Main suppresses insertion only when its window is visible/focused and that session matches, while unknown, background, hidden, or unfocused state fails safe to notification. `turn_id UNIQUE` prevents duplicates, abort is silent, session deletion cascades, and only the newest 200 rows remain. The titlebar bell exposes exact unread count, All/Unread, row mark-read/session activation, mark-all-read, and clear with complete keyboard/accessibility behavior. Protocol v4 adds singular `notification.list/markRead/markAllRead/clear`; `session.endTurn` returns an inserted record, Electron emits renderer `notification.changed`, and only while the main window is unfocused it also shows a native system notification whose click restores/focuses the window and emits `notification.activated`. Persisted rows contain structured kind/session/turn/error data plus the session-name snapshot, never localized notification title/body prose. The task inbox has no permission, scheduled-reminder, preference, cloud-notification, or plugin-notification source; plugin-native notifications are the separate D213 surface. D113's profile footer remains unchanged.** | Notifications should recover task outcomes the user did not see, not duplicate a result already visible in the current chat. A bounded host-owned inbox keeps background/unfocused outcomes durable and navigable without violating SQLite ownership, duplicating events, or turning every terminal event into notification history. |
+| D118 | 平台应用程序菜单和窗口镶边 | **macOS 安装传统的系统应用程序菜单并保留隐藏式交通信号灯。 Windows/Linux 使用共享的 46px 无框架外壳以及本地化的 File/Edit/View/Window/Help 菜单和渲染器绘制的 minimize/maximize-or-restore/close 控件。两个菜单表面都通过固定的 `AppMenuCommand` 允许列表路由渲染器拥有的操作；渲染器菜单通过单独的固定允许列表路由本机 editing/window 操作。目标打包在 Electron 打包之前构建本地发布主机。这增加了平台就绪的 shell 行为，但不会逆转 D010：Windows/Linux 发布资格在 MVP 后仍然有效。** | 默认的 Electron 菜单会使 macOS shell 命令不完整，而无框 Windows/Linux 窗口会丢失应用程序菜单和窗口控件。共享允许列表可以保持行为一致，而不会暴露任意特权命令桥。 |
+| D120 | 应用程序更新交付 | *(amended by D364)* **Electron Main 独家拥有固定的 GitHub 发布源、更新轮询、类型化状态和安装生命周期。开发被禁用；打包的 macOS 和非 AppImage Linux 使用通知和链接传递，而 Windows NSIS 和 Linux AppImage 在应用程序内下载并在退出时安装。 Renderer IPC 无法提供 Feed URL。自动故障保持环境状态，显式检查表面状态，下载状态保持可操作。更新程序始终强制使用 `allowPrerelease = false`，因此预发布安装（例如 `0.2.0-rc.6`）会跟踪 GitHub 的最新稳定版本，而不是 electro-updater 的默认同通道引脚。 D126 随后发布由标签矩阵生成的每个平台提要，而 macOS 仍保持手动状态，直到签名通道合格为止。** | 将软件包安装保持在沙盒渲染器之外，匹配每种安装程序格式的交付，并在菜单、设置和更新横幅之间提供一种一致的状态 (ADR 0022)。如果没有稳定通道引脚，RC 不会构建更新的稳定通道，因为电子更新程序将 `rc` 视为自定义通道。 |
+| D313 | 主进程拥有的 GitHub 问题反馈 | **GitHub issue 表单是唯一入口。Bug 表单必填描述、复现步骤、预期/实际行为、应用版本和操作系统；功能表单必填问题和期望改动。设置 → 信息提供一条「问题反馈」，走 `pi-desktop/app/openFeedback`。Electron Main 构造固定的 `bug_report.yml` URL，用主进程版本信息预填 `app-version` / `os` / `environment`，再以 `shell.openExternal` 打开。渲染器不能提供 URL。功能请求仍从 GitHub 模板选择器进入。不改 host 协议、存储或更新源（ADR 0157）。** | 缺少版本或复现步骤的报告无法排查；由渲染器选择目标会削弱 D120 同样的「GitHub URL 归主进程」规则。 |
+| D330 | 由主进程拥有的 openExternal 协议白名单 | **每次 `shell.openExternal` 先解析 URL。只有 `http:`、`https:`（含主机名和写出的 `//`）以及 `mailto:`（非空地址）会以规范化 href 到达操作系统。`file:`、`javascript:`、`data:` 和自定义方案被拒绝。见 ADR 0168。** | 任意协议的 openExternal 会把沙箱渲染器变成打开本地文件或执行脚本的入口。 |
+| D332 | 分类的插件文件预览与实时工作区事件 | **修订 ADR 0104 / 0105 / 0109 / 0111：在 `fs.read` 下增加 `fs.readPreview`（文本 / 图片 data URL / 二进制 / tooLarge，上限与宿主 Files 页相同）。工作区事件同时广播给停靠视图和独立面板。** | 插件需要与 Files 页同类的预览，以及工作区变更的实时信号。 |
+| D334 | 受约束的聊天内图片显示 | **修订桌面 `fs/read` 仅工作区条款：`fs/read`、`fs/reveal` 和 `fs/open` 共用 `resolveOpenablePath`（工作区、`<data_dir>/scratch/`、`<data_dir>/attachments/`，以及 `attachments/<sha256>` blob）。读取会 `realpath` 目标。** | 聊天需要内联图片，但不能把任意绝对路径交给渲染器。 |
+| D336 | 由宿主代发的插件补全与会话上下文 | **修订 D019：插件在授予 `session.read` 时可经 `pi.session.getLlmContext()` 读取进行中工具会话的面向模型转录，并在授予相应权限时经 `pi.agent.complete()` 跑一次性补全。见 ADR 0174。** | 插件需要第二意见补全，但不能自己拿提供商凭据。 |
+| D340 | 用户可配置的出站代理 | **设置 → 通用 → 网络把代理暴露为系统 / 直连 / 自定义。自定义接受 http/https/socks5 URL 和绕过列表，持久化为可选 `AppSettings.networkProxy`。Chromium `session.setProxy` 覆盖内置浏览器和 `net.fetch`；sidecar 经 undici dispatcher 应用。见 ADR 0177 与 E2E-190。** | Node fetch 忽略操作系统代理，Clash/V2Ray/SOCKS5 用户能浏览却不能调模型。 |
+| D342 | 从本地智能体存储导入模型配置 | **修订 D007：设置 → 导入仍不自动导入 `~/.pi`。显式模型配置卡片扫描 Claude Code、Codex、OpenCode、Pi 和 CC Switch 提供商行，列出不含密钥的草稿，并由 `modelConfig/importRun` 经 `providers.create` 复制 API 密钥。等价提供商（规范化 base URL + API 风格 + 同一凭据）被跳过。见 ADR 0179、ADR 0188 与 E2E-209。** | 用户已经从这些存储导入会话，否则要在模型页重打同样的端点和密钥。 |
+| D351 | 模型配置导入保留不同凭据 | **修订 D342 / ADR 0179：导入提供商仅在规范化端点、API 风格和凭据都匹配时视为等价。同一端点不同 API 密钥创建独立提供商行，并仍可在 Composer 中选择。Electron main 经宿主密钥边界解析已有 API 密钥。见 ADR 0188 与 E2E-209。** | CC Switch 在同一网关端点存多个账户；仅按端点幂等会静默丢掉除第一个以外的配置。 |
+| D344 | 由主进程拥有的文件选择能力 | **修订 D197 / D334：Composer 原生文件和图片选择器把选中的绝对路径留在 Electron main，用短时、绑定发送者、一次性令牌保护。`composer/importFiles` 只接受该令牌和持久会话 id；渲染器从不提供源路径。MVP 文件选择器只提供常规文件。见 ADR 0181 与 E2E-102h。** | 渲染器 IPC 不是用户点击门禁：导入载荷接受任意绝对路径会变成本地文件外泄原语。 |
+| D314 | 已发布语言注册表与语言选择器 | **修订 D073：界面语言列在 `@pi-desktop/i18n`（`en`、`zh-CN`、`zh-TW`、`tr`）。本地名称永不翻译。设置 → 常规的语言是可搜索选择器（跟随系统 + 注册表），不再是三张预览卡。插件标签保持 `en` + `zh-CN` 契约；没有插件翻译的外壳语言使用英语回退；产品更新日志跟随每个已发布产品语言。见 ADR 0160、ADR 0182 与 E2E-091。** | 预览卡无法扩展到两种以上语言；注册表让添加语言无需重写外观卡即可发货。 |
+| D345 | 繁体中文外壳语言 | **修订 D314 / ADR 0160：以独立完整外壳目录发布 `zh-TW`，本地名称为繁體中文。`zh-TW`、`zh-Hant`、`zh-HK` 和 `zh-MO` 解析到繁体中文外壳；通用 `zh` 和简体中文区域继续解析到 `zh-CN`。持久化的 `AppSettings.language` 加入 `zh-TW`，Electron 打包 `zh-TW` 与 `zh_TW` 语言环境目录；应用内变更日志加入对应的 `zh-TW` 目录，使发行说明跟随当前繁体中文外壳。不改变宿主协议或存储架构版本。** | 繁体中文用户需要独立的外壳和发行说明语言；复用简体中文目录会使自动检测和可见术语不正确。 |
+| D346 | P0 国际外壳语言 | **修订 D314 / ADR 0160 / ADR 0182：发布完整的 `de`、`es` 和 `fr` 外壳目录，本地名称为 Deutsch、Español 和 Français。`de-*`、`es-*` 和 `fr-*` 解析到对应基础目录；持久化的 `AppSettings.language` 接受三个新 ID；匹配的变更日志目录让发行说明跟随当前语言。不改变宿主协议、存储架构或 IPC 版本。** | 西班牙语、法语和德语是缺失的最高价值 P0 国际化覆盖，而现有注册表和可搜索选择器已经可以扩展到更多语言。 |
+| D349 | 韩语应用程序壳 | **修订 D314 / ADR 0160 / ADR 0183：提供完整 `ko` 外壳目录，本地名한국어，英文名 Korean。`ko` 和 `ko-*` 解析到韩语目录；持久化 `AppSettings.language` 接受 `ko`；Electron 打包韩语 Chromium locale，并有匹配的韩语发版日志。不改主机协议或存储 schema。** | 韩语用户需要独立完整外壳和发版说明语言。 |
+| D350 | 按焦点区分本机通知投递 | **修订 D117 / ADR 0107：渲染器在 `notification/showNative` 终端结果调用中标记 `kind: "task"`，在 asktool、工具权限和 Plan 审批调用中标记 `kind: "interactive"`。缺失或未知值默认为 `task`。任务本机投递仍然仅在未聚焦时进行，包括聚焦的背景会话；交互投递仅在确切的询问会话已在聚焦窗口中可见时抑制，因此聚焦其他会话时可以收到横幅。交互询问从不创建持久任务收件箱行，插件本机通知仍使用独立的权限门控 API。不改变主机协议或存储架构版本。** | PR #84 扩展共享 handler 的门控时，使聚焦的背景终端完成也显示了本机横幅，同时实现了聚焦背景交互询问通知的目标。显式 `kind` 在同一个 Electron 边界隔离这两种用户可见策略。 |
+| D358 | 在进行中重试行显示 provider 原因 | **修订 ADR 0175：`AgentActivity.retrying` 可携带有界、已脱敏的错误详情。紧凑重试行在静止时保持原样；悬停或键盘聚焦揭示本地化摘要、稳定码/状态和 provider 消息。中间重试不会变成转录错误行。见 ADR 0196 与 US-UI-60d。** | 用户需要当前重试原因，又不能复制最终助手错误。 |
+| D359 | 用宿主一次性补全总结首轮会话标题 | **首轮提示回退保持同步。`agent_end` 后渲染器调用白名单 `session/summarizeTitle`。Electron 解析会话模型并跑关闭思考的一次性补全；有效结果经 `session.rename` 持久化。自动替换拒绝已持久的 `manualTitle`。见 ADR 0186 与 E2E-021a。** | 截断的首轮提示当侧栏标签很差，但标题生成不能挡住回合或把凭据暴露给渲染器。 |
+| D361 | 内联图片传输使用 10 MB 应用侧上限 | **修订 ADR 0101 / D197：`MAX_INLINE_IMAGE_BYTES` 为 10,000,000。具备视觉能力的模型把不超过该十进制 10 MB 上限的图片作为瞬时 base64 接收；更大的图片和非视觉模型保留 `@path` 回退。Electron main 和 sidecar 共用该常量。不改协议或 schema。** | MiniMax 的 OpenAI 兼容端点单张图上限是 10 MB；更高的应用上限会在 Composer 已经内联字节后被提供商拒绝。 |
+| D316 | 可搜索主题选择器 | **修订 ADR 0160：设置 → 常规的主题是可搜索选择行（与语言相同的锚定菜单），不再是三张预览卡。系统 / 浅色 / 深色钉在顶部；插件主题在分隔线之后。`AppSettings.theme` 与插件主题回退不变。见 ADR 0161 与 E2E-091。** | 插件主题会撑破三列卡片网格，而语言选择器已经解决了可增长列表的控件问题。 |
+| D121 | 品牌macOS开发主机 | **macOS 上的 `pnpm dev` 通过 `.cache/electron-dev/` 下已安装的 Electron 主机包的指纹、临时签名的 PI-Desktop 副本启动 electro-vite。生成的捆绑包仅更改开发主机元数据、可执行文件名称、捆绑包标识符和 ICNS 资源；它永远不会改变 `node_modules`。 Windows/Linux 保持库存开发可执行，而打包通道仍归电子制造商所有。** | AppKit 会忽略顶级应用程序身份的运行时 app-name/menu 覆盖，并从主机包中获取本机菜单名称和“关于”图标；需要品牌开发主机才能与打包的 PI-Desktop 保持一致。 |
+| D129 | 无菜单 Windows/Linux 窗口镀铬 | **应用程序菜单仅为 macOS 系统菜单表面。 Windows/Linux 保留共享的无框架 46px 标题栏和渲染器绘制的 minimize/maximize-or-restore/close 控件，但在窗口内不渲染 File/Edit/View/Window/Help 菜单，并且不保留左侧标题栏空间。通过 renderer/native Web 内容处理，现有应用程序、编辑、缩放、全屏和关闭快捷方式仍然可用；仍然可以通过“设置”->“信息”访问更新检查。这仅取代 D118 和 ADR 0021 的 Windows/Linux 渲染器菜单部分。** | 窗口内桌面菜单会重复 macOS 特定的系统菜单镶边、占用导航空间，并且不属于 PI-Desktop 的无框 Windows/Linux 标题栏。 |
+| D130 | 侧边栏页脚通知条目 | **持久通知铃声从主标题栏移动到扩展侧边栏页脚右侧单独的 `32px` 操作，取代了 D113 的“帮助”快捷方式。其未读徽章和完整的 D117 收件箱行为保持不变；弹出窗口在页脚的上方和右侧打开，并且主标题栏中没有重复的贝尔。这仅取代 D113 和 D117 的条目位置条款。** | 通知历史记录属于持久的本地配置文件控件，页脚位置使主标题栏保持安静，同时保留紧凑、熟悉的状态条目。 |
+| D141 | 规范 Windows 本机应用程序身份 | *（由 D443 修订）* **Electron Main 在准备就绪之前设置产品名称，并在创建任何窗口之前将 `com.pi-desktop.app` 注册为 Windows 进程 AppUserModelID。该 ID 是现有的 electron-builder/NSIS 应用程序 ID； Windows 打包显式保留 `PI-Desktop` 作为可执行文件和“开始”菜单快捷方式。本机通知属性、通知设置、任务栏分组、安装的快捷方式和打包的可执行标识必须公开 `PI-Desktop`，而不是库存 Electron 主机。 D121 保持不变：Windows 开发可以使用库存 Electron 可执行文件，而其面向操作系统的运行时标识使用规范的 AUMID。** | `app.setName` 更改 Electron 的内部名称，但不更改通知和 shell 集成使用的 Windows 标识。跨运行时和打包的一个稳定 ID 可防止观察到的通知源泄漏和相邻 shell 品牌漂移，而无需更改已发布的 NSIS 升级身份。 |
+| D204 | 空的家庭任务输入表面 | *（取代 D111 的非停靠家庭输入框条款及其上下文快速行动条款；D205 中的起始网格修正被 D206 取代）* **空的聊天主页将受限制的英雄和可选的首次运行清单保留在可滚动内容区域中。主输入框是滚动条的底部保留兄弟，在聊天表面的底部保持可见，并且从不覆盖内容。 ** | 直接编辑器仍然是稳定的主要操作，并且流程布局保留了短窗口内清单的可达性（ADR 0066）。 |
+| D205 | ChatGPT 启发的空屋指导 | *（被 D206 取代）* **空的聊天主页在英雄和可选清单之间添加了一个紧凑的四卡开发人员入门网格：探索代码库、构建功能、修复错误和审查更改。每张本地化卡仅预填充并聚焦底部输入框；它从不发送提示或创建回合。 D204 中保留的底部合成器和单个可滚动主页流程保持不变。** | 之前的英雄专属中路留下了太多未使用的空间，并且没有提供起始线索。 ChatGPT 清晰的空状态层次结构提高了第一个任务的可发现性，而开发人员特定的提示则保持表面有目的性而不是促销性。 |
+| D206 | 删除空置的开发者入门卡 | **空的聊天主页不会呈现开发人员入门卡、入门字形或上下文快速操作行。保留了内敛的英雄、较短的辅助线、可选的新手引导清单以及D204的底部保留输入框；任务输入直接在编辑器中启动。这取代了 D205，而不改变 D204 的滚动和底部保留布局。** | 审查证实，直接输入框是首选的任务输入界面，并且这些卡片为空荡荡的家添加了不必要的决策层。 |
+| D208 | 可恢复的本机工具路径合约 | **保留 D185 的延迟 Glob/Grep 边界，但使每个提示和模式明确显示 Read 接受现有常规文件、Glob 接受目录、Grep 接受文件或目录。目录读取返回 `INVALID_ARGUMENT` 加上结构化的 Glob 恢复参数；显式文件 Grep 仅搜索该文件并将 `include` 应用于其基本名称。工具错误在其 ToolCallRows 上仍然可见，而活动组仅报告处理持续时间，并且从不从子行推断终端转向失败；终端代理事件和专用结果表面仍然具有权威性 (ADR 0069)。** | 持久会话反复显示目录读取和文件作为目录 Grep 错误，然后将恢复的工作显示为最终失败。窄主机边界的兼容性加上一个结果所有者消除了重试和错误失败 UI，而无需将每个搜索模式恢复到 Agent 核心。 |
+| D216 | 跨平台托盘驻留最小化 | **Electron Main 在 macOS、Windows 和 Linux 上创建一个打包资源托盘图标。每个主窗口最小化路径都会被拦截并隐藏窗口，而不需要配置主机或sidecar；托盘 click/double-click、Show 和 macOS 应用程序激活 恢复并聚焦现有窗口（如果已关闭，则创建一个窗口）。本地化托盘菜单显示“显示 PI-Desktop”和显式“退出 PI-Desktop”操作。关闭窗口仍然是退出操作，托盘销毁加上退出使用现有的有序 `before-quit` 关闭路径。** | 用户需要后台工作才能继续而不丢失应用程序窗口，而最小化在本机 macOS 控件和自定义 Windows/Linux shell 中必须意味着相同的事情。主要拥有的托盘生命周期避免了渲染器权限扩展并保持显式退出可观察。 |
+| D218 | 主机拥有的跨平台插件面板窗口栏 | **插件面板窗口采用主窗口的 46px 平台窗口栏：macOS 使用 `hiddenInset`，交通灯位置为 `{x:16,y:16}`；Windows/Linux 使用无框窗口，并提供 112px 宽的自定义最小化、最大化或还原、关闭控制区。沙盒化插件 preload 在封闭的 Shadow DOM 中渲染 manifest 标题与控件，在现有顶部内边距之外再按标题栏高度偏移内容，并使用一个私有、验证发送方、固定动作集合的窗口操作通道；`window.pluginBridge`、每插件 partition 与 host protocol v9 均不扩展。重新打开最小化的面板时会还原并聚焦窗口。** | Electron 默认窗口框架使插件工具看起来脱离 PI-Desktop，且各平台表现不一致。由 preload 拥有窗口栏可实现一致性，同时不将不受信任的插件 HTML 移入主机渲染器，也不暴露通用 Electron 窗口权限（ADR 0081）。 |
+| D234 | 插件拥有的面板表面与主机窗口控制胶囊 | **插件面板在 macOS、Windows 和 Linux 上均使用无框窗口。沙盒化 preload 在每个平台预留相同的透明 46px 安全区，并在右上角的封闭 Shadow DOM 中仅渲染一个固定胶囊，胶囊恰好包含最小化、最大化或还原、关闭三个按钮。主机不再渲染面板标题或开发安全区提示；插件拥有标题、工具栏、背景以及其他所有可见面板界面。普通流内容会自动偏移，固定或粘性界面使用现有的 `--pi-plugin-titlebar-height: 46px`，插件自己的拖拽区域使用 `-webkit-app-region: drag`，交互控件退出拖拽。私有的验证发送方控制通道、本地化标签、页面自适应颜色、`window.pluginBridge`、每插件 partition、host protocol v9 和存储架构保持不变。本决策修订 D218 / ADR 0081 以及 D232 / ADR 0082。** | 主机标题栏占用了插件自己的视觉层级，并且仍然让 macOS 与 Windows/Linux 表现不同。紧凑的主机控制胶囊保留安全的原生窗口操作，同时把面板表面交还给插件。 |
+| D235 | 严格 46px 插件拖拽带与简约胶囊 | **插件面板在每个平台均严格预留 46px 的透明主机拖拽带。普通流内容按该数值偏移，拖拽带内除胶囊外不接受插件点击，开发面板显示本地化提示，说明顶部 46px 仅用于拖拽。主机不渲染面板标题。固定在右上角的胶囊保持在拖拽带内，恰好包含最小化、最大化或还原、关闭三个按钮，并使用简洁的页面自适应表面，不添加厚重阴影或模糊效果。本决策修订 D234 / ADR 0092；私有的验证发送方控制通道、封闭 Shadow DOM、`window.pluginBridge`、protocol v9 和存储架构保持不变。** | 无框面板需要可靠的拖拽目标和清晰的开发约束，但主机拖拽带不能增长，也不能抢占插件自己的视觉层级。 |
+| D343 | 自定义全局文字缩放 | **设置 → 常规 → 外观在字体行下增加字体大小。星巴克式杯型档位（中杯 / 大杯 / 超大杯 / 超超大杯）加上百分比滑杆，持久化为可选 `AppSettings.fontScale`（`1` = 产品字号阶，缺失 = 1，范围 0.8–1.5、步进 0.025）。渲染器在根元素设置 `--font-scale`；每个 `--text-*` 令牌和 `--leading-row` 都是 `calc(<产品 px> * var(--font-scale))`，共享 Lucide 图标使用同一倍率，正文、chrome、标题、代码和图标无需重载即保持相对阶。界面不出现 px 输入。窗口放大/缩小/重置仍独立。未发布的遗留 `fontSize` px 字段在没有 `fontScale` 时按 `px / 14` 迁移。无协议/存储版本升级。** | `--text-*` 阶本身就是一组相对尺寸；一个倍率可以一次缩放所有台阶。窗口缩放仍会缩放布局。只改阅读区的 px 会让同一窗口出现两套字号，还强迫用户填一个只对应 `--text-base` 的数字（ADR 0180）。 |
+| D232 | 自定义全局界面字体 | **设置 → 基础 → 外观新增可搜索的字体选择器（触发器以当前字体的字样预览）。选择结果持久化为 `AppSettings.fontFamily`（CSS 字体栈）；缺失时保持内置 `--font-sans` 令牌栈，渲染器通过覆盖根元素的 `--font-sans` 应用字体栈，无需重载。四款内置字体——Geist、Inter、Noto Sans SC、LXGW WenKai——以 woff2 格式按 SIL OFL 1.1 本地发布并附许可证文本；每个自定义字体栈都追加 CJK 回退层，等宽字体栈保持不变。系统已安装字体由 Electron 主进程仅使用平台工具枚举（macOS 用 `system_profiler`、Windows 用 PowerShell、Linux 用 `fc-list`），去重/排序/过滤并缓存 60 秒，通过新增的允许通道 `pi-desktop/app/systemFonts` 暴露；主机协议 v9 与存储架构 v10 不变。** | 用户需要 Codex/dbx 风格的全局字体偏好，但沙盒化渲染器无法枚举系统字体，而针对仅渲染器偏好不应扩大主机 RPC 面。内置 OFL 许可字体保证每个可选字体均商用安全且可离线使用，60 秒缓存限制了 macOS 枚举的耗时（ADR 0083）。 |
+| D230 | 用户可配置的关闭行为与关闭到托盘 | **Windows/Linux 的关闭行为是由 Electron 主进程存放在 `<data>/close-behavior.json` 的持久化偏好。`ask` 是尚未设置的过渡态：首次关闭弹出原生模态框（取消 / 关闭到托盘 / 退出），选定其一即永久保存，取消则保持窗口打开且偏好仍未设置。可设置的只有 `tray` 和 `quit` —— 设置 → 通用仅在 Windows/Linux 渲染两项单选段（关闭到托盘 / 退出应用），`pi-desktop/window/closeBehavior/set` 拒绝 `ask`，因此选择可以切换但无法退回到每次询问。`tray` 把窗口隐藏到 D216 常驻的托盘图标之下（点击恢复，菜单显示或退出）；切换到 `quit` 不会销毁该图标，因为最小化到托盘仍然需要它。除了已经获准的退出之外，每一次非 macOS 的关闭都会被拦截；`quitting` 与 macOS 的关闭直接放行，`quit` 分支自己调用 `app.quit()`，而 `window-all-closed` 只在 `tray` 下保持沉默，因此启动探针与显式退出不受影响，常驻托盘也不会让 `quit` 会话继续活着。在 macOS 上 `closeBehavior/set` 同样以 `INVALID_ARGUMENT` 失败。边界看门狗跳过最小化和隐藏的窗口，所以隐藏到托盘的窗口不会被强制恢复。macOS 保持原生 Dock 生命周期（D216、ADR 0078、ADR 0090）。** | 最小化本来就把窗口收进 D216 的托盘；缺口在关闭：它在 Windows/Linux 上直接退出。固定的关闭到托盘会让期待退出的用户意外，所以这个选择只问一次、记住、并可在设置里回访 —— 与 Codex 风格外壳让长时会话继续存活但不接管关闭按钮的做法一致。 |
+| D363 | 显式退出在关机前确认 | **修订 D230 / D216：Cmd+Q、应用菜单退出和托盘退出显示一次原生警告（取消 / 退出）。取消让应用继续运行，之后的退出会再次询问。确认走有序 `before-quit` 关机。已在 D230 对话框选择退出的关窗路径设置 `quitConfirmed`，不再问第二次。boot、supervision 和 capture 探针跳过对话框，应用内更新所执行的退出同样跳过：`autoUpdater.quitAndInstall()` 会先于 `app.quit()` 启动平台安装器，而该安装器一旦发现应用超出等待窗口就会中止，因此更新重启必须不经询问直接进入有序关机。见 E2E-204。** | 显式退出会拆掉 host-core、sidecar 和进行中的工作；一步确认避免误触 Cmd+Q 或托盘退出。 |
+| D252 | Windows 任务栏保留原生最小化/恢复 | *（显式的渲染器/菜单最小化条款被 D256 / ADR 0123 取代）* **修订 D216 / ADR 0078：当聚焦的 Windows 主窗口从它的任务栏按钮被切换时，Electron 让原生 `minimize` 过渡走完，而不是隐藏窗口。任务栏条目保持可用，下一次点击任务栏会恢复并聚焦它。显式的渲染器/菜单最小化操作仍然隐藏到常驻托盘；macOS/Linux 的原生最小化仍然驻留托盘。不改动 IPC、存储、主机协议或后台工作。** | D216 无条件的 `window.hide()` 把任务栏发起的 Windows `minimize` 事件当成托盘隐藏处理，意外移除了任务栏条目，只给用户留下托盘恢复这一条路。 |
+| D236 | 每个数据目录只允许一个桌面实例 | **Electron 主进程在模块求值期间调用 `app.requestSingleInstanceLock()` —— 在 `app.setName` 之后（锁位于由应用名派生的 `userData` 路径下），且在 logger、持久化 outbox 或任何其他数据目录访问之前。没有拿到锁的启动直接调用 `app.quit()` 且不引导任何东西：readiness 与 `before-quit` 处理器都提前返回，因此它不会在运行中实例的数据目录内创建窗口、托盘、子进程或日志行。持有锁的实例通过与托盘“显示”操作相同的路径响应 `second-instance`，恢复并聚焦主窗口，若窗口已关闭或隐藏到托盘则重新创建。只有在未设置 `PI_DESKTOP_DATA_DIR` 时才请求该锁，因此 E2E 测试装置、截图装置和有意并行的 profile 保持原有的随时启动行为。IPC 通道、宿主协议和存储架构均未变化。** | 第二次启动会引导出一个完整的第二份应用：在单写者 `pi.sqlite`（D002）上再开一个 host-core，在同一目录下再建一份 outbox 和日志树，再加一个托盘、一次启动器快捷键注册和一个更新器，导致两个 shell 在同一个数据库上出现分歧。再次启动应用是想看到已经在运行的那一个，把锁的作用域限定在安装本身也让使用独立数据目录的运行仍可启动（ADR 0094）。 |
+| D367 | 宿主拥有的插件会话导入与归属 API | **`pi.session` 增加 `import`、`importBatch`、`list`、`get`、`listMessages`、`rename`、`delete`；每个来源必须声明 `contributes.sessionSources`；host-core 生成 id，并把所有操作限定在 `(pluginId, source, externalId)` 归属内；导入永不激活项目/provider/模型绑定。Schema v14 增加 `session_import_origins` 与 `sessions.deleted_at`；协议 v11 不变。回收站保留转录，仅属主可清除。** | 外部历史插件需要持久的导入/读取/更新/删除，而进行中的 `session.getLlmContext` 与核心 `session.import` 边界不是安全的插件归属边界（ADR 0200，E2E-214 / E2E-215） |
+| D368 | 显式插件项目 id 与宿主拥有的会话刷新 | **受权限门控的 `pi.project.create({ path })` 创建或复用项目并返回宿主生成的 id，不激活工作区；导入项可绑定已有 `projectId`，省略则保持未绑定，历史来源路径永不成为工具根。Electron main 在插件导入、重命名、删除成功后发出 `pi-desktop/session/event/changed`；渲染器复用 `refreshSessions()`，跳过的导入不发事件，已关闭的项目标签不会重新打开。** | 向插件暴露 `workspace.set` 会改变用户的活动工作区，且插件写入需要宿主拥有的渲染器刷新路径（ADR 0201，E2E-216） |
+| D370 | 桌面操作的本地 MCP 控制平面 | *(由 D372 修订)* **Electron Main 内可选启用的 Streamable HTTP MCP 服务器绑定 `127.0.0.1`，用持久随机 bearer token 认证，按回环主机名校验 Origin，写入受模式限制的连接清单，并委托给渲染器使用的同一组已注册 IPC 处理器。命名工具覆盖项目/会话/Agent 流程；`pi_desktop_invoke` 可达带风险标记的操作目录；危险操作需要 `confirm: true`；成功的外部变更复用渲染器会话变更事件。仅本地且启动时失败软着陆。** | 外部 Agent 需要驱动运行中的桌面，又不能有第二套权限或持久化实现，也不能触碰推迟的远程 Gateway / WebUI 边界（ADR 0203，E2E-220） |
+| D372 | 收紧本地 MCP 控制平面边界 | **修订 D370 / ADR 0203：首版目录为项目/会话/Agent/工作区流程加已审阅的读取；剥离秘密形态的参数；`session/configure` 视为危险；监听地址断言为回环；协议版本协商而非回显；包含 `structuredContent` 的结果有界；渲染器会话刷新仅限变更操作。** | 首版目录仍暴露原生选择器、写秘密的 provider/OAuth/MCP 路径与未确认的 `session/configure`，并把会话读取当作渲染器变更（E2E-220） |
+| D377 | 插件桌面控制需要原生用户同意 | **通过 `pi.desktop.invoke` 调用的 `dangerous` 桌面操作，需要插件给出 `confirm: true`，然后由用户在宿主拥有的原生对话框中作答；该对话框只显示目录中的操作 id、描述和有界的参数预览；关闭对话框、拒绝，以及没有对话框服务的宿主都以 `PERMISSION_DENIED` 失败。`read`/`write` 操作与 MCP 契约（D372）不变。** | 控制器的 `confirm` 标志由调用方设置，因此插件（或其背后的模型）可以在没有人参与的情况下删除会话或把会话切到 `auto`，而任何由插件绘制的确认卡片都可能被提示注入的成绩单改换标签（ADR 0208，E2E-236） |
 
-## O. Desktop shell decisions
+## P. 转录本存储决策
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D118 | Platform application menu and window chrome | **macOS installs a conventional system application menu and keeps hidden-inset traffic lights. Windows/Linux use the shared 46px frameless shell with localized File/Edit/View/Window/Help menus and renderer-drawn minimize/maximize-or-restore/close controls. Both menu surfaces route renderer-owned actions through a fixed `AppMenuCommand` allowlist; renderer menus route native editing/window actions through a separate fixed allowlist. Target packaging builds the local release host before Electron packaging. This adds platform-ready shell behavior but does not reverse D010: Windows/Linux release qualification remains post-MVP.** | A default Electron menu leaves macOS shell commands incomplete, while a frameless Windows/Linux window otherwise loses both application menus and window controls. Shared allowlists keep behavior consistent without exposing an arbitrary privileged command bridge. |
-| D120 | Application update delivery | *(amended by D364)* **Electron Main exclusively owns a fixed GitHub Releases feed, update polling, typed state, and install lifecycle. Development is disabled; packaged macOS and non-AppImage Linux use notify-and-link delivery, while Windows NSIS and Linux AppImage download in-app and install on quit. Renderer IPC cannot provide feed URLs. Automatic failures stay ambient, explicit checks surface status, and downloaded state remains actionable. The updater always forces `allowPrerelease = false` so prerelease installs (for example `0.2.0-rc.6`) track GitHub's latest stable release instead of electron-updater's default same-channel pin. D126 later publishes every platform feed produced by the tag matrix while macOS remains manual until a signed channel is qualified.** | Keep package installation outside the sandboxed renderer, match delivery to each installer format, and provide one consistent state across menus, Settings, and the update banner (ADR 0022). Without the stable-channel pin, RC builds never surface newer stables because electron-updater treats `rc` as a custom channel. |
-| D313 | Main-owned GitHub issue feedback | **GitHub issue forms are the only intake path. The bug form requires description, reproduction steps, expected and actual behavior, app version, and OS; the feature form requires a problem and a proposed change. Settings → Info exposes one Report a problem action on `pi-desktop/app/openFeedback`. Electron Main builds a fixed `bug_report.yml` URL, prefills `app-version` / `os` / `environment` from Main-owned version info, and opens it with `shell.openExternal`. The renderer cannot supply a URL. Feature requests stay on GitHub's template picker. No host-protocol, storage, or update-feed change (ADR 0157).** | Reports without version or steps cannot be triaged, and a renderer-chosen destination would weaken the same Main-owned GitHub URL rule as D120. |
-| D330 | Main-owned `openExternal` protocol allowlist | **Every `shell.openExternal` call parses the URL first. Only `http:`, `https:` (hostname plus a written `//`), and `mailto:` (non-empty address) reach the OS, as a normalized href. `file:`, `javascript:`, `data:`, and custom URI schemes throw `DISALLOWED_EXTERNAL_URL` / plugin `INVALID_ARGUMENT`. Window-open handlers deny in-app and catch the error. Workspace files keep using `shell.openPath` after the path gate (ADR 0109). Preview "open in browser" uses the allowlist for web/mail URLs and `openPath` for an in-root file page (ADR 0168).** | Unvalidated `setWindowOpenHandler` → `openExternal` lets a clicked `ms-msdt:` / `file:` / custom-scheme link invoke an OS protocol handler. |
-| D332 | Classified plugin file preview and live workspace events | **Amend ADR 0104 / 0105 / 0109 / 0111: add `fs.readPreview` under `fs.read` (text / image data URL / binary / tooLarge, same caps as the host Files tab). Broadcast panel events to docked views as well as detached windows. Deliver `workspace:changed` to panels and plugin processes. The bundled Files view restores Open with default app, search, image preview, and copy path on those public channels.** | `fs.readText` cannot preview images or cap large binaries; docked views missed `appearance:changed`; Files polled for project switches. |
-| D334 | Contained in-chat image display | **Amend the desktop `fs/read` workspace-only clause: `fs/read`, `fs/reveal`, and `fs/open` share `resolveOpenablePath` (workspace, `<data_dir>/scratch/`, `<data_dir>/attachments/`, plus `attachments/<sha256>` blobs). Reads `realpath` the target. Add renderer-only `fs/readImageDataUrl` that returns a bounded image data URL or `missing` / `notImage` / `tooLarge` and never non-image bytes. A known image extension wins over client `mimeType`; extension-less blobs accept only the `IMAGE_MIME` allowlist. Chat thumbnails and local Markdown images load through that channel; click opens the host files viewer. Not a plugin API. See ADR 0172 and E2E-187.** | History attachments are extension-less data-root blobs the renderer origin cannot load; an unbounded absolute-path read would leak arbitrary files. |
-| D336 | Host-owned plugin completions and session context | **Amend D019: plugins may read the in-flight tool session's model-facing transcript through `pi.session.getLlmContext()` when `session.read` is granted, and may run a one-shot completion through `pi.agent.complete()` when `agent.complete` is granted. `pi.models.list()` lists ready provider/model rows (`models.list`). Credentials never leave Electron main. `includeSessionContext` requires both complete permissions and an in-flight tool session; plugins cannot pass a session id. Completions are rate-braked (8/60s) and size-capped. `session:modelChanged` is pushed after `session.configure`. The bundled first-party Advisor UX is temporarily not shipped; the public APIs remain available to explicitly installed plugins. No protocol/schema bump. See ADR 0174 and E2E-188 / E2E-189.** | Second-opinion tools need the user's models and the current LLM context without holding secrets or calling providers from plugin code. |
-| D340 | User-configurable outbound proxy | **Settings → General → Network exposes Proxy as System / Direct / Custom. Custom accepts http/https/socks5 URLs and a bypass list, persisted as optional `AppSettings.networkProxy`. Chromium `session.setProxy` covers the in-app browser and `net.fetch`; the agent sidecar applies an undici dispatcher (SOCKS5 CONNECT or HTTP ProxyAgent) via `sidecar.configure`; host-core marketplace curl uses `--proxy` from the stored blob and does not inherit proxy env (workspace Bash stays clean). OAuth still uses the system browser. No protocol or schema version bump. See ADR 0177 and E2E-190.** | Node fetch ignores the OS proxy, so Clash/V2Ray/SOCKS5 users could browse but not call models. One settings control should own app-owned HTTP. |
-| D342 | Import model configuration from local agent stores | **Amend D007: Settings → Import still never auto-imports `~/.pi` (or any other tool). An explicit Model configuration card scans Claude Code, Codex, OpenCode, Pi, and CC Switch (`~/.cc-switch/cc-switch.db`, fallback `config.json`) provider rows, lists drafts without secrets, and `modelConfig/importRun` copies API keys through `providers.create`. A live tool file that matches a CC Switch endpoint and credential is not listed twice. OAuth/subscription tokens stay in the source app. Equivalent providers (normalized base URL + API style + same credential) are skipped; different credentials at one endpoint remain independent rows (ADR 0188). If no global default model exists, the first newly created provider becomes it. Electron IPC only; no host protocol or schema version bump. See ADR 0179, ADR 0188, and E2E-209.** | Users already import sessions from those stores and otherwise retype the same endpoints and keys on the Models page. |
-| D351 | Preserve distinct credentials during model configuration import | **Amend D342 / ADR 0179: an imported provider is equivalent only when normalized endpoint, API style, and credential all match. Same-endpoint profiles with different API keys create independent provider rows and remain selectable in Composer. Electron main resolves existing API keys through the host secret boundary; secrets never reach the renderer, logs, or provider metadata. The live-file-versus-CC-Switch scan uses the same credential-aware rule. No host protocol or storage schema version bump. See ADR 0188 and E2E-209.** | CC Switch stores multiple accounts at one gateway endpoint; endpoint-only idempotence silently dropped all but the first profile during import. |
-| D344 | Main-owned picker capabilities | **Amend D197 / D334: composer native file and image pickers keep selected absolute paths in Electron main behind a short-lived, sender-bound, one-shot token. `composer/importFiles` accepts only that token and a durable session id; the renderer never supplies source paths. The MVP file picker offers regular files only, so unsupported directory selection and its misleading UI copy are removed. Main retains realpath, regular-file, session-scratch, and size-limit validation. See ADR 0181 and E2E-102h.** | Renderer IPC is not a user-click gate: accepting arbitrary absolute paths in the import payload creates a local file exfiltration primitive. Folder import needs separate bounded traversal and symlink semantics. |
-| D314 | Shipped locale registry and language picker | **Amend D073: UI locales are listed in `@pi-desktop/i18n` (`en`, `zh-CN`, `zh-TW`, `tr`). Native names stay untranslated. Settings → General language is a searchable picker (Auto + registry), not three preview cards. Plugin labels keep their `en` + `zh-CN` contract with English fallback for shell locales without a plugin translation; the product changelog follows every shipped product locale. See ADR 0160, ADR 0182, and E2E-091.** | Preview cards cannot scale past two languages; a registry lets additional locales ship without rewriting the Appearance card. |
+| D119 | 成绩单文件存储； SQLite 仅索引 | **架构 v7：消息内容从 SQLite 移入 `~/.pi-desktop/sessions/` 下的每个会话 JSONL 文件 — `<id>.jsonl`（会话标头行，然后每条消息一个规范的块数组消息行，RFC3339 标记）加上用于重新生成分支的仅附加 `<id>.revisions.jsonl`。 `messages` 删除 `messages`/`content_json` 并成为纯索引（排序、提升过滤列、提取 `text` 馈送 FTS）； `message_revisions` 将 `messages_json` 替换为 `message_count`，并且仅在数据库中跟踪 `is_active`。写入首先是文件，然后是索引事务；读取时跳过 unknown/torn 行并删除重复消息 ID keep-last；完全重写是临时文件+原子重命名；会话文件仅与其会话一起删除，而绝不会删除 age/orphan-swept。打开 v7 之前的数据库会将其存档为 `pi.sqlite.v6.bak` 并进行全新引导 — 显式中断重置，删除所有 v1-v6 迁移代码。 RPC 线路格式未更改，因此 Electron/renderer/importers 无需更改。** | 数据库的增长不受携带工具args/results和思考有效负载的限制； codex/claude-code-style 每个会话文件使记录保持人类可读、可 grep 和可移植的状态，而 SQLite 则保持小型、快速的索引（列表、搜索、徽章）。选择了开发阶段中断重置而不是迁移机制。 |
+| D122 | 独立对话会话分叉 | **协议 v5 添加了主机拥有的 `session.fork`：将空闲源的完整活动规范转录复制到具有重新映射的 message/tool-call id 和继承的 project/provider/model/mode/thinking/permission 配置的新独立会话中。不会复制轮转、重新生成修订、通知、工件、会话授权、scratch/runtime 状态、引脚状态和父子沿袭。创建分支激活子分支； D109 保持不变，因为没有引入消息级分支树。** | 单个主机拥有的快照保留了规范块和持久性一致性，同时为用户提供了 Codex 风格的发散工作流程，而无需将独立对话与重新生成变体混为一谈。 |
+| D134 | 助理响应叉和可逆编辑 | *（由 D137 取代的编辑子句）* **完成的辅助工具栏显示“复制”、“分叉”、“编辑”和“重新生成”，但没有“删除”。 Fork 使用可选的 `throughMessageId` 调用现有主机拥有的 `session.fork`，生成一个独立会话，其规范记录以该响应结束。编辑使用相同的隔离子项，仅替换其中选定的辅助文本，并将 original/edited 尾部存储为两个条目的 D109 修订系列，以便现有寻呼机可以恢复其中之一。两者都需要空闲源、重新映射 message/tool-call id，并且从不共享源会话 id、运行时、转录本、修订版或提供程序缓存状态。** | 响应级别的分歧和纠正应该保持可逆，而不改变源或让编辑的历史重用从不同助手内容构建的缓存运行时状态。 |
+| D199 | 重新生成主机 RPC 锁下存档的分支 | **`session.saveActiveRevision` 在状态锁下的一次主机调用中执行读取、分支存档和 `revisionCount` / `activeRevision` 标记，替换 Electron 主程序的 `session.get` + `session.replaceMessages` 读取-修改-写入。标记仅重写 root 用户的转录行并在写入时重新读取文件，因此同时附加的行会保留下来； Electron main 首先排空持久性发件箱，并跳过存档并发出警告，而不是存档不完整的分支。 `session.replaceMessages` 在重写过程中携带每条幸存消息所属的 `turn_id`，并且仅对于在呼叫持续时间内拥有整个记录的呼叫者而言才被记录为安全 (ADR 0060)。** | 助手和工具消息通过 ADR 0041 发件箱异步到达 SQLite，因此渲染器端快照可以早于回合的最终消息 - 然后整个转录文本重写从转录文件和索引中将其连同每行的 `turn_id` 一起删除。只有主机可以原子地读取和写入转录本。 |
 
-| D345 | Traditional Chinese shell locale | **Amend D314 / ADR 0160: ship `zh-TW` as an independent full shell catalog with native name 繁體中文. `zh-TW`, `zh-Hant`, `zh-HK`, and `zh-MO` resolve to the Traditional Chinese shell; generic `zh` and Simplified Chinese regions continue to resolve to `zh-CN`. Persisted `AppSettings.language` includes `zh-TW`, Electron packages both `zh-TW` and `zh_TW` locale directories, and the in-app changelog includes a matching `zh-TW` catalog so release notes follow the active Traditional Chinese shell. No host protocol or storage schema change.** | Traditional Chinese users need an independent shell and release-note language; reusing the Simplified Chinese catalog makes Auto detection and visible terminology incorrect. |
-| D346 | P0 international shell locales | **Amend D314 / ADR 0160 / ADR 0182: ship complete `de`, `es`, and `fr` shell catalogs with native names Deutsch, Español, and Français. `de-*`, `es-*`, and `fr-*` resolve to their shipped base catalogs; persisted `AppSettings.language` accepts the three ids; matching changelog catalogs keep release notes in the active locale. No host protocol, storage schema, or IPC version change.** | Spanish, French, and German provide the highest-value missing P0 international coverage while the registry and searchable picker already scale to additional locales. |
-| D349 | Korean shell locale | **Amend D314 / ADR 0160 / ADR 0183: ship a complete `ko` shell catalog with native name 한국어 and English name Korean. `ko` and `ko-*` resolve to the Korean catalog; persisted `AppSettings.language` accepts `ko`; Electron packages the Korean Chromium locale; and a matching Korean changelog keeps release notes in the active locale. No host protocol, storage schema, or IPC version change.** | Korean users need a distinct complete shell and release-note language, while one base catalog preserves the existing searchable locale contract for regional Korean variants. |
-| D350 | Focus-aware native task notifications | **Amend D117 / ADR 0107: `notification/showNative` carries `kind` as `task` or `interactive`. Omitted or unknown values default to `task`. Task banners are suppressed whenever the main window is visible and focused, including a focused background session. Interactive prompts are suppressed only for the exact visible focused session. Interactive prompts never create a durable task inbox row. Plugin notifications stay on their permission-gated path. No host protocol or storage schema change. See ADR 0187 and E2E-065 / E2E-065a.** | Task completions and interactive asks share one native channel but need different focus rules. The field is `kind`; a colliding `source` name is not part of the contract. |
-| D358 | Show provider retry causes in the active-turn status | **Amend ADR 0175: `AgentActivity.retrying` may carry bounded, already-redacted error details. The compact retry row stays at rest; hover or keyboard focus reveals the localized summary, stable code/status, and provider message. Intermediate retries never become transcript error rows. See ADR 0196 and US-UI-60d.** | Users need the current retry cause without duplicating the final assistant error. |
-| D359 | Summarize first-turn session titles with a main-owned one-shot | **Keep the first-prompt fallback synchronous. After `agent_end`, the renderer calls allowlisted `session/summarizeTitle`. Electron resolves the session model and runs a thinking-disabled one-shot; a valid result persists through `session.rename`. Automatic replacement refuses a persisted `manualTitle` and any title that is neither a default nor the first-prompt fallback. No host schema change. See ADR 0186 and E2E-021a.** | A truncated first prompt is a poor sidebar label, but title generation must not block the turn or expose credentials to the renderer. |
-| D361 | Inline image transport uses a 10 MB app-side bound | **Amend ADR 0101 / D197: `MAX_INLINE_IMAGE_BYTES` is 10,000,000. Vision-capable models receive images at or below that decimal 10 MB bound as transient base64; larger images and non-vision models keep the `@path` fallback. Electron main and the sidecar share the constant so replay cannot take a different path. No protocol or schema change.** | MiniMax's OpenAI-compatible endpoint accepts one image up to 10 MB; a higher app bound produced provider rejections after the composer had already inlined the bytes. |
-| D316 | Searchable theme picker | **Amend ADR 0160: Settings → General theme is a searchable picker row (same anchored-menu pattern as Language), not three preview cards. System / Light / Dark stay pinned at the top; plugin themes follow after a divider. `AppSettings.theme` and plugin-theme fallback are unchanged. See ADR 0161 and E2E-091.** | Plugin themes wrap a three-column card grid, and Language already solved the growing-list control. |
-| D121 | Branded macOS development host | **`pnpm dev` on macOS launches electron-vite through a fingerprinted, ad-hoc-signed PI-Desktop copy of the installed Electron host bundle under `.cache/electron-dev/`. The generated bundle changes only development host metadata, executable name, bundle identifier, and the ICNS resource; it never mutates `node_modules`. Windows/Linux keep the stock development executable, while packaged lanes remain electron-builder-owned.** | AppKit ignores runtime app-name/menu overrides for the top-level application identity and takes the native menu name and About icon from the host bundle; a branded development host is required for parity with packaged PI-Desktop. |
-| D129 | Menu-free Windows/Linux window chrome | **The application menu is a macOS system-menu surface only. Windows/Linux retain the shared frameless 46px titlebar and renderer-drawn minimize/maximize-or-restore/close controls, but render no File/Edit/View/Window/Help menu inside the window and reserve no left-side titlebar space for one. Existing application, editing, zoom, fullscreen, and close shortcuts remain available through renderer/native web-content handling; update checks remain reachable from Settings -> Info. This supersedes only the Windows/Linux renderer-menubar portions of D118 and ADR 0021.** | An in-window desktop menu duplicates macOS-specific system-menu chrome, consumes navigation space, and does not belong in PI-Desktop's frameless Windows/Linux titlebar. |
-| D130 | Sidebar-footer notification entry | **The durable notification Bell moves from the main titlebar to the separate `32px` action at the right of the expanded sidebar footer, replacing D113's Help shortcut. Its unread badge and complete D117 inbox behavior remain unchanged; the popover opens above and to the right of the footer, and no duplicate Bell remains in the main titlebar. This supersedes only the entry-location clauses of D113 and D117.** | Notification history belongs with the persistent local profile controls and the footer position keeps the main titlebar quiet while preserving a compact, familiar status entry. |
-| D141 | Canonical Windows native application identity | *(amended by D443)* **Electron Main sets the product name before readiness and registers `com.pi-desktop.app` as the Windows process AppUserModelID before creating any window. That ID is the existing electron-builder/NSIS application ID; Windows packaging explicitly retains `PI-Desktop` for the executable and Start menu shortcut. Native notification attribution, notification settings, taskbar grouping, installed shortcuts, and packaged executable identity must expose `PI-Desktop`, not the stock Electron host. D121 remains unchanged: Windows development may use the stock Electron executable while its OS-facing runtime identity uses the canonical AUMID.** | `app.setName` changes Electron's internal name but not the Windows identity used by notifications and shell integration. One stable ID across runtime and packaging prevents both the observed notification-source leak and adjacent shell-brand drift without changing the published NSIS upgrade identity. |
-| D204 | Empty home task-entry surface | *(supersedes D111's non-docked home-composer clause and its contextual quick-action clauses; starter-grid amendment in D205 is superseded by D206)* **The empty chat home keeps the restrained hero and optional first-run checklist in the scrollable content region. The home composer is a bottom-reserved sibling of the scroller, remains visible at the bottom of the chat surface, and never covers the content.** | The direct composer remains the stable primary action and the flow layout preserves checklist reachability in short windows (ADR 0066). |
-| D205 | ChatGPT-inspired empty-home guidance | *(superseded by D206)* **The empty chat home adds a compact four-card developer starter grid between the hero and optional checklist: Explore a codebase, Build a feature, Fix a bug, and Review a change. Each localized card only prefills and focuses the bottom composer; it never sends a prompt or creates a turn. The bottom-reserved composer and single scrollable home flow from D204 remain unchanged.** | The previous hero-only middle left too much unused space and offered no starting cues. ChatGPT's clear empty-state hierarchy improves first-task discoverability while developer-specific prompts keep the surface purposeful rather than promotional. |
-| D206 | Remove empty-home developer starter cards | **The empty chat home does not render developer starter cards, starter glyphs, or a contextual quick-action row. It keeps the restrained hero, short supporting line, optional onboarding checklist, and D204's bottom-reserved composer; task entry starts directly in the composer. This supersedes D205 without changing D204's scroll and bottom-reservation layout.** | Review confirmed that the direct composer is the preferred task-entry surface and that the cards add an unnecessary decision layer to the empty home. |
-| D208 | Recoverable native-tool path contracts | **Keep D185's deferred Glob/Grep boundary, but make every prompt and schema explicit that Read accepts an existing regular file, Glob accepts a directory, and Grep accepts a file or directory. A directory Read returns `INVALID_ARGUMENT` plus structured Glob recovery args; an explicit-file Grep searches only that file and applies `include` to its basename. Tool errors remain visible on their ToolCallRows, while activity groups report processing duration only and never infer terminal turn failure from a child row; terminal agent events and the dedicated outcome surfaces remain authoritative (ADR 0069).** | Durable sessions showed directory Read and file-as-directory Grep mistakes repeatedly, then displayed recovered work as terminally failed. Compatibility at the narrow host boundary plus one outcome owner removes retries and false failure UI without restoring every search schema to the Agent core. |
-| D216 | Cross-platform tray-resident minimize | *(Windows taskbar clause amended by D252 / ADR 0117; explicit Windows/Linux action clauses amended by D256 / ADR 0123)* **Electron Main creates one packaged-resource tray icon on macOS, Windows, and Linux. Explicit application minimize actions and macOS/Linux native minimize hide the window without disposing the host or sidecar; Windows' native taskbar minimize remains an ordinary taskbar-visible OS minimize. Tray click/double-click, Show, and macOS app activation restore and focus the existing window (or create one if it was closed). The localized tray menu exposes Show PI-Desktop and an explicit Quit PI-Desktop action.** | Users need background work to continue without losing the app window, while Windows users also expect the active taskbar button to retain its normal minimize/restore behavior. Main-owned tray lifecycle avoids renderer privilege expansion and keeps explicit exit observable. |
-| D218 | Host-owned cross-platform plugin panel chrome | **Plugin panel windows adopt the main window's 46px platform chrome: macOS uses `hiddenInset` with traffic lights at `{x:16,y:16}`, while Windows/Linux are frameless with a 112px custom minimize/maximize-or-restore/close band. The sandboxed plugin preload renders the manifest title and controls in a closed Shadow DOM, offsets content by the titlebar height in addition to existing top padding, and consumes a private sender-validated fixed window-action channel; `window.pluginBridge`, the per-plugin partition, and host protocol v9 do not expand. Reopening a minimized panel restores and focuses it.** | Default Electron frames made plugin tools look detached from PI-Desktop and varied by platform. Preload-owned chrome provides parity without moving untrusted plugin HTML into the host renderer or exposing general Electron window authority (ADR 0081). |
-| D234 | Plugin-owned panel surface with a host window-control capsule | **Plugin panels use frameless windows on macOS, Windows, and Linux. The sandboxed preload reserves a transparent 46px safe area and renders only one fixed top-right capsule with exactly three buttons — minimize, maximize/restore, and close — in a closed Shadow DOM. It no longer renders a panel title or development reminder. The plugin owns its title, toolbar, background, and all other visible UI; normal-flow content is offset automatically, fixed/sticky UI uses `--pi-plugin-titlebar-height: 46px`, and plugin-owned drag regions use `-webkit-app-region: drag` with interactive controls opting out. The private sender-validated control channel, localized labels, page-adaptive colors, `window.pluginBridge`, per-plugin partition, host protocol v9, and storage schema remain unchanged. This amends D218 / ADR 0081 and D232 / ADR 0082.** | The host titlebar consumed the plugin's visual hierarchy and still made macOS different from Windows/Linux. A compact host capsule preserves safe native window actions while leaving the panel surface to the plugin. |
-| D235 | Strict 46px plugin drag band with a minimal capsule | **Plugin panels reserve exactly 46px for a transparent host drag band on every platform. Normal-flow content is offset by that value, the band blocks plugin clicks outside the capsule, and development panels show a localized reminder that the top 46px is drag-only. The host renders no panel title. The fixed top-right capsule stays inside the band, contains exactly minimize, maximize/restore, and close, and uses a subtle page-adaptive surface without heavy shadow or blur. This amends D234 / ADR 0092; the private sender-validated control channel, closed Shadow DOM, `window.pluginBridge`, protocol v9, and storage schema remain unchanged.** | Frameless panels need a reliable drag target and a clear authoring constraint, but the host band must not grow or compete with the plugin's visual hierarchy. |
-| D343 | Custom global UI type scale | **Settings → General → Appearance gains a Font size row under Font. Starbucks-style cup presets (Tall / Grande / Venti / Trenta) plus a percentage slider persist as optional `AppSettings.fontScale` (`1` = product ramp, absent = 1, range 0.8–1.5 in 0.025 steps). The renderer sets `--font-scale` on the root; every `--text-*` token and `--leading-row` is `calc(<product px> * var(--font-scale))`, and shared Lucide wrappers size glyphs with the same multiplier, so body, chrome, headings, code, and icons stay in proportion without a reload. The UI never asks for a px value. Window Zoom In/Out/Reset stays independent. An unreleased leftover `fontSize` px field migrates as `px / 14` when `fontScale` is absent. No host protocol or storage schema version bump.** | The `--text-*` ramp is a frozen set of relative sizes; a single multiplier scales every step at once. Window zoom still scales layout. A reading-only px field would leave two type sizes in one window and force the user to pick a number that only matches `--text-base` (ADR 0180). |
-| D232 | Custom global UI font | **Settings → Basics → Appearance gains a searchable Font picker (trigger previews the current family). Selections persist as `AppSettings.fontFamily`, a CSS stack; absent means the built-in `--font-sans` token stack, and the renderer applies the stack by overriding `--font-sans` on the root element without a reload. Four bundled families — Geist, Inter, Noto Sans SC, LXGW WenKai — ship locally as woff2 under the SIL OFL 1.1 with license texts; every custom stack appends a CJK fallback tier and the mono stack is unchanged. Installed system families are enumerated by Electron main using platform tooling only (macOS: `osascript` JXA bridging the CoreText query `CTFontManagerCopyAvailableFontFamilyNames` — the same API dbx's `font_kit::all_families()` calls — with `system_profiler` as a slow fallback; Windows: PowerShell; Linux: `fc-list`), deduplicated/sorted/filtered and cached 60 s, exposed through the additive allowlisted channel `pi-desktop/app/systemFonts`; host protocol v9 and storage schema v10 are unchanged.** | Users want a Codex/dbx-style global font preference, but the sandboxed renderer cannot enumerate OS fonts and the host RPC should stay unchanged for a renderer-only preference. Bundling OFL-licensed families keeps every offered font commercially safe and offline, while the fast CoreText path returns the canonical CSS family names (e.g. PingFang SC) in tens of milliseconds and the 60 s cache bounds repeated enumeration (ADR 0083). |
-| D230 | User-configurable close behavior with close-to-tray | **Windows/Linux close behavior is a persisted preference stored by Electron main in `<data>/close-behavior.json`. `ask` is the transient unset state: the first close shows a native modal (Cancel / Close to tray / Quit); picking one persists it forever, Cancel keeps the window open and unset. Only `tray` and `quit` are ever settable — Settings -> General renders a two-option radio segment (Close to tray / Quit app) for Windows/Linux only, and `pi-desktop/window/closeBehavior/set` rejects `ask`, so a choice can be switched but never reverted to prompting. `tray` hides the window under the resident D216 tray icon (click restores, menu shows or quits); switching to `quit` leaves that icon in place, because minimize-to-tray still needs it. Close interception runs for every non-macOS close that is not already an approved quit; `quitting` and macOS closes fall through, a `quit` close calls `app.quit()` itself, and `window-all-closed` stays silent only under `tray`, so the boot probe and explicit quits are unaffected and a resident tray never keeps a `quit` session alive. `closeBehavior/set` also fails with `INVALID_ARGUMENT` on macOS. The bounds watchdog skips minimized and hidden windows so a tray-hidden window is never force-restored. macOS keeps the native Dock lifecycle (D216, ADR 0078, ADR 0090).** | Minimizing already hides the window into the D216 tray; the gap was close: it quit outright on Windows/Linux. A fixed close-to-tray would surprise users who expect exit, so the choice is asked once, remembered, and revisitable in Settings — matching how Codex-style shells keep long-running sessions alive without taking over the close button. |
-| D363 | Explicit quit confirms before shutdown | **Amend D230 / D216: Cmd+Q, the application-menu Quit item, and the tray Quit item show one native warning (Cancel / Quit). Cancel leaves the app running and allows a later quit to prompt again. Confirm runs the ordered `before-quit` shutdown. A window-close path that already chose Quit in the D230 dialog sets `quitConfirmed` and does not ask again. Boot, supervision, and capture probes skip the dialog, and so does the quit an in-app update performs: `autoUpdater.quitAndInstall()` spawns the platform installer before `app.quit()`, and that installer aborts once the app outlives its wait window, so the update restart must reach the ordered shutdown without a prompt. No IPC, storage, or host-protocol change. See E2E-204.** | An explicit quit tears down host-core, the sidecar, and in-flight work; a one-step confirm prevents an accidental Cmd+Q or tray Quit from doing that, without re-prompting a user who already chose Quit on the close-behavior dialog. |
-| D252 | Windows taskbar preserves native minimize/restore | *(Explicit renderer/menu minimize clauses superseded by D256 / ADR 0123)* **Amend D216 / ADR 0078: when the focused Windows main window is toggled from its taskbar button, Electron lets the native `minimize` transition complete instead of hiding the window. The taskbar entry remains available and the next taskbar click restores/focuses it. Explicit renderer/menu minimize actions still hide to the resident tray; macOS/Linux native minimize remains tray-resident. No IPC, storage, host protocol, or background-work changes.** | D216's unconditional `window.hide()` handled the taskbar-originated Windows `minimize` event as a tray hide, unexpectedly removing the taskbar entry and leaving the user with only the tray restore path. |
-| D236 | One desktop instance per data directory | **Electron main takes `app.requestSingleInstanceLock()` during module evaluation — after `app.setName`, because the lock lives under the name-derived `userData` path, and before the logger, the persistence outbox, or any other data-directory access. A launch that does not take the lock calls `app.quit()` and boots nothing: the readiness and `before-quit` handlers both return early, so it creates no window, tray, child process, or log line inside the running instance's data directory. The lock holder answers `second-instance` by restoring and focusing its main window through the same path as the tray's Show action, which recreates a window that was closed or hidden into the tray. The lock is requested only when `PI_DESKTOP_DATA_DIR` is unset, so E2E harnesses, the capture rig, and deliberate side-by-side profiles keep the current start-anytime behavior. No IPC channel, host protocol, or storage schema changes.** | A second launch booted a complete second app: another host-core over the single-writer `pi.sqlite` (D002), another outbox and log tree in the same directory, another tray, launcher-chord registration, and updater, leaving two shells divergent over one database. Relaunching the app is a request to see the one already running, and scoping the lock to the installation keeps isolated-data-directory runs launchable (ADR 0094). |
-| D367 | Host-owned plugin session import and ownership API | **`pi.session` gains `import`, `importBatch`, `list`, `get`, `listMessages`, `rename`, and `delete`; `contributes.sessionSources` is required for every source; host-core generates ids and scopes every operation to `(pluginId, source, externalId)` ownership; imports never activate project/provider/model bindings. Schema v14 adds `session_import_origins` and `sessions.deleted_at`; protocol v11 is unchanged. Trash keeps the transcript for owner-only purge.** | External-history plugins need durable import/read/update/delete, and the in-flight `session.getLlmContext` and core `session.import` boundaries are not safe plugin ownership boundaries (ADR 0200, E2E-214 / E2E-215) |
-| D368 | Explicit plugin project ids and host-owned session refresh | **Permission-gated `pi.project.create({ path })` creates or reuses a project and returns its host-generated id without activating the workspace; import items may bind an existing `projectId`, omitted ids stay unbound, and historical origin paths never become tool roots. Electron main emits `pi-desktop/session/event/changed` after successful plugin imports, renames, and deletes; the renderer reuses `refreshSessions()`, skipped imports emit nothing, and closed project tabs are not reopened.** | Exposing `workspace.set` to plugins would change the user's active workspace, and plugin writes need a host-owned renderer refresh path (ADR 0201, E2E-216) |
-| D370 | Local MCP control plane for desktop operations | *(amended by D372)* **An opt-in Streamable HTTP MCP server inside Electron Main binds to `127.0.0.1`, authenticates with a persistent random bearer token, validates supplied Origins against loopback hostnames, writes a mode-restricted connection manifest, and delegates to the same registered IPC handlers the renderer uses. Named tools cover the project/session/Agent flow; `pi_desktop_invoke` reaches a risk-tagged operation catalog; dangerous operations require `confirm: true`; successful external mutations reuse the renderer session-change event. Local-only and fail-soft at startup.** | An external Agent needs to drive the running desktop without a second permission or persistence implementation and without touching the deferred remote Gateway / WebUI boundary (ADR 0203, E2E-220) |
-| D372 | Tightened local MCP control-plane boundary | **Amend D370 / ADR 0203: the first-version catalog is the project/session/Agent/workspace flow plus reviewed reads; secret-shaped arguments are stripped; `session/configure` is dangerous; listen addresses are asserted loopback; protocol versions are negotiated rather than echoed; results including `structuredContent` are bounded; renderer session refresh is mutation-only.** | The first catalog still exposed native pickers, secret-write provider/OAuth/MCP paths, and unconfirmed `session/configure`, and treated session reads as renderer mutations (E2E-220) |
-| D377 | Plugin desktop control requires native user consent | **A `dangerous` desktop operation invoked through `pi.desktop.invoke` needs the plugin's `confirm: true` and then the user's answer to a host-owned native dialog that shows only the catalog operation id, description, and a bounded argument preview; dismissal, Deny, and a host without a dialog service fail with `PERMISSION_DENIED`. `read`/`write` operations and the MCP contract (D372) are unchanged.** | The controller's `confirm` flag is set by the caller, so a plugin (or a model behind it) could delete sessions or switch a session to `auto` with no human in the loop, and any plugin-drawn confirmation card can be relabeled by a prompt-injected transcript (ADR 0208, E2E-236) |
+## 问：仍然推迟
 
-## P. Transcript storage decisions
+1. 准确的市场域名/提供商 ID
+2. 私有市场授权机制
+3. 签名密钥分发操作细节
+4. 远程目录更新通道详细信息（URL/signature）
+5. 每个供应商预设的确切推荐默认模型
 
-| ID | Topic | Decision | Rationale |
+完整的开放列表位于 [open-questions.md](/spec/08-meta/open-questions) 中；这个
+部分仅镜像 marketplace/catalog 项目，但仍然没有阻挡任何内容。
+
+## U. 设置铁路图标
+
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D119 | Transcript file store; SQLite index-only | **Schema v7: message content moves out of SQLite into per-session JSONL files under `~/.pi-desktop/sessions/` — `<id>.jsonl` (a session-header line, then one canonical block-array message line per message, RFC3339 stamps) plus an append-only `<id>.revisions.jsonl` for regenerate branches. `messages` drops `content_json`/`meta_json` and becomes a pure index (ordering, promoted filter columns, extracted `text` feeding FTS); `message_revisions` swaps `messages_json` for `message_count`, with `is_active` tracked in the DB only. Writes are file-first then index transaction; reads skip unknown/torn lines and dedupe repeated message ids keep-last; full rewrites are temp-file + atomic rename; session files are deleted only with their session and never age/orphan-swept. Opening a pre-v7 database archives it as `pi.sqlite.v6.bak` and bootstraps fresh — an explicit breaking reset, with all v1–v6 migration code removed. RPC wire format is unchanged, so Electron/renderer/importers need no changes.** | The database grew without bound carrying tool args/results and thinking payloads; codex/claude-code-style per-session files keep transcripts human-readable, greppable, and portable while SQLite stays a small, fast index (list, search, badges). A dev-phase breaking reset was chosen over migration machinery. |
-| D122 | Independent conversation session fork | **Protocol v5 adds host-owned `session.fork`: an idle source's complete active canonical transcript is copied into a new independent session with remapped message/tool-call ids and inherited project/provider/model/mode/thinking/permission configuration. Turns, regenerate revisions, notifications, artifacts, session grants, scratch/runtime state, pin state, and parent-child lineage are not copied. Create branch activates the child; D109 remains unchanged because no message-level branch tree is introduced.** | A single host-owned snapshot preserves canonical blocks and persistence consistency while giving users a Codex-style divergence workflow without conflating independent conversations with regenerate variants. |
-| D134 | Assistant response fork and reversible edit | *(edit clause superseded by D137)* **The completed-assistant toolbar exposes Copy, Fork, Edit, and Regenerate but no Delete. Fork calls the existing host-owned `session.fork` with optional `throughMessageId`, producing an independent session whose canonical transcript ends at that response. Edit uses the same isolated child, replaces only the selected assistant text there, and stores original/edited tails as a two-entry D109 revision family so the existing pager can restore either. Both require an idle source, remap message/tool-call ids, and never share the source session id, runtime, transcript, revisions, or provider cache state.** | Response-level divergence and correction should remain reversible without mutating the source or letting an edited history reuse cached runtime state built from different assistant content. |
-| D199 | Regenerate branch archived under the host RPC lock | **`session.saveActiveRevision` performs the read, the branch archive, and the `revisionCount` / `activeRevision` stamp in one host call under the state lock, replacing Electron main's `session.get` + `session.replaceMessages` read-modify-write. The stamp rewrites only the root user's transcript line and re-reads the file at write time, so a line appended meanwhile survives; Electron main drains the persistence outbox first and skips the archive with a warning rather than archiving an incomplete branch. `session.replaceMessages` carries each surviving message's owning `turn_id` across a rewrite and is documented as safe only for a caller that owns the whole transcript for the call's duration (ADR 0060).** | Assistant and tool messages reach SQLite asynchronously through the ADR 0041 outbox, so the renderer-side snapshot could predate the turn's final message — and the whole-transcript rewrite then deleted it from both the transcript file and the index, along with every row's `turn_id`. Only the host can read and write the transcript atomically. |
+| D143 | 设置目录导轨图标 | **五个设置目标使用固定 Lucide 字形：基础 = `SlidersHorizontal`、模型配置 = `Bot`、导入 = `Download`、项目存档 = `Archive`、信息 = `Info`。此导轨上未使用 Refresh/rotate 字形。** | 先前的映射重用了 Settings/RefreshCcw/RotateCw，它读取为通用 gear/reload 而不是目标语义；单色 Lucide 保持紧凑目录可扫描。 |
+| D166 | 设置目录分为 AI 和快捷方式目的地 | **设置栏按顺序从五个增加到七个目的地：基础知识 (`SlidersHorizontal`)、全局 AI/AI（`Sparkles`，新）、快捷方式（`Keyboard`，新）、模型配置 (`Bot`)、导入 (`Download`)、项目存档 (`Archive`)、信息（`Info`）。权限和上下文管理从基础转向新的人工智能目标；键盘快捷键从“基础”移动到新的“快捷键”目的地；开发人员从基础转向信息。基础仅保留外观和默认值。这取代了 D133 的五个目标 count/order 和 D143 的五个图标集（添加 `Sparkles` 和 `Keyboard`），而不更改任何设置的语义、全页 shell 或轨道指标。** | 基础知识积累了六张不相关的卡片，将全局人工智能行为（权限模式、上下文压缩）和快捷方式配置与外观和感觉一起埋葬；拆分它们为每个关注点提供了一个可扫描的主页，同时在模型配置中保持 provider/connection 配置独立。 |
 
-## Q. Still deferred
+## R. 未来的决策规则
 
+- 架构边界更改需要新的 ADR
+- 实现默认值可以在此日志+相关规范中更新
+- D001–D010 的任何逆转都需要明确的基线碰撞
 
-1. Exact marketplace domain / provider IDs
-2. Private marketplace auth mechanism
-3. Signature key distribution operational details
-4. Remote catalog update channel details (URL/signature)
-5. Exact recommended default model per vendor preset
+## S. Composer 输入决策
 
-The full open list lives in [open-questions.md](open-questions.md); this
-section mirrors only marketplace/catalog items still blocking nothing.
-
-## U. Settings rail iconography
-
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D143 | Settings directory rail icons | **The five settings destinations use fixed Lucide glyphs: Basics=`SlidersHorizontal`, Model configuration=`Bot`, Import=`Download`, Project archive=`Archive`, Info=`Info`. Refresh/rotate glyphs are not used on this rail.** | Prior mapping reused Settings/RefreshCcw/RotateCw, which read as generic gear/reload rather than the destination semantics; monochrome Lucide keeps the compact directory scannable. |
-| D166 | Settings directory split into AI and Shortcuts destinations | **The Settings rail grows from five to seven destinations in order: Basics (`SlidersHorizontal`), 全局 AI/AI (`Sparkles`, new), Shortcuts (`Keyboard`, new), Model configuration (`Bot`), Import (`Download`), Project archive (`Archive`), Info (`Info`). Permissions and Context management move from Basics to the new AI destination; Keyboard shortcuts moves from Basics to the new Shortcuts destination; Developer moves from Basics to Info. Basics keeps only Appearance and Defaults. This supersedes the five-destination count/order of D133 and the five-icon set of D143 (adding `Sparkles` and `Keyboard`) without changing any setting's semantics, the full-page shell, or rail metrics.** | Basics accumulated six unrelated cards, burying global AI behavior (permission mode, context compaction) and shortcut configuration alongside look-and-feel; splitting them gives each concern a scannable home while keeping provider/connection config separate in Model configuration. |
+| D123 | Composer 斜线命令，三个来源 | **在编辑器的位置 0 处键入 `/` 将打开一个内联命令菜单，其中合并 (a) `<workspace>/.pi/prompts/*.md` 和 `~/.pi/agent/prompts/*.md` 中的 pi 提示模板（项目在名称冲突时覆盖用户全局；frontmatter `session.get`/`session.replaceMessages`），(b) 通过在与调色板搜索共享的一个注册表中定义的斜杠别名的内置调色板命令，以及 (c) 插件调色板命令。发送时，builtin/plugin 调用通过现有渲染器开关/`commandPalette/execute` 在本地执行，无需创建会话或提示模型；模板调用在持久化之前在 Electron 主 `agent/prompt` 处理程序中扩展（来自 pi-agent-core 的 `parseCommandArgs` + `substituteArgs`），持久化 `content = expanded` 加上一个携带键入表单的新可选 `command` 字段；未知的 `/foo` 作为文字文本发送。** | 重用 pi 的精确 CLI 语义和模板资源，保持代理重新设定种子的准确性（重新设定种子重播 `content`），并通过将键入的调用呈现为芯片（ADR 0024）来保持脚本的可读性。 |
+| D124 | `@` 文件引用是纯文本灯光引用 | **令牌边界处的 `@` 在工作区索引上打开一个模糊文件菜单，该索引由新的仅限 Electron 的通道 `pi-desktop/fs/index` 提供服务（文件+目录、具有忽略设置步行回退的 `git ls-files -co --exclude-standard` 快速路径、带截断标志的 8000 个条目上限、短 TTL 缓存、工作区根目录、无工作区软失败）。接受会为文件创建规范的 `@rel/path ` 引用（当路径有空格时引用 `@"a b.txt" `），并插入 `@dir/`，目录中不带尾随空格； D209 修改已完成的文件草稿演示，但不更改发送的纯文本路径。该模型遵循 Plan 和 Agent 中的读取工具的参考。没有提示内容内联或提供程序附件转换；剪贴板文件具体化由 D197 定义。** | 匹配 pi CLI 面向模型的语义，避免上下文膨胀和截断规则，并使用户驱动的文件浏览保持在每个 ADR 0019 的代理 tool/permission 路径之外。 |
+| D125 | Composer 自动完成交互和 IME 合约 | **一个菜单组件锚定在编辑器上方，完整的编辑器宽度，焦点始终保留在文本区域中。打开时的按键：↑/↓ 循环环绕，Enter/Tab 接受，Escape 仅关闭菜单（优先于输入框的 clear/blur Escape），实时输入过滤器；当某个项目突出显示时，Enter 永远不会发送，并且空结果列表将被视为已关闭。菜单在外部鼠标按下、模糊、删除超过触发字符或会话切换时关闭。所有按键处理和触发检测都位于 IME 防护后面（`isComposing || keyCode === 229` 加上组合 start/end 跟踪）：在组合期间，不会触发、更新或拦截任何内容，并且在组合结束时重新评估状态。** | 规范中第一个明确的 IME 规则 - zh-CN Enter-to-send 加上候选确认绝不能与菜单冲突；统一的插入然后分派使双输入流保持快速且可预测。 |
+| D197 | Composer 剪贴板文件成为会话草稿引用 | **当 Composer 剪贴板包含一个或多个操作系统 files/images 时，渲染器会拦截文件粘贴，通过仅限 Electron 的 `pi-desktop/composer/pasteFiles` 通道传输有界字节和 name/MIME 元数据，并包含持久会话 ID。 Electron main 验证会话、清理名称并在 `<data_dir>/scratch/<sessionId>/pasted/` 下写入唯一文件； D209 修改呈现草稿，同时保留每个返回的绝对路径作为发送给代理的带引号或不带引号的 `@` 引用。纯文本粘贴仍然是原生的。家庭输入框首先创建或重用持久会话。剪贴板字节永远不会进入提示符、工作区或工件存储，并且会话删除会删除带有临时根的粘贴文件。** | 修复了损坏的 file/image 粘贴路径，而不会弄脏项目或发明特定于提供程序的二进制提示管道；它重用了现有的暂存遏制和生命周期合同。 |
+| D209 | Composer 文件引用将紧凑显示与规范提示路径分开 | **完成的工作区文件选择和物化剪贴板文件成为渲染器拥有的、会话范围的参考芯片。芯片始终仅显示叶名称，通过 tooltip/accessibility 元数据公开规范路径，并且可以在不删除临时字节的情况下将其删除。在提交之前，引用会在可见草稿之后以稳定的顺序序列化，并使用 D124 的精确引用，因此仅供引用的草稿、斜线模板和 Agent/Plan/Goal 模式别名保留其当前行为。接受的调度会清除活动编辑器，但保留仅渲染器、回合范围的预序列化快照，而智能停止仍然可以撤消未应答的发送。该撤消操作会恢复原始文本和碎片，而不是预填充序列化消息内容；回复开始后中止保留部分记录并且不恢复任何内容。 Rejected/failed 发送保留活动草稿。 `ComposerPastedFile.name` 是经过清理的原始叶标签，而 `path` 保留 UUID 支持的绝对存储身份。未添加二进制有效负载、提供程序附件、主机 RPC 或架构。** *（由 D362 修订：芯片是 contenteditable 草稿中的行内哨兵元素）* | 长相对路径和 UUID 支持的临时路径淹没了提示行，即使只有代理需要它们。将表示与序列化分离可以保留精确的工具可读路径、重复名称标识、textarea/IME 行为和纯文本提供程序合约 (ADR 0070)。 |
+| D362 | 接受的 `@` 文件插入与粘贴相同的行内芯片 | **修订 D209 / D125：从 `@` 菜单接受已完成的工作区文件（Enter、Tab 或点击）会把触发标记替换为草稿中的一个私用区哨兵，并把该哨兵存到引用上，路径与剪贴板粘贴相同。芯片绘制在光标处；该确认不会发送。目录仍插入 `@dir/` 文本。无哨兵的引用不再是可见草稿表面。工作区相对芯片在切换项目时仍会丢弃；绝对 scratch/paste 路径保留。不改 IPC、存储、主机协议或 schema。** | 芯片改为行内后，文件接受仍会剥掉 `@query` 并存储无哨兵引用，因此不再绘制，Enter 会让文件消失。 |
+| D333 | 工作面板浏览器是随应用打包的 `pi.browser` 插件 | **工作面板 Browser 启动项、chrome 和代理 CDP 作为随应用打包的插件 `pi.browser` 交付（默认启用、可禁用、不可卸载）。访客 `WebContentsView` 和调试器仍由宿主拥有，只能通过受 `browser.cdp` 门控的公开 `pi.browser.*` 访问。访客页边界夹紧到调用插件视图。原始 CDP 走白名单（拒绝 cookies/storage/Target/Fetch）。宿主 `BrowserPreview` 仍是 Plan 安全门面，插件禁用时失败。不升协议/schema。** | 用户需要整个浏览器像 Files 一样可选，但不能把任意网页放进沙盒插件视图。见 ADR 0170。 |
+| D211 | 全局插件启动器 | **可自定义的 `openPluginLauncher` 快捷方式在 macOS 上默认为 Option+Space，在 Windows/Linux 上默认为 Alt+Space。Electron main 在启动后全局注册它，并拥有一个在启动完成后预热的 620×440 无框工具窗口，以最靠近指针的显示器为中心；macOS 使用跨工作区面板，而 Windows 使用 host-core 低级钩子来保留默认 Alt+Space 组合键，并在该钩子不可用时保留聚焦窗口回退。沙盒渲染器仅列出已启用且就绪的面板插件，通过原始字符、无声调完整拼音或拼音首字母（加上规范化的 name/id/description）匹配中文名称，并通过现有插件面板主机打开选定结果。Up/Down 选择，Enter/click 打开，Escape/blur 隐藏，IME 组合输入期间从不分派。附加的 toggle/dismiss/shown IPC 仅存在于 Electron 本地；host-core 的附加快捷键 method/notification 仅携带绑定事件。** | 插件面板需要一个键盘优先的入口点，使其在 PI-Desktop 未聚焦时仍可工作，同时不恢复完整 shell，也不削弱现有面板的 sandbox/permission 边界（ADR 0072/0076/0080）。 |
+| D212 | 运行输入框阶段下一轮配置和停止轮保持吞吐量 | **在活动回合期间，草稿文本和 mode/thinking/permission 选择器保持可编辑。单一提交槽位仅在草稿为空时显示停止；有内容时显示可用的发送，并将下一条提示加入队列。渲染器会投影每个会话的最新完整配置，并仅在终端事件之后调用现有的仅空闲 `session/configure`，因此运行时保持固定状态；等待 Plan/Goal 批准仍可进行门编辑。用户停止的部分答案保留 `responseDurationMs`；当最终提供商输出使用不存在时，可见思考+答案文本被估计为每个标记的四个 Unicode 代码点到可选的 `responseOutputTokens` 中。 Rust 转录本元数据保留这两个字段，精确使用获胜，并且 UI 标记仅估计吞吐量。** | 准备下一个提示不应等待当前流，但主机安全需要不可变的运行中配置。停止的可见答案仍然具有足够的测量数据，可用于有用的、明确的近似生成速度（ADR 0073）。 |
+| D215 | Windows 保留的全局快捷方式回退 | **在 Windows 上，host-core 为有效的 `Alt+Space` 默认绑定安装一个狭窄的 `WH_KEYBOARD_LL` 挂钩，因为 shell 可能会从 Electron 的 `globalShortcut` 中保留它。 hook 仅消耗匹配的和弦并发出 `keyboard.shortcut({ binding: "Alt+Space" })`； Electron 切换现有插件启动器。每当设置更改时，Electron 都会调用附加的 `keyboard.setGlobalShortcut({ binding })`，而 host-core 仅针对该精确绑定启用挂钩。其他平台和自定义绑定保留在 Electron 的全局快捷路径上。** | 每当 PI-Desktop 未获得焦点时，Windows 的活动窗口系统菜单保留都会导致附带的全局启动器不可用。范围狭窄的主机回退会保留快捷方式，而不读取文本或扩展 plugin/renderer 权限 (ADR 0076)。 |
+| D217 | 启动完成后预热插件启动器 | **主应用及后端完成启动后，Electron 创建并加载保留的插件启动器，同时保持窗口隐藏。窗口创建使用一个共享的进行中 promise，因此预热期间收到的快捷键会复用同一次渲染器加载；若预热失败，则销毁未完成的窗口、清除 promise，并允许下次调用重试。每次显示窗口时仍会刷新实时插件目录。** | 将 BrowserWindow 分配和渲染器启动移出首次可见调用，使启动器的显示延迟更稳定，同时不拖慢主应用启动，也不削弱插件目录的新鲜度、IPC 或沙盒边界（ADR 0080）。 |
+| D219 | 插件启动器的最近使用历史 | **启动器渲染器把每个成功打开过的插件 id 连同时间戳记录在渲染器本地的 `localStorage` 里（键 `pi.desktop.pluginLaunchHistory`，上限 24 条），并在查询为空时按最近使用顺序呈现。键入查询后，先按搜索相关性排序，仅在同等相关时用最近使用作为决胜条件，因此未用过的插件按名称排在最近使用的之后。存储损坏或不可用时降级为原有的名称顺序，不影响启动。这只是细化 D211 的呈现，不改变 IPC、主机 RPC、权限、协议 v9 或存储架构 v11。** | 以键盘为先的启动器用户会反复打开同一批插件；记住上次使用顺序让最常用的目标始终只差一个 Enter，而用户一旦键入，相关性仍然是权威。 |
+| D221 | 渲染器产物体积控制 | **渲染器构建显式设置 `minify: "esbuild"`，因为 `electron-vite` 将其渲染器预设硬编码为 `minify: false`。`pi-drop-legacy-font-fallbacks` 插件以 `enforce: "pre"` 在 Vite 将 `url()` 登记为资源之前剥离逗号前缀的 `woff`/`truetype` `src` 条目，因为内置 Chromium 始终支持 `woff2`；唯一来源为旧格式的字体保持不变。`BrandLogo` 导入由规范母版派生的 192x192 标记 `src/assets/brand/logo-{light,dark}.png`，而非 `build/` 中的 1024px 安装器图标，在不改变视觉标识的前提下细化 D079/D094。`packaging-footprint.test.mjs` 对这三项均有断言，使框架默认值或被回退的导入无法静默回归。两个内置 CJK 字体依据 ADR 0083 第 2 节保持不裁剪。** | `out/renderer` 从 31 MiB 降至 24 MiB 且无功能损失；未压缩的默认值与安装器图标导入属于意外成本，而 CJK 子集化会丢失用户内容中的字形，需要修订 ADR |
+| D198 | Goal模式为第二种合约模式 | **Goal 是第三种持久操作模式 (`agent` / `plan` / `goal`)，它端到端地重用 Plan 审批管道。 `EnterGoalMode` 将活跃的 Agent 切换为 Goal 合约状态； `SubmitGoal(title, markdown, question)` 写入主机拥有的不可变 `.pi/goal/<unique-name>.md` 工件并插入一个待处理的 `plan_approvals` 行。单个审批表在 schema v11 中获得 `kind` 列（`plan` 或 `goal`，默认为 `plan`）；这种类型（而不是预计的计划状态）选择提示、工件目录、提交工具和 i18n 命名空间，因此一个批准栏和一个执行队列同时服务于这两者。 Plan 和 Goal 是合约模式：它们共享一个工具白名单（Read/Glob/Grep/BrowserPreview/Bash 加上他们自己的提交工具）、针对持久模式评估的 Write/Edit/plugin/unknown 工具的一台主机硬拒绝、共享 `*_IN_PLAN` 错误代码以及对无人值守运行的 `PLAN_REQUIRES_INTERACTIVE_SESSION` 拒绝。经批准的 Goal 在 Agent 中自主执行：它选择自己的方法并继续工作，直到验证每个验收标准或边界阻止它，然后逐个报告标准。线 `kind` 是可选的，不存在意味着 `plan`，因此这是协议 v9 中的附加内容。** | Plan 回答“执行这些步骤”；用户还需要“达到这个结果，自己决定步骤”（Claude Code的计划模式和Codex的目标型运行）。在批准的合同中制定目标声明、验收标准和边界可以保持自治的可审核性，并且按类型区分一条管道可以避免出现不可避免的漂移的平行表、批准表面和许可边界。 |
+| D144 | 侧边栏主镀铬为 14 像素 | **扩展侧边栏主要镶边（新任务、插件、会话标题、页脚标识名称、配置文件菜单操作）使用 `--text-base` (14px)。 Project/group 标题和空状态副本使用 `--text-md` (13px)。部分标签使用 `--text-sm` (12px)。主要侧边栏内容不得使用微型 `--text-xs` 带。** | 13px 侧边栏主体在 14px 聊天界面旁边感觉尺寸过小；仅碰撞原色铬可以保持密度，同时恢复视觉平衡，而无需全局类型比例变化。 |
+| D145 | 禁用可编辑字段上的浏览器文本更正 | **桌面渲染器中的每个文本 `input` 和 `textarea` 都会禁用浏览器文本校正：`spellCheck={false}`、`autoCorrect="off"` 和 `autoCapitalize="off"`。共享 `Input`/`Textarea` 原语默认这些值；原始字段（编写器、消息编辑、命令选项板、全局搜索、settings/plugins/projects 搜索、模型搜索、浏览器 URL 栏、提供程序模型组合）显式设置它们。复选框和非文本控件保持不变。** | 编码提示、路径、模型 ID 和 URL 不得带有红色下划线或通过 Chromium/OS 文本更正自动更改； shell 是一个应用程序，而不是文档编辑器。 |
 
-## R. Decision rules going forward
+| D146 | 启动画面 + 动作令牌 | **虽然引导程序不完整，但渲染器显示品牌全窗口启动启动画面（徽标、shell 名称、标语、可访问的 `app.starting`、软进度条）而不是纯状态文本。在 `ready` 之后，飞溅会保持短暂的最小停留时间（~420ms），然后在安装的外壳上淡出（~280ms）。全局运动使用 CSS 令牌 `--motion-duration-{fast,normal,slow}` 和 `--motion-ease-{out,in,standard}` 以及共享的 overlay/surface 输入关键帧；交互式转换更喜欢这些标记。减少的运动会将 splash/overlay 运动折叠到接近于零并冻结进度条。崩溃 chrome 使用 `app.uiCrashed`。** | 启动是第一次运行的时刻，以前感觉尚未完成；简短的品牌标志无需装饰性戏剧即可传达准备就绪的信息，共享的动作令牌使 shell 过渡一致且更流畅，同时仅保留反馈。 |
+| D147 | 交互细节润色（选择、CJK 标签、动作填充） | **可复制表面在单色坡道上使用主题感知的 `::selection`（文本-主混合）、`caret-color` 和 `accent-color`；聚焦环与透明色混合（无白色清洗）。高流量镶边（跳转最新、停止、菜单、搜索行、通知、工作面板选项卡关闭、品牌芯片）通过 `--motion-duration-fast` 进行转换。滚动条为 8 像素，悬停拇指更强。空主堆栈间隙为 24px。在 `lang=zh-CN` 下，部分标签会删除 uppercase/wide 跟踪。未定义的 `--radius-token-row` 被替换为 `--radius-sm`。** | 中性口音 + 动作令牌传递后残留的金色抛光间隙：浏览器蓝色选择、突然的悬停填充、中文 chrome 上仅拉丁文的标签样式以及一个未定义的半径令牌。 |
+| D150 | Composer 运行时芯片下降器 | **Composer 工具栏芯片（Agent/Plan、思考、权限模式、模型 ID）将标签完全墨水化在 28px 胶囊内：芯片和标签行高为 `--leading-compact`，芯片不会在控件上使用 `overflow: hidden` 进行剪辑，并且模型标签使用水平省略号而不使用 `leading-none`。 `autoCorrect="off"`/`autoCapitalize="off"`/`Input`/`Textarea`/`Input`/`Textarea` 上的下降器在光线和黑暗中都必须保持可见。** | `leading-none` 加上截断溢出，模型 ID 和标签上的字形下降部分（例如 Agent）/接受编辑，使底部工具栏看起来被切断。 |
+| D151 | 发送重新固定的文字记录如下 | **通过发送、重试或重新生成开始回合始终会重新固定转录跟随模式，隐藏跳转到最新的药丸，并在新内容到达之前滚动到底部。手动滚动在回合过程中仍会暂停跟随；跳跃控制仍然是唯一恢复的非回合方式。这改进了 D071，而无需在每个标记上恢复强制滚动。** | 向上滚动查看历史记录的用户仍然期望他们发送的下一个提示能够登陆最新的交易所；发送后暂停跟随，将新回合隐藏在跳跃药丸后面。 |
+| D152 | 直接运行时流渲染 | **辅助内容直接通过增量 Markdown 块缓存渲染每个运行时流块。渲染器不添加 requestAnimationFrame 打字机状态循环。 KaTeX 的 Vite 内联字体仍然是本地资源，并被狭窄的 `font-src 'self' data:` CSP 指令所允许。** | 重复的动画循环可能会在持续流期间触发 React 的嵌套更新防护，而之前的 CSP 会阻止捆绑的数学字体并产生控制台错误。 |
+| D153 | 推理会话默认为最大思考 | *（由 D303 取代）* **新创建的会话（其继承的默认模型支持推理）从该模型的 pi 发布的 `supportedThinkingLevels` 中的最高规范条目开始。非推理模型和缺失的能力元数据从 `off` 开始；现有会议保留其持久选择。这改进了 D096，而无需添加提供程序覆盖。** | 具有推理能力的模型应该默认使用最强大的可用努力，同时保留明确的每会话选择和 pi-ai 的模型权威。 |
+| D264 | Composer 输入避开全量排序与冗余 DOM 写入 | **`@` 文件菜单用有界 top-K 选择从匹配列表中挑出可见行，而不再排序全部匹配；该选择返回的行集合与顺序与完整排序完全一致，而较小且按命令类型分组的命令列表保留完整排序。Composer 自动调整高度与 `--composer-dock-height` 发布都是幂等的：高度未变化时不做 DOM 写入，也不会使整个文档样式失效，`height: auto` 测量探针仅在文本框可能需要收缩时读取。增长到七行、超过第七行后内部滚动，以及 delete/submit 后的收缩均保持不变。当一次按键既未改变草稿文件引用状态也未改变光标位置时，两者都保持原有的身份与取值，因此草稿缓存序列化 effect 和自动完成触发检测不再每次按键都重跑。不改动 IPC、存储、主机协议或 schema。** | 在大型工作区中打开 `@` 菜单时，每次按键都要对整个 8000 条的文件索引做一次完整排序才显示 50 行，还要为测量探针付一次强制同步重排，而每次按键新建的 `fileReferences` 数组身份又会重跑草稿缓存序列化 effect。代价是输入延迟而非正确性；与完整排序的顺序等价性由单元测试覆盖。 |
 
-- Architecture-boundary changes require a new ADR
-- Implementation defaults can be updated in this log + related specs
-- Any reversal of D001–D010 requires explicit baseline bump
+## T. 发布交付决策
 
-## S. Composer input decisions
-
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D123 | Composer slash commands, three sources | **Typing `/` at position 0 of the composer opens an inline command menu merging (a) pi prompt templates from `<workspace>/.pi/prompts/*.md` and `~/.pi/agent/prompts/*.md` (project overrides user-global on name conflict; frontmatter `description`/`argument-hint`), (b) builtin palette commands through slash aliases defined in one registry shared with palette search, and (c) plugin palette commands. On send, builtin/plugin invocations execute locally through the existing renderer switch / `commandPalette/execute` without creating a session or prompting the model; template invocations are expanded in the Electron main `agent/prompt` handler before persistence (`parseCommandArgs` + `substituteArgs` from pi-agent-core), persisting `content = expanded` plus a new optional `command` field carrying the typed form; unknown `/foo` is sent as literal text.** | Reuses pi's exact CLI semantics and template assets, keeps agent reseed faithful (reseed replays `content`), and keeps the transcript readable by rendering the typed invocation as a chip (ADR 0024). |
-| D124 | `@` file references are plain-text light references | **`@` at a token boundary opens a fuzzy file menu over a workspace index served by the new Electron-only channel `pi-desktop/fs/index` (files+dirs, `git ls-files -co --exclude-standard` fast path with ignore-set walk fallback, 8000-entry cap with truncation flag, short TTL cache, workspace-rooted, fails soft without a workspace). Accepting creates the canonical `@rel/path ` reference for files (quoted `@"a b.txt" ` when the path has spaces) and inserts `@dir/` without trailing space for directories; D209 amends completed-file draft presentation without changing the dispatched plain-text path. The model follows references with its Read tool in both Plan and Agent. No prompt content inlining or provider attachment conversion; clipboard file materialization is defined by D197.** | Matches pi CLI's model-facing semantics, avoids context inflation and truncation rules, and keeps user-driven file browsing out of the agent tool/permission path per ADR 0019. |
-| D125 | Composer autocomplete interaction and IME contract | **One menu component anchored above the composer, full composer width, focus always stays in the textarea. Keys while open: ↑/↓ cycle with wraparound, Enter/Tab accept, Escape closes only the menu (takes precedence over the composer's clear/blur Escape), typing filters live; Enter never sends while an item is highlighted, and an empty result list counts as closed. The menu closes on outside mousedown, blur, deleting past the trigger character, or session switch. All key handling and trigger detection sit behind the IME guard (`isComposing || keyCode === 229` plus composition start/end tracking): during composition nothing triggers, updates, or intercepts, and state is re-evaluated on compositionend.** | First explicit IME rule in the spec — zh-CN Enter-to-send plus candidate confirmation must never fight the menu; uniform insert-then-dispatch keeps two-Enter flows fast and predictable. |
-| D197 | Composer clipboard files become session-scratch references | **When the composer clipboard contains one or more OS files/images, the renderer intercepts the file paste, transfers bounded bytes plus name/MIME metadata through the Electron-only `pi-desktop/composer/pasteFiles` channel, and includes the durable session id. Electron main verifies the session, sanitizes names, and writes unique files below `<data_dir>/scratch/<sessionId>/pasted/`; D209 amends the draft presentation while preserving each returned absolute path as the quoted-or-unquoted `@` reference sent to the agent. Text-only paste remains native. A home composer creates or reuses a durable session first. Clipboard bytes never enter the prompt, workspace, or artifact store, and session deletion removes the pasted files with the scratch root.** | Fixes the broken file/image paste path without dirtying the project or inventing provider-specific binary prompt plumbing; it reuses the existing scratch containment and lifecycle contract. |
-| D209 | Composer file references separate compact display from canonical prompt paths | **Completed workspace-file selections and materialized clipboard files become renderer-owned, session-scoped reference chips. A chip persistently displays only the leaf name, exposes the canonical path through tooltip/accessibility metadata, and can be removed without deleting scratch bytes. Immediately before submit, references serialize in stable order after the visible draft with D124's exact quoting, so reference-only drafts, slash templates, and Agent/Plan/Goal mode aliases retain their current behavior. Accepted dispatch clears the active editor but keeps a renderer-only, turn-scoped pre-serialization snapshot while smart Stop can still undo an unanswered send. That undo restores the original text and chips rather than prefilling serialized message content; abort after reply start keeps the partial transcript and restores nothing. Rejected/failed sends retain the active draft. `ComposerPastedFile.name` is the sanitized original leaf label while `path` retains the UUID-backed absolute storage identity. No binary payload, provider attachment, host RPC, or schema is added.** *(amended by D362: chips are inline sentinel-backed elements in the contenteditable draft)* | Long relative paths and UUID-backed scratch paths overwhelmed the prompt row even though only the agent needs them. Separating presentation from serialization preserves exact tool-readable paths, duplicate-name identity, textarea/IME behavior, and the text-only provider contract (ADR 0070). |
-| D362 | Accepted `@` files insert the same inline chip as paste | **Amend D209 / D125 in the renderer: accepting a completed workspace file from the `@` menu (Enter, Tab, or click) replaces the trigger token with one private-use sentinel in the draft and stores that token on the reference, the same path clipboard paste already uses. The chip paints at the caret; that confirmation never sends. Directories still insert `@dir/` as text. Token-less references are not a visible draft surface. Workspace-relative chips still drop on project switch; absolute scratch/paste paths stay. No IPC, storage, host-protocol, or schema change.** | After chips moved inline, file accept still stripped `@query` and stored a token-less reference that no longer painted, so Enter made the file vanish. |
-| D333 | Work-panel browser is the bundled `pi.browser` plugin | **The work-panel Browser launcher, chrome, and agent CDP ship as bundled plugin `pi.browser` (enabled by default, disableable, not uninstallable). The guest `WebContentsView` and debugger remain host-owned and are reached only through public `pi.browser.*` gated by `browser.cdp`. Guest bounds are clamped to the calling plugin view. Raw CDP is allowlisted (cookies/storage/Target/Fetch denied). Host `BrowserPreview` stays a Plan-safe facade that fails if the plugin is disabled. No protocol/schema bump.** | Users need the whole browser to be optional like Files, without putting arbitrary web content inside a sandboxed plugin view. See ADR 0170. |
-| D211 | Global plugin launcher | **A customizable `openPluginLauncher` shortcut defaults to Option+Space on macOS and Alt+Space on Windows/Linux. Electron main registers it during startup and owns one prewarmed 620×440 frameless utility window centered on the display nearest the pointer; macOS uses a cross-workspace panel, while Windows uses a host-core low-level hook for the reserved default Alt+Space chord and retains a focused-window fallback if that hook is unavailable. The sandboxed renderer lists only enabled, ready panel plugins, matches Chinese names by original characters, tone-free full pinyin, or pinyin initials (plus normalized name/id/description), and opens the selected result through the existing plugin panel host. Up/Down selects, Enter/click opens, Escape/blur hides, and IME composition never dispatches. The additive toggle/dismiss/shown IPC is Electron-local; host-core's additive shortcut method/notification carries only the binding event.** | Plugin panels need a keyboard-first entry point that works while PI-Desktop is unfocused, without restoring the full shell or weakening the existing panel sandbox/permission boundary (ADR 0072/0076/0080). |
-| D212 | Running composers stage next-turn configuration and stopped turns preserve throughput | **During an active turn, draft text and mode/thinking/permission selectors remain editable. The single submit slot renders Stop only for an empty draft; a non-empty draft renders enabled Send and queues the next prompt. The renderer projects the latest full configuration per session and calls the existing idle-only `session/configure` only after the terminal event, so the running runtime remains pinned; pending Plan/Goal approval still gates editing. User-stopped partial answers preserve `responseDurationMs`; when final provider output usage is absent, visible thinking+answer text is estimated at four Unicode code points per token into optional `responseOutputTokens`. Rust transcript metadata persists both fields, exact usage wins, and the UI marks estimate-only throughput.** | Preparing the next prompt should not wait for the current stream, but host safety requires immutable in-flight configuration. A stopped visible answer still has enough measured data for useful, explicitly approximate generation speed (ADR 0073). |
-| D215 | Windows-reserved global shortcut fallback | **On Windows, host-core installs a narrow `WH_KEYBOARD_LL` hook for the effective `Alt+Space` default binding because the shell may reserve it from Electron's `globalShortcut`. The hook consumes only the matching chord and emits `keyboard.shortcut({ binding: "Alt+Space" })`; Electron toggles the existing plugin launcher. Electron calls additive `keyboard.setGlobalShortcut({ binding })` whenever settings change, and host-core enables the hook only for that exact binding. Other platforms and custom bindings remain on Electron's global shortcut path.** | Windows' active-window system menu reservation made the shipped global launcher unavailable whenever PI-Desktop was unfocused. A narrowly scoped host fallback preserves the shortcut without reading text or expanding plugin/renderer privileges (ADR 0076). |
-| D217 | Early plugin launcher warm-up | **As soon as Electron is ready, before backend/plugin boot completes, Electron starts creating and loading the retained plugin launcher while it remains hidden. Window creation uses one shared in-flight promise, so a shortcut received during warm-up joins the same renderer load; failures destroy the incomplete window, clear the promise, and remain retryable on the next invocation. Each show still refreshes the live plugin catalog. On macOS, showing the panel relies on its normal activation and skips a redundant application activation/window-stack move.** | Overlapping launcher renderer startup with backend boot and avoiding duplicate macOS activation work removes first-invocation delay and visible stutter without weakening plugin freshness, IPC, or sandbox boundaries (ADR 0080). |
-| D219 | Plugin launcher most-recently-used history | **The launcher renderer records each successfully opened plugin id with a timestamp in renderer-local `localStorage` (key `pi.desktop.pluginLaunchHistory`, capped at 24) and presents an empty query in most-recently-used order. A typed query ranks search relevance first and uses recency only as a tiebreaker, so unused plugins sort after the recent ones by name. Corrupted or unavailable storage degrades to the existing name order without breaking launching. This refines D211's presentation without changing IPC, host RPC, permissions, protocol v9, or storage schema v11.** | Keyboard-first launcher users reopen the same plugins repeatedly; remembering the last-used order keeps the most frequent target one Enter away while relevance stays authoritative once the user types. |
-| D221 | Renderer output size controls | **The renderer build sets `minify: "esbuild"` explicitly because `electron-vite` hard-defaults its renderer preset to `minify: false`. A `pi-drop-legacy-font-fallbacks` plugin strips comma-prefixed `woff`/`truetype` `src` entries with `enforce: "pre"`, before Vite registers them as assets, since the bundled Chromium always supports `woff2`; a face whose only source is a legacy format keeps it. `BrandLogo` imports 192x192 marks derived from the canonical masters at `src/assets/brand/logo-{light,dark}.png` rather than the 1024px installer icons in `build/`, refining D079/D094 without changing the visual identity. `packaging-footprint.test.mjs` asserts all three so a framework default or a reverted import cannot silently regress them. The two bundled CJK faces stay unsubset per ADR 0083 section 2.** | `out/renderer` fell from 31 MiB to 24 MiB with no feature loss; the unminified default and the installer-icon import were accidental costs, while CJK subsetting would drop glyphs from user content and needs an ADR revision |
-| D198 | Goal mode is the second contract mode | **Goal is a third durable operating mode (`agent` / `plan` / `goal`) that reuses the Plan approval pipeline end to end. `EnterGoalMode` switches an active Agent turn into the Goal contract state; `SubmitGoal(title, markdown, question)` writes an immutable host-owned `.pi/goal/<unique-name>.md` artifact and inserts one pending `plan_approvals` row. The single approval table gains a `kind` column (`plan` or `goal`, defaulting to `plan`) in schema v11; the kind — not the projected planning state — selects the prompt, artifact directory, submit tool, and i18n namespace, so one approval bar and one execution queue serve both. Plan and Goal are together the contract modes: they share one tool allowlist (Read/Glob/Grep/BrowserPreview/Bash plus their own submit tool), one host hard deny for Write/Edit/plugin/unknown tools evaluated against the durable mode, the shared `*_IN_PLAN` error codes, and the `PLAN_REQUIRES_INTERACTIVE_SESSION` rejection of unattended runs. An approved Goal executes autonomously in Agent: it chooses its own approach and keeps working until every acceptance criterion is verified or a boundary blocks it, then reports criterion by criterion. The wire `kind` is optional and absent means `plan`, so this is additive inside protocol v9.** | Plan answers "carry out these steps"; users also need "reach this outcome, decide the steps yourself" (Claude Code's plan mode and Codex's goal-shaped runs). Making the goal statement, acceptance criteria, and boundaries an approved contract keeps autonomy auditable, and discriminating one pipeline by kind avoids a parallel table, approval surface, and permission boundary that would inevitably drift. |
-| D144 | Sidebar primary chrome at 14px | **Expanded sidebar primary chrome (New task, Plugins, session titles, footer identity name, profile menu actions) uses `--text-base` (14px). Project/group titles and empty-state copy use `--text-md` (13px). Section labels use `--text-sm` (12px). Primary sidebar content must not use the micro `--text-xs` band.** | 13px sidebar body felt undersized next to the 14px chat surface; bumping only primary chrome keeps density while restoring visual balance without a global type-scale change. |
-| D145 | Disable browser text correction on editable fields | **Every text `input` and `textarea` in the desktop renderer disables browser text correction: `spellCheck={false}`, `autoCorrect="off"`, and `autoCapitalize="off"`. Shared `Input`/`Textarea` primitives default these values; raw fields (composer, message edit, command palette, global search, settings/plugins/projects search, model search, browser URL bar, provider model combo) set them explicitly. Checkboxes and non-text controls are unchanged.** | Coding prompts, paths, model ids, and URLs must not be red-underlined or auto-mutated by Chromium/OS text correction; the shell is an application, not a document editor. |
-
-| D146 | Startup splash + motion tokens | **While bootstrap is incomplete the renderer shows a branded full-window startup splash (logo, shell name, tagline, accessible `app.starting`, soft progress bar) instead of plain status text. After `ready`, the splash holds a short minimum dwell (~420ms), then fades out (~280ms) over the mounted shell. Global motion uses CSS tokens `--motion-duration-{fast,normal,slow}` and `--motion-ease-{out,in,standard}` with shared overlay/surface enter keyframes; interactive transitions prefer these tokens. Reduced motion collapses splash/overlay motion to near-zero and freezes the progress bar. Crash chrome uses `app.uiCrashed`.** | Boot is a first-run moment that previously felt unfinished; a short branded splash communicates readiness without decorative theatre, and shared motion tokens make shell transitions consistent and silkier while remaining feedback-only. |
-| D147 | Interaction detail polish (selection, CJK labels, motion fills) | **Copyable surfaces use theme-aware `::selection` (text-primary mix), `caret-color`, and `accent-color` on the monochrome ramp; focus rings mix accent with transparent (no white wash). High-traffic chrome (jump-latest, stop, menus, search rows, notifications, work-panel tab close, brand chip) transitions via `--motion-duration-fast`. Scrollbars are 8px with a stronger hover thumb. Empty-home stack gap is 24px. Under `lang=zh-CN`, section labels drop uppercase/wide tracking. Undefined `--radius-token-row` is replaced by `--radius-sm`.** | Residual gold-polish gaps after the neutral accent + motion-token pass: browser-blue selection, abrupt hover fills, Latin-only label styling on Chinese chrome, and one undefined radius token. |
-| D150 | Composer runtime chip descenders | **Composer toolbar chips (Agent/Plan, Thinking, permission mode, model ID) keep labels fully inked inside the 28px capsule: chip and label line-height is `--leading-compact`, chips do not clip with `overflow: hidden` on the control, and the model label uses horizontal ellipsis without `leading-none`. Descenders on `g`/`y`/`p`/`q`/`j` must remain visible in light and dark.** | `leading-none` plus truncate overflow crushed glyph descenders on model IDs and labels such as Agent / Accept edits, making the bottom toolbar look cut off. |
-| D151 | Send re-pins transcript follow | **Starting a turn via send, retry, or regenerate always re-pins transcript follow mode, hides the jump-to-latest pill, and scrolls to the bottom before new content arrives. Manual scroll during a turn still pauses follow; the jump control remains the only non-turn way to resume. This refines D071 without restoring forced scroll on every token.** | Users who scroll up to inspect history still expect the next prompt they send to land at the latest exchange; leaving follow paused after send hid the new turn behind the jump pill. |
-| D152 | Direct runtime stream rendering | **Assistant content renders each runtime stream chunk directly through the incremental Markdown block cache. The renderer does not add a requestAnimationFrame typewriter state loop. KaTeX's Vite-inlined fonts remain local-only assets and are admitted by the narrow `font-src 'self' data:` CSP directive.** | The duplicate animation loop could trip React's nested-update guard during sustained streams, while the previous CSP blocked bundled math fonts and produced console errors. |
-| D153 | Reasoning sessions default to maximum thinking | *(superseded by D303)* **A newly created session whose inherited default model supports reasoning starts at the highest canonical entry in that model's pi-published `supportedThinkingLevels`. Non-reasoning models and missing capability metadata start at `off`; existing sessions retain their durable choice. This refines D096 without adding a provider override.** | Reasoning-capable models should use their strongest available effort by default while preserving explicit per-session choices and pi-ai's model authority. |
-| D264 | Composer typing avoids full sorts and redundant DOM writes | **The `@` file menu picks its visible rows with a bounded top-K selection over the match list instead of sorting every match; the selection returns exactly the row set and order a full sort produced, and the small, kind-grouped command list keeps its full sort. Composer auto-resize and `--composer-dock-height` publication are idempotent: an unchanged height performs no DOM write and no document-wide style invalidation, and the `height: auto` measurement probe is taken only when the box may need to shrink. Growth through seven rows, internal scrolling past the seventh, and contraction on delete or submit are unchanged. Draft file-reference state and the cursor keep their identity and value when a keystroke changes neither, so the draft-cache serialization effect and autocomplete trigger detection stop re-running per keystroke. No IPC, storage, host-protocol, or schema change.** | With a large workspace and the `@` menu open, every keystroke paid a full sort over the whole 8000-entry file index to show 50 rows, plus a forced synchronous reflow from the measurement probe, while a fresh `fileReferences` array identity per keystroke re-ran the draft-cache serialization effect. The cost was typing latency, not correctness; ordering equivalence with the full sort is covered by unit tests. |
-
-
-## T. Release delivery decisions
-
-| ID | Topic | Decision | Rationale |
-|---|---|---|---|
-| D126 | Three-platform release delivery (lifts D010) | *(amended by D364)* **Tag builds publish every artifact the matrix produces to the GitHub Release: macOS dmg/zip (arm64), Windows NSIS x64, Linux AppImage + deb (x64), each with blockmaps and the platform's `latest*.yml` electron-updater feed. Publishing the feeds activates D120's in-app update lanes for Windows NSIS and Linux AppImage; macOS stays in notify-and-link mode until a signed channel is qualified. The NSIS artifact name is pinned space-free (`PI-Desktop-Setup-${version}.${ext}`) because GitHub asset URLs mangle spaces. D010's macOS-only scope is lifted per the baseline-bump rule (baseline `0.4.7`); the release pipeline itself was qualified end-to-end on v0.1.1-rc.1/v0.1.1.** | The pipeline builds and validates all three platforms on every tag anyway; keeping installers as expiring Actions artifacts (90-day retention) withheld them from users without adding safety. Publishing the update feeds is the point of shipping: platforms with in-app lanes update silently, and future platform regressions surface through real installs instead of unused artifacts. |
+| D126 | 三平台发布交付（电梯D010） | *(amended by D364)* **标签构建将矩阵生成的每个工件发布到 GitHub 版本：macOS dmg/zip (arm64)、Windows NSIS x64、Linux AppImage + deb (x64)，每个都有块图和平台的 `latest*.yml` 电子更新器提要。发布提要会激活 D120 的 Windows NSIS 和 Linux AppImage 的应用内更新通道； macOS 保持通知和链接模式，直到签名通道合格为止。 NSIS 工件名称固定为无空格 (`PI-Desktop-Setup-${version}.${ext}`)，因为 GitHub 资产 URL 会损坏空格。根据基线凹凸规则（基线 `0.4.7`），D010 的仅限 macOS 范围被提升；发布管道本身在 v0.1.1-rc.1/v0.1.1 上通过了端到端合格。** | 无论如何，管道都会在每个标签上构建并验证所有三个平台；将安装程序保留为过期的 Actions 工件（保留 90 天）会阻止用户安装它们，而不会增加安全性。发布更新源是交付的重点：具有应用程序内通道的平台会静默更新，并且未来的平台回归会通过实际安装而不是未使用的工件来呈现。 |
 | D364 | Windows portable exe without installer | **Amend D120 / D126 / ADR 0022: tag builds publish a Windows x64 portable exe `PI-Desktop-Portable-${version}.exe` alongside the NSIS installer `PI-Desktop-Setup-${version}.exe`. The portable target does not write `latest.yml`. Packaged portable runs (`PORTABLE_EXECUTABLE_FILE`) use notify-and-link delivery. NSIS installs keep in-app download and quit-and-install. Data stays in the existing application data directory. Portable requests user execution level.** | Company environments that whitelist a single executable cannot run the NSIS installer. Applying the NSIS updater to a portable run would install the app, so portable stays manual (ADR 0197, E2E-211). |
-| D260 | Release documentation is a version surface | **A stable version bump must update every version-bearing surface before the tag: the shipped-locale in-app changelog and its test list, every workspace `package.json` including `docs/package.json` (a third workspace root `scripts/release.mjs` previously skipped), the Cargo workspace version and `host-core` lockfile entry, `APP_VERSION`, and the `<major>.<minor>.x` release line stated in `README.md` and `README.zh-CN.md`. `scripts/check-release-docs.mjs` verifies all of them; `scripts/release.mjs` runs it after bumping and refuses to commit or tag while any surface disagrees, with `--skip-docs-check` reserved for deliberate non-release bumps. Extends D164.** | The in-app changelog gate alone left published documentation behind: the READMEs still advertised the `0.5.x` line at `0.10.8`, and `docs/package.json` sat at `0.5.8`. A tag is irreversible, so the check runs before the tag exists rather than as review etiquette. |
-| D371 | Explicit unsigned macOS first-launch helper | *(amended by D406 and D443)* **Every macOS distribution ships an executable `PI-Desktop-macOS-open.command`, placed on the DMG in a visible first-launch row below the drag-to-Applications gesture. It searches only `/Applications/PI-Desktop.app` and `~/Applications/PI-Desktop.app`, verifies `CFBundleIdentifier` is `net.aiuo.pi-desktop`, removes only `com.apple.quarantine` when present, and opens the app. It never uses `sudo`, accepts no arbitrary path, and does not replace Developer ID signing or notarization.** | The unsigned macOS lane can be blocked by quarantine with a misleading damaged-app message, and the terminal-only `xattr -cr` note was broader than the launch failure requires (ADR 0204, E2E-196b) |
-| D443 | Canonical application ID and macOS codesign identifier | **Amend D141 / D371 / ADR 0204: the application ID is `net.aiuo.pi-desktop` (`APP_ID`, electron-builder `appId`, macOS `CFBundleIdentifier`, Windows AppUserModelID). Development macOS hosts use `net.aiuo.pi-desktop.dev`. Do not adhoc-sign the unsigned pack in `afterPack`/`afterSign`: nested Electron helpers are still unsigned and `codesign` fails with `code object is not signed at all`. See ADR 0278 and issue #524.** | The owner domain is `net.aiuo.pi-desktop`. Binding the unsigned outer identifier is deferred until a helper-safe pack path exists. |
+| D260 | 发布文档是一个版本载体 | **稳定版本号提升必须在打标签之前更新每一处带版本号的载体：双语言的应用内变更日志及其测试清单、每个工作区的 `package.json`（包括之前被第三个工作区根 `scripts/release.mjs` 跳过的 `docs/package.json`）、Cargo 工作区版本与 `host-core` 的锁文件条目、`APP_VERSION`，以及 `README.md` 和 `README.zh-CN.md` 中声明的 `<major>.<minor>.x` 发布线。`scripts/check-release-docs.mjs` 校验全部这些；`scripts/release.mjs` 在提升版本号之后运行它，只要任一载体不一致就拒绝提交或打标签，`--skip-docs-check` 仅保留给刻意的非发布性版本提升。扩展 D164。** | 仅有应用内变更日志这道闸门，导致已发布的文档落后：版本已到 `0.10.8`，两个 README 仍在宣传 `0.5.x` 线，而 `docs/package.json` 停在 `0.5.8`。标签是不可逆的，所以这项检查在标签存在之前运行，而不是作为评审礼节。 |
+| D371 | 显式的未签名 macOS 首次启动助手 | *（由 D406 和 D443 修订）* **每个 macOS 分发都附带可执行的 `PI-Desktop-macOS-open.command`，放在 DMG 上拖入 Applications 手势下方的可见首启行。它只查找 `/Applications/PI-Desktop.app` 与 `~/Applications/PI-Desktop.app`，校验 `CFBundleIdentifier` 为 `net.aiuo.pi-desktop`，仅在存在时移除 `com.apple.quarantine`，然后打开应用。永不使用 `sudo`，不接受任意路径，也不替代 Developer ID 签名或公证。** | 未签名的 macOS 通道可能被 quarantine 拦截并显示误导性的\"已损坏\"提示，而仅限终端的 `xattr -cr` 说明比启动失败所需的范围更宽（ADR 0204，E2E-196b） |
+| D443 | 规范应用 ID 与 macOS 代码签名标识 | **修订 D141 / D371 / ADR 0204：应用 ID 为 `net.aiuo.pi-desktop`（`APP_ID`、electron-builder `appId`、macOS `CFBundleIdentifier`、Windows AppUserModelID）。开发用 macOS 宿主为 `net.aiuo.pi-desktop.dev`。不要在 `afterPack`/`afterSign` 对未签名包做 adhoc 签名：嵌套 Electron helper 此时尚未签名，`codesign` 会报 `code object is not signed at all`。见 ADR 0278、issue #524。** | 所有者域名为 `net.aiuo.pi-desktop`。未签名包的 Identifier 绑定推迟到有安全的 helper 签名路径之后。 |
 
-## V. Extension activation decisions
+## V. 扩展激活决策
 
-| ID | Topic | Decision | Rationale |
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D192 | Activation scope shared by every extension kind | **Plugins, user MCP servers and user skills each carry `enabled: boolean` plus `scope: { mode: "global" \| "projects"; projects: string[] }`. `enabled` stays separate so switching an extension off never discards its project list, and the three-state control (`off` / `projects` / `global`) is derived, not stored. Matching is case-insensitive, trailing-separator-insensitive and subdirectory-inclusive; a missing scope resolves to global; a `projects`-mode extension is inactive in a session with no project. Scope is enforced both when a per-turn catalog is assembled and again at dispatch (`tools.execute`, `UserMcpRuntime.callTool`, `loadUserSkillBody`, command execution). Agent-facing surfaces filter on the session's project, app-facing surfaces on the active window's; themes are not scoped at all.** | A single boolean made every extension global, so a work-only MCP server spent context in every unrelated session and the only remedy was toggling by hand on each project switch. One scope shape lets one control and one predicate serve all three kinds, and enforcing at dispatch closes the window in which a session still remembers a tool the user has just scoped away (ADR 0056). |
-| D193 | User-owned MCP servers need no plugin | **host-core stores one JSON configuration file per MCP id under `~/.agents/servers` or `<project>/.agents/servers`; enablement and project overrides live only in `<data>/agent-capabilities/mcp.json`. Level-aware `mcp.list`, `mcp.active`, `mcp.upsert`, `mcp.remove`, and `mcp.setEnabled` calls drive the Settings > Agent > MCP page; a project record shadows a global record by id or label before disabled records are filtered. The existing MCP editor and desktop `mcp/test` action provide transport validation and connection feedback.** | A user-owned server is portable configuration, not a plugin package. Separating its file from app-local state lets projects override a global server without mutating the user file and makes deletion pruning deterministic (ADR 0112). |
-| D194 | User-owned skills are Markdown documents in `.agents` roots | **host-core scans `~/.agents/skills` and `<project>/.agents/skills`, accepts direct Markdown files and `<skill>/SKILL.md`, and exposes frontmatter `name`/`description` through level-aware `skills.list` and `skills.active`. A single-file import physically copies the source into the selected directory. Enablement and project overrides live in `<data>/agent-capabilities/skills.json`, never in the document; project records shadow global records before disabled records are filtered.** | A skill remains a portable Markdown document, while the app-local state file keeps activation decisions out of user-authored content (ADR 0112). |
-| D257 | Capability pages are one workbench that can author | **Refine D193 / D194 and supersede D202's page shape: Settings > Agent > Skills / MCP / Subagents each render one toolbar (level filter as a segmented control with live counts, one search field, project picker, primary actions) above one elevated panel whose rows are divided by level group headers and carry their own level badge. All three pages create, edit, and delete through the host calls that already existed; new capabilities land at the level the filter points at and the primary action names that destination. Destructive row actions live in a per-row overflow menu and arm before firing. Busy state is scoped to the row with the in-flight request, skeletons render on first paint only, later loads dim the rows already on screen, and enablement flips optimistically and reverts only if the host refuses. `skills.reveal` accepts `{ id, level?, projectPath? }` and forwards it to `skills.read`, which already parsed both; a bare id string still works. Subagents stay global-only (no filter, no picker), and every capability-state, precedence, and `.agents` path rule from D193 / D194 / D202 is unchanged.** | The pages listed capabilities but could not manage them: `d24e1ee0` deleted both editor sheets while the create/update/remove/reveal RPCs stayed live, the level was page structure rather than a filter so two headers consumed most of a short page, one pending request disabled every control through `busy={loading \|\| busyKey !== null}`, and awaiting a reload after each toggle replaced the list with skeletons. Revealing a project skill also sent the id alone, which cannot resolve a project record with no global counterpart (ADR 0126). |
+| D192 | 每个扩展类型共享的激活范围 | **插件、用户 MCP 服务器和用户技能均带有 `enabled: boolean` 加上 `scope: { mode: "global" \ | “项目”；项目： string[] }`. `enabled` stays separate so switching an extension off never discards its project list, and the three-state control (`off` / `projects` / `global`) is derived, not stored. Matching is case-insensitive, trailing-separator-insensitive and subdirectory-inclusive; a missing scope resolves to global; a `projects`-mode extension is inactive in a session with no project. Scope is enforced both when a per-turn catalog is assembled and again at dispatch (`tools.execute`, `UserMcpRuntime.callTool`, `loadUserSkillBody`，命令执行）。面向代理的表面在会话的项目上进行过滤，面向应用程序的表面在活动窗口的表面上进行过滤；主题根本没有范围。** | 单个布尔值使每个扩展都是全局的，因此仅工作的 MCP 服务器在每个不相关的会话中使用上下文，唯一的补救措施是在每个项目切换上手动切换。一种作用域形状让一个控件和一个谓词服务于所有三种类型，并且在调度时强制关闭会话仍然记住用户刚刚作用域的工具的窗口（ADR 0056）。 |
+| D193 | 用户拥有的 MCP 服务器不需要插件 | **host-core 按 MCP ID 在 `~/.agents/servers` 或 `<project>/.agents/servers` 下保存单个 JSON 配置文件；启用状态和项目覆盖只存于 `<data>/agent-capabilities/mcp.json`。设置 > 智能体 > MCP 通过带级别的 `mcp.list`、`mcp.active`、`mcp.upsert`、`mcp.remove` 和 `mcp.setEnabled` 驱动；项目记录按 ID 或 label 在过滤关闭项前遮蔽全局记录。现有 MCP 编辑器和桌面 `mcp/test` 操作提供传输校验与连接反馈。** | 用户拥有的服务器是可迁移配置而不是插件包。将文件与应用本地状态分离，可以在不修改用户文件的情况下让项目覆盖全局服务器，并让删除清理保持确定性 (ADR 0112)。 |
+| D194 | `.agents` 根目录中的用户技能是 Markdown 文档 | **host-core 扫描 `~/.agents/skills` 和 `<project>/.agents/skills`，接受直接 Markdown 文件以及 `<skill>/SKILL.md`，通过带级别的 `skills.list` 和 `skills.active` 暴露 frontmatter 的 `name`/`description`。单文件导入会把源文件物理复制到选定目录。启用状态和项目覆盖存于 `<data>/agent-capabilities/skills.json`，绝不写入文档；过滤关闭项前项目记录先遮蔽全局记录。** | 技能仍是可迁移的 Markdown 文档，而应用本地状态文件把启用决定留在用户内容之外 (ADR 0112)。 |
+| D257 | 能力页面合并为一个可编辑的工作台 | **细化 D193 / D194 并取代 D202 的页面形态：设置 > 智能体 > 技能 / MCP / 子智能体三个页面都在一块抬升面板之上呈现单条工具栏（级别筛选做成带实时计数的分段控件、一个搜索框、项目选择器、主操作按钮），面板内部按级别分组标题分隔，每一行自带级别徽标。三个页面都通过早已存在的 host 调用完成新建、编辑和删除；新能力落在筛选器当前指向的级别上，主操作按钮直接写出该目标位置。破坏性的行内操作收进每行的溢出菜单，并且需要先解除保险再执行。忙碌状态只作用于发出请求的那一行，骨架屏只在首次绘制时出现，后续加载把已在屏幕上的行调暗，启用开关先乐观翻转、只在 host 拒绝时回滚。`skills.reveal` 接受 `{ id, level?, projectPath? }` 并转交给本就同时解析两者的 `skills.read`；仅传 id 字符串仍然可用。子智能体保持全局唯一（没有筛选器、没有项目选择器），D193 / D194 / D202 里关于能力状态、优先级和 `.agents` 路径的规则一条都没有改动。** | 这些页面只能列出能力，却无法管理它们：`d24e1ee0` 删掉了两个编辑器面板，而 create/update/remove/reveal 的 RPC 一直活着；级别是页面结构而不是筛选条件，于是两个分组标题就吃掉了本来就不高的页面的大半；一个未完成的请求会通过 `busy={loading \|\| busyKey !== null}` 禁用所有控件；每次切换开关后都等待重新加载，列表又被换回骨架屏。显示项目级技能时也只发送了 id，而单靠 id 无法解析一条没有全局同名记录的项目记录 (ADR 0126)。 |
 
-## 2026-07-28 — Plugin marketplace, panels, and high-risk APIs
+## 2026-07-28 — 插件市场、面板和高风险 API
 
-- Official local marketplace provider can browse/search/install `.piplug` packages with checksum verification.
-- Plugin panels run in sandboxed isolated windows via `pluginBridge`.
-- High-risk plugin host APIs (`fs.write`, `net.fetch`, clipboard, openExternal) are available only with explicit grants.
-- Per-plugin auto-update is supported; permission-expanding upgrades require review.
+- 官方本地市场提供商可以对 browse/search/install `.piplug` 包进行校验和验证。
+- 插件面板通过 `pluginBridge` 在沙盒隔离窗口中运行。
+- 高风险插件主机 API（`fs.write`、`net.fetch`、剪贴板、openExternal）仅在明确授权的情况下可用。
+- 支持每个插件自动更新；权限扩展升级需要审查。
 
-## 2026-07-28 — Official plugin marketplace repository
+## 2026-07-28 — 官方插件市场存储库
 
-- Dedicated repo `vastsa/pi-desktop-plugins` is the official marketplace source.
-- PI-Desktop fetches `catalog.json` remotely (cached under `~/.pi-desktop/plugins/market/`).
-- Plugin maintainers pack sources with repo scripts and publish by pushing to that repository.
-- Local bundled catalog remains fallback only when remote fetch fails.
+- 专用存储库 `vastsa/pi-desktop-plugins` 是官方市场来源。
+- PI-Desktop 远程获取 `catalog.json`（缓存在 `~/.pi-desktop/plugins/market/` 下）。
+- 插件维护者将源代码与存储库脚本打包在一起，并通过推送到该存储库来发布。
+- 仅当远程获取失败时，本地捆绑目录才会保留后备状态。
 
-## 2026-07-28 — Marketplace template + detail pane
+## 2026-07-28 — 市场模板 + 详细信息窗格
 
-- Official warehouse gained a practical template plugin `demo.workspace-summary` and CONTRIBUTING guide.
-- PI-Desktop marketplace UI now opens a detail pane with README, changelog, and version list via `market.getDetail`.
+- 官方仓库获得了实用的模板插件`demo.workspace-summary`和CONTRIBUTING指南。
+- PI-Desktop 市场 UI 现在通过 `market.getDetail` 打开包含自述文件、变更日志和版本列表的详细信息窗格。
 
-## 2026-07-28 — Sidebar type balance
+## 2026-07-28 — 侧边栏类型平衡
 
-- Expanded sidebar primary chrome uses `--text-base` (14px) instead of `--text-md` (13px).
-- Project/group titles step to `--text-md`; section labels stay secondary at `--text-sm`.
-- Decision D144: keep micro tokens off primary left-rail content so the rail matches body readability without changing the global type ramp.
+- 扩展侧边栏主要镀铬使用 `--text-base` (14px) 而不是 `--text-md` (13px)。
+- Project/group 标题跳转至 `--text-md`；部分标签在 `--text-sm` 中保持次要地位。
+- 决策 D144：使微型标记远离主要的左栏内容，以便栏与正文可读性相匹配，而不改变全局类型斜坡。
 
-## 2026-07-28 — Chat markdown prose redesign
+## 2026-07-28 — 聊天 Markdown 散文重新设计
 
-- Assistant markdown (`.prose-chat`) was restyled for denser, calmer transcript reading: clearer heading hierarchy, accent-tinted blockquotes, quieter list markers, bordered inline code, zebra/hover tables, and inset code cards with monospace language tags.
-- Thinking prose reuses the same hierarchy at secondary color / `text-sm-plus` so reasoning stays visually subordinate to the answer.
-- Renderer behavior (streaming block split, GFM/math, Shiki) is unchanged; this is a presentation-only pass in `globals.css` + component/design specs.
+- 助理降价 (`.prose-chat`) 进行了重新设计，以实现更密集、更平静的文字阅读：更清晰的标题层次结构、带重音的块引号、更安静的列表标记、带边框的内联代码、zebra/hover 表格以及带有等宽语言标签的插入代码卡。
+- 思考散文在次要颜色/`text-sm-plus` 处重用相同的层次结构，因此推理在视觉上保持从属于答案。
+- Renderer 行为（流块分割、GFM/math、Shiki）不变；这是 `globals.css` + component/design 规范中的仅演示通行证。
 
-## 2026-07-28 — Neutral gray accent (no blue brand)
+## 2026-07-28 — 中性灰色口音（无蓝色品牌）
 
-- `--ds-accent` / `--ds-accent-hover` / `--ds-accent-soft` / `--ds-info` now resolve to the gray scale (dark: white→gray-100→gray-300; light: `#1a1c1f`→`#303030`→`#5d5d5d`) instead of Codex blue.
-- Markdown links, blockquotes, focus rings, plugin CTAs, toggles, and selected-session rings inherit the neutral accent automatically via tokens.
-- Project color dots and docs/specs updated to drop blue as the brand accent.
+- `--ds-accent` / `--ds-accent-hover` / `--ds-accent-soft` / `--ds-info` 现在解析为灰度（深色：白色→灰色-100→灰色-300；浅色：`#1a1c1f`→`#303030`→`#5d5d5d`）而不是 Codex 蓝色。
+- Markdown 链接、块引用、焦点环、插件 CTA、切换和选定会话环通过标记自动继承中性重音。
+- 项目色点和 docs/specs 更新为蓝色作为品牌口音。
 
-## 2026-07-28 — Plugins page light-theme token pass
+## 2026-07-28 — 插件页面浅色主题令牌通行证
 
-- Marketplace/plugin chrome CSS dropped raw blue-slate fallbacks (`#4f7cff`, `#2a3144`, `#121826`, …) and now consumes only `--ds-*` tokens.
-- Tabs, actions, search, cards, permission modal, and badges adapt to light/dark via the neutral gray accent system.
+- Marketplace/plugin chrome CSS 删除了原始的 blue-slate 后备（`#4f7cff`、`#2a3144`、`#121826`，...），现在仅消耗 `--ds-*` 代币。
+- 选项卡、操作、搜索、卡片、权限模式和徽章通过中性灰色强调系统适应 light/dark。
 
-## 2026-07-28 — Markdown light-theme paper pass
+## 2026-07-28 — Markdown 浅色主题纸质通行证
 
-- Light `.prose-chat` / `.code-block` surfaces were retuned for white chat paper: softer underlined links, flat gray code cards (no muddy shadow), quieter blockquotes/tables/kbd/math, and secondary thinking ink.
-- Dark markdown treatment is unchanged in spirit (inset charcoal code, light-gray links via accent-soft).
+- 浅色 `.prose-chat` / `.code-block` 表面针对白色聊天纸进行了重新调整：更柔和的下划线链接、平坦的灰色代码卡（无泥泞阴影）、更安静的 blockquotes/tables/kbd/math 和二次思维墨水。
+- 深色降价处理在精神上没有改变（插入木炭代码，通过accent-soft的浅灰色链接）。
 
-## 2026-07-28 — One Dark Pro code highlighting
+## 2026-07-28 — One Dark Pro 代码高亮
 
-- Chat fence highlighting switched from `github-light`/`github-dark` to `one-light`/`one-dark-pro`.
-- Code cards paint a single editor surface (`#fafafa` / `#282c34`); nested `pre`/`code`/token backgrounds are forced transparent so there is no double wash.
+- 聊天围栏突出显示从 `demo.workspace-summary`/`market.getDetail` 切换为 PI-Desktop/`--text-base`。
+- 代码卡绘制单个编辑器表面（`#fafafa` / `#282c34`）；嵌套的 PI-Desktop/`--text-base`/token 背景强制透明，因此不会出现双重清洗。
 
-## 2026-07-28 — Disable text correction on editable fields
+## 2026-07-28 — 禁用可编辑字段的文本更正
 
-- Shared `Input`/`Textarea` primitives default `spellCheck={false}`, `autoCorrect="off"`, and `autoCapitalize="off"`.
-- Composer, message edit, palette/search fields, settings/plugins/projects search, model search, browser URL bar, and provider model combo follow the same contract.
-- Decision D145: browser/OS spelling and autocorrect chrome stays off across the desktop shell.
+- 共享 `Input`/`Textarea` 原语默认为 `spellCheck={false}`、`autoCorrect="off"` 和 `autoCapitalize="off"`。
+- 输入框、消息编辑、palette/search 字段、settings/plugins/projects 搜索、模型搜索、浏览器 URL 栏和提供商模型组合遵循相同的合同。
+- 决策 D145：browser/OS 拼写和自动更正 chrome 在桌面 shell 中保持关闭状态。
 
-## 2026-07-28 — Startup splash and motion tokens
+## 2026-07-28 — 启动启动画面和动作令牌
 
-- Boot path paints `StartupSplash` (brand mark, shell name, tagline, progress bar) until host/settings bootstrap finishes.
-- Shared CSS motion tokens and overlay/surface enter keyframes polish dialogs, search, toasts, and interactive fills.
-- Decision D146: splash is boot feedback with reduced-motion-safe exit; catalogs gain `app.uiCrashed` and finish zh-CN empty-home/custom copy.
+- 引导路径绘制 `StartupSplash`（品牌标记、外壳名称、标语、进度条），直到 host/settings 引导程序完成。
+- 共享 CSS 动作令牌和 overlay/surface 输入关键帧、抛光对话框、搜索、Toast和交互式填充。
+- 决策 D146：飞溅是带有减少运动安全退出的启动反馈；目录获得 `app.uiCrashed` 并完成 zh-CN empty-home/custom 副本。
 
-## 2026-07-28 — Interaction detail polish
+## 2026-07-28 — 交互细节完善
 
-- Theme-aware `::selection`, `caret-color`, and `accent-color` keep copy/edit chrome on the neutral gray accent ramp.
-- Hover fills on jump-latest, stop, composer-plus, search rows, profile/notification menus, and work-panel tab close use shared motion tokens.
-- CJK section labels under `:lang(zh-CN)` use normal tracking without forced uppercase.
-- Empty-home stack gap clamped to 24px; scrollbars refined to 8px with hover thumb; brand chip radius uses `--radius-sm`.
-- Decision D147.
+- 主题感知 `::selection`、`caret-color` 和 `accent-color` 将 copy/edit 镀铬保留在中性灰色强调坡道上。
+- 悬停填充最新跳转、停止、composer-plus、搜索行、profile/notification 菜单和工作面板选项卡关闭使用共享动作令牌。
+- `:lang(zh-CN)` 下的 CJK 部分标签使用正常跟踪，无需强制大写。
+- 空主堆栈间隙固定为 24px；使用悬停拇指将滚动条细化为 8px；品牌芯片半径采用`--radius-sm`。
+- 决定 D147。
 
-## 2026-07-28 — Work panel / settings light-surface polish
+## 2026-07-28 — 工作面板/设置光表面抛光
 
-- Light work panel uses a quiet `#fafafa` inset column with a white header band so it separates from white chat paper without a heavy border.
-- Browser URL, generic field controls, shortcut keycaps, segment tracks, and toggle knobs receive light-theme surfaces and focus rings aligned with settings pills.
-- File tree, diff headers, resize handle, and destination filters ease hover fills with shared motion tokens.
-- Light dialog scrim softens to 28% ink so elevated white dialogs stay readable.
-- Decision D148.
+- 轻型工作面板使用安静的 `#fafafa` 插入列，带有白色标题带，因此它与白色聊天纸分开，没有厚重的边框。
+- 浏览器 URL、通用字段控件、快捷键键帽、分段轨道和切换旋钮接收浅色主题表面和与设置药丸对齐的对焦环。
+- 文件树、差异标头、调整大小手柄和目标过滤器可通过共享运动令牌轻松悬停填充。
+- 浅色对话稀松布软化至 28% 墨水，因此升高的白色对话保持可读性。
+- 决定 D148。
 
-## 2026-07-28 — User-facing i18n copy pass
+## 2026-07-28 — 面向用户的 i18n 复制通行证
 
-- English and zh-CN catalogs rewrite high-traffic shell copy away from internal
-  jargon: local service instead of host/backend, AI provider instead of bare
-  provider, project instead of workspace in user strings, marketplace refresh
-  instead of "from repo", temporary chats, and calmer status/error phrasing.
-- Empty states, onboarding, settings help, plugin permissions, and notifications
-  explain outcomes in plain language while keeping stable i18n keys and
-  interpolation names.
-- Decision D149.
+- 英语和中文目录重写了高流量的 shell 副本，使其远离内部
+  行话：本地服务代替 host/backend，AI 提供商代替裸机
+  提供商、项目而不是用户字符串中的工作区、市场刷新
+  而不是“来自仓库”，临时聊天，以及更平静的 status/error 措辞。
+- 空状态、入门、设置帮助、插件权限和通知
+  用简单的语言解释结果，同时保持稳定的 i18n 键和
+  插值名称。
+- 决定 D149。
 
-## 2026-07-28 — Composer runtime chip descenders
+## 2026-07-28 — Composer 运行时芯片下降
 
-- Model, mode, thinking, and permission chips no longer use `leading-none` under
-  overflow clipping; labels use `--leading-compact` so descenders stay visible.
-- Long model IDs still ellipsize horizontally via `.model-chip-label`.
-- Decision D150.
-
-## 2026-07-28 — Send re-pins transcript follow
-
-- Starting a turn from send, retry, or regenerate re-pins the transcript and
-  jumps to the bottom even if the user had scrolled up through history.
-- Stream follow remains paused only for manual scroll during an active turn;
-  the jump-to-latest pill still resumes follow without starting a new turn.
-- Decision D151.
-
-## 2026-07-28 — Direct runtime stream rendering
-
-- Assistant responses now display the runtime's progressive chunks directly
-  through the incremental Markdown block cache, without a second per-frame
-  React state loop.
-- Renderer CSP admits only local and Vite-inlined data fonts, allowing bundled
-  KaTeX glyphs without opening a remote font origin.
-- Decision D152.
-
-## 2026-07-28 — Reasoning sessions default to maximum thinking
-
-- New sessions inherit the app's default model and select its highest
-  pi-published thinking level when that model supports reasoning.
-- Non-reasoning or unresolved models remain `off`, while existing sessions keep
-  their stored thinking preference.
-- Decision D153. Superseded by D303 once Settings persisted a per-model
-  `defaultThinkingLevel`.
-
-## 2026-07-28 — Work-panel activity rail
-
-- The open work panel now keeps Review, Terminal, and Browser in a compact
-  44px activity rail with clear active/open states.
-- The content header shows the active resource, closes it directly, and uses a
-  bounded keyboard-operable switcher for all open tool and file resources.
-- The former horizontally scrolling tabs and hidden header context menu are
-  removed; artifact-driven panel opening and session ownership are unchanged.
-- Decision D154.
-
-## 2026-07-28 — Sidebar project/session list type density
-
-- Sidebar project group titles and session/thread titles step one token quieter
-  than the previous body-chrome sizing so dense lists scan more cleanly.
-- Session titles use `--text-md` (13px); project/group titles and empty-state
-  copy use `--text-sm` (12px). Primary chrome (New task, Plugins, footer) stays
-  at `--text-base`.
-- Decision D155; superseded by D159 for the expanded sidebar's primary list
-  content.
-
-## 2026-07-28 — Independent window and work-panel resizing
-
-- Native window edges now resize only the Electron shell; work-panel open,
-  collapse, close, and divider commits leave outer bounds unchanged.
-- The divider uses anchored pointer delta, frame-coalesced preview, rollback on
-  cancellation, and a wider stable hit area. Responsive clamping no longer
-  overwrites the persisted preferred width.
-- Removed the renderer-to-Main `window/resizeBy` channel, programmatic resize
-  attribution, and panel-specific window-state offset.
-- Decision D156; ADR 0029.
-
-## 2026-07-28 — Single assistant toolbar per user turn
-
-- Provider-level assistant messages separated by tool calls remain canonical
-  transcript records for model reseeding, persistence, and fork boundaries.
-- The chat transcript composes every assistant/thinking/tool record after one
-  user message and before the next into one visual assistant turn, preserving
-  order while exposing one aggregate meta row and one Copy/Fork/Retry toolbar.
-- Copy joins all contentful assistant fragments; Fork and Retry target the last
-  contentful assistant record. Decision D157.
-
-## 2026-07-28 — Turn-boundary context checkpoint compaction
-
-- PI-Desktop now evaluates context after every `turn_end`, before the next
-  provider request, with a transient soft reminder and a deterministic hard
-  checkpoint guard.
-- Durable checkpoint records rebuild model context without deleting or hiding
-  visible transcript messages; exact provider overflow receives one compacted
-  retry.
-- The implementation reuses pi-agent-core primitives. OpenCode DCP remains an
-  AGPL-3.0 behavioral reference, not a dependency or copied implementation.
-- Decision D158; ADR 0030.
-
-## 2026-07-28 — Sidebar typography aligned with the global body scale
-
-- Expanded-sidebar session titles return to `--text-base` (14px), matching the
-  app body and primary sidebar chrome; project/group titles and empty-state copy
-  return to the adjacent `--text-md` (13px) tier.
-- Section labels and secondary metadata remain at `--text-sm` (12px), and the
-  existing compact row pitch, truncation, and sidebar dimensions are unchanged.
-- Decision D159; supersedes D155 and restores D144's primary-list hierarchy.
-
-## 2026-07-28 — Icon-free composer prompt row
-
-- Home and thread-docked composer prompt rows render no leading brand icon;
-  draft text and placeholder ink align directly with the input gutter.
-- The canonical logo remains in the home hero, sidebar, native application
-  identity, startup splash, and About surfaces. Session-creation controls keep
-  their dedicated message-plus icon. Decision D160; ADR 0031.
-
-## 2026-07-28 — Smooth latest-wins session switching
-
-- Session rows now acknowledge the newest selection immediately, prefetch on
-  deliberate hover/focus, coalesce detail reads, and retain five recent
-  transcripts for warm revisits with background revalidation.
-- Superseded transcript reads no longer block the latest request. Workspace
-  alignment overlaps transcript IO where summary metadata permits, while the
-  navigation generation still owns the only visible commit.
-- The previous complete transcript remains as a dimmed, non-interactive frame
-  while React prepares a changed session's Markdown tree; reduced motion uses a
-  static progress track. Decision D162.
-
-## 2026-07-28 — Compact sidebar session titles
-
-- Expanded-sidebar session titles use `--text-md` (13px), matching the compact
-  project/group tier while primary actions and footer identity remain at
-  `--text-base` (14px).
-- Row height, truncation, indentation, weight, and sidebar dimensions remain
-  unchanged.
-- Decision D161; refines D159's session-title size.
-
-## 2026-07-29 — Native width reservation for the fixed work panel
-
-- The docked panel now keeps its committed `364..720px` width while open;
-  native edges resize MainChat only.
-- Open, collapse/final close, and divider commit set one idempotent native-width
-  target. Chat remains stable when the work area can reserve the full width and
-  absorbs only the unavoidable shortfall otherwise.
-- Maximized/fullscreen geometry waits for normal state. Persisted base bounds
-  exclude reservation width/x shift, and background artifacts cannot change the
-  visible target.
-- Decision D163; ADR 0032 (the window-expansion portion is superseded by ADR 0033:
-  the work panel is an internal dock that never expands the OS window). This
-  supersedes the contrary portions of D156 and ADR 0029.
-
-## 2026-07-29 — Dual-locale in-app product changelog
-
-- Ship EN + zh-CN product highlights in `packages/shared` and attach them to
-  `UpdateState.releaseNotes` from Electron Main when an update is discovered.
-- The update banner and Settings → Info surface a compact What's new list in
-  the active product locale without a new feed or IPC domain.
-- Release tagging requires updating both locale catalogs before the tag build.
-- Decision D164; extends D120 / ADR 0022.
-
-## 2026-07-29 — Release process: mandatory dual-locale changelog gate
-
-- Stable app version bumps / tags **must** update
-  `packages/shared/src/changelog.ts` (EN + zh-CN) before the tag; shipping
-  without catalog entries is a release process failure (D164).
-- Codified in the release runbook §4.1, AI development workflow matrix +
-  forbidden practices, change checklist, `AGENTS.md`, and `scripts/release.mjs`
-  header so agents and humans hit the same gate.
-- GitHub auto-generated release notes remain web-only.
-
-## 2026-07-29 — Bounded atomic tool batches in context checkpoints
-
-- Automatic compaction now bounds an oversized final parallel tool-result
-  batch inside the checkpoint copy instead of repeatedly failing at the same
-  transcript boundary.
-- The retained copy preserves every call/result envelope, distributes text
-  budget fairly with explicit head/tail truncation markers, and omits duplicate
-  provider-irrelevant details; original transcript rows remain complete.
-- Decision D158; amends ADR 0030's previous policy of blocking an indivisible
-  batch above the retained-tail cap.
-
-## 2026-07-29 — Safe lazy Mermaid diagrams in assistant answers
-
-- Completed `mermaid` fences in answer prose render through a dynamically
-  loaded, theme-aware Mermaid chunk only near the viewport; partial streams and
-  thinking prose remain source code.
-- Rendering is serialized and bounded at 20,000 source characters / 500 edges.
-  Strict Mermaid configuration plus DOMPurify SVG sanitization removes links,
-  embedded media, foreign HTML, and URL attributes before DOM insertion.
-- Invalid or oversized diagrams fall back to source with copy and view controls;
-  no IPC, storage, process, CSP, or external-network boundary changes.
-- Decision D165.
-
-## 2026-07-31 — Slimmer default work-panel width
-
-- The docked work panel now opens at 280px instead of 420px, a third narrower,
-  and its fixed clamp becomes `244..720px`.
-- `WORK_PANEL_DEFAULT_WIDTH`, `WORK_PANEL_MIN_WIDTH` (renderer and Electron
-  Main), and the `.work-panel` CSS floor stay in sync; divider double-click
-  restores the new default.
-- D154's 364px floor was sized for a 44px activity rail beside 320px of content;
-  the rail became a header switcher, so the floor scales with the default.
-- Persisted wider widths remain valid, and the 720px maximum is unchanged.
-- Decision D167; supersedes the width clamp in D154/D163 and ADR 0033 §4.
-
-## 2026-07-31 — Project archive presentation redesign (bands superseded by D267)
-
-- Settings → Project archive is rebuilt as three bands: an overview banner with
-  four derived counters, a search + Recent/Name sort toolbar, and a grouped
-  index in the order Pinned / All projects / Archived with per-section counts.
-- Rows gain an always-visible disclosure control, state tags, a single meta line
-  (path, branch, session count), a relative last-active time, and a quick New
-  task action beside the row menu; the menu now groups create/edit above pin,
-  archive/restore, and Close and dismisses on Escape or outside press.
-- Archived records stay grouped and softened rather than filtered, so the
-  destination still has no visibility toggle (D133). Project storage, search
-  matching, batch-of-eight session reveal, and activation semantics are
-  unchanged.
-- Decision D168; supersedes D133's flat-list presentation. D267 later replaced
-  the overview banner and the per-section panels with one quiet description line
-  and one panel, retiring the four page-level counters; the row anatomy and
-  grouping rules carry over, and the per-group counts remain on the strips.
-
-## 2026-07-31 — Plugins page redesign (presentation amended by D196)
-
-- The original Plugins page was rebuilt as four bands: an overview band with four derived
-  counters (installed, enabled, updates, high-risk access), a header that keeps
-  one contextual primary action and moves check-updates / apply-auto-updates /
-  install-package / load-local into an overflow menu, a segmented
-  Installed / Marketplace switch carrying counts, and the tab body.
-- Installed rows group by state as Needs attention / Updates available /
-  Active / Turned off inside one hairline-separated panel. `status: "error" |
-  "load_error"` and `errorMessage` are now surfaced instead of dropped; row
-  actions collapse to a hover-revealed panel button plus an overflow menu
-  (auto-update, Uninstall as a danger item) beside an always-visible switch.
-- Permissions are tiered from the risk column of
-  `07-plugins/13-plugin-permissions-matrix.md`: risk-tinted chips with collapsed
-  overflow on rows, and High / Medium / Low sections in the detail sheet and the
-  install dialog. Upgrade reviews tag permissions the new version adds as New,
-  and the install queue deduplicates the declared set against the diff.
-- Details move from a nested sidebar to a right-side sheet (scrim, Escape and
-  outside-press dismiss, sticky install action, selectable version rows).
-  Marketplace cards render a monogram glyph and never fetch `iconUrl`, so the
-  renderer performs no remote image loads.
-- Decision D169; supersedes the flat list, pill tabs, and inline detail pane of
-  `07-plugins/07-plugin-marketplace.md` §7/§14.
-
-## 2026-07-31 — Renderer stylesheet split into per-surface partials
-
-- `apps/desktop/src/styles/globals.css` becomes an import-only entry point. The
-  rules move into 22 partials in the same directory, each owning one surface:
-  `tokens`, `base`, `chrome`, `chat-shell`, `composer`, `sidebar-threads`,
-  `messages`, `prose`, `ui-kit`, `overlays`, `theme-overrides`,
-  `composer-menus`, `settings`, `destinations`, `projects`, `sessions`,
-  `work-panel`, `providers`, `chat-links`, `composer-autocomplete`, `plugins`,
-  `responsive`.
-- Import order **is** the cascade and must not be reordered: tokens and base
-  first, feature layers in build order, the responsive / reduced-motion tail
-  last so it can still override what precedes it.
-- The split is contiguous — no rule changed position relative to another. The
-  joined partials reproduce the pre-split file byte for byte, and the built
-  renderer CSS is byte-identical before and after, so Tailwind v4 resolves the
-  `@theme` block from `tokens.css` unchanged.
-- Style assertions load the effective cascade through
-  `apps/desktop/test/helpers/styles.mjs`, which inlines the local `@import`
-  lines in declaration order. Tests must not read a partial directly.
-- Sidebar session styles live in both `sidebar-threads.css` and `sessions.css`
-  because the original file interleaved them; the file headers cross-reference.
-- The design-token scales now live in `styles/tokens.css`; the guard in
-  `scripts/check-style-tokens.mjs` walks the whole `src` tree and is unaffected.
-- Decision D170; the single-file layout assumed by `04-ux/07-ui-design-system.md`
-  §Typography and `04-ux/08-component-spec.md` no longer holds.
-
-
-## 2026-07-31 — Plugin skills activation and the plugin devkit
-
-- `contributes.skills` is activated. `PluginRuntime.getSkills()` reads each
-  declared skill file at prompt time, only for plugins granted
-  `agent.prompt.inject`, and only through the containment guard the gated `fs`
-  APIs use. The agent runtime renders a `# Plugin skills` section capped at
-  16 KiB total and 8 KiB per skill — its own budget, not the 32 KiB instruction
-  chain of ADR 0037 — and orders it after the built-in skills but before
-  project instructions, so a user's own files keep the last word. Runtime reuse
-  keys on a skills digest, so enabling a plugin, revoking the permission, or
-  editing a skill file retires the idle runtime instead of reusing a stale
-  prompt. Closes roadmap gap R2.
-- Plugin authoring ships as a first-party package, `@pi-desktop/plugin-devkit`,
-  which owns `scaffold` / `check` / `pack` over one implementation shared by the
-  `pi-plugin` CLI, the `PluginScaffold` / `PluginCheck` / `PluginPack` agent
-  tools served from Electron main, and the plugins page's New plugin from
-  template action. `check` reproduces the rules host-core enforces, so passing
-  it implies install will pass; `pack` writes store-only (method 0) `.piplug`
-  entries because `extract_zip_bytes` accepts nothing else. Closes roadmap gap
-  R3's template and `check`/`pack` items.
-- A bundled plugin was rejected as the delivery vehicle: a plugin cannot produce
-  a `.piplug` (no archive API in `HOST_API_ALLOWLIST`) and scaffolding would
-  need high-risk `fs.write.workspace` for a capability the application should
-  provide itself.
-- The built-in `plugin-development` skill activates only for plugin workspaces —
-  a plugin `manifest.json` at the workspace root, or a loaded development plugin
-  inside it — so an ordinary session pays only for three tool descriptions.
-- Development plugins are watched and hot reload on save, debounced 300 ms,
-  ignoring `node_modules` / `.git` / `dist` / `target`, capped at 16 plugins, and
-  re-armed across restarts. A reload can never widen a permission set: the
-  manifest is compared against the set approved when the folder was picked and a
-  new permission stops the reload with `PERMISSION_DENIED`, while removed
-  permissions do take effect. A failed reload keeps the watch so the fixing save
-  recovers the plugin, and reports through a toast plus `pluginChanged` —
-  host-core has no RPC for a runtime-side load failure, so the registry row does
-  not move to `load_error`. Closes roadmap gap R3's hot-reload item.
-- Decision D171; recorded as ADR 0039.
-- The prompt-injection half of this decision was replaced the same day by
-  D174: skills now reach the model as a catalog plus a `Skill` tool. The devkit,
-  hot-reload and workspace-gate clauses stand unchanged.
-
-## 2026-07-31 — Creating a plugin from a template opens the folder
-
-- Creating a plugin from a template now also opens the chosen folder as the
-  active project (`workspace.set`, which registers the project and switches to
-  chat), not just as a loaded development plugin. Loading only makes the plugin
-  run; development needs the sources inside the workspace the agent, the file
-  panel and the built-in `plugin-development` skill all read, and requiring the
-  user to re-pick the same folder through Open folder was pure friction.
-- The activation runs in the renderer through the existing `activateProject`
-  action rather than from the template IPC handler, so project state, the sidebar
-  project list and the navigation intent guard keep their single owner.
-- The success toast distinguishes the two outcomes: if the folder cannot be
-  opened as a project the plugin stays loaded and the toast says only that,
-  instead of claiming a workspace that is not there.
-- Loading an existing local plugin folder (Load local plugin) deliberately keeps
-  its current behavior: running someone else's plugin is not a reason to switch
-  the user's project.
-- Decision D172; no ADR — this completes the flow ADR 0039 describes.
-
-## 2026-07-31 — Work panel header menu: tools first, no duplicated entries
-
-- The unified header menu lists the four tools (Review, Terminal, Browser,
-  Files) first, in a fixed order, and only then — after a divider, and only when
-  they exist — the resources the transcript opened. The previous layout listed
-  every open tool twice: once in the resource switcher and again in the
-  create-new section, which made "open" and "switch to" indistinguishable.
-  Each tool row now carries its own open state and its own close control, so a
-  single row is the whole affordance for that tool.
-- Activating a tool that is already open activates its existing tab instead of
-  replacing it with a fresh singleton, so the Browser keeps its URL. The header
-  action cluster is pinned right (`margin-left: auto`) so the close/collapse
-  controls no longer slide with the label length, and the trailing close slot in
-  each row is always reserved so labels and open dots never shift.
-- Menu rows own real DOM focus (WAI-ARIA menu pattern) rather than a roving
-  highlight: the trigger's ArrowDown/ArrowUp opens on the active or last row,
-  Arrow/Home/End walk rows only, Delete/Backspace closes the focused row while
-  the menu stays open with focus on its neighbor, and Escape/Tab/selection
-  return focus to the trigger. Only a session switch dismisses the menu
-  implicitly — selecting a row closes it explicitly, so the previous
-  active-tab-keyed auto-dismiss (which fired whenever a background artifact
-  changed the active tab) is gone.
-- Missing `panel.tabs.file` was the reason a bare Files tab showed a literal
-  `file` label; the catalogs now carry it plus `panel.tools`, and the obsolete
-  `panel.openTool` is removed.
-- Decision D173; no ADR — presentation and input handling only, inside the
-  existing work-panel architecture (ADR 0033).
-
-## 2026-07-31 — Plugin skills are model-invoked
-
-- `contributes.skills` is activated at load time behind `agent.prompt.inject`.
-  Each entry may be a path or `{ path, id?, name?, description? }`; front matter
-  in the document supplies `name` / `description` when the manifest does not.
-- The base system prompt carries only a catalog — skill id, name, and a
-  description trimmed to 240 chars. Bodies are not in the prompt; the model
-  fetches one through a built-in `Skill` tool that Electron main serves locally
-  against `plugins.loadSkillBody(id)`, so the sidecar never holds skill text.
-- Caps: 32 skills per plugin, 128KB per document. A manifest without
-  `agent.prompt.inject` still validates — skills predate the permission gate — and
-  the runtime simply skips them.
-- Skill ids join the runtime-reuse key in `packages/agent-runtime/src/runtime.ts`,
-  so enabling or disabling a plugin rebuilds the runtime instead of serving a
-  stale catalog.
-- Rejected: user-facing slash commands. A skill is guidance the agent should
-  reach for when a task calls for it, not a command the user has to know exists.
-- Decision D174; closes the "parsed but never activated" gap in
-  `07-plugins/14-plugin-roadmap.md` R2.
-
-## 2026-09-11 — User-invoked Skills in the composer (D393)
-
-- D174's model-invoked catalog remains the Skill body-loading and security
-  contract, but its rejection of a user-facing slash entry made active Skills
-  difficult to discover for users who already knew the workflow they wanted.
-- D393 / ADR 0219 adds active built-in, plugin, and user Skills as the final
-  group in the composer `/` menu. Selection inserts the exact id; Electron
-  main revalidates the current project scope and asks the model to call the
-  local `Skill` tool. The typed command remains the transcript chip, and no
-  host protocol or durable schema changes.
-
-## 2026-09-11 — Windows work-panel chrome keeps one resource action cluster (D394)
-
-- The open work-panel header now keeps one compact resource switcher. Resource
-  close is available from the existing unified context-menu rows, so a second
-  `X` does not sit beside the Windows native close control.
-- The viewport-fixed work-panel toggle remains the sole panel-level collapse
-  control. Subagent detail uses a back chevron, and Windows/Linux native
-  controls remain fixed at the window edge.
-- Decision D394 amends D154 / D357 / ADR 0195. This is renderer-only and does
-  not change panel state, window geometry, IPC, protocol, or storage. See ADR
-  0220 and E2E-067.
-
-## 2026-09-11 — Canonical thinking-level values in the UI (D395)
-
-- Thinking levels are stable protocol values, but translating them made the
-  same provider/runtime setting vary with the application locale.
-- Decision D395 / ADR 0221 amends D369 / ADR 0202: Composer, model
-  configuration, and delegation surfaces render `off`, `minimal`, `low`,
-  `medium`, `high`, `xhigh`, and `max` directly. These values are removed from
-  every locale catalog; effective metadata, clamping, provider requests,
-  protocol, and storage are unchanged. See E2E-219.
-
-## 2026-09-11 — Renderer and plugin-panel scrollbars share one compact contract (D396)
-
-- Windows' classic scrollbar made the right-side work-panel Files view visibly
-  heavier than the conversation even though the host renderer already had a
-  quiet custom scrollbar. The sidebar also retained a separate width and thumb
-  opacity override, so the app had two scrollbar treatments.
-- Decision D396 amends D300: every renderer scroll container uses the same 6px,
-  trackless, transparent-at-rest scrollbar with the same hover, focus-within,
-  scroll-reveal, and dragged-thumb states. The sidebar-specific override is
-  removed. The plugin-panel preload applies the same contract and 300ms reveal
-  mark to docked and detached plugin documents, including the bundled Files
-  view. An external page loaded inside the Browser guest remains page-owned.
-- This is a presentation-only change; there is no protocol, storage, host
-  runtime, or external-page behavior change. See `04-ux/07-ui-design-system.md`,
-  `04-ux/08-component-spec.md`, and E2E-157.
-## 2026-09-11 — Composer accepts native file and folder drops (D397)
-
-- Native file-system drops into the Composer now prevent the browser default
-  and use one accent outline around the complete shell without changing its
-  layout. Regular files reuse the bounded session-scratch paste bridge and
-  become removable leaf-name chips; folders are never read, traversed, or
-  copied.
-- The preload resolves the path of each user-dropped `File` with Electron's
-  `webUtils.getPathForFile`. The renderer inserts a dropped folder's complete
-  native path at the caret as literal `@<path>/` text, preserving mixed item
-  order, the surrounding draft, focus, and the caret after asynchronous file
-  saving. No host RPC, protocol, workspace, or durable-schema change is added.
-- Decision D397 amends ADR 0101's previous drag/drop scope. See ADR 0222 and
-  E2E-102i.
-## 2026-09-11 — Message quotes and renderer-owned side chats (D-LOCAL-message-quotes)
-
-*(Retired by ADR 0268 on 2026-09-16: the feature and its surfaces were removed, and these IDs stay retired and must not be reused. The record is kept for history.)*
-
-- Every user message and every assistant turn gains a Quote action beside Copy,
-  Edit, Delete, Fork, and Retry. It inserts a `> `-prefixed Markdown blockquote
-  plus a `chat.quoteSource` attribution line into the active session's composer
-  draft, uses the live text selection when it lies inside the clicked message
-  row and the message's own text otherwise, caps the excerpt at 2000 characters
-  with a trailing ellipsis, focuses the composer, and never sends.
-- Open side chat forks the anchored assistant or user message through the
-  existing `session.fork` without activating the child, so the main conversation
-  keeps its visible session. The child is registered as a renderer-owned side
-  chat of the parent and the work panel opens one `sidechat` tab that streams
-  from the same event stream through the shared background-transcript reducer,
-  with Add to main chat, Open as a conversation, a compact Send/Stop input, and
-  the existing permission card.
-- Closing the tab or opening the child as a conversation removes the
-  registration and its transcript projection; the durable child remains an
-  ordinary session in the sidebar, session lists, and search. No protocol,
-  storage-schema, IPC channel, or permission change. See ADR message-quotes-and-side-chats and E2E-CHAT-quote-prefill
-  through E2E-CHAT-side-chat-close.
-
-## 2026-09-11 — Context usage display preference (D398)
-
-- The context usage inspector's leading figure — the trigger ring arc
-  (`strokeDashoffset`), percentage, token label, popover heading, tooltip,
-  and `aria-label` — is configurable via `AppSettings.contextUsageDisplay`
-  (`"remaining"` or `"used"`). Default and fallback for absent or
-  unrecognised values is `"remaining"`.
-- When `"used"`, the ring fills by `usedRatio`, and text shows the
-  used-capacity pair instead of the remaining pair.
-- Warning and critical color thresholds (remaining ≤ 25 % / ≤ 10 %) stay
-  based on remaining capacity regardless of display mode.
-- Settings → AI → Defaults adds a segmented control (Remaining / Used) after
-  Link open destination and before Enter-to-send.
-- Decision D398 amends D347 / ADR 0184. See ADR 0223 and E2E-250.
-
-## 2026-09-11 — Project groups can be manually reordered (D399)
-
-- Retained project groups expose a grip that appears on hover and keyboard
-  focus. Native drag/drop inserts the source before or after the target based
-  on the pointer position; ArrowUp/ArrowDown on the focused grip provides the
-  keyboard path, and Escape cancels an active drag.
-- Reordering writes contiguous normalized-path `order` values and switches
-  the renderer-local project sort to `manual`. Pinned and archived priority,
-  project activation, host workspace identity, session ordering, and on-disk
-  directories are unchanged.
-- Decision D399 amends D093. No protocol, host, IPC, or durable project-schema
-  change is introduced; see the sidebar interaction specs and E2E-253.
-
-## 2026-09-11 — Restore deferred tools from effective session context (D400)
-
-- A new prompt or mode switch clears the in-memory deferred activation set, then
-  restores successful activation evidence from the effective session context.
-  `ToolSearch` rows contribute `addedToolNames`; successful deferred-tool rows
-  contribute their own tool name.
-- Restoration keeps only names still in the current mode's deferred catalog.
-  Failed, interrupted, and missing-result placeholder rows are ignored, and
-  assistant/user prose is never parsed as activation evidence. Host
-  permissions, workspace containment, and audit behavior remain unchanged.
-- Decision D400 amends D185 / ADR 0048. See ADR 0225 and E2E-008a.
-
-## 2026-07-31 — Plugin themes ship CSS files
-
-- `contributes.themes` declares `{ id, label, path, base? }` and requires
-  `ui.theme`. `path` is a plugin-relative `.css` file; `base` (`light` | `dark`,
-  default `dark`) names the palette the overrides layer on.
-- The main process reads the file and runs `sanitizeThemeCss()`: no `@import`, no
-  `url()` outside `data:`, no unparseable `url(`, no `javascript:` /
-  `expression(`, no markup sequences, 256KB cap, 8 themes per plugin. The
-  renderer receives finished text over `plugin/themes` and injects it into one
-  `<style id="pi-plugin-theme">` appended after the app's own stylesheets.
-- `AppSettings.theme` widens to `plugin:<pluginId>:<themeId>`. When the providing
-  plugin is disabled, uninstalled, or fails to load, the app falls back to
-  `system` rather than rendering an unstyled shell.
-- Rejected: a token-JSON contribution. It would have been safer to validate, but
-  it can only express the tokens we thought to enumerate; a stylesheet lets a
-  theme reach a surface the token list forgot, and the sanitizer plus
-  append-order rule bound the risk to appearance.
-- Decision D175.
-
-## 2026-07-31 — Plugin MCP servers over stdio and remote HTTP
-
-- `contributes.mcpServers` declares `{ id, label?, transport }` plus exactly one
-  transport's fields: `stdio` takes `command` / `args` / `env`, `http` takes
-  `url` / `headers`. Permissions are separate: `mcp.server.local` for stdio,
-  `mcp.server.remote` for HTTP.
-- `apps/desktop/electron/main/plugin-mcp.ts` speaks protocol `2025-06-18` —
-  `initialize`, `tools/list`, `tools/call` — as NDJSON over stdio or streamable
-  HTTP/SSE. Budgets: 10s connect, 100s per call, 8 `tools/list` pages, 4MB per
-  stdio line, 64 tools per server, 8 servers per plugin. Connection is lazy;
-  teardown follows unload.
-- Discovered tools register as `plugin_<pluginIdSafe>_<serverId>_<toolName>` in
-  the existing plugin tool map, so they inherit the audit trail, the timeout, and
-  the disable switch with no new routing. They are always `risk: "medium"`: the
-  schema and description come from a third party, so a self-declared risk level
-  is not trustworthy.
-- `env` and `headers` resolve only from the plugin's own settings via
-  `{ "setting": "<key>" }`; the host environment is never passed through (D018).
-  A stdio child gets `PATH`, temp/locale vars, and the declared values — nothing
-  else. `command` must be a bare PATH name or plugin-relative; `url` must be
-  `https` unless the host is loopback.
-- Both transports ship rather than stdio alone: a hosted MCP endpoint is common
-  enough that stdio-only would have pushed plugins to wrap it in a local shim,
-  which is strictly worse — an extra process and an unreviewable proxy.
-- Decision D176; ADR [0038](../../adr/0038-plugin-mcp-bridge.md).
-
-## 2026-07-31 — Resident plugin services and their restart policy
-
-- `contributes.services` declares `{ id, label?, autoRestart? }` behind
-  `background.service`, at most 4 per plugin. The plugin calls
-  `pi.services.register({ id, start, stop })`; the broker calls `start` after
-  `onLoad` (5s budget) and `stop` before `onUnload`, so a service is never live
-  outside the plugin's own lifetime.
-- A service lives in the plugin's `utilityProcess`, so a crash takes it down with
-  the process and the supervisor restarts the whole plugin: backoff 1s, 2s, 4s,
-  8s, 16s capped at 30s; at most 5 attempts; a process that survives 60s is
-  healthy and the counter resets. `autoRestart: false` opts out. After the last
-  attempt the plugin stays `failed` — a visible failure beats a silent crash
-  loop.
-- Per-service state (`starting` | `running` | `stopped` | `failed`) and the
-  restart count are read over `plugin/services` and rendered as chips on the
-  Plugins page; every transition emits `pluginChanged` with `reason: "service"`
-  and a `plugin.service.*` audit entry.
-- Manual enable / disable outranks the supervisor: an explicit action cancels the
-  pending timer and clears the attempt counter.
-- Decision D177; ADR
-  [0040](../../adr/0040-plugin-resident-services-and-message-bus.md).
-
-## 2026-07-31 — Inter-plugin message bus routes declared topics only
-
-- `pi.bus.publish` / `subscribe` require `bus.publish` / `bus.subscribe` **and** a
-  matching entry in `contributes.bus`: publishers list concrete topics,
-  subscribers list patterns. A granted permission alone routes nothing, so the
-  manifest stays a complete description of what a plugin says and hears.
-- Topics are dot-separated segments (`[a-zA-Z0-9][a-zA-Z0-9_-]*`, ≤8 segments,
-  ≤128 chars). `*` matches one segment; `**` matches one or more trailing
-  segments and may appear only last.
-- Routing lives in the broker. A message carries `topic`, `from`, `payload`, and
-  a host-assigned `at`; the publisher is excluded from its own fan-out; delivery
-  is fire-and-forget over a new one-way `{ t: "event" }` frame, so a wedged
-  subscriber cannot stall the sender. That frame also makes the previously
-  stubbed `pi.events.on` / `off` real.
-- Caps: 64KB per payload, 16 subscriptions per plugin, 100 publishes per rolling
-  10s window, failing with `LIMIT_EXCEEDED` / `RATE_LIMITED` and an audit line.
-- A payload conveys data, never capability: receiving a message grants the
-  subscriber nothing it did not already hold, so a topic should be treated as
-  public within the app.
-- Decision D178; ADR
-  [0040](../../adr/0040-plugin-resident-services-and-message-bus.md).
-
-## 2026-08-02 — Bash tool inherits the user's login-shell PATH
-
-- On Unix, the first Bash call probes the user's login shell for its PATH —
-  `$SHELL` (fallback `/bin/zsh` → `/bin/bash` → `/bin/sh`) with `-lic
-  'printf %s "$PATH"'` — so `-l` sources login files and `-i` sources the
-  interactive rc, matching a fresh terminal. The probe is bounded to 5s and
-  cached per process (`OnceLock`); only the last stdout line is kept (rc
-  banners are ignored), stderr is discarded (missing-tty noise), and a
-  non-zero exit, missing shell, or timeout silently falls back to the host
-  PATH.
-- Every Bash subprocess gets the probed PATH injected via `cmd.env("PATH",
-  ...)`; `bash -lc` still re-runs the bash profile at startup (conda/brew
-  hooks may prepend/dedupe/reorder entries on top of the injected base).
-  Agent commands remain POSIX bash; the resolved bash binary is unchanged.
-  Windows keeps `bash -c` with the host environment (no change).
-- Fixes macOS Finder/Dock launches where `bash -lc` alone cannot see nvm,
-  pnpm, or Homebrew tooling initialized in `~/.zshrc` / `~/.zprofile`.
-- Decision D181; ADR
-  [0045](../../adr/0045-bash-inherits-user-login-path.md).
-
-## 2026-08-02 — Route process logs into category files
-
-- The `app`, `host`, and `agent` channels remain local NDJSON files, but each
-  channel is now a directory containing focused `<category>.log` files. App
-  records use explicit lifecycle/session/tool/permission/plugin/provider/
-  persistence/updater/diagnostics/terminal/runtime categories; host and agent
-  stderr is classified into the same categories, with timing lines isolated
-  in `timing.log`.
-- Every record carries a `category` field. Child stderr is buffered by line,
-  decoded as UTF-8, and stripped of ANSI control sequences before it is
-  persisted. Unknown child output goes to `runtime.log`.
-- Rotation remains 5 MB with two rotated files, but the limit applies to each
-  category file. The logger uses byte length for UTF-8 records and treats
-  rotation and disk failures as best effort. Existing flat log files are not
-  deleted during migration.
-- Decision D182; ADR [0046](../../adr/0046-categorized-process-logs.md).
-
-## 2026-08-02 — Context usage inspector
-
-- Replace the oversized context ring with a compact Codex-style trigger that
-  combines a remaining-capacity ring, `Context` label, and percentage. Hover
-  and keyboard focus open a non-modal panel *(superseded by D225: the trigger
-  is click-toggled)* with the context window, exact
-  provider input/output/cache/reasoning usage, aggregate generation speed in
-  `tokens/s`, and each unique tool type in first-seen execution order.
-- Tool rows aggregate repeated calls and expose call count, argument tokens,
-  result tokens, total estimated footprint, share bar, and cumulative known
-  duration. Runtime estimates use pi-agent-core's existing four-characters-
-  per-token heuristic; provider-reported usage remains the authoritative total
-  and the UI labels tool rows as estimates.
-- Generation speed is a completed-turn snapshot from provider output and final
-  stream duration; active assistant streams do not show a live token-rate
-  counter.
-- The context-window total comes from the matching `pi-ai` model metadata used
-  by the agent sidecar; provider metadata and the 128K default remain fallbacks
-  for unknown models.
-- `UiMessage.responseDurationMs`, `UiMessage.toolUsage`, and the optional
-  `tool_end.toolUsage` event field are additive, so older persisted messages
-  and peers remain readable.
-- The inspector panel is rendered at the document body level as a fixed,
-  collision-aware viewport overlay. It follows transcript scroll and window
-  resize, flips around the trigger, and clamps to viewport margins instead of
-  being clipped by the transcript scroll container.
-- The inspector resolves its context-window total from the same `pi-ai` model
-  record passed to the agent sidecar, enriching cached/discovered model rows;
-  provider metadata and the 128K default remain fallbacks for unknown models.
-- Decision D184; ADR [0047](../../adr/0047-context-usage-inspector.md).
-
-## 2026-08-02 — Lazy per-turn tool activation
-
-- The sidecar keeps a complete local registry but sends only the mode's core
-  tools and local `ToolSearch` on a new prompt. (`CompactContext` was also
-  always-active here until D200 removed the tool; D203 restores it as
-  `new_context`, again always-active.)
-  Agent follows pi's coding-agent core (`Read`/`Bash`/`Edit`/`Write`), while
-  Chat keeps (`Read`/`Glob`/`Grep`). Agent-mode `Glob`/`Grep`,
-  `BrowserPreview`, plugin tools, `Skill`, and plugin-development helpers are
-  represented by bounded compact catalog entries instead of full parameter
-  schemas.
-- An exact-name or capability search activates at most four matches for the
-  next model turn. `addedToolNames` lets pi-ai providers with native deferred
-  search serialize those definitions at the load point; other providers use
-  the rebuilt active tool list. Activation resets before the next user prompt.
-- Host permissions, workspace and scratch containment, timeouts, and audit
-  behavior are unchanged. Persisted tool results retain activation markers for
-  valid transcript reconstruction.
-- Decision D185; ADR [0048](../../adr/0048-lazy-per-turn-tool-activation.md).
-
-## 2026-08-04 — Bound provider stream recovery and diagnostics
-
-- Provider request setup now has one bounded pi-ai retry. A transient stream,
-  network, or timeout failure after streaming begins gets one same-turn retry
-  with a short abortable backoff; the failed assistant is removed from model
-  context and the visible assistant id is reused.
-- `terminated` and equivalent incomplete stream messages map to
-  `STREAM_FAILED`. A second failure remains terminal and carries bounded phase,
-  timing, provider status/code, and retry-attempt diagnostics when available.
-- Mutation recovery is explicitly finite: use `Edit` for one unique local
-  replacement, use `Write` for a coherent rewrite, then allow one fresh
-  read/regeneration after a mismatch. A second same-path `Edit` failure or
-  failed shell patch command emits the terminating tool hint instead of
-  repairing an old patch artifact.
-- Decision D186; see [ADR 0050](../../adr/0050-bounded-provider-stream-recovery.md).
-
-## 2026-08-04 — Recover automatic compaction failures with a retained tail
-
-- Automatic threshold and provider-overflow compaction failures now attempt a
-  deterministic, aggressively bounded retained-tail checkpoint before ending
-  the turn. The previous checkpoint summary is preserved when available, the
-  complete visible transcript remains untouched, and host persistence plus the
-  hard-budget recheck remain mandatory.
-- The summary input is preflighted against the model window so an obviously
-  oversized summary request goes directly to the bounded recovery path instead
-  of waiting for a provider rejection or timeout.
-- The lifecycle event marks recovery with `fallback: "retained_tail"`, so the
-  renderer keeps the run active and shows a warning. Manual `/compact` remains
-  fail-fast and never silently discards historical context.
-- Decision D158; amends ADR 0030 and adds ADR 0049.
-
-## 2026-08-04 — Resource-isolated host RPC stdio
-
-- Host-core no longer uses Tokio's stdio adapters for its NDJSON control pipe.
-  One named OS thread reads stdin and one named OS thread serializes stdout,
-  keeping per-message framing and retrying interrupted or transient
-  `EAGAIN`/`EWOULDBLOCK` errors.
-- This closes the process-exit path where Tokio's blocking pool panicked after
-  the OS refused another worker thread with `Resource temporarily unavailable`
-  (errno 35 on macOS). Failure to create a control thread is reported as a
-  startup error; it is not an unhandled thread-spawn panic.
-- The login-shell PATH probe uses `thread::Builder` as well and falls back to
-  the inherited PATH when the optional helper cannot start.
-- Decision D187; see [ADR 0051](../../adr/0051-host-rpc-stdio-resource-isolation.md).
-
-## Plan checkpoint and shell decisions (0.4.14)
-
-The earlier local Plan operating-state decision remains recorded as D188 for
-history. D189 is the implementation authority and supersedes D188 and ADR
-0052. D190 defines the shell execution contract used by D189. The agent-only
-decision developed in parallel is renumbered D191 (ADR 0055) and is superseded
-by D188/D189; the three decisions that shipped alongside it follow as D192,
-D193, and D194.
-
-| ID | Topic | Decision | Rationale |
+- 模型、模式、思维、权限芯片不再使用`leading-none`下
+  溢出剪裁；标签使用 `--leading-compact`，因此下行部分保持可见。
+- 长模型 ID 仍然通过 `.model-chip-label` 水平椭圆化。
+- 决定 D150。
+
+## 2026-07-28 — 发送重新固定的文字记录如下
+
+- 从发送、重试或重新生成开始一轮重新固定记录并
+  即使用户向上滚动浏览历史记录也会跳到底部。
+- 流跟随仅在活动回合期间手动滚动时保持暂停；
+  跳转到最新的药丸仍然会继续执行，而不会开始新的回合。
+- 决定 D151。
+
+## 2026-07-28 — 直接运行时流渲染
+
+- 助手响应现在直接显示运行时的渐进块
+  通过增量 Markdown 块缓存，无需每帧第二个
+  React 状态循环。
+- Renderer CSP 仅允许本地和 Vite 内联数据字体，允许捆绑
+  KaTeX 字形无需打开远程字体源。
+- 决定 D152。
+
+## 2026-07-28 — 推理课程默认为最大思考
+
+- 新会话继承应用程序的默认模型并选择其最高的
+当该模型支持推理时，pi-发布了思维水平。
+- 非推理或未解决的模型保留 `off`，而现有会话保留
+  他们储存的思维偏好。
+- 决定 D153。在设置页持久化每模型 `defaultThinkingLevel` 后由 D303 取代。
+
+## 2026-07-28 — 工作面板活动导轨
+
+- 开放的工作面板现在将审阅、终端和浏览器保持在紧凑的状态
+  44 像素活动导轨，具有清晰的 active/open 状态。
+- 内容标题显示活动资源，直接关闭，并使用
+  用于所有打开的工具和文件资源的有界键盘可操作切换器。
+- 以前的水平滚动选项卡和隐藏的标题上下文菜单是
+  删除；工件驱动的面板打开和会话所有权保持不变。
+- 决定 D154。
+
+## 2026-07-28 — 侧边栏 project/session 列表类型密度
+
+- 侧边栏项目组标题和 session/thread 标题第一步标记更安静
+  比以前的机身镀铬尺寸如此密集的列表扫描得更干净。
+- 会话标题使用 `--text-md` (13px)； project/group 标题和空状态
+  复制使用 `--text-sm` (12px)。主要镶边（新任务、插件、页脚）保留
+  在 `--text-base`。
+- D155决定；扩展侧边栏的主要列表被 D159 取代
+  内容。
+
+## 2026-07-28 — 独立窗口和工作面板调整大小
+
+- 本机窗口边缘现在仅调整 Electron shell 的大小；工作面板打开，
+  折叠、关闭和分隔符提交使外部边界保持不变。
+- 分隔线使用锚定指针增量、帧合并预览、回滚
+取消，以及更广泛的稳定命中区域。不再有响应式夹紧
+  覆盖保留的首选宽度。
+- 删除了渲染器到主 `window/resizeBy` 通道，以编程方式调整大小
+  归因和面板特定的窗口状态偏移。
+- D156决定； ADR 0029。
+
+## 2026-07-28 — 每个用户轮流使用单个助手工具栏
+
+- 由工具调用分隔的提供商级助理消息仍然是规范的
+  模型重新播种、持久性和分叉边界的转录记录。
+- 聊天记录由一条之后的每一条 assistant/thinking/tool 记录组成
+  用户消息和下一个之前变成一个视觉助理，保留
+  订单，同时公开一个聚合元行和一个 Copy/Fork/Retry 工具栏。
+- 复制加入所有内容丰富的辅助片段；分叉并重试目标最后一个
+  内容丰富的助理记录。决定 D157。
+
+## 2026-07-28 — 回合边界上下文检查点压缩
+
+- PI-Desktop 现在会在每个 `turn_end` 之后、下一个之前评估上下文
+  提供商请求，具有短暂的软提醒和确定性的硬提醒
+  检查站警卫。
+- 持久的检查点记录重建模型上下文，无需删除或隐藏
+  可见的文字记录消息；精确的提供商溢出收到一个压缩的
+  重试。
+- 该实现重用 pi-agent-core 原语。 OpenCode DCP 仍然是
+  AGPL-3.0 行为参考，不是依赖项或复制的实现。
+- D158决定； ADR 0030。
+
+## 2026-07-28 — 侧边栏排版与全球身体比例一致
+
+- 扩展侧边栏会话标题返回 `--text-base` (14px)，与
+  应用程序主体和主侧边栏镀铬； project/group 标题和空状态副本
+  返回到相邻的 `--text-md` (13px) 层。
+- 部分标签和辅助元数据保留在 `--text-sm` (12px)，并且
+  现有的紧凑行间距、截断和侧边栏尺寸保持不变。
+- D159决定；取代 D155 并恢复 D144 的主要列表层次结构。
+
+## 2026-07-28 — 无图标的输入框提示行
+
+- 主目录和线程停靠的输入框提示行不渲染领先的品牌图标；
+  草稿文本和占位符墨迹直接与输入装订线对齐。
+- 规范徽标保留在主页英雄、侧边栏、本机应用程序中
+  身份、启动画面和关于表面。会话创建控制保留
+  他们专用的消息加号图标。 D160 决定； ADR 0031。
+
+## 2026-07-28 — 平滑最新胜利会话切换
+
+- 会话行现在立即确认最新选择，预取
+  深思熟虑的 hover/focus，合并详细信息，并保留最近的五个
+  用于温暖重访和背景重新验证的成绩单。
+- 取代的转录读取不再阻止最新的请求。工作空间
+  在摘要元数据允许的情况下，对齐与转录本 IO 重叠，而
+  导航生成仍然拥有唯一可见的提交。
+- 之前的完整文字记录保持为灰色、非交互式框架
+  而 React 准备更改会话的 Markdown 树；减少运动使用
+  静态进度轨迹。决定 D162。
+
+## 2026-07-28 — 紧凑的侧边栏会话标题
+
+- 扩展侧边栏会话标题使用 `--text-md` (13px)，与紧凑型相匹配
+project/group 层，而主要操作和页脚标识仍保留在
+  `--text-base`（14 像素）。
+- 保留行高、截断、缩进、粗细和侧边栏尺寸
+  不变。
+- D161决定；优化了 D159 的会话标题大小。
+
+## 2026-07-29 — 固定工作面板的本机宽度预留
+
+- 对接面板现在在打开时保持其承诺的 `364..720px` 宽度；
+  本机边缘仅调整 MainChat 的大小。
+- 打开、collapse/final 关闭和分隔符提交设置一个幂等本机宽度
+  目标。当工作区可以保留完整宽度时，聊天保持稳定
+  仅吸收否则不可避免的短缺。
+- Maximized/fullscreen 几何等待正常状态。持续的基界
+  排除预留 width/x 移位，并且背景工件无法更改
+  可见目标。
+- D163决定； ADR 0032（窗口扩展部分被 ADR 0033 取代：
+  工作面板是一个内部扩展坞，永远不会扩展操作系统窗口）。这个
+  取代 D156 和 ADR 0029 的相反部分。
+
+## 2026-07-29 — 双区域设置应用内产品变更日志
+
+- 在 `packages/shared` 中发送 EN + zh-CN 产品亮点并将其附加到
+  `UpdateState.releaseNotes` 从 Electron Main 当发现更新时。
+- 更新横幅和设置 → 信息显示紧凑的新增内容列表
+  没有新 Feed 或 IPC 域的活动产品区域设置。
+- 发布标记需要在标记构建之前更新两个区域设置目录。
+- D164决定；扩展 D120/ADR 0022。
+
+## 2026-07-29 — 发布流程：强制双区域变更日志门
+
+- 稳定的应用程序版本颠簸/标签**必须**更新
+  标签前的 `packages/shared/src/changelog.ts` (EN + zh-CN)；运输
+  没有目录条目是发布过程失败 (D164)。
+- 编入发布运行手册§4.1，人工智能开发工作流程矩阵+
+  禁止的做法、更改清单、`AGENTS.md` 和 `scripts/release.mjs`
+  头因此特工和人类撞到了同一扇门。
+- GitHub 自动生成的发行说明仍然仅限网络。
+
+## 2026-07-29 — 上下文检查点中的有界原子工具批次
+
+- 自动压缩现在限制了超大的最终并行工具结果
+  在检查点副本中进行批处理，而不是重复失败
+  转录本边界。
+- 保留的副本保留每个 call/result 信封，分发文本
+  使用显式 head/tail 截断标记公平地预算，并省略重复项
+  与提供商无关的详细信息；原始成绩单行保持完整。
+- D158决定；修改了 ADR 0030 之前阻止不可分割的政策
+  批次位于保留尾盖上方。
+
+## 2026-07-29 — 助理答案中的安全懒人美人鱼图
+
+- 通过动态方式完成答案散文渲染中的 `mermaid` 栅栏
+  仅在视口附近加载、主题感知的美人鱼块；部分流和
+  思考散文仍然是源代码。
+- 渲染被序列化并限制在 20,000 个源字符/500 个边缘。
+  严格的 Mermaid 配置加上 DOMPurify SVG 清理会删除链接，
+  DOM 插入之前的嵌入媒体、外部 HTML 和 URL 属性。
+- 无效或过大的图表通过复制和视图控件回退到源；
+  没有 IPC、存储、进程、CSP 或外部网络边界更改。
+- 决定 D165。
+
+## 2026-07-31 — 更薄的默认工作面板宽度
+
+- 停靠的工作面板现在以 280 像素打开，而不是 420 像素，第三窄，
+  其固定夹变成`244..720px`。
+- `WORK_PANEL_DEFAULT_WIDTH`、`WORK_PANEL_MIN_WIDTH`（渲染器和 Electron
+  Main) 和 `.work-panel` CSS 底板保持同步；分隔符双击
+  恢复新的默认值。
+- D154 的 364 像素地板尺寸适合 320 像素内容旁边的 44 像素活动导轨；
+  导轨变成了标题切换器，因此地板按默认比例缩放。
+- 持续更宽的宽度仍然有效，并且 720px 最大值保持不变。
+- D167决定；取代 D154/D163 和 ADR 0033 §4 中的宽度限制。
+
+## 2026-07-31 — 项目档案演示重新设计（堆叠带由 D267 取代）
+
+- 设置 → 项目档案被重建为三个带：一个概述横幅
+  四个派生计数器、一个搜索 + Recent/Name 排序工具栏和一个分组
+  索引按固定/所有项目/按部分计数存档的顺序排列。
+- 行获得始终可见的披露控制、状态标签、单个元行
+  （路径、分支、会话计数）、相对上次活动时间和快速新建
+  行菜单旁边的任务操作；菜单现在将 create/edit 分组到引脚上方，
+  archive/restore，以及按 Escape 或外部按键关闭并解散。
+- 归档记录保持分组和软化而不是过滤，因此
+  目的地仍然没有可见性切换（D133）。项目存储、搜索
+  匹配、八个批次的会话显示和激活语义是
+不变。
+- D168决定；取代 D133 的平面列表演示。D267 随后用一条仅含说明的引导行和一个面板
+  取代了概述横幅与每部分面板，并停用四个页面级计数器；行剖析和分组规则
+  延续不变，分组计数仍保留在标题条上。
+
+## 2026-07-31 — 插件页面重新设计（演示文稿由 D196 修改）
+
+- 原始插件页面被重建为四个带：一个概述带，带有四个派生带
+  计数器（已安装、已启用、更新、高风险访问），一个保留的标头
+  一个上下文主要操作和移动检查更新/应用自动更新/
+  install-package / load-local 进入溢出菜单，分段
+  安装/市场开关承载计数，以及选项卡主体。
+- 安装的行按状态分组为需要注意/可用更新/
+  在一个细细分隔的面板内激活/关闭。 `状态：“错误” |
+  “load_error”` and `errorMessage` 现在浮出水面而不是被删除；行
+  操作折叠为悬停显示的面板按钮和溢出菜单
+  （自动更新、作为危险项目卸载）位于始终可见的开关旁边。
+- 权限按风险列分级
+  `07-plugins/13-plugin-permissions-matrix.md`：带有塌陷风险的筹码
+  溢出在行以及详细信息表中的高/中/低部分以及
+  安装对话框。升级评论标签权限新版本添加为New，
+  安装队列根据差异删除声明的集合的重复数据。
+- 详细信息从嵌套侧边栏移至右侧表（稀松布、Escape 和
+  外部按下关闭、粘性安装操作、可选版本行）。
+  市场卡呈现字母组合字形并且从不获取 `iconUrl`，因此
+  渲染器不执行远程图像加载。
+- D169决定；取代平面列表、药丸选项卡和内联详细信息窗格
+  `07-plugins/07-plugin-marketplace.md` §7/§14。
+
+## 2026-07-31 — Renderer 样式表拆分为每个表面的部分
+
+- `apps/desktop/src/styles/globals.css` 成为仅导入入口点。的
+  规则移入同一目录中的 22 个部分，每个部分拥有一个表面：
+  `tokens`、`base`、`chrome`、`chat-shell`、`composer`、`sidebar-threads`、
+  `messages`、`prose`、`ui-kit`、`overlays`、`theme-overrides`、
+  `composer-menus`、`settings`、`destinations`、`projects`、`sessions`、
+  `work-panel`、`providers`、`chat-links`、`composer-autocomplete`、`plugins`、
+  `responsive`。
+- 导入顺序**是**级联，不得重新排序：令牌和基础
+  首先，按构建顺序排列特征层，响应/减少运动尾部
+  最后，所以它仍然可以覆盖它之前的内容。
+- 分割是连续的——没有规则改变相对于另一个的位置。的
+  连接的部分文件逐字节地再现预分割文件，并且构建的
+  渲染器 CSS 前后字节相同，因此 Tailwind v4 解决了
+  `@theme` 块与 `tokens.css` 相同。
+- 样式断言通过加载有效级联
+  `apps/desktop/test/helpers/styles.mjs`，内联本地 `@import`
+  按声明顺序排列的行。测试不得直接读取部分内容。
+- 侧边栏会话样式同时存在于 `sidebar-threads.css` 和 `sessions.css` 中
+  因为原始文件将它们交错；文件头交叉引用。
+- 设计令牌量表现在位于 `styles/tokens.css` 中；守卫在
+  `scripts/check-style-tokens.mjs` 遍历整个 `src` 树并且不受影响。
+- D170 决定； `04-ux/07-ui-design-system.md` 假定的单文件布局
+  §版式和 `04-ux/08-component-spec.md` 不再适用。
+
+## 2026-07-31 — 插件技能激活和插件开发套件
+
+- `contributes.skills` 已激活。 `PluginRuntime.getSkills()` 读取每个
+  在提示时声明技能文件，仅适用于授予的插件
+  `agent.prompt.inject`，并且只能通过收容守卫门控 `fs`
+  API 使用。代理运行时呈现 `# Plugin skills` 部分，上限为
+  总共 16 KiB，每项技能 8 KiB — 它自己的预算，而不是 32 KiB 指令
+  ADR 0037 链 — 并将其排序在内置技能之后但之前
+  项目说明，因此用户自己的文件拥有最终决定权。运行时重用
+  技能摘要上的键，因此启用插件、撤销权限，或者
+  编辑技能文件会淘汰空闲运行时间，而不是重用陈旧的运行时间
+  提示。缩小路线图差距 R2。
+- 插件创作作为第一方包 `@pi-desktop/plugin-devkit` 提供，
+  它拥有 `scaffold` / `check` / `pack` 共享的一个实现
+  `pi-plugin` CLI，`PluginScaffold` / `PluginCheck` / `PluginPack` 代理
+  Electron main 提供的工具，以及插件页面的新插件
+  模板动作。 `check` 重现 host-core 强制执行的规则，因此通过
+  这意味着安装将通过； `pack` 仅写入存储（方法 0） `.piplug`
+  条目，因为 `extract_zip_bytes` 不接受其他任何内容。缩小路线图差距
+  R3 的模板和 `contributes.skills`/`PluginRuntime.getSkills()` 项。
+- 捆绑插件被拒绝作为交付工具：插件无法生成
+  `.piplug`（`HOST_API_ALLOWLIST` 中没有存档 API）并且脚手架将
+  需要高风险 `fs.write.workspace` 才能获得应用程序应具备的功能
+  自己提供。
+- 内置 `plugin-development` 技能仅针对插件工作区激活 —
+工作区根目录下的插件 `manifest.json`，或加载的开发插件
+  在它里面——所以一个普通的会话只需支付三个工具描述的费用。
+- 监视开发插件并在保存时热重载，去抖 300 毫秒，
+  忽略 `node_modules` / `.git` / `dist` / `target`，上限为 16 个插件，并且
+  重新启动后重新武装。重新加载永远不会扩大权限集：
+  将清单与选取文件夹时批准的集进行比较，然后
+  新权限通过 `PERMISSION_DENIED` 停止重新加载，同时删除
+  权限确实生效。重新加载失败会保留手表，以便修复保存
+  恢复插件，并通过 toast 和 `pluginChanged` 进行报告 —
+  host-core 没有用于运行时端加载失败的 RPC，因此注册表行不会
+  不移动到 `load_error`。弥补了 R3 热重载项目的路线图差距。
+- D171决定；记录为 ADR 0039。
+- 该决定的立即注入部分于同一天被替换为
+  D174：技能现在以目录和 `Skill` 工具的形式到达模型。开发套件，
+  热重载和工作空间门子句保持不变。
+
+## 2026-07-31 — 从模板创建插件会打开文件夹
+
+- 从模板创建插件现在还会打开所选文件夹作为
+  活动项目（`workspace.set`，它注册项目并切换到
+  聊天），而不仅仅是作为加载的开发插件。加载仅使插件
+  跑；开发需要工作空间内的源、代理、文件
+  面板和内置 `plugin-development` 技能均已读取，并且需要
+  用户通过“打开文件夹”重新选择同一文件夹纯粹是摩擦。
+- 激活通过现有的 `activateProject` 在渲染器中运行
+  操作而不是来自模板 IPC 处理程序，因此项目状态、侧边栏
+项目列表和导航意图防护保持其单一所有者。
+- 成功 toast 区分两种结果：如果文件夹不能
+  作为项目打开，插件保持加载状态，Toast仅说明这一点，
+  而不是声明一个不存在的工作空间。
+- 加载现有的本地插件文件夹（加载本地插件）故意保留
+  它当前的行为：运行别人的插件不是切换的理由
+  用户的项目。
+- D172决定；无 ADR — 这完成了 ADR 0039 描述的流程。
+
+## 2026-07-31 — 工作面板标题菜单：工具优先，无重复条目
+
+- 统一的标题菜单列出了四个工具（审阅、终端、浏览器、
+  文件）首先，按固定顺序，然后 - 在分隔符之后，并且仅当
+  它们存在——文字记录打开的资源。列出之前的布局
+  每个打开的工具两次：一次在资源切换器中，另一次在
+  创建新部分，这使得“打开”和“切换到”无法区分。
+  现在，每个工具行都有自己的打开状态和关闭控制，因此
+  单行是该工具的全部功能。
+- 激活已打开的工具会激活其现有选项卡，而不是激活
+  将其替换为新的单例，因此浏览器保留其 URL。标题
+  操作簇固定在右侧 (`margin-left: auto`)，因此 close/collapse
+  控件不再随标签长度滑动，并且尾随关闭插槽
+  每行始终保留，因此标签和空心点永远不会移动。
+- 菜单行拥有真正的 DOM 焦点（WAI-ARIA 菜单模式）而不是移动
+  突出显示：触发器的 ArrowDown/ArrowUp 在活动行或最后一行上打开，
+  Arrow/Home/End 仅遍历行，Delete/Backspace 关闭焦点行，同时
+菜单保持打开状态，重点关注其邻居，并且 Escape/Tab/selection
+  将焦点返回到触发器。仅会话切换即可关闭菜单
+  隐式 — 选择一行会显式关闭它，因此前一个
+  活动标签键自动关闭（每当背景工件出现时就会触发
+  更改了活动选项卡）消失了。
+- 缺少 `panel.tabs.file` 是裸文件选项卡显示文字的原因
+  `file` 标签；目录现在包含它加上 `panel.tools`，以及过时的
+  `panel.openTool` 已删除。
+- D173决定；无 ADR — 仅在
+  现有的工作面板架构（ADR 0033）。
+
+## 2026-07-31 — 插件技能是模型调用的
+
+- `contributes.skills` 在 `agent.prompt.inject` 之后的加载时间被激活。
+  每个条目可能是一个路径或`{ path, id?, name?, description? }`；头条新闻
+  文档中提供 `name` / `description`，而清单中没有。
+- 基本系统提示仅包含一个目录 - 技能 ID、名称和
+  描述被削减至 240 个字符。正文不在提示中；模型
+  通过 Electron main 在本地提供服务的内置 `Skill` 工具获取一个
+  针对 `plugins.loadSkillBody(id)`，因此 sidecar 永远不会保存技能文本。
+- 上限：每个插件 32 个技能，每个文档 128KB。清单没有
+  `agent.prompt.inject` 仍然有效——技能早于许可门——并且
+  运行时只是跳过它们。
+- 技能 ID 加入 `packages/agent-runtime/src/runtime.ts` 中的运行时重用密钥，
+  因此启用或禁用插件会重建运行时而不是服务
+  陈旧的目录。
+- 拒绝：面向用户的斜杠命令。技能是座席应具备的指导
+  当任务需要它时就可以到达，而不是用户必须知道存在的命令。
+- D174决定；弥补了“已解析但从未激活”的差距
+  `07-plugins/14-plugin-roadmap.md` R2。
+
+## 2026-07-31 — 插件主题附带 CSS 文件
+
+- `contributes.themes` 声明 `{ id, label, path, base? }` 并要求
+  `ui.theme`。 `path` 是与插件相关的 `.css` 文件； `base` (`light` | `dark`,
+  默认 `dark`) 命名覆盖图层所在的调色板。
+- 主进程读取文件并运行 `sanitizeThemeCss()`：无 `@import`，无
+  `url()` 在 `data:` 之外，没有不可解析的 `url(`，没有 `javascript:` /
+  `expression(`，无标记序列，256KB 上限，每个插件 8 个主题。的
+  渲染器通过 `plugin/themes` 接收完成的文本并将其注入到一个
+  `<style id="pi-plugin-theme">` 附加在应用程序自己的样式表之后。
+- `AppSettings.theme` 扩大为 `plugin:<pluginId>:<themeId>`。当提供
+  插件被禁用、卸载或加载失败，应用程序回退到
+  `system` 而不是渲染无样式的外壳。
+- 被拒绝：令牌-JSON 贡献。验证会更安全，但是
+  它只能表达我们想要枚举的标记；样式表可以让
+  主题到达令牌列表忘记的表面，并且消毒剂加上
+  附加顺序规则将风险限制在外观上。
+- 决定 D175。
+
+## 2026-07-31 — 通过 stdio 和远程 HTTP 插件 MCP 服务器
+
+- `contributes.mcpServers` 声明 `{ id, label?, transport }` 加一
+  传输字段：`stdio` 需要 `command` / `args` / `env`，`http` 需要
+`url` / `headers`。权限是独立的：`mcp.server.local` 用于 stdio，
+  `mcp.server.remote` 为 HTTP。
+- `apps/desktop/electron/main/plugin-mcp.ts` 讲协议 `2025-06-18` —
+  `initialize`、`tools/list`、`tools/call` — 作为通过 stdio 或流传输的 NDJSON
+  HTTP/SSE。预算：10 秒连接，每次调用 100 秒，8 个 `tools/list` 页，每个 4MB
+  stdio 系列，每个服务器 64 个工具，每个插件 8 个服务器。连接是惰性的；
+  卸载后进行拆卸。
+- 发现的工具在中注册为 `plugin_<pluginIdSafe>_<serverId>_<toolName>`
+  现有的插件工具图，因此它们继承了审计跟踪、超时和
+  禁用交换机，没有新的路由。它们始终是 `risk: "medium"`：
+  架构和描述来自第三方，因此自我声明的风险级别
+  不值得信赖。
+- `env` 和 `headers` 仅通过插件自己的设置进行解析
+  `{ "setting": "<key>" }`；主机环境永远不会被传递（D018）。
+  stdio 子进程获取 `PATH`、temp/locale 变量和声明的值 — 无
+  否则。 `command` 必须是裸路径名称或与插件相关的名称； `url` 必须是
+  `https` 除非主机环回。
+- 两种传输方式而不是单独的 stdio：托管 MCP 端点很常见
+  足以让 stdio-only 推送插件将其包装在本地垫片中，
+  这更糟糕——一个额外的过程和一个无法审查的代理。
+- D176决定； ADR [0038](/adr/0038-plugin-mcp-bridge)。
+
+## 2026-07-31 — 驻留插件服务及其重启策略
+
+- `contributes.services` 声明 `{ id, label?, autoRestart? }` 落后
+  `background.service`，每个插件最多 4 个。插件调用
+`pi.services.register({ id, start, stop })`；经纪商在之后调用 `start`
+  `onLoad`（5 秒预算）和 `stop` 在 `onUnload` 之前，因此服务永远不会上线
+  在插件自己的生命周期之外。
+- 服务存在于插件的 `utilityProcess` 中，因此崩溃会导致该服务崩溃
+  该进程和主管重新启动整个插件：退避 1 秒、2 秒、4 秒，
+  8秒、16秒上限为30秒；最多 5 次尝试；能存活 60 秒的过程是
+  健康并且计数器重置。 `autoRestart: false` 选择退出。最后一次之后
+  尝试插件保持 `failed` — 可见的故障胜过无声的崩溃
+  循环。
+- 每个服务状态 (`starting` | `running` | `stopped` | `failed`) 和
+  重新启动计数通过 `plugin/services` 读取并呈现为芯片上的
+  插件页面；每个转换都会发出 `pluginChanged` 和 `reason: "service"`
+  和 `plugin.service.*` 审核条目。
+- 手动启用/禁用优于主管：明确的操作取消
+  挂起计时器并清除尝试计数器。
+- D177决定； ADR
+  [0040] (../../adr/0040-plugin-resident-services-and-message-bus.md)。
+
+## 2026-07-31 — 仅声明主题的插件间消息总线路由
+
+- `pi.bus.publish` / `subscribe` 需要 `bus.publish` / `bus.subscribe` **和** a
+  `contributes.bus` 中的匹配条目：发布者列出具体主题，
+  订户列表模式。仅授予许可不会带来任何影响，因此
+  清单保留了插件所说和听到的内容的完整描述。
+- 主题是点分隔的段（`[a-zA-Z0-9][a-zA-Z0-9_-]*`，≤8 个段，
+  ≤128 个字符）。 `*` 匹配一个段； `**` 匹配一个或多个尾随
+段，并且可能只出现在最后。
+- 路由存在于代理中。消息中携带`topic`、`from`、`payload`，
+  主机分配的 `at`；发布者被排除在自己的扇出之外；交货
+  是一种新的单向 `{ t: "event" }` 框架的即发即忘，因此楔形
+  订阅者无法阻止发送者。该框架也使得之前
+  存根 `pi.events.on` / `off` 真实。
+- 上限：每个有效负载 64KB，每个插件 16 个订阅，每个滚动 100 个发布
+  10 秒窗口，因 `LIMIT_EXCEEDED` / `RATE_LIMITED` 和审核行而失败。
+- 有效负载传送数据，而不是能力：接收消息授予
+  订阅者没有它尚未持有的任何内容，因此主题应被视为
+  在应用程序内公开。
+- D178决定； ADR
+  [0040] (../../adr/0040-plugin-resident-services-and-message-bus.md)。
+
+## 2026-08-02 — Bash 工具继承用户的登录 shell 路径
+
+- 在 Unix 上，第一个 Bash 调用会探测用户的登录 shell 的 PATH —
+  `$SHELL`（后备 `/bin/zsh` → `/bin/bash` → `/bin/sh`）带有 `-lic
+  'printf %s "$PATH"'` — so `-l` sources login files and `-i` 来源
+  交互式rc，匹配一个新的终端。探头限制为 5s，
+  每个进程缓存（`OnceLock`）；仅保留最后一个标准输出行（rc
+  横幅被忽略），stderr 被丢弃（缺少 tty 噪音），并且
+  非零退出、缺少 shell 或超时静默回退到主机
+  路径。
+- 每个 Bash 子进程都会通过 `cmd.env("PATH",
+  ...)`; `bash -lc` 仍然在启动时重新运行 bash 配置文件 (conda/brew
+挂钩可能会在注入的基数顶部添加 prepend/dedupe/reorder 条目）。
+  Agent 命令仍然是 POSIX bash；解析后的 bash 二进制文件没有改变。
+  Windows 使 `bash -c` 与主机环境保持一致（无变化）。
+- 修复了 macOS Finder/Dock 启动时 `bash -lc` 单独无法看到 nvm，
+  pnpm，或在 `~/.zshrc` / `~/.zprofile` 中初始化的 Homebrew 工具。
+- D181决定； ADR
+  [0045] (../../adr/0045-bash-inherits-user-login-path.md)。
+
+## 2026-08-02 — 将进程日志路由到类别文件中
+
+- `app`、`host` 和 `agent` 通道仍保留本地 NDJSON 文件，但每个通道
+  通道现在是包含重点 `<category>.log` 文件的目录。应用程序
+  记录使用显式 lifecycle/session/tool/permission/plugin/provider/
+  persistence/updater/diagnostics/terminal/runtime 类别；主机和代理
+  stderr 分为同一类别，时序线隔离
+  在 `timing.log` 中。
+- 每条记录都带有一个 `category` 字段。子 stderr 按行缓冲，
+  解码为 UTF-8，并在解码之前去除 ANSI 控制序列
+  坚持下来了。未知子输出进入 `runtime.log`。
+- 两个旋转文件的旋转仍为 5 MB，但该限制适用于每个文件
+  类别文件。记录器使用 UTF-8 记录和处理的字节长度
+  旋转和磁盘故障尽最大努力。现有的平面日志文件不是
+  迁移过程中删除。
+- D182决定； ADR [0046](/adr/0046-categorized-process-logs)。
+
+## 2026-08-02 — 上下文使用检查器
+
+- 用紧凑的 Codex 式触发器替换超大的上下文环
+结合了剩余容量环、`Context` 标签和百分比。悬停
+  和键盘焦点打开一个带有上下文窗口的非模式面板，确切地说
+  提供商 input/output/cache/reasoning 使用情况，聚合生成速度
+  `tokens/s`，以及按首次执行顺序排列的每种独特的工具类型。
+- 工具行聚合重复调用并公开调用计数、参数标记、
+  结果代币、总估计足迹、分享条和累积已知
+  持续时间。运行时间估计使用 pi-agent-core 现有的四个字符 -
+  每个令牌启发式；提供商报告的使用量仍然是权威的总量
+  UI 将工具行标记为估计值。
+- 生成速度是提供商输出和最终结果的完整回合快照
+  流持续时间；活动助理流不显示实时令牌率
+  柜台。
+- 上下文窗口总计来自所使用的匹配 `pi-ai` 模型元数据
+  由Agent sidecar 提供；提供商元数据和 128K 默认值仍然是后备方案
+  对于未知模型。
+- `UiMessage.responseDurationMs`、`UiMessage.toolUsage` 和可选
+  `tool_end.toolUsage` 事件字段是可加的，因此较旧的持久消息
+  并且同行仍然可读。
+- 检查器面板在文档正文级别呈现为固定的、
+  碰撞感知视口叠加。它遵循转录滚动和窗口
+  调整大小、围绕触发器翻转并夹紧到视口边缘而不是
+  被转录滚动容器剪切。
+- 检查器从相同的 `pi-ai` 模型解析其上下文窗口总数
+  记录传递给代理 sidecar，丰富 cached/discovered 模型行；
+提供程序元数据和 128K 默认值仍然是未知模型的后备方案。
+- D184决定； ADR [0047](/adr/0047-context-usage-inspector)。
+
+## 2026-08-02 — 延迟每回合工具激活
+
+- sidecar 保留完整的本地注册表，但仅发送模式的核心
+  工具和本地 `ToolSearch` 出现新提示。 （`CompactContext` 也被
+  此处始终处于活动状态，直到 D200 移除工具； D203 将其恢复为
+  `new_context`，再次始终处于活动状态。）
+  Agent 遵循 pi 的编码代理核心 (../../adr/0047-context-usage-inspector.md/ADR/sidecar/`ToolSearch`)，而
+  聊天保持 (../../adr/0047-context-usage-inspector.md/ADR/sidecar)。代理模式 `ToolSearch`/`CompactContext`,
+  `BrowserPreview`、插件工具、`Skill` 和插件开发助手是
+  由有界紧凑目录条目而不是完整参数表示
+  模式。
+- 精确名称或功能搜索最多激活四个匹配项
+  下一个模型回合。 `addedToolNames` 允许 pi-ai 提供商使用本机延迟
+  搜索在加载点序列化这些定义；其他提供商使用
+  重建的活动刀具列表。激活会在下一个用户提示之前重置。
+- 主机权限、工作区和暂存控制、超时和审核
+  行为不变。持久化工具结果保留激活标记
+  有效的转录重建。
+- D185决定； ADR [0048](/adr/0048-lazy-per-turn-tool-activation)。
+
+## 2026-08-04 — 绑定提供商流恢复和诊断
+
+- 提供程序请求设置现在具有一次有限的 pi-ai 重试。瞬息流，
+  网络，或流式传输开始后超时失败会进行同轮重试
+  具有短暂的可中止退避；失败的助手将从模型中删除
+上下文和可见的助手 ID 被重用。
+- `terminated` 和等效的不完整流消息映射到
+  `STREAM_FAILED`。第二次故障仍然是终止状态并带有有限阶段，
+  计时、提供程序 status/code 和重试尝试诊断（如果可用）。
+- 突变恢复是明确有限的：使用 `Edit` 作为一个唯一的本地
+  替换，使用 `Write` 进行连贯重写，然后允许一个新的
+  不匹配后的 read/regeneration。第二个相同路径 `Edit` 失败或
+  失败的 shell patch 命令会发出终止工具提示，而不是
+  修复旧的补丁工件。
+- D186决定；请参阅 [ADR 0050](/adr/0050-bounded-provider-stream-recovery)。
+
+## 2026-08-04 — 使用保留尾部恢复自动压缩失败
+
+- 自动阈值和提供商溢出压缩失败现在尝试
+  结束前确定性的、积极限制的保留尾部检查点
+  轮到了。先前的检查点摘要在可用时会被保留，
+  完整的可见转录本保持不变，并且宿主持久性加上
+  硬预算重新检查仍然是强制性的。
+- 摘要输入是针对模型窗口进行预检的，因此显然
+  过大的摘要请求会直接转到有界恢复路径
+  等待提供商拒绝或超时。
+- 生命周期事件用 `fallback: "retained_tail"` 标记恢复，因此
+  渲染器保持运行活动并显示警告。手动 `/compact` 仍然存在
+  快速失败，永远不会默默地放弃历史背景。
+- D158决定；修改 ADR 0030 并添加 ADR 0049。
+
+## 2026-08-04 — 资源隔离主机 RPC stdio
+
+- Host-core 不再使用 Tokio 的 stdio 适配器作为其 NDJSON 控制管道。
+  一个命名的操作系统线程读取 stdin，一个命名的操作系统线程序列化 stdout，
+  保持每条消息的成帧和重试中断或短暂
+  NDJSON/`EAGAIN` 错误。
+- 这会关闭 Tokio 的阻塞池在发生恐慌后的进程退出路径
+  操作系统使用 `Resource temporarily unavailable` 拒绝另一个工作线程
+  （macOS 上的错误号 35）。未能创建控制线程将被报告为
+  启动错误；这不是未处理的线程生成恐慌。
+- 登录 shell 路径探测也使用 `thread::Builder` 并回退到
+  当可选帮助程序无法启动时继承的 PATH。
+- D187决定；请参阅 [ADR 0051](/adr/0051-host-rpc-stdio-resource-isolation)。
+
+## Plan 检查点和 shell 决策 (0.4.14)
+
+较早的本地 Plan 操作状态决策仍记录为 D188
+历史。 D189 是执行机构并取代 D188 和 ADR
+0052.D190定义了D189使用的shell执行合约。仅限代理
+并行制定的决定重新编号为 D191 (ADR 0055) 并被取代
+由 D188/D189 提供；随之而来的三个决定为 D192，
+D193 和 D194。
+
+| 身份证号 | 主题 | 决定 | 基本原理 |
 |---|---|---|---|
-| D188 | Replace Chat profile with Plan state | *(superseded by D189)* **PI-Desktop has one pi Agent and one product selector: `Agent | Plan`. Plan is that Agent after entering planning state, never a second Agent, planner model, planner service, or permission mode. Agent remains the default. Persisted sessions, app defaults, and scheduled values stored as `chat` migrate to `plan`; the internal `page = "chat"` route may remain as a conversation-surface detail. Plan exposes `Read`, `Glob`, `Grep`, `BrowserPreview`, `Bash`, `CompactContext`, and `ExitPlanMode`; it denies `Write`, `Edit`, plugin tools, and unknown tools. Plan retains permission-mode selection: Bash prompts under `ask` and `accept-edits`, and runs without confirmation under `auto`, so Plan is planning intent rather than a strict read-only security profile.** | Historical pre-checkpoint Plan contract; retained to explain the supersession chain |
-| D189 | Plan checkpoint artifact, approval, and execution epoch | **The same pi Agent uses `Agent | Plan`, with Agent default. Plan calls `SubmitPlan(title, markdown, question)` as the only tool in its assistant batch. Rust host-core writes the submitted Markdown bytes unchanged to a new immutable unique file under `<workspaceRoot>/.pi/plan/*.md`; it stores the relative artifact path, SHA-256, and byte size together with structured title/question fields in the existing `plan_approvals` row. No title/question wrapper is added and no prior artifact is replaced. The approval surface displays title, question, an artifact opener, absolute expiry, and status, and offers only Approve or Reject. Approve requires an explicit `ask`, `accept-edits`, or `auto` permission mode, with Ask selected by default; Reject carries no mode. The approval expires at one absolute 30-minute deadline and uses `PLAN_APPROVAL_TIMEOUT`. The same `plan_approvals` row carries `execution_id` and `execution_state` through `queued → running → completed|interrupted`. A startup transaction marks prior pending approvals and queued/running execution states interrupted before serving RPC; no work is replayed. Pending interruption/rejection/expiry leaves the session Plan; an already-approved queued/running interruption leaves the session Agent. One active turn, idle-only configuration, and one pending approval/queued-or-running execution per session are enforced. Scheduled Plan is rejected before provider, artifact, or queue work with `PLAN_REQUIRES_INTERACTIVE_SESSION`. Protocol v9 and storage schema v10 carry the contract without a serialized process-epoch field.** | Immutable host artifacts preserve the submitted checkpoint while one approval/execution row and a startup process fence prevent restart replay without losing the already-approved Agent state |
-| D190 | Selectable command shell catalog and execution identity | **Host-core exposes stable platform-aware catalog IDs: `windows-powershell`, `cmd`, `git-bash`, and `bash`; the platform catalog contains only IDs supported by that platform. `defaultCommandShell` persists in host settings, and settings writes reject unavailable or wrong-platform IDs. If a persisted choice later becomes unavailable, the effective shell intentionally falls back to the first available platform shell. The `Bash` tool and `tools.execute` protocol name remain unchanged; each turn pins the effective shell ID and dialect, and host rejects a stale ID/dialect before spawn with `COMMAND_SHELL_CHANGED`. Shell identity is the catalog selection, not an executable path hash. Bash streams stdout and stderr separately, uses a mandatory 60-second default timeout with a 1–300 second override, and cancellation/timeout shuts down the complete process tree.** | Users can choose the command language without multiplying protocol tools, while platform validation, explicit fallback, and turn-pinned catalog identity keep execution predictable |
+| D188 | 将聊天配置文件替换为 Plan 状态 | *（被 D189 取代）* **PI-Desktop 有 1 个 pi Agent 和 1 个产品选择器：`Agent | 计划`. Plan is that Agent after entering planning state, never a second Agent, planner model, planner service, or permission mode. Agent remains the default. Persisted sessions, app defaults, and scheduled values stored as `聊天` migrate to `计划`; the internal `页面 = “聊天”` route may remain as a conversation-surface detail. Plan exposes `读取`, `Glob`, `Grep`, `浏览器预览`, `Bash`, `CompactCon text`, and `ExitPlanMode`; it denies `Write`, `编辑`, plugin tools, and unknown tools. Plan retains permission-mode selection: Bash prompts under `ask` and `accept-edits`, and runs without confirmation under `auto`,因此 Plan 是计划意图而不是严格的只读安全配置文件。** | 历史预检查点Plan合约；保留解释取代链 |
+| D189 | Plan 检查点工件、批准和执行纪元 | **相同的 pi Agent 使用 `Agent | Plan`, with Agent default. Plan calls `SubmitPlan(标题, markdown, 问题)` as the only tool in its assistant batch. Rust host-core writes the submitted Markdown bytes unchanged to a new immutable unique file under `<workspaceRoot>/.pi/plan/*.md`; it stores the relative artifact path, SHA-256, and byte size together with structured title/question fields in the existing `plan_approvals` row. No title/question wrapper is added and no prior artifact is replaced. The approval surface displays title, question, an artifact opener, absolute expiry, and status, and offers only Approve or Reject. Approve requires an explicit `ask`, `accept-edits`, or `auto` permission mode, with Ask selected by default; Reject carries no mode. The approval expires at one absolute 30-minute deadline and uses `PLAN_APPROVAL_TIMEOUT`. The same `plan_approvals` row carries `execution_id` and `execution_state` through `queued → 运行 → 已完成 | 中断了`. A startup transaction marks prior pending approvals and queued/running execution states interrupted before serving RPC; no work is replayed. Pending interruption/rejection/expiry leaves the session Plan; an already-approved queued/running interruption leaves the session Agent. One active turn, idle-only configuration, and one pending approval/queued-or-running execution per session are enforced. Scheduled Plan is rejected before provider, artifact, or queue work with `PLAN_REQUIRES_INTERACTIVE_SESSION`。协议 v9 和存储模式 v10 携带的合约没有序列化的 process-epoch 字段。** | 不可变的主机工件保留提交的检查点，同时一个 approval/execution 行和启动进程栅栏可防止重新启动重播，而不会丢失已批准的 Agent 状态 |
+| D190 | 可选择的命令 shell 目录和执行标识 | **主机核心公开稳定的平台感知目录 ID：`windows-powershell`、`cmd`、`git-bash` 和 `bash`；平台目录仅包含该平台支持的 ID。 `defaultCommandShell` 保留在主机设置中，并且设置写入拒绝不可用或错误的平台 ID。如果持久选择稍后变得不可用，则有效 shell 会有意回退到第一个可用的平台 shell。 `Bash` 工具和 `tools.execute` 协议名称保持不变；每个回合都会固定有效的 shell ID 和方言，并且主机在使用 `COMMAND_SHELL_CHANGED` 生成之前拒绝过时的 ID/dialect。 Shell 标识是目录选择，而不是可执行路径哈希。 Bash 分别流式传输 stdout 和 stderr，使用强制的 60 秒默认超时和 1-300 秒覆盖，并且 cancellation/timeout 关闭完整的进程树。** | 用户可以选择命令语言，而无需增加协议工具，而平台验证、显式回退和转固定目录身份可保持执行的可预测性 |
 
-## 2026-08-05 — Agent-only mode
+## 2026-08-05 — 仅代理模式
 
-- `agent` is the only session mode. The former `chat` profile is renamed
-  `read-only`; host-core still hard-denies Write/Edit/Bash for it, but nothing
-  in the UI can select, display, or command it.
-- The mode gate is negative everywhere (`mode != "agent"` → read-only surface)
-  and `chat` normalizes to `read-only` on every host write path, so a legacy or
-  unknown value fails closed instead of widening tools.
-- `BASH_DISABLED_IN_CHAT` / `WRITE_DISABLED_IN_CHAT` become
-  `BASH_DISABLED_IN_READ_ONLY` / `WRITE_DISABLED_IN_READ_ONLY`.
-- Database open rewrites `sessions.mode = 'chat'` and a stored `defaultMode` of
-  `chat` to `agent` — a data fix-up inside schema v7, not a version bump.
-- Decision D191, superseded by D189; see
-  [ADR 0055](../../adr/0055-agent-only-mode.md). The mode concept it removed
-  returned as Plan (D188/D189, ADR 0052/0053); the entry is retained because the
-  `read-only` normalization and the `chat` fix-up it describes shipped.
+- `agent` 是唯一的会话模式。之前的 `chat` 配置文件已重命名
+  `read-only`； host-core 仍然强硬否认 Write/Edit/Bash 对此，但什么也没有
+  在 UI 中可以选择、显示或命令它。
+- 模式门到处都是负值（`mode != "agent"` → 只读表面）
+  并且 `chat` 在每个主机写入路径上标准化为 `read-only`，因此遗留或
+未知值失败关闭而不是拓宽工具。
+- `BASH_DISABLED_IN_CHAT` / `WRITE_DISABLED_IN_CHAT` 成为
+  `BASH_DISABLED_IN_READ_ONLY` / `WRITE_DISABLED_IN_READ_ONLY`。
+- 数据库打开重写 `sessions.mode = 'chat'` 和存储的 `defaultMode`
+  `chat` 到 `agent` — 架构 v7 内的数据修复，而不是版本碰撞。
+- D191决定，由D189取代；看到
+  [ADR 0055](/adr/0055-agent-only-mode)。它删除了模式概念
+  返回为 Plan (D188/D189, ADR 0052/0053)；该条目被保留，因为
+  `read-only` 规范化和它所描述的 `chat` 修复已发布。
 
-## 2026-08-05 — Structured tool-result presentation in the transcript
+## 2026-08-05 — 记录中的结构化工具结果呈现
 
-- Expanded tool rows no longer render `JSON.stringify` of the arguments and the
-  result. A pure renderer module maps each known payload to labeled blocks: file
-  and written content as highlighted code, commands as shell, stdout and stderr
-  as separate blocks, Glob results as clickable paths, Grep hits grouped per
-  file, failures as an error note. Unmapped plugin payloads degrade to
-  label/value fields and labeled blocks; only nested objects keep a JSON body.
-- The pi-ai result envelope carries the structured payload in `details` and
-  repeats it as text for the model. Only the structured half is rendered, so no
-  byte is shown twice.
-- Collapsed rows carry outcome chips (exit code, match/file counts, replacement
-  count, written or read size, `truncated`, `scratch`) so a result reads without
-  expanding. A successful exit earns no chip.
-- Search results follow the host's `outputMode`: grouped hits, a path list, or
-  per-file totals. A host `notice` (scoping, clipped lines, Read window) renders
-  as a neutral note under the blocks it qualifies, never as an error.
-- Edit rows draw their own diff only when no ReviewChangeCard owns one, keeping
-  workspace edits single-sourced. The inline permission card shares the same
-  block renderer for its args preview.
-- Blocks are built on expansion only and highlighting is skipped above 100 KB or
-  800 lines; lists and diffs are capped and report the hidden remainder.
-- Decision D192; renderer-only presentation, so no ADR. See
-  `04-ux/08-component-spec.md` §9 and E2E-145.
+- 扩展工具行不再呈现参数的 `JSON.stringify` 和
+  结果。纯渲染器模块将每个已知的有效负载映射到标记块：文件
+  并将内容编写为突出显示的代码，将命令编写为 shell、stdout 和 stderr
+  作为单独的块，Glob 结果作为可点击路径，Grep 命中按每个分组
+  文件，失败作为错误注释。未映射的插件有效负载降级为
+  label/value 字段和标记块；只有嵌套对象才会保留 JSON 主体。
+- pi-ai 结果包络携带 `details` 中的结构化有效负载，
+  将其重复作为模型的文本。仅渲染结构化的一半，因此没有
+  字节显示两次。
+- 折叠的行携带结果芯片（退出代码、match/file 计数、替换
+  计数、写入或读取大小、`truncated`、`scratch`），因此读取结果时无需
+  扩大。成功退出不会获得任何筹码。
+- 搜索结果遵循主机的 `outputMode`：分组命中、路径列表或
+  每个文件的总计。主机 `notice`（范围、剪裁线、读取窗口）渲染
+作为它所限定的块下的中立注释，绝不作为错误。
+- 仅当没有 ReviewChangeCard 拥有一个时，编辑行才绘制自己的差异，保持
+  工作区编辑单一来源。内联权限卡共享相同
+  块渲染器的参数预览。
+- 块仅基于扩展构建，并且突出显示超过 100 KB 或
+  800行；列表和差异有上限并报告隐藏的剩余部分。
+- D192决定；仅呈现器演示，因此没有 ADR。参见
+  `04-ux/08-component-spec.md` §9 和 E2E-145。
 
-## 2026-08-05 — A silent assistant turn re-runs once before it is an error
+## 2026-08-05 — 无声助手在出现错误之前重新运行一次
 
-- A turn that ends with no tool call and no visible text is no longer reported
-  as complete. The runtime pops the empty assistant out of model context,
-  appends a no-output nudge to the system prompt, and calls `agent.continue()`
-  once — reusing the visible bubble id and swallowing the first attempt's
-  `turn_end` / `agent_end`, so a successful recovery is invisible to the user.
-- Blank visible text triggers it even when reasoning content is present. The
-  observed failure was exactly that shape: a 2830-character conclusion in
-  thinking and an empty `text`, which reached the user as nothing. The timing
-  log keeps `thinkingOnly` so the two shapes stay distinguishable.
-- The nudge rides on `state.systemPrompt` rather than `prepareNextTurn`, which
-  only shapes in-flight turns and whose context is discarded once the loop
-  stops. It is restored only if still unchanged, so a concurrent prompt rebuild
-  wins.
-- A second silence is terminal: retriable `EMPTY_MODEL_RESPONSE`, which the
-  existing assistant error row renders with a "Try again" action. One re-run per
-  prompt, so overflow recovery in the same prompt cannot multiply attempts.
-- Decision D193; recovery inside the existing loop contract, so no ADR. See
-  `03-runtime/02-agent-runtime.md` §5e, `03-runtime/08-error-codes.md` §3.2,
-  and E2E-146.
+- 不再报告以没有工具调用且没有可见文本结束的回合
+  一样完整。运行时将空助手从模型上下文中弹出，
+  将无输出微移附加到系统提示符，并调用 `agent.continue()`
+  一次 - 重用可见的气泡 ID 并吞掉第一次尝试的
+  `turn_end` / `agent_end`，因此用户看不到成功的恢复。
+- 即使存在推理内容，空白可见文本也会触发它。的
+  观察到的失败正是这种形式：一个 2830 个字符的结论
+  思考和一个空的 `text`，对用户来说什么也没有。时机
+  log 保留 `thinkingOnly`，因此这两个形状保持可区分。
+- 微调位于 `state.systemPrompt` 而不是 `prepareNextTurn`，
+  仅塑造飞行中的回合，一旦循环，其上下文就会被丢弃
+  停止。仅当仍然不变时才恢复，因此并发提示重建
+  获胜。
+- 第二次沉默结束：可重试 `EMPTY_MODEL_RESPONSE`，
+  现有的助手错误行通过“重试”操作进行呈现。每重新运行一次
+提示，因此同一提示中的溢出恢复不能多次尝试。
+- D193决定；恢复现有循环合约内，因此没有 ADR。参见
+  `03-runtime/02-agent-runtime.md` §5e、`03-runtime/08-error-codes.md` §3.2、
+  和 E2E-146。
 
-## 2026-08-05 — Per-tool output budgets, scoped search, and stated collaboration rules
+## 2026-08-05 — 每个工具的输出预算、范围搜索和规定的协作规则
 
-- The single 256KB / 4000-line cap is replaced by per-tool budgets: 48KB for
-  Read/Glob/Grep, 96KB for Bash stdout, 96KB tail-kept for Bash stderr, 2000
-  chars per line everywhere. Search results are re-fetchable — narrow the
-  pattern, advance the offset — so they earn the tighter half; a failing
-  command's last line is the actionable one, so stderr keeps its tail.
-- `Read` paginates with `offset` / `limit` and never refuses on file size. The
-  old >512KB rejection said "use Grep or Bash to sample it", which is how an
-  unpaginated read became an unbounded `sed` pipeline. `Grep` takes `path`,
-  `include`, `outputMode`, `headLimit`; `Glob` takes `path`, `limit`; both order
-  by modification time, newest first.
-- An explicit `path` disables parent ignore files. Without that, scoping a
-  search to `node_modules` or `dist` returned zero and pushed the model back to
-  shell — and Grep could not read its own spill files.
-- Over-budget Bash output spills into the per-session scratch dir so the marker
-  names a real file. Read/Glob/Grep embed no marker: `content` stays
-  byte-faithful so text copied out of it still matches for `Edit`, and the
-  window metadata plus `notice` carry the same facts as sibling fields.
-- The system prompt now states collaboration rules outright — answer in the
-  user's language, a sentence before each tool batch, never more than one batch
-  without visible text, answer in text rather than only in reasoning, finish end
-  to end — and states a preference for the scoped tools over shell equivalents.
-  "Prefer concise, actionable answers" was the only nearby rule, and a reasoning
-  model executed it as saying nothing.
-- Decision D194; tool schemas widen without breaking callers and prompt text is
-  not an interface, so no ADR. See `03-runtime/16-tool-result-limits.md`,
-  `03-runtime/02-agent-runtime.md` §7, and E2E-147.
+- 单个 256KB/4000 行上限被每个工具预算取代：48KB
+  Read/Glob/Grep，Bash 标准输出 96KB，Bash 标准错误 96KB 尾部保留，2000
+  每行字符无处不在。搜索结果可重新获取——缩小搜索范围
+  模式，提前抵消——这样他们就赚得更紧的一半；失败的
+  命令的最后一行是可操作的行，因此 stderr 保留其尾部。
+- `Read` 使用 `offset` / `limit` 进行分页，并且从不拒绝文件大小。的
+  旧的 >512KB 拒绝说“使用 Grep 或 Bash 对其进行采样”，这就是
+  无分页读取成为无界 `sed` 管道。 `Grep` 取 `path`，
+  `include`、`outputMode`、`headLimit`； `Glob` 取 `path`、`limit`；两者都订购
+  按修改时间，最新的在前。
+- 显式 `path` 禁用父忽略文件。如果没有这个，范围
+  搜索 `node_modules` 或 `dist` 返回零并将模型推回到
+  shell — 并且 Grep 无法读取自己的溢出文件。
+- 超出预算的 Bash 输出溢出到每个会话的暂存目录中，因此标记
+  命名一个真实的文件。 Read/Glob/Grep 未嵌入任何标记：`content` 保留
+  字节忠实，因此从中复制出来的文本仍然与 `Edit` 匹配，并且
+  窗口元数据加上 `notice` 具有与同级字段相同的事实。
+- 系统提示现在直接说明协作规则 - 在
+  用户的语言，每个工具批次之前的一句话，最多不超过一个批次
+没有可见的文字，用文字回答而不仅仅是推理，完成结束
+  结束 — 并指出相对于 shell 等效工具，对作用域工具的偏好。
+  “更喜欢简洁、可行的答案”是唯一的附近规则，并且是一个推理
+  模型执行它时什么也没说。
+- D194决定；工具模式在不破坏调用者的情况下扩大，并且提示文本是
+  不是接口，因此没有 ADR。请参阅 `03-runtime/16-tool-result-limits.md`，
+  `03-runtime/02-agent-runtime.md` §7 和 E2E-147。
 
-## 2026-08-05 — MCP servers and skills the user owns, scoped per project
+## 2026-08-05 — 用户拥有的 MCP 服务器和技能，范围按项目划分
 
-- Plugins, user MCP servers and user skills now share one activation shape:
-  `enabled` plus `{ mode: "global" | "projects", projects: [] }`. The boolean
-  stays separate from the scope so switching something off keeps the project
-  list it was narrowed to, and the `off` / `projects` / `global` control the UI
-  renders is derived from the pair rather than stored as a third mode.
-- Matching is case-insensitive and trailing-separator-insensitive because macOS
-  and Windows both hand us case-varying spellings of one directory, and a scoped
-  path covers its subdirectories so a monorepo root does not have to be listed
-  package by package. A `projects`-scoped extension is inactive in a session
-  with no project: "these projects" is a claim about projects.
-- Scope is checked when the per-turn catalog is built **and** again at dispatch.
-  A session outlives the prompt that listed its tools, and a tool the model can
-  see is a tool it will try to call, so filtering in one place leaves a hole
-  between re-scoping and the next prompt. Themes stay unscoped — appearance is
-  app-wide, not a per-project capability.
-- Adding an MCP server is a paste. `parseMcpImport` reads the `mcpServers`
-  document every README prints plus the `servers`, bare-map and single-object
-  variants, infers `http` from a `url` because half the configs omit `type`, and
-  reports per-entry skip reasons so one bad entry in fifteen is not fatal.
-- A user MCP server connects on first use and caches its tools; a failed
-  handshake stays failed until the user edits it or presses Test. Saving a change
-  to what the server *is* drops the connection, renaming it does not — a stale
-  tool list is worse than a missing one.
-- A user skill is one `SKILL.md`. D174's contract is untouched, which is why the
-  editor requires a description and puts it above the body: the description is
-  the only part that enters the prompt.
-- Four tabs rather than one merged list. Plugins are installed, MCP servers are
-  configured, skills are written; their rows need a connection light, a byte
-  counter and a permissions matrix respectively, and one list would hide all of
-  that behind a lowest-common-denominator row.
-- Decisions D192, D193, D194; new host-core registries, new RPC methods and a
-  new main-process runtime, so ADR 0053. See `07-plugins/01-plugin-system.md`
-  and `07-plugins/03-plugin-api.md`.
+- 插件、用户 MCP 服务器和用户技能现在共享一种激活形状：
+  `enabled` 加上 `{ mode: "global" | "projects", projects: [] }`。布尔值
+  与范围保持分离，因此关闭某些内容可以保留项目
+  缩小到的列表，`off` / `projects` / `global` 控制 UI
+  渲染是从该对派生的，而不是存储为第三种模式。
+- 匹配不区分大小写且不区分尾随分隔符，因为 macOS
+  和 Windows 都为我们提供了一个目录的大小写不同的拼写，以及一个作用域
+  路径覆盖其子目录，因此不必列出 monorepo 根目录
+  逐个封装。 `projects` 范围的扩展在会话中处于非活动状态
+  没有项目：“这些项目”是关于项目的声明。
+- 当构建每回合目录时会检查范围**并在调度时再次**。
+  会话的寿命比列出其工具的提示要长，并且模型可以使用工具
+  see 是一个它将尝试调用的工具，因此在一个地方进行过滤会留下一个漏洞
+  在重新确定范围和下一个提示之间。主题保持未定范围——外观是
+  应用程序范围内的功能，而不是每个项目的功能。
+- 添加 MCP 服务器很简单。 `parseMcpImport` 读取 `mcpServers`
+记录每个自述文件打印以及 `servers`、裸图和单一对象
+  变体，从 `url` 推断 `http`，因为一半的配置省略了 `type`，并且
+  报告每个条目的跳过原因，因此十五分之一的错误条目并不致命。
+- 用户 MCP 服务器在首次使用时连接并缓存其工具；失败的
+  握手一直失败，直到用户对其进行编辑或按“测试”。保存更改
+  服务器*是什么*会断开连接，重命名它不会 - 陈旧
+  工具清单比缺少工具清单更糟糕。
+- 用户技能是一项 `SKILL.md`。 D174 的合约未受影响，这就是为什么
+  编辑器需要一个描述并将其放在正文上方：描述是
+  唯一进入提示的部分。
+- 四个选项卡而不是一个合并列表。插件已安装，MCP 服务器已安装
+  配置好，技能写好；他们的行需要一个连接灯，一个字节
+  分别是计数器和权限矩阵，一个列表将隐藏所有
+  位于最低公分母行后面。
+- D192、D193、D194 号决定；新的 host-core 注册表、新的 RPC 方法和
+  新的主进程运行时，因此 ADR 0053。请参阅 `07-plugins/01-plugin-system.md`
+  和 `07-plugins/03-plugin-api.md`。
 
-## 2026-08-05 — Permission-gated external paths and portable native search
+## 2026-08-05 — 权限控制的外部路径和可移植的本机搜索
 
-- Explicit `path` arguments for `Read`, `Glob`, `Grep`, `Write`, and `Edit` are
-  classified against the durable session workspace and scratch roots before
-  the normal risk matrix. In `ask` and `accept-edits`, an outside path emits
-  the existing permission card with the requested path preview; in `auto`, it
-  executes without a card. Allow-once and the existing tool-scoped
-  allow-session grant remain available, while denial, timeout, and cancellation
-  return `TOOL_DENIED` without touching the path.
-- The approved resolver canonicalizes the deepest existing ancestor again at
-  execution time, so `..` and symlink escapes cannot skip the boundary. The
-  outside location is not promoted to a workspace root; external reads and
-  searches retain absolute paths, and external mutations stay outside Review
-  and workspace artifact records.
-- The sidecar exposes the host's bounded search controls (`Read.offset/limit`,
-  `Glob.path/limit`, and `Grep.path/include/outputMode/headLimit`) with the
-  canonical `filesWithMatches` spelling; the host normalizes common
-  `files_with_matches` and `files-with-matches` provider aliases. Guidance
-  prefers native tools and portable workspace-relative paths, with shell search
-  as a bounded, platform-specific fallback.
-- Decision D195; the external path capability and widened search schemas change
-  the host/runtime boundary, so ADR 0057. See
-  `03-runtime/03-tools-and-permissions.md`, `03-runtime/06-host-rpc-protocol.md`,
-  `03-runtime/15-workspace-ignore-rules.md`, `03-runtime/16-tool-result-limits.md`,
-  and E2E-019/E2E-019e.
+- `Read`、`Glob`、`Grep`、`Write` 和 `Edit` 的显式 `path` 参数为
+  根据持久会话工作区进行分类并之前从头开始
+  正态风险矩阵。在 `ask` 和 `accept-edits` 中，外部路径发出
+  具有所请求路径预览的现有权限卡；在 `auto` 中，它
+  无卡执行。允许一次和现有工具范围
+  允许会话授予仍然可用，而拒绝、超时和取消
+返回 `TOOL_DENIED` 而不触及路径。
+- 批准的解析器再次规范化最深的现有祖先
+  执行时间，因此 `..` 和符号链接转义无法跳过边界。的
+  外部位置不会提升为工作空间根目录；外部读取和
+  搜索保留绝对路径，外部突变保留在审阅之外
+  和工作区工件记录。
+- sidecar 公开主机的有界搜索控件（`Read.offset/limit`、
+  `Glob.path/limit` 和 `Grep.path/include/outputMode/headLimit`）
+  规范的 `filesWithMatches` 拼写；主机标准化公共
+  `files_with_matches` 和 `files-with-matches` 提供商别名。指导
+  更喜欢本机工具和可移植工作空间相对路径，以及 shell 搜索
+  作为有界的、特定于平台的后备。
+- D195决定；外部路径能力和扩大的搜索模式发生变化
+  host/runtime 边界，因此 ADR 0057。请参阅
+  `03-runtime/03-tools-and-permissions.md`、`03-runtime/06-host-rpc-protocol.md`、
+  `03-runtime/15-workspace-ignore-rules.md`、`03-runtime/16-tool-result-limits.md`、
+  和 E2E-019/E2E-019e。
 
-## 2026-08-05 — Extensions page density and theme-readable actions
+## 2026-08-05 — 扩展页面密度和主题可读操作
 
-- The Extensions destination no longer renders the four-card numeric overview
-  band. Installed, MCP, Skills, and Marketplace remain separate tabs; tab
-  counts, installed state-group counts, and the pending-update alert retain
-  actionable state without duplicating it in a static summary row.
-- Shared primary and secondary buttons use semantic accent, surface, text, and
-  border tokens. Primary actions invert the current theme surface; secondary
-  actions keep an opaque elevated surface and visible border in both themes.
-- Decision D196 amends the presentation portion of D169 without changing
-  plugin, MCP, skill, marketplace, permission, or runtime contracts. See ADR
-  0058, `04-ux/01-ui-ia.md`, `04-ux/07-ui-design-system.md`,
-  `07-plugins/07-plugin-marketplace.md`, and E2E-024N/E2E-060b.
+- 扩展目标不再呈现四张数字概览
+  乐队。已安装、MCP、技能和市场仍然是单独的选项卡；选项卡
+  计数、已安装状态组计数和待更新警报保留
+  可操作状态，无需将其复制到静态摘要行中。
+- 共享主要和次要按钮使用语义重音、表面、文本和
+  边界令牌。主要操作反转当前主题表面；中学
+动作在两个主题中都保持不透明的升高表面和可见边框。
+- 决定 D196 修改了 D169 的表述部分，但没有改变
+  插件、MCP、技能、市场、权限或运行时合约。请参阅 ADR
+  第0058章
+  `07-plugins/07-plugin-marketplace.md` 和 E2E-024N/E2E-060b。
 
-## 2026-08-05 — Clipboard files become session-scratch references
+## 2026-08-05 — 剪贴板文件成为会话临时引用
 
-- The composer now distinguishes native text paste from a clipboard payload
-  containing files or images. File bytes are sent to Electron main only after
-  the renderer has a durable session id; a home composer creates or reuses one
-  before the transfer.
-- Main validates the session and writes bounded, uniquely named files under
-  `<data_dir>/scratch/<sessionId>/pasted/`. The draft receives ordinary
-  `@absolute/path` references, with quoting for whitespace, so the existing
-  Read/Glob/Grep path semantics handle the pasted material without binary
-  prompt content or project mutations.
-- Decision D197 and ADR 0059 define the new renderer/main boundary. See
-  `04-ux/08-component-spec.md` §11.7–11.8,
-  `03-runtime/01-ipc-protocol.md` §13c,
-  `03-runtime/03-tools-and-permissions.md` §4b,
-  `03-runtime/04-data-storage.md`, and E2E-102.
+- 输入框现在可以区分本机文本粘贴和剪贴板有效负载
+  包含文件或图像。文件字节仅在之后发送到 Electron main
+  渲染器有一个持久的会话ID；家庭输入框创建或重复使用一个
+  转移之前。
+- Main 验证会话并在下面写入有界的、唯一命名的文件
+  `<data_dir>/scratch/<sessionId>/pasted/`。该草案收到普通
+  `@absolute/path` 引用，并引用空格，因此现有
+  Read/Glob/Grep 路径语义处理粘贴的材料，无需二进制文件
+  提示内容或项目突变。
+- 决策 D197 和 ADR 0059 定义新的 renderer/main 边界。参见
+  `04-ux/08-component-spec.md` §11.7–11.8，
+  `03-runtime/01-ipc-protocol.md` §13c，
+  `03-runtime/03-tools-and-permissions.md` §4b，
+  `03-runtime/04-data-storage.md` 和 E2E-102。
 
-## 2026-08-06 — Goal mode joins Plan as a contract mode
+## 2026-08-06 — Goal 模式加入 Plan 作为合约模式
 
-- Sessions now persist one of three operating modes: `agent`, `plan`, or
-  `goal`. The Composer-left chip cycles Agent → Plan → Goal → Agent, and
-  `/goal-mode` (`builtin.mode.goal`) is its palette/slash entry.
-- Goal negotiates a goal statement, acceptance criteria, and boundaries instead
-  of ordered steps. `EnterGoalMode` and `SubmitGoal` mirror `EnterPlanMode` and
-  `SubmitPlan`, writing `.pi/goal/<unique-name>.md` and one pending
-  `plan_approvals` row. `plan_approvals.kind` (schema v11) is the only
-  discriminator; a submit tool run against the other kind fails with
-  `PLAN_KIND_MISMATCH`.
-- Plan and Goal are the contract modes. The host hard deny for
-  Write/Edit/plugin/unknown tools, the Bash-follows-permission-mode rule, the
-  `*_IN_PLAN` error codes, the single-pending-approval invariant, and the
-  `PLAN_REQUIRES_INTERACTIVE_SESSION` rejection of scheduled runs all apply to
-  both, evaluated against the session's durable mode.
-- After approval the session becomes Agent and the queued execution carries the
-  kind, so a Goal run chooses its own approach, self-checks against every
-  acceptance criterion, stops at a stated boundary, and reports criterion by
-  criterion.
-- Decision D198 defines this. See `03-runtime/01-ipc-protocol.md` §5.4,
-  `03-runtime/02-agent-runtime.md` §5b/§7.2a,
-  `03-runtime/03-tools-and-permissions.md` §10.1,
-  `03-runtime/04-data-storage.md` §4.6a/§7,
-  `03-runtime/06-host-rpc-protocol.md` §5.1,
-  `03-runtime/08-error-codes.md`, `03-runtime/10-session-state-machine.md`,
-  `04-ux/04-builtin-commands.md`, and `04-ux/08-component-spec.md` §11.
+- 会话现在保留三种操作模式之一：`agent`、`plan` 或
+  `goal`。 Composer 左芯片周期 Agent → Plan → Goal → Agent，并且
+  `/goal-mode` (`builtin.mode.goal`) 是其 palette/slash 条目。
+- Goal 协商目标声明、验收标准和边界
+  的有序步骤。 `EnterGoalMode` 和 `SubmitGoal` 镜像 `EnterPlanMode` 和
+  `SubmitPlan`，写入 `.pi/goal/<unique-name>.md` 和一个待处理的
+  `plan_approvals` 行。 `plan_approvals.kind`（架构 v11）是唯一
+  鉴别器；针对另一种类型运行的提交工具失败
+  `PLAN_KIND_MISMATCH`。
+- Plan 和 Goal 是合约模式。主机硬否认
+  Write/Edit/plugin/unknown 工具、Bash 遵循权限模式规则、
+  `*_IN_PLAN` 错误代码、单一待批准不变量以及
+  `PLAN_REQUIRES_INTERACTIVE_SESSION` 拒绝预定运行均适用于
+  两者均根据会话的持久模式进行评估。
+- 批准后，会话变为 Agent 并且排队执行携带
+  种，因此 Goal 运行会选择自己的方法，对每个方法进行自我检查
+  接受标准，在规定的边界处停止，并报告标准
+  标准。
+- D198 号决定定义了这一点。请参阅 `03-runtime/01-ipc-protocol.md` §5.4，
+  `03-runtime/02-agent-runtime.md` §5b/§7.2a，
+  `03-runtime/03-tools-and-permissions.md` §10.1，
+  `03-runtime/04-data-storage.md` §4.6a/§7，
+  `03-runtime/06-host-rpc-protocol.md` §5.1，
+  `03-runtime/08-error-codes.md`、`03-runtime/10-session-state-machine.md`、
+  `04-ux/04-builtin-commands.md` 和 `04-ux/08-component-spec.md` §11。
 
-## 2026-08-06 — The regenerate branch is archived under the host RPC lock
+## 2026-08-06 — 重新生成分支存档在主机 RPC 锁下
 
-- Turn completion used to archive the finished regenerate branch with a
-  read-modify-write from Electron main: `session.get`, then
-  `session.replaceMessages` to stamp `revisionCount` / `activeRevision` on the
-  user root. Assistant and tool messages reach SQLite asynchronously through the
-  persistence outbox (ADR 0041), so the snapshot could predate the turn's final
-  message and the whole-transcript rewrite deleted it from the transcript file
-  and the index, along with every row's `turn_id`.
-- `session.saveActiveRevision` now performs the read, the archive, and the stamp
-  in one host call under the state lock. The stamp rewrites only the root user's
-  transcript line and re-reads the file at write time, so a line appended in the
-  meantime survives. Electron main drains the outbox first and skips the archive
-  with a warning rather than archiving an incomplete branch.
-- `session.replaceMessages` carries each surviving message's owning `turn_id`
-  across the rewrite, and is documented as safe only for a caller that owns the
-  whole transcript for the duration of the call.
-- Decision D199 and ADR 0060 define this. See
-  `03-runtime/04-data-storage.md` §4.9/§7,
-  `03-runtime/06-host-rpc-protocol.md` §4, and E2E-118.
+- 转动完成用于归档已完成的重新生成分支
+从 Electron main 读取-修改-写入：`session.get`，然后
+  `session.replaceMessages` 在 `revisionCount` / `activeRevision` 上标记
+  用户根。助手和工具消息通过异步到达 SQLite
+  持久性发件箱 (ADR 0041)，因此快照可能早于本回合的最终结果
+  消息和整个记录重写将其从记录文件中删除
+  和索引，以及每行的 `turn_id`。
+- `session.saveActiveRevision` 现在执行读取、存档和标记
+  在一台主机调用状态下锁定。该标记仅重写 root 用户的
+  转录行并在写入时重新读取文件，因此在
+  在此期间幸存下来。 Electron main 首先清空发件箱并跳过存档
+  并发出警告，而不是归档不完整的分支。
+- `session.replaceMessages` 携带每个幸存消息所属的 `turn_id`
+  整个重写过程中，并且仅对拥有该对象的调用者来说才被记录为安全的
+  通话期间的完整文字记录。
+- 决策 D199 和 ADR 0060 定义了这一点。参见
+  `03-runtime/04-data-storage.md` §4.9/§7，
+  `03-runtime/06-host-rpc-protocol.md` §4 和 E2E-118。
 
-## 2026-08-06 — Context compaction becomes imperceptible
+## 2026-08-06 — 上下文压缩变得难以察觉
 
-- Compaction is host-driven and silent. The `CompactContext` tool, the
-  `<context_management>` soft-boundary nudge, and the host no-confirmation
-  allowlist entry are gone, so a long session never spends a model turn asking
-  to be compacted and never grows a transcript row for it.
-- `contextBudget()` keeps the D158 hard limit and headroom untouched, derives
-  the retained-tail target from the model window instead of settings, and adds
-  a background limit at 70% of the hard budget. Background pre-computation also
-  requires growth of at least the retained-tail target since the newest
-  checkpoint's baseline, so a large tail cannot re-trigger every turn.
-- Generation and installation are separate. A checkpoint is built only in
-  provider-idle windows — while a tool executes, and after a run ends — so the
-  summary request never shares the provider connection with a streaming turn.
-  It installs at the next turn boundary or prompt if its base is still active,
-  its anchor still exists, and it still fits the current model's budget;
-  otherwise the unchanged blocking hard boundary handles it. A failed
-  background build is discarded with no event, no persistence, and no ADR 0049
-  fallback.
-- `compaction_start`/`compaction_end` gain optional `phase`, and
-  `compaction_end` gains optional `status { generation, summaryTokens }`; both
-  are additive inside protocol v9. A successful automatic compaction notifies
-  nobody. The context usage inspector is the only visible trace, and Settings
-  exposes no compaction controls at all.
-- Decision D200 and ADR 0061 amend D158 / ADR 0030 / ADR 0049. See
-  `03-runtime/01-ipc-protocol.md` §6, `03-runtime/02-agent-runtime.md` §5.1/§7.1,
+- 压缩由主机驱动且安静。 `CompactContext` 工具
+  `<context_management>` 软边界微移，主机未确认
+  允许列表条目已消失，因此长时间会话永远不会花费模型轮询
+  被压缩并且永远不会为其增加转录行。
+- `contextBudget()` 保持 D158 硬限制和净空不变，导出
+  来自模型窗口的保留尾部目标而不是设置，并添加
+硬预算的 70% 的背景限制。后台预计算也
+  自最新以来，至少需要增长保留尾部目标
+  检查点的基线，因此大尾巴无法在每个回合重新触发。
+- 生成和安装是分开的。检查点仅内置于
+  提供程序空闲窗口 - 当工具执行时，以及运行结束后 - 因此
+  摘要请求永远不会与流式传输共享提供商连接。
+  如果其底座仍处于活动状态，它会安装在下一回合边界或提示处，
+  它的锚仍然存在，并且仍然符合当前模型的预算；
+  否则，不变的阻塞硬边界会处理它。失败了
+  后台构建被丢弃，没有事件，没有持久性，也没有 ADR 0049
+  后备。
+- ADR/`compaction_start` 增益可选 `phase`，以及
+  `compaction_end` 获得可选的 `status { generation, summaryTokens }`；两者
+  在协议 v9 中是附加的。成功的自动压缩通知
+  没有人。上下文使用检查器是唯一可见的跟踪，并且设置
+  根本不暴露任何压缩控件。
+- 决定 D200 和 ADR 0061 修改 D158 / ADR 0030 / ADR 0049。参见
+  `03-runtime/01-ipc-protocol.md` §6、`03-runtime/02-agent-runtime.md` §5.1/§7.1、
   `03-runtime/03-tools-and-permissions.md` §0/§2/§10.1,
-  `03-runtime/06-host-rpc-protocol.md`, `04-ux/06-settings-ia.md`,
-  `04-ux/08-component-spec.md` §7.3/§8.3/§11.5,
-  `04-ux/09-interaction-patterns.md` §3A, and E2E-084.
-
-## 2026-08-06 — Context compaction is rebuilt to match Codex
-
-- The previous round cited Codex and then implemented its opposite on four
-  counts. Codex compacts only synchronously, measures the whole context by
-  default, emits a `ContextCompaction` item and a `Warning` for every
-  compaction, and has a real model-facing tool (`new_context`). D200's Context
-  section also stated that Codex has no such tool, which is wrong. The user
-  asked for Codex's mechanism after being told it reverses the imperceptibility
-  they had asked for one round earlier.
-- Compaction is inline again. Background pre-computation, its 70% limit, the
-  increment-scoped trigger, and the three idle call sites are deleted;
-  `prepareNextTurn()` compacts when the context crosses `hardLimit` or the model
-  called `new_context`, matching Codex's `should_roll_over`.
-- A checkpoint carries the summary plus recent user messages, nothing else. pi's
-  cut point still marks the boundary, but its split-turn prefix and recent tail
-  are folded back into the summary input, so no message leaves the model context
-  uncovered — the reason a filtered tail alone would have been a data-loss bug.
-  Retention is newest-first to 20,000 tokens with the crossing message truncated
-  rather than dropped, and assistant messages take their tool calls with them, so
-  no orphaned call reaches a provider.
-- Both Codex families exist: the summary path, and a `fresh_window` rollover
-  that asks for no summary and installs a fixed marker text. The family is an
-  internal switch (construction option, then
-  `PI_DESKTOP_COMPACTION_STRATEGY`), absent from settings and i18n, because no
-  user can judge that trade-off from a settings row and Codex does not ask them
-  to.
-- `new_context` is parameterless with Codex's description verbatim, sits on the
-  host no-confirmation allowlist, and is never assignable to a subagent. Two
-  budget reminders — at `clamp(hardLimit * 0.15, 8k, 32k)` and at 2,000 tokens
-  remaining — are appended to the current turn's system prompt, claimed once per
-  checkpoint window, and never persisted or shown.
-- host-core keeps the whole checkpoint chain, per-record valid, because one
-  transcript row per compaction has to survive a restart, a rewrite, and a fork.
-  `compaction_end` drops `phase` and carries `mark` instead of `status`; the
-  transcript draws a divider row after the message each checkpoint covers, and
-  every successful compaction raises one warning toast. The context inspector
-  keeps its line, now the newest mark's.
-- Three deviations from Codex are deliberate: the summary precedes the retained
-  users because `buildSessionContext` fixes that order, `hardLimit` stays
-  "window − output reserve" rather than 90% of the window (we have no separate
-  full-window guard), and the tool is registered in both families rather than
-  only the rollover one.
-- Decision D203 and ADR 0064 amend D200 / ADR 0061 and restore D158 / ADR 0030's
-  visibility property. See `03-runtime/01-ipc-protocol.md` §6,
-  `03-runtime/02-agent-runtime.md` §5.1, `03-runtime/03-tools-and-permissions.md`
-  §2/§10.1, `03-runtime/04-data-storage.md` §2.1,
-  `03-runtime/16-tool-result-limits.md` §4, `04-ux/08-component-spec.md`
-  §7.3/§7.4/§8.4a/§11.5, `04-ux/09-interaction-patterns.md` §3A, and E2E-084.
-
-## 2026-08-06 — Bounded subagents behind a `Task` tool
-
-- A session can delegate one self-contained piece of work to a subagent and get
-  back a single written report. Definitions are Markdown documents — four
-  inline builtins (`explorer`, `code-reviewer`, `test-runner`, `fixer`) plus
-  enabled global user documents under `~/.agents/subagents/*.md`, re-read on
-  every launch, capped at 16, with malformed documents degraded to launch
-  diagnostics. There is no project-level subagent capability source.
-- A definition declares its own `tools` from Read/Glob/Grep/BrowserPreview/
-  Bash/Edit/Write and is read-only (`Read, Glob, Grep`) when it declares none. A
-  delegate never inherits mutation rights from its session, cannot reach plugin,
-  skill, mode or meta tools, and has no `Task` tool of its own. Its calls run
-  through the same `tools.execute` host path, so containment and permission
-  modes are unchanged.
-- A definition may pin `model: <provider>/<model>`, resolved once per launch in
-  Electron main against configured providers (by id, vendor key or display name,
-  8 distinct providers maximum). An unresolvable pin fails the `Task` call with a
-  tool error instead of falling back to the session model.
-- `Task` is offered in Agent mode only. Fan-out comes from execution modes: the
-  session Agent runs `toolExecution: "parallel"`, every other tool is
-  `sequential`, and only an all-`Task` batch runs concurrently, capped at 4
-  slots and each delegate at its own `maxTurns` (default 24, maximum 80). The
-  sidecar serializes same-path `Write`/`Edit` calls through a `PathMutex`.
-- The parent's model context gains the bounded report (12k chars) and nothing
-  else. Delegate messages and tool rows are emitted and persisted with
-  `parentToolCallId` / `agentName` in the message `meta`, but the runtime skips
-  them when rebuilding context, and a delegate's termination collapses into the
-  tool result rather than reaching Electron main's turn handling.
-- The transcript nests attributed rows one level inside their `Task` row and
-  keeps them out of the turn stream and the minimap. One `Task` stays compact;
-  two or more in an activity group derive one renderer-only delegation card
-  with aggregate status and a main-agent-to-delegate topology. Nodes reuse the
-  existing row disclosure, structured outcome and nested rows. The topology is
-  derived from persisted attribution on live and reload, adds no protocol or
-  storage shape, and invents neither delegate dependencies nor an unavailable
-  parent-summary node. Pending permission requests become a per-session queue:
-  head-only answering, id-matched removal, whole queue denied on abort, and a
-  card that names the delegate that asked and how many wait behind it.
-- Decision D201 and ADR 0062 define this. See
-  `03-runtime/02-agent-runtime.md` §5f/§7.2b/§8,
-  `03-runtime/03-tools-and-permissions.md` §10.2,
-  `03-runtime/04-data-storage.md` §4.7a,
-  `04-ux/03-permission-ux.md` §6a, `04-ux/08-component-spec.md` §9.9, and
-  E2E-119.
-
-## 2026-08-07 — Empty home uses direct bottom task entry
-
-- Empty chat home uses a direct bottom composer and keeps the hero and optional
-  onboarding content in one scrollable region.
-- The home composer is a bottom-reserved sibling of that region, so it remains
-  visible at the bottom while checklist content scrolls independently on short
-  windows.
-- Decision D204 and ADR 0066 define the layout. See
-  `04-ux/01-ui-ia.md`, `04-ux/07-ui-design-system.md`,
-  `04-ux/08-component-spec.md`, and E2E-063 / US-UI-64.
-
-## 2026-08-07 — Empty home gains developer starter guidance (superseded)
-
-- The empty home now presents four compact, localized developer starters under
-  the hero so the middle surface is useful without becoming a marketing panel.
-- Activating a starter pre-fills and focuses the composer. It does not send a
-  prompt or create a session turn, and short-window scrolling still preserves
-  access to every block.
-- Decision D205 defined this amendment to D204 before D206 superseded it. See
-  `04-ux/01-ui-ia.md`, `04-ux/07-ui-design-system.md`,
-  `04-ux/08-component-spec.md`, and E2E-063 / US-UI-64.
-
-## 2026-08-07 — Empty home removes developer starter cards
-
-- The empty home no longer renders development task cards, starter glyphs, or
-  contextual quick actions.
-- The hero, optional onboarding checklist, and direct bottom composer remain;
-  task entry starts directly in the composer.
-- Decision D206 supersedes D205 while retaining D204's scrollable layout. See
-  `04-ux/01-ui-ia.md`, `04-ux/07-ui-design-system.md`,
-  `04-ux/08-component-spec.md`, and E2E-063 / US-UI-34 / US-UI-48.
-
-## 2026-08-07 — Work panel gains a direct keyboard entry point
-
-- `Cmd/Ctrl + J` is a customizable renderer shortcut named `openWorkPanel`.
-  It reveals the active session's retained work-panel context at the committed
-  width without creating a resource tab; the context menu remains the place to
-  create Review, Terminal, Browser, or Files. No active session and the
-  Settings page are no-op contexts. *(Open-only clause amended by D221: the
-  shortcut also collapses the visible panel.)*
-- Artifact-driven resource creation, session ownership, background-event
-  isolation, collapse behavior, and width persistence remain unchanged.
-- Decision D207 supersedes D128's no-global-shortcut clause and amends D142's
-  no-launcher presentation. See ADR 0068, `04-ux/01-ui-ia.md`,
-  `04-ux/08-component-spec.md`, `04-ux/09-interaction-patterns.md`, and
-  E2E-056.
-
-## 2026-08-10 — Native path mistakes recover without false turn failure
-
-- Read is file-only, Glob is directory-only, and Grep accepts a file or
-  directory; directory Read errors include structured Glob recovery args.
-- Recovered tool errors remain visible on their own rows but no longer turn the
-  containing processing group into a terminal failure surface.
-- D185's deferred Agent search tools remain unchanged. Decision D208 and ADR
-  0069 define the compatible tool and transcript contracts.
-
-## 2026-08-10 — Composer file references use compact draft chips
-
-- Completed workspace-file selections and pasted session-scratch files now live
-  as renderer-owned, session-scoped references instead of exposing their
-  canonical paths in the textarea.
-- The composer shows only removable leaf-name chips. Full paths remain available
-  to tooltips and assistive technology, and duplicate leaf names retain distinct
-  canonical identities.
-- Immediately before the existing submit dispatcher, references serialize after
-  visible text with the unchanged quoted-or-unquoted `@path` grammar. Reference-
-  only sends, slash templates, and Agent/Plan/Goal aliases keep their existing
-  behavior; failed sends retain both text and references.
-- An accepted send retains only an in-memory, session/turn-scoped copy of its
-  pre-serialization draft while unanswered smart Stop remains possible. That
-  Stop restores the original text and chips; after reply content begins, abort
-  preserves the partial transcript and restores no draft.
-- `ComposerPastedFile.name` is the sanitized original leaf label, while `path`
-  keeps the UUID-backed absolute storage name. Clipboard bytes, scratch
-  containment, cleanup, host RPC, storage schema, and provider payloads remain
-  unchanged.
-- Decision D209 and ADR 0070 amend the draft-presentation clauses of D124 / ADR
-  0024 and D197 / ADR 0059. See `03-runtime/01-ipc-protocol.md` §13c,
-  `03-runtime/03-tools-and-permissions.md` §4b,
-  `04-ux/07-ui-design-system.md` §8.1, `04-ux/08-component-spec.md` §11.7–11.8,
-  `04-ux/09-interaction-patterns.md` §8a, and E2E-102/E2E-102a.
-
-## 2026-08-11 — Global corners use an Apple-inspired shape hierarchy
-
-- Fixed radii use a regular 4/6/8/10/12/14/16/18/20/24px ladder. Compact and
-  medium desktop controls use rounded rectangles; explicit pill and circle
-  tokens remain reserved for semantic capsules, equal-width icon controls,
-  switches, tracks, avatars, and dots.
-- Nested surfaces follow Apple's concentricity rule when their corners align:
-  the outer radius equals the inner radius plus the inset between their edges.
-  Structural full-width shell panels remain square.
-- The composer keeps its 20px visible radius through the shared radius scale.
-  Experimental `corner-shape` rendering is deferred because Electron 37's
-  Chromium 138 runtime does not support it.
-- Decision D210 amends D072's previously pixel-preserving radius ladder without
-  changing its token-only enforcement. ADR 0071 records the rationale. See
-  `04-ux/07-ui-design-system.md` §6.2 and US-UI-72.
-
-## 2026-08-11 — Global plugin launcher and uninterrupted next-turn preparation
-
-- Option+Space on macOS and Alt+Space on Windows/Linux opens a centered,
-  frameless plugin launcher. It searches launchable panels by Chinese name,
-  full pinyin, pinyin initials, normalized name/id, and description, then opens
-  the highlighted result through the existing panel host.
-- During an active answer the composer draft and mode, thinking, and permission
-  choices remain editable for the next turn, while Send remains disabled. The
-  renderer flushes only the newest full choice after the host reports idle.
-- User-stopped partial responses retain elapsed duration and exact provider
-  output when present; absent final usage falls back to a visibly approximate
-  output count so generation throughput survives persistence and reload.
-- Decisions D211/D212 and ADRs 0072/0073 define the native-window, IPC,
-  in-flight configuration, and transcript metadata contracts. See
-  `03-runtime/01-ipc-protocol.md`, `03-runtime/02-agent-runtime.md`,
-  `04-ux/07-ui-design-system.md`, `04-ux/08-component-spec.md`,
-  `04-ux/09-interaction-patterns.md`, and E2E-120.
-
-## 2026-08-12 — Plugins can request and send native notifications
-
-- `pi.ui.notify` remains an in-app Toast for compatibility. Plugins with the
-  existing `notify` permission gain `getNotificationPermission`,
-  `requestNotificationPermission`, and `showNativeNotification` APIs.
-- Native plugin notification objects remain owned by Electron main. The API
-  returns a best-effort `granted` / `denied` / `unknown` / `unsupported` state
-  because Electron has no cross-platform read-only permission query. Native
-  plugin notifications do not create durable task inbox rows or session
-  activation events.
-- Decision D213 and ADR 0074 define the public API and the separation from
-  D117's application-owned task notification contract. See
-  `07-plugins/01-plugin-system.md`, `07-plugins/03-plugin-api.md`,
-  `07-plugins/13-plugin-permissions-matrix.md`, and E2E-122.
-
-## 2026-08-12 — Development plugins get an explicit permission-ceiling reload
-
-- Automatic development-plugin reloads continue to reject manifest permission
-  additions, preserving the no-silent-widening boundary.
-- The Plugins page now offers Reload for `source: "dev"` rows. The new
-  `plugin/reload` invoke resolves the registered folder, reloads it through the
-  existing Electron runtime path, and re-arms the watcher with the current
-  declared permissions as its new ceiling.
-- Decision D214 and ADR 0075 define this additive renderer/main IPC surface.
-  Host RPC and storage schema versions remain unchanged; see
-  `07-plugins/10-plugin-devex.md`, `07-plugins/12-plugin-ipc-and-host-services.md`,
-  and E2E-022B.
-
-## 2026-08-12 — Windows reserves the plugin launcher chord
-
-- Windows' `Alt+Space` system-menu reservation can cause Electron's global
-  shortcut registration to fail while the application is unfocused. The host
-  core now owns a narrow low-level keyboard hook for the default binding,
-  consumes the chord, and emits `keyboard.shortcut` to Electron. Electron
-  toggles the existing launcher window; custom bindings continue to use the
-  normal Electron global shortcut path.
-- Decision D215 and ADR 0076 define this additive host integration. Protocol
-  version 9 and storage schema 11 remain unchanged.
-
-## 2026-08-13 — Plugin launcher renderer warms during startup
-
-- Electron starts creating and loading the retained plugin launcher as soon as
-  Electron is ready, before backend/plugin boot completes, while keeping the
-  window hidden.
-- Shortcut delivery during warm-up joins the same in-flight creation promise;
-  failed warm-up remains retryable, and each visible invocation still refreshes
-  the plugin catalog. macOS reveals the panel through one normal activation
-  path, without a redundant application focus steal or window-stack move.
-- Decision D217 and ADR 0080 supersede only D211/ADR 0072's first-use lazy
-  creation clause. IPC, host RPC, protocol v9, and storage schema v11 are
-  unchanged.
-
-## 2026-08-12 — Approval cards focus on the artifact and remember the mode
-
-- Plan/Goal approval cards now show only the title, host-created artifact
-  opener/path, Reject, and Approve. Submitted question/description, status,
-  validity/deadline, and inline warnings are not rendered.
-- The selected Ask / Accept edits / Auto approval mode is remembered in
-  renderer-local device preferences and becomes the next approval's default;
-  Ask remains the safe fallback.
-- Title-derived artifact filenames preserve Unicode alphanumeric characters so
-  localized plan titles remain recognizable. The host's existing internal
-  deadline remains a compatibility/fail-closed boundary but is not exposed by
-  the approval card.
-- Decision D215 and ADR 0076 amend D189/ADR 0053. Protocol and storage versions
-  remain unchanged.
-
-## 2026-08-14 — Plugin launcher remembers recently opened plugins
-
-- The shortcut-invoked launcher records every successfully opened plugin id in
-  renderer-local `localStorage` and shows an empty query in most-recently-used
-  order, so the last opened plugin stays one Enter away.
-- Typing keeps search relevance authoritative and uses recency only as a
-  tiebreaker between equally relevant matches; corrupted or unavailable storage
-  degrades to the existing name order without breaking launching.
-- Decision D219 refines D211's presentation. IPC, host RPC, protocol v9, and
-  storage schema v11 remain unchanged.
-
-## 2026-08-14 — New task stays out of history until it carries input
-
-- Clicking New Task now opens an unpersisted draft: the renderer no longer
-  calls `session.create` (or reuses an old empty draft) at click time. The
-  first message — or pasted file attachments, which need a session to attach
-  to — materializes the session, which then appears in the sidebar history
-  titled with the prompt.
-- Composer toolbar selections made before the first message (mode, thinking
-  level, permission mode, model) are retained on the draft and applied when
-  the session is created; a toolbar-only interaction creates no history row.
-- The sidebar history filter drops sessions whose title is still a default
-  untitled value, which hides legacy empty drafts created before this change
-  as well as any future accidentally empty sessions.
-- Decision D220 supersedes the empty-draft reuse clause of D088/D093: there is
-  nothing to reuse because no draft session exists until first input. Protocol
-  v9, host RPC, and storage schema v11 are unchanged; the change is confined
-  to the renderer store, Composer, and Sidebar.
-
-## 2026-08-21 — New Task creates an immediate durable empty slot
-
-- New Task now resolves the current project or Temporary group by its most
-  recent non-archived session. An empty latest session is selected and reused;
-  a non-empty latest session causes one real empty session to be created,
-  refreshed into the sidebar, and selected before the first prompt.
-- The renderer serializes same-group New Task requests so rapid repeated clicks
-  cannot race multiple empty-session inserts. The rule is shared by project
-  groups and path-less Temporary sessions; an older empty row is intentionally
-  untouched when a newer non-empty session is the latest.
-- `SessionSummary.messageCount` is derived by host-core from `sessions.last_seq`
-  and replaces title heuristics as the empty predicate. Empty rows are visible;
-  title localization and manual renaming remain presentation concerns.
-- Decision D252 supersedes D220 and ADR 0084. The startup home remains an
-  unpersisted renderer draft, but explicit New Task is eager and durable.
-  `messageCount` is additive inside protocol v9; storage schema v11 is
-  unchanged. See ADR 0113 and E2E-011b / E2E-011d / E2E-011e.
-
-## 2026-08-14 — The work panel shortcut toggles instead of only opening
-
-- `Cmd/Ctrl + J` (`openWorkPanel`) now collapses the visible work panel as well
-  as revealing a closed one, going through the same store action as the header
-  collapse control. Collapsing retains the session's tabs, active resource,
-  Browser resource, and committed width, so a second press restores the
-  previous surface.
-- The shortcut id stays `openWorkPanel` so existing keybinding overrides keep
-  working; only the Settings → Shortcuts label changes to describe toggling.
-- The no-active-session and Settings no-op contexts, artifact-driven resource
-  creation, session ownership, and background-event isolation are unchanged.
-- Decision D221 amends D207 and reverses ADR 0068's rejected toggle
-  alternative; D128's and D142's remaining clauses stand. See ADR 0085,
-  `04-ux/01-ui-ia.md`, `04-ux/08-component-spec.md`,
-  `04-ux/09-interaction-patterns.md`, and E2E-056. Protocol v9, host RPC, IPC
-  channels, and storage schema v11 are unchanged.
-
-## 2026-08-14 — A recorded change is a list row, not a card
-
-- The review change card flattens into a single line on the `.tool-row` rhythm
-  (24px row, disclosure caret, mono path, `+`/`−` counts on the right): the 1px
-  border, 2px status rail, icon plate, status pill, second meta line, shadow,
-  and light-theme white fill are all gone, leaving hover fill as the only row
-  chrome. The 280px-default Review panel was spending most of its width on that
-  chrome instead of on the path.
-- Status now travels as a Git-style letter (`A`/`M`/`D`) tinted by the existing
-  per-status accent, so it is never carried by color alone; the localized status
-  word — plus the rolled-back state, which the row shows as a strikethrough —
-  stays in the row's accessible name. The expanded hunks, hash-guarded rollback,
-  `aria-expanded`/`aria-controls` disclosure, and message ownership are
-  unchanged; rollback becomes a borderless text action.
-- The Review tab's summary bar loses its icon, tinted band, and pill border,
-  and the tab body drops its inset fill so the list reads flat. The Git-diff-era
-  `.diff-file*` rules that no surface had rendered since the Review tab became a
-  session change history were deleted (`.diff-file-counts` survives, renamed
-  `.diff-counts`).
-- Decision D222 refines the presentation of D097's Review tab and the
-  message-owned card; the review truth model, rollback semantics, and panel
-  ownership rules stand. Presentation-only: see `04-ux/08-component-spec.md`
-  §4.2/§4.4/§4.5 and §5. Protocol v9, host RPC, IPC channels, and storage
-  schema v11 are unchanged.
-
-## 2026-08-14 — PI-Desktop stays a regular macOS application
-
-- The plugin launcher window asked Electron for `visibleOnFullScreen` without
-  `skipTransformProcessType`, so Electron ran
-  `TransformProcessType(kProcessTransformToUIElementApplication)` on the whole
-  process and PI-Desktop vanished from the Dock and Cmd+Tab. ADR 0080's boot
-  warm-up made that happen on every launch. The launcher now passes
-  `skipTransformProcessType: true`; the process type is never transformed, and
-  `app.dock.hide()`/`app.setActivationPolicy` remain forbidden in Main.
-- The launcher keeps `canJoinAllSpaces` and `FullScreenAuxiliary`: it still
-  covers every regular Space and PI-Desktop's own fullscreen window. Overlaying
-  another application's fullscreen Space is given up — macOS reserves it for
-  accessory apps — and invoking the launcher from one activates PI-Desktop.
-- macOS activation restores the shell from `did-become-active` as well as
-  `activate`, gated on a booted, non-quitting app with no visible window, so
-  Cmd+Tab and App Exposé resurface a tray-hidden window (D216/ADR 0078) while
-  launcher and plugin-panel activations leave the main window where it is.
-- Decision D223 constrains ADR 0072's launcher window and completes D216's
-  restore paths; ADR 0080's warm-up and launcher latency budget stand. See
-  ADR 0086, `03-runtime/07-process-model.md` §5, and E2E-127. Protocol v9, host
-  RPC, IPC channels, and storage schema v11 are unchanged.
-
-## 2026-08-14 — Revealed work panel with no resource lists its four tools
-
-- `Cmd/Ctrl+J` reveals the panel without creating a tab, which left the body as
-  blank space below the title bar. The body now renders an empty state — tiled
-  icon, title, one line of copy — followed by the same four tools the header
-  menu lists (Review, Terminal, Browser, Files) as plain 28px entry rows.
-- A row calls the same create-or-select path as its menu counterpart, so it
-  cannot produce a duplicate tab. The rows exist only while the body has no tab
-  at all; the shortcut itself still creates nothing, keeping D128's
-  artifact-driven entry model intact — the rows are a user choice, not a side
-  effect of revealing the panel.
-- The empty body is not exposed as a `role="tabpanel"` because no tab labels it;
-  its rows are buttons inside a `role="group"` labelled "Tools".
-- All panel empty states (the no-resource body and each tab's own) now share one
-  `WorkTabEmpty` component on the proportions the rest of the app already uses
-  (`.ext-empty`, `.projects-empty`): 38px round tiled icon, title, muted copy
-  wrapping at 34ch instead of 48ch because the panel can be 244px wide.
-- Entry rows stay restrained — hover fill and a focus ring, no cards, no hero
-  art, no large icons — so this does not reintroduce what D206 removed from the
-  empty home, and it stays inside design-system §14's "no marketing-style empty
-  states".
-- No action button in the "open a project" empty states: `openProject()` resets
-  the panel context and hides the panel, so the button would undo the surface
-  that offered it.
-- Decision D224 is renderer-only. Protocol, host RPC, and storage schema are
-  unchanged.
-
-## 2026-08-14 — Context usage inspector opens on click
-
-- The inspector trigger no longer opens on `pointerenter` or focus. A click —
-  or `Enter`/`Space` on the focused button — toggles the panel, and the 140ms
-  hover-grace close timer that kept it alive between trigger and panel is
-  deleted with it. Reading a token breakdown, scrolling the tool list, and
-  selecting text inside the panel all outlast a pointer that wanders off, which
-  the hover model punished.
-- Dismissal is explicit: a second activation, a capture-phase pointerdown
-  outside both trigger and panel, or `Escape`, which also returns focus to the
-  trigger. The existing rule that scrolling the trigger out of view closes the
-  panel stands, as does the body-level collision-aware placement (ADR 0047 §6).
-- The panel stops being a tooltip. It carries `role="dialog"` with the localized
-  `Context` label; the trigger swaps `aria-describedby` for
-  `aria-haspopup="dialog"` and keeps `aria-expanded`/`aria-controls`. Keyboard
-  users gain a stable panel instead of one that vanished on blur.
-- Decision D225 amends D184/ADR 0047 and is renderer-only. Protocol, host RPC,
-  and storage schema are unchanged.
-
-## 2026-08-14 — A run row's command lives in its head, not in its body
-
-- Expanding a `run` row opened with the command it had just printed in its
-  collapsed head, so the first thing the reader met was the line they already
-  had, and the output they expanded for started below it. The body now carries
-  only the channels the command produced (Output, Errors); the command appears
-  once, in the head.
-- The head therefore grows the two things the body no longer offers. A copy
-  button beside the chevron yields the command as it was written — the head's
-  summary is squeezed onto one line, so it is not what gets copied — and the
-  outcome is stated in words (`Done`, `Failed`, `Denied`, `Working…`) with a
-  dot tinted to match. The dot pulses while the command runs and replaces the
-  row's spinner; the label carries the meaning, so the tint is decoration and
-  `prefers-reduced-motion` stills it.
-- Withholding the command is gated on `hideSummaryArg`, the option that means
-  "the collapsed row already shows this argument". `PermissionCard` builds its
-  presentation without it and so keeps showing the command it is asking about,
-  which is the whole point of that card. The generic argument fallback is
-  suppressed for the same reason: a command withheld because the head shows it
-  must not return as an argument the moment it prints nothing.
-- The head is a flex row holding the disclosure button, the copy button, and a
-  pointer-only chevron, because a button cannot nest inside a button. Hover fill
-  moved from the header to the head so it does not stop short beneath the new
-  controls, and `:has()` keeps a row with nothing to expand unfilled. Copy and
-  chevron are quiet until hover, focus, or expansion; the status label is always
-  visible. The chevron duplicates the header for pointers only
-  (`aria-hidden`, `tabIndex={-1}`), and the visible status doubles as the row's
-  live region, so the outcome is announced once rather than twice.
-- This replaces the withdrawn in-place terminal card: reverted for reproducing
-  panel chrome inside the transcript. The row keeps its standard disclosure
-  shape and gains only what the reader was missing.
-- Decision D226 refines D192's structured tool presentation and is
-  renderer-only. Protocol, host RPC, IPC channels, and storage schema are
-  unchanged. See `04-ux/08-component-spec.md` §9.2/§9.3/§9.5/§9.10 and E2E-129.
-
-## 2026-08-14 — A run row reports what the command did
-
-- The row's outcome was the tool call's status, so a command that exited 1 could
-  read `Done` whenever a layer forgot to flag the call as failed. It is now read
-  from the shell's own report: `exitCode` non-zero is `Failed`, a killed shell
-  that reports no code at all is `Failed`, and only `exitCode: 0` is `Done`. The
-  host already applied that rule when marking Bash results; the row no longer
-  depends on it having been applied upstream.
-- Tools that report no exit code fall back to the call's status. A row with
-  neither — an import, a half-written message — states nothing rather than
-  claiming success, and hands the announcement back to the hidden live region.
-  The auto-open on failure follows the derived outcome, so a failing command
-  opens its own row whichever layer noticed.
-- The expanded body loses its card. A `run` row's blocks drop the heading, the
-  border, the fill and the per-block copy button, leaving the output as plain
-  monospace text that reads like the terminal it came from. The 260px cap and
-  its scroll stay: a long build must not bury the rest of the transcript.
-- Dropping the headings would have left `Errors` distinguished by tint alone, so
-  each channel's name is still rendered for assistive technology — visually
-  hidden, semantically present.
-- Decision D227 refines D226 and is renderer-only. Protocol, host RPC, IPC
-  channels, and storage schema are unchanged. See
-  `04-ux/08-component-spec.md` §9.2/§9.3/§9.5/§9.10 and E2E-129.
-
-## 2026-08-14 — Mid-stream rate limits use the bounded retry
-
-> Superseded by D245 on 2026-08-19; the one-retry behavior below is retained as
-> the historical decision and is no longer the active provider policy.
-
-- A mid-stream HTTP 429 is now classified as retryable `PROVIDER_RATE_LIMITED`
-  and joins `STREAM_FAILED`, `NETWORK_ERROR`, and `TIMEOUT` in the runtime's
-  same-turn bounded replay path: one 750 ms abortable backoff, the failed
-  assistant is removed from model context, and the turn is replayed once with
-  the same visible assistant bubble.
-- The retry budget is unchanged — one same-turn retry per prompt. A second 429
-  remains terminal and emits the normal assistant error plus lifecycle `error`
-  event with `retryAttempt: 1` and `providerStatus: 429` in the details, so the
-  transcript keeps its manual retry action.
-- Request-setup 429s were already covered by pi-ai's one bounded retry that
-  honors `Retry-After` up to the 8-second cap; this closes the post-stream gap
-  where that wrapper can no longer act.
-- Decision D233 refines D186 and is runtime-only. Protocol, host RPC, IPC
-  channels, and storage schema are unchanged. See
-  `03-runtime/02-agent-runtime.md` §5d, `03-runtime/08-error-codes.md`, ADR
-  0091, and E2E-149.
-
-## 2026-08-15 — A stopped mutation loop says so
-
-- D186's repeat guard counted every same-path `Edit` failure alike, so the two
-  failures it allows could both be spent on errors that already told the model
-  what to do next. `EDIT_TAG_MISMATCH`, `EDIT_TAG_UNKNOWN`, and
-  `EDIT_LINES_UNSEEN` each hand back the live tag or the withheld content, so
-  each now gets one free attempt per path. Every other code still counts on its
-  first occurrence, and a write that lands clears that path's history.
-- The guard stops the loop by terminating the tool batch, which pi-agent-core
-  reads as "no more work". The turn therefore ended with a failed tool card and
-  no final message, indistinguishable from a model that chose to say nothing.
-  The runtime now finalizes the assistant row with
-  `MUTATION_RETRY_BUDGET_EXHAUSTED` — retriable, so the transcript keeps its
-  retry affordance — and emits the matching error event, which also records the
-  turn as `error` rather than `completed`.
-- Decision D228 refines D186 and is runtime-only. Protocol, host RPC, IPC
-  channels, and storage schema are unchanged. See
-  `03-runtime/18-line-anchored-edit-contract.md` §9.3,
-  `03-runtime/03-tools-and-permissions.md` §4d,
-  `03-runtime/08-error-codes.md` §3.3, ADR 0089, and E2E-140/E2E-141.
-
-## 2026-08-15 — A file permission carries a range, and a delete is recoverable
-
-- The three fs permissions were workspace-wide switches: `fs.read.workspace`
-  reached `.env`, and `recursive: false` bounded one `fs.remove` call while a
-  `glob` plus a loop reached the whole tree. A permission now says whether a
-  plugin may touch files at all; `manifest.fs` says which ones, per mode, with
-  globs relative to the mode's root. `fs.read` may ask for the whole tree —
-  egress is confined to `manifest.net.domains`, so a broad read no longer
-  carries anything out — but `fs.write` and `fs.delete` are refused a whole-tree
-  pattern at validation time.
-- Every `pi.fs.*` call passes four gates in a fixed order and a later gate can
-  only refuse: declared ∩ granted, `realpath` containment on both sides (so a
-  symlink out of the workspace fails where a string comparison passed), the
-  unconditional credential deny-list plus the host's own data directory, then the
-  declared scope. Outside the scope the user is asked natively — deny / allow
-  once / allow this session — and a session answer lives in memory and dies with
-  the process. A host with no consent service refuses rather than assumes yes.
-- Deletion is bounded rather than scoped alone, because it is the one operation
-  re-running the plugin cannot undo. `own: true` lets a plugin remove what it
-  wrote itself, tracked by a path+mtime ledger in its own data directory and
-  invalidated the moment the user edits the file; anything else needs a declared
-  scope. Removal goes through `shell.trashItem`, stays non-recursive, and is
-  braked at 50 removals per rolling minute. The host copies none of the user's
-  data to provide the undo — the operating-system trash is the whole mechanism.
-- `root: "userSelected"` trades standing power for reach: `pi.fs.requestDirectory()`
-  asks the user to pick a directory, needs no manifest scope inside it, and the
-  handle is memory-only. This is what keeps whole-disk plugins possible without
-  a permanent grant.
-- The pre-scope names still install and are downgraded on load: `fs.read.workspace`
-  keeps the whole tree, `fs.write.workspace` can write nothing until the manifest
-  says where, `fs.delete.workspace` becomes `own: true`. Capability is reduced
-  rather than a hole left open; the marketplace preflight and `pi-plugin check`
-  both name the downgrade so an author sees it before a user does.
-- Decision D229 continues ADR 0008 D009 and implements the confirmation policy
-  `07-plugins/13-plugin-permissions-matrix.md` promised but never enforced. The
-  manifest gains `fs`, and `pi.fs.remove` / `pi.fs.requestDirectory` join the
-  brokered API; host RPC and storage schema are otherwise unchanged. See
-  ADR 0088, `07-plugins/02-plugin-manifest-schema.md` §5.2,
-  `07-plugins/04-plugin-security.md` §6, and
-  `07-plugins/13-plugin-permissions-matrix.md`.
-
-## 2026-08-16 — Proactive background subagent delegation
-
-- `Task` stops blocking: it starts a delegate in the background and returns a
-  `delegationId` immediately. Three new Agent-mode core tools drive the
-  lifecycle — `TaskWait` (converge on running delegations, `mode: "any"` +
-  `minCompleted` for early convergence, settled delegations re-readable by id),
-  `TaskList` (status report) and `TaskStop` (stop running delegations). The
-  runtime owns a per-session delegation registry; delegates still running at
-  run end, on parent abort, or on dispose are stopped.
-- The base system prompt gains a `## Delegation` section (when the catalog is
-  non-empty) with positive trigger patterns — parallel exploration, adversarial
-  review, multi-file implementation, context-economy searches, batch sharding —
-  and convergence rules; the `Task` description is rewritten to lead with those
-  triggers.
-- Builtins grow to four: `explorer` is rewritten in the omo-slim style
-  (tool-choice guidance, parallel searches, `<files>`/`<answer>` report shape),
-  and a new write-capable `fixer` implements multi-file changes from a complete
-  spec (`tools: [Read, Glob, Grep, Edit, Write, Bash]`, `maxTurns: 40`,
-  `<summary>`/`<changes>`/`<verification>` report shape).
-- Builtin and user definitions may declare `permission: inherit | ask |
-  accept-edits | auto` (default `inherit`). The sidecar attaches the scope to
-  the delegate's `tools.execute` calls; host-core resolves the call under that
-  mode instead of the session's effective permission mode, with the contract
-  modes' hard deny and the external-path gate still in force. A project
-  definition may not declare a scope: it arrives with the repository, so the
-  declaration is dropped at parse time with a warning and its delegates run
-  under the session's effective mode. `fixer` ships with `accept-edits`, so it
-  writes inside the workspace without prompting while Bash and external paths
-  keep the session's behavior.
-- `TaskWait` blocks the turn, so its `timeoutSeconds` defaults to 600 and is
-  clamped to 900. A timeout returns the finished reports plus a note to call
-  again, so the ceiling costs one round-trip and keeps Stop responsive.
-- `MAX_SUBAGENT_CONCURRENCY` becomes a per-session running cap of 10; `Task`
-  fails with a tool error when the session already runs 10 delegates.
-- Decision D231 amends D201/ADR 0062 and touches the sidecar, host-core's
-  `tools.execute` permission resolution, the builtin definitions, the system
-  prompt, and the renderer's tool presentation mapping. See ADR 0089 and
-  `03-runtime/02-agent-runtime.md` §5f/§5f.1.
-
-## 2026-08-17 — Plugin panels leave the visible surface to plugins
-
-- Plugin panel windows are now frameless on macOS, Windows, and Linux. The
-  preload reserves the same transparent 46px safe area on every platform and
-  draws only a fixed capsule in the top-right with minimize,
-  maximize/restore, and close.
-- The host no longer renders the manifest title or a development safe-area
-  reminder. Plugin authors own the title, toolbar, background, and all other
-  visible panel UI; fixed or sticky UI uses the existing
-  `--pi-plugin-titlebar-height` variable and plugin-owned drag regions can use
-  `-webkit-app-region: drag`.
-- Decision D234 amends D218 / ADR 0081 and D232 / ADR 0082. The private
-  sender-validated control channel, closed Shadow DOM, localized labels,
-  theme-adaptive capsule, `window.pluginBridge`, protocol v9, and storage
-  schema remain unchanged. See ADR 0092, `07-plugins/01-plugin-system.md`,
-  `04-ux/07-ui-design-system.md`, and E2E-024D.
-
-## 2026-08-17 — Plugin panels keep a strict 46px drag band
-
-- Plugin panels reserve exactly 46px for a transparent host drag band on every
-  platform. Normal-flow content is offset by that value, and clicks in the
-  band are unavailable outside the capsule.
-- The host renders no panel title. Development panels show a localized,
-  non-interactive reminder that the top 46px is drag-only; production panels
-  keep the reminder hidden. The minimal capsule stays fixed at the top-right
-  inside the band with minimize, maximize/restore, and close.
-- Decision D235 amends D234 / ADR 0092. The page-adaptive capsule keeps its
-  closed Shadow DOM, localized labels, focus and reduced-motion behavior,
-  private sender-validated control channel, `window.pluginBridge`, protocol
-  v9, and storage schema. See ADR 0093 and E2E-024D.
-
-## 2026-08-18 — One desktop instance per data directory
-
-- Launching PI-Desktop while it is already running no longer starts a second
-  app. Electron main takes the single-instance lock before it touches the data
-  directory, and the duplicate launch quits before it creates a window, a tray,
-  a child process, or a log line.
-- The running instance answers the relaunch by restoring and focusing its main
-  window through the tray's Show path, so a window that was closed or hidden
-  into the tray comes back instead of a second shell appearing beside it.
-- Decision D236 protects D002's single SQLite writer and the singletons around
-  it (outbox, tray, launcher shortcut, updater). The lock is scoped to the
-  installation, so runs with their own `PI_DESKTOP_DATA_DIR` — E2E harnesses,
-  the capture rig, side-by-side profiles — start as before. No IPC, host
-  protocol, or storage schema changed. See ADR 0094,
-  `03-runtime/07-process-model.md`, and E2E-150.
-
-## 2026-08-18 — Vendor-account (OAuth) login
-
-- A provider row can now be authenticated by a vendor subscription. The seven
-  pi-ai OAuth vendors — anthropic, openai-codex, github-copilot, openrouter,
-  kimi-coding, xai, radius — ship at once because the card list is derived from
-  `models.getProviders().filter(p => p.auth.oauth)` rather than hardcoded.
-  `registerBunOAuthFlows()` runs once at startup: pi-ai loads flows through a
-  dynamic import with a variable specifier, which electron-vite cannot bundle.
-- Credentials live in the existing encrypted secret store under the new ref
-  `secret:provider:<id>:oauth`, beside (never instead of) the row's API key.
-  `has_secret` widens to "either credential" so existing readiness checks keep
-  working; `has_oauth` and a non-secret `oauthAccountLabel` are new.
-  `auth_kind` gains `oauth` — it was already a free string, so host protocol
-  v9 and storage schema v10 are unchanged. Deleting a provider deletes both
-  refs and both `secrets_meta` rows.
-- Electron main owns login/logout: `oauth.ts` implements pi-ai's
-  `CredentialStore` over `secrets.*`, serializes `modify` per provider for
-  locked refresh, and bridges `AuthInteraction` to the renderer through
-  `providersOauthVendors/Start/Respond/Cancel/Logout` plus the
-  `pi-desktop/providers/oauth/event` stream. Browser-callback, device-code,
-  select and paste-a-code steps all travel that one stream, so a single dialog
-  renders whatever the vendor asked for and cancel aborts the local callback
-  server or the polling loop.
-- The sidecar resolves auth per request. An OAuth row launches with
-  `apiKey: ""`; the runtime injects `resolveAuth`, which calls the host-proxy
-  method `provider.resolveAuth`. Main answers it locally — never forwarding to
-  host-core — after checking `(sessionId, providerId)` against the binding
-  table it rewrites on every launch, and returns a short-lived `ModelAuth`
-  (`apiKey`/`headers`/`baseUrl`, which is how Copilot pins its per-account
-  endpoint). A refresh token never leaves main, and the sidecar receives
-  strictly less than the long-lived API key it gets for a keyed row.
-- `matches()` needs no new field: a vendor row's `apiKey` is permanently `""`
-  and the per-launch `resolveAuth` closure disappears through `JSON.stringify`,
-  so an OAuth session reuses its warm runtime across turns.
-- Model discovery and the connection test go through the account:
-  `providers.listModels` reads `models.getAvailable` (which applies the
-  vendor's own `filterModels`, so Copilot lists what the subscription
-  includes), and the test proves the account by resolving auth instead of
-  probing `/models`. A row's `apiStyle` follows the selected model — Copilot
-  spans wire APIs — and two styles are added: `openai_codex_responses` and
-  `pi_messages`.
-- Settings → Model configuration gains a Vendor accounts section above the
-  provider list; a signed-in row shows its account label and default model, and
-  its edit dialog exposes only those non-secret fields instead of API-key inputs.
-- Decision D237 extends D028/D031 and touches host-core secrets and providers,
-  Electron main, the agent runtime's provider binding, and the settings UI.
-  See ADR 0095 and `03-runtime/14-secrets-storage.md`.
-
-## 2026-08-18 — Independent vendor OAuth accounts
-
-- D240 amends D237 / ADR 0095. The provider row id is the OAuth account
-  identity, and every login creates a new row even when `vendorKey` is the same
-  as an existing account. Each row owns its own pi-ai collection, credential
-  store, refresh serialization chain, and `secret:provider:<id>:oauth` ref.
-- Settings now has one owner per concept: Vendor accounts renders and removes
-  OAuth rows; AI services renders API-key/custom rows only. A connected OAuth
-  row remains selectable in the default model control, while removing it clears
-  or repairs a default that points at the deleted id.
-- The sidecar binds a set of exact OAuth provider ids and main resolves auth by
-  that id. Subagent vendor/name aliases are accepted only when unique, so a
-  duplicate vendor account cannot be selected accidentally. See ADR 0098,
-  `03-runtime/11-provider-model-system.md`, and E2E-151.
-
-## 2026-08-18 — Builtin subagents inherit the parent permission mode
-
-- The builtin `fixer` no longer declares `permission: accept-edits`; like the
-  other builtins, it defaults to `permission: inherit` and uses the parent
-  session's effective permission mode.
-- In `auto`, builtin delegate calls therefore auto-allow the same in-root,
-  high-risk, and explicit external-path operations as the parent. `ask` and
-  `accept-edits` keep their existing approval boundaries, and explicit
-  non-`inherit` scopes on eligible builtin or user definitions remain
-  intentional overrides.
-- Decision D242 amends D231 / ADR 0089. Host-core's external-path gate and
-  containment checks are unchanged; the fix removes an accidental builtin
-  scope override rather than weakening the security boundary. See ADR 0100,
-  `03-runtime/02-agent-runtime.md` §5f/§5f.1, and E2E-142.
-
-## 2026-08-18 — Model-aware image attachment transport
-
-- Clipboard images remain compact structured composer references instead of
-  being inserted as base64 or forced into visible `@path` text. Electron main
-  validates the source against the session roots and stores image bytes under
-  `<data>/attachments/<sha256>`; the durable user message stores only the ref,
-  kind, name, MIME type, and size.
-- The exact pi-ai model record owns visual capability. A model with
-  `input.includes("image")` receives eligible images as transient image blocks
-  through the sidecar. Unknown/custom models, non-vision models, and images
-  above the 10 MB inline bound receive a safe scratch/project path fallback;
-  replayed content-store images use a session `replayed/` copy. An explicit
-  `supportsImages` binding override may enable or disable the published image
-  capability for that exact endpoint; discovery cannot promote an unknown model
-  without such an override.
-- Decision D243 amends the image portion of D197 / ADR 0059, and D392 / ADR 0218
-  amends its capability-resolution rule. It fixes the
-  observed GPT vision gap without moving provider logic into the renderer or
-  putting binary data into host persistence. See ADR 0101,
-  `03-runtime/01-ipc-protocol.md` §5.1/§13c,
-  `03-runtime/04-data-storage.md`, `04-ux/08-component-spec.md` §11.7–11.8,
-  and E2E-102c–102e / E2E-163.
-
-## 2026-09-11 — Effective image-input overrides across Composer and transport (D392)
-
-- Advanced model settings persist `supportsImages` per provider/model binding as
-  a three-state value. `null` or an absent value follows the published model
-  record; `true` or `false` explicitly enables or disables image input for that
-  endpoint.
-- Composer model rows, attachment status, and Electron main transport all use
-  the same effective binding capability. The shared published `ModelInfo` is
-  not mutated, and unknown/custom models remain conservative without an explicit
-  override.
-- Decision D392 amends D243 / ADR 0101. See ADR 0218,
-  `03-runtime/13-model-catalog-and-selection.md` §11.2,
-  `04-ux/08-component-spec.md` §11.7–11.8, and E2E-163.
-
-## 2026-08-19 — models.dev is the primary model catalog
-
-- D266 amends D136 / ADR 0027. Electron main loads the public
-  `https://models.dev/api.json` catalog with a bounded timeout and matches
-  provider records by vendor key or normalized API URL. Settings, Composer,
-  and runtime model metadata use the matching record first.
-- The catalog maps display names, context/output limits, input modalities,
-  reasoning options, tool-call and structured-output flags, and prices into the
-  existing model surfaces. API keys and OAuth credentials never accompany the
-  request. `catalogSource` distinguishes models.dev from the pi-ai fallback in
-  renderer metadata without changing the host schema.
-- If the remote catalog cannot be loaded or has no matching record, the pinned
-  pi-ai catalog supplies known native models and adapter compatibility. Custom
-  or account-specific provider discovery and explicit IDs remain available
-  after that fallback. See ADR 0133, `03-runtime/11-provider-model-system.md`,
-  `03-runtime/13-model-catalog-and-selection.md`, and E2E-066/E2E-080/E2E-154.
-
-## 2026-08-19 — The work panel becomes a plugin extension point
-
-- Decision D246. A plugin declares work panel surfaces with `contributes.views`
-  (id, plain or localized title, icon token, HTML entry, order), gated by the
-  new low-risk `ui.view` permission. `ui.view` and `ui.panel` are independent,
-  so a plugin may ship docked views, a detached window, or both.
-- A view renders as a main-process `WebContentsView` positioned from a
-  renderer-measured rect — the mechanism the preview browser has used since
-  D100 — and reuses the plugin's existing isolation wholesale: the same
-  sandboxed preload, the same `persist:pi-plugin-<id>` partition as that
-  plugin's panel window, and the same `net.domains` egress filter. The egress
-  policy and partition name are shared functions so the two placements cannot
-  drift apart. An `<iframe>` was rejected because Electron cannot give one its
-  own partition, which would make a docked view strictly less isolated than the
-  detached window it replaces.
-- Icons are tokens from a host-owned closed list, never plugin markup: the icon
-  is drawn inside host chrome, so SVG there would be an injection surface and
-  would let a plugin impersonate the host. An unknown token degrades to a
-  lettered tile rather than failing validation.
-- The view list is filtered by activation scope, unlike contributed themes
-  (D-themes/`pluginThemes`), which stay unfiltered because the selected theme is
-  one global app setting. A view is scoped work, so a project-scoped plugin must
-  not offer it elsewhere. Permission, scope, and entry existence are re-checked
-  on open; the renderer is never the authority.
-- Decision D247. Review, Terminal, and Files move out of the host and ship as
-  bundled first-party plugins on that same `contributes.views` channel, leaving
-  Browser as the only built-in tool. This gives the plugin API a first-party
-  consumer, so a gap in it becomes a shipped-feature bug. It requires new
-  `pi.review.*` and `pi.terminal.*` APIs; `terminal.pty` is classified critical
-  because a PTY is arbitrary execution as the user, and it is accepted
-  deliberately rather than sidestepped with private first-party privileges.
-- See ADR 0104, ADR 0105, `07-plugins/02-plugin-manifest-schema.md` §4/§5/§7,
-  `07-plugins/03-plugin-api.md` §6, `07-plugins/13-plugin-permissions-matrix.md`
-  §2/§3, `04-ux/08-component-spec.md` §5, and E2E-152.
-## 2026-08-18 — Compact context usage summary
-
-- The context inspector keeps the click/keyboard trigger, remaining percentage,
-  used/window counts, turn total, completed-turn speed, exact provider values,
-  aggregate tool summary, checkpoint summary, body-level portal, placement,
-  outside dismissal, and Escape focus return.
-- The default panel becomes a short summary: turn/speed values are unboxed,
-  provider and tool usage become compact inline rows, and the per-tool rows,
-  share bars, source badges, explanatory estimate paragraph, and used-capacity
-  meter are removed. The `~` aggregate tool total still signals estimation.
-- Decision D244 amends D103 / D184 / ADR 0047. Protocol, storage, runtime
-  accounting, and model metadata remain unchanged. See ADR 0103,
-  `04-ux/08-component-spec.md`, and E2E-060d / US-UI-61.
-
-## 2026-08-19 — OpenCode-style bounded provider 429 retry
-
-- HTTP 429 is now handled by one runtime-owned policy in both request setup
-  and stream recovery. The budget is five retries after the initial request,
-  shared across phases and disabled inside pi-ai's nested retry wrapper.
-- Retries stay silent and abortable. `retry-after-ms`, `retry-after` seconds,
-  and HTTP-date values take precedence over the 2-second exponential fallback;
-  positive 25% jitter and a 30-second cap keep the client bounded. Failed
-  response status and headers are captured from fetch because pi-ai's ordinary
-  response callback does not expose setup failures.
-- Main sessions and builtin subagents reuse the visible assistant row and
-  suppress intermediate lifecycle/error events. Exhaustion emits one terminal
-  `PROVIDER_RATE_LIMITED` error with `retryAttempt: 5` and `providerStatus: 429`;
-  aborting during the wait starts no later provider request.
-- Authentication, model-selection, malformed-request, and context failures
-  remain terminal. Other transient provider failures retained one setup or
-  mid-stream retry until D258 gave them their own shared bounded budget.
-- Decision D245 amends D186 and D233. See ADR 0091,
-  `03-runtime/02-agent-runtime.md` §5d, `03-runtime/08-error-codes.md`, and
-  E2E-149.
-
-## 2026-08-19 — Files ships as the first bundled plugin
-
-- Decision D248 implements the first step of D247. Browsing the project is now
-  the bundled `pi.files` plugin, reached through `contributes.views` like any
-  third-party one, and the host's tool list no longer carries a Files entry.
-  Review and Terminal stay built in until their capabilities exist as plugin
-  APIs.
-- Bundled plugins carry `source: "builtin"`. host-core reconciles its registry
-  against the directory Electron reports in `PI_DESKTOP_BUILTIN_PLUGINS_DIR` on
-  every launch, so an app update refreshes version and contributions, while the
-  two pieces of state the user owns — enabled, and activation scope — carry
-  across. They cannot be uninstalled, only disabled, and a plugin dropped from a
-  newer build leaves no orphan registry row.
-- Only the *tool* migrated. A `file:<path>` tab is a transcript artifact — a
-  file link or plan checkpoint the conversation opened — and stays host-owned,
-  exactly like Review's artifacts. The same split will apply when Review moves.
-- Writing the plugin proved D247's premise immediately: `fs.glob` returns a
-  flat, 500-capped file list with no directories and cannot back a lazy tree, so
-  `pi.fs.list` was added under the existing `fs.read` permission. It applies the
-  same guards as `glob` — declared scope, deny-list, protected paths, skipped
-  heavy directories — because a listing is a read; directories are always
-  returned so a narrow scope still yields a navigable tree.
-- See ADR 0105, `07-plugins/03-plugin-api.md` §3/§6,
-  `07-plugins/13-plugin-permissions-matrix.md` §2,
-  `04-ux/08-component-spec.md` §5, and E2E-153.
-
-## 2026-08-19 — The builtin command surface is reduced to five core entries
-
-- Decision D250 freezes the first-party registry at `builtin.session.new`,
-  `builtin.agent.compact`, and the three `builtin.mode.*` entries. Their only
-  builtin composer aliases are `/new`, `/compact`, `/agent-mode`, `/plan-mode`,
-  and `/goal-mode`.
-- Session deletion, abort, project, settings, plugin, log, rename, command
-  palette, reload-window, and DevTools entries are removed from the registry
-  and renderer dispatch. The legacy `newChat`, `openProject`, and
-  `openSettings` aliases are removed as well. Dedicated UI workflows and plugin
-  commands are unaffected.
-- Mode aliases keep the one-shot `/mode <prompt>` behavior: mode changes first,
-  then the remaining text is sent as the visible user turn. Former aliases are
-  no longer supported builtin contracts.
-- See ADR 0106, `04-ux/04-builtin-commands.md`, ADR 0024, ADR 0034, and
-  E2E-117.
-
-## 2026-08-19 — The panel's built-in interactive terminal is removed
-
-- Decision D251 supersedes D249 and the terminal clauses of ADR 0019/0105.
-  The work panel no longer owns an interactive shell; users use an external
-  terminal for interactive shell work.
-- Browser remains the host-built work-panel tool. Files remains a bundled
-  plugin, Review and `file:<path>` remain artifact surfaces, and contributed
-  plugin views remain available beside them.
-- Agent Bash stays non-interactive and transcript-owned: command, output,
-  status, copy behavior, and its terminal icon remain unchanged. The removal
-  deletes only terminal-specific PTY UI, IPC, types, dependencies, packaging,
-  and tests; the desktop protocol version does not change.
-- No plugin PTY permission or bundled-plugin replacement is introduced.
-- See ADR 0108, `04-ux/08-component-spec.md` §5, and E2E-058.
-
-## 2026-08-24 — Windows taskbar minimize keeps the taskbar entry
-
-- Decision D252 amends D216 / ADR 0078 for the native Windows taskbar path.
-  Clicking the focused window's taskbar button completes the ordinary native
-  minimize and keeps the PI-Desktop taskbar entry. Clicking it again restores
-  and focuses the window; clicking the entry while the window is merely covered
-  keeps the existing bring-to-front behavior.
-- Explicit renderer/menu minimize actions remain tray-resident, as do the
-  macOS/Linux native minimize paths. The resident tray, background processes,
-  window bounds, IPC, and storage contracts are unchanged.
-- See ADR 0117, `03-runtime/07-process-model.md`,
-  `04-ux/09-interaction-patterns.md`, and E2E-124.
-
-## 2026-08-24 — Renderer-owned queued prompts and graceful Send now
-
-- Decision D253 adds a per-session, renderer-local FIFO queue for prompts sent
-  while an agent is running. The queue holds the visible prompt and its draft
-  snapshot, supports independent removal, survives session switches, and is
-  intentionally not persisted or replayed after restart.
-- The composer has one submit slot. While a run is active, a non-empty draft
-  renders Send and appends to the queue; an empty draft renders Stop, so the
-  user clears the draft to expose the immediate-stop action. After the owning
-  session's `agent_end`, the renderer drains one item through the existing
-  `agent/prompt` path. Send now promotes one item and calls additive
-  `pi-desktop/agent/stop`; the sidecar sets pi-agent-core's one-shot
-  `shouldStopAfterTurn` flag, so the current assistant response/tool batch
-  completes and the durable turn closes normally before the prioritized prompt
-  starts. Immediate abort keeps its current behavior and never clears the
-  queue.
-- This changes renderer state ownership and adds a public Electron IPC channel,
-  but does not change host-core protocol v9, storage schema v11, or the
-  one-running-turn constraint. See ADR 0118 and E2E-011f.
-
-## 2026-08-24 — Subagents use event-driven idle and duration timeouts
-
-- Decision D254 replaces the default subagent turn cap with a 600-second idle
-  watchdog and a 21,600-second total-duration ceiling. The idle timer resets
-  for turn, message, and tool lifecycle events and pauses during tool
-  execution; the duration timer includes tool execution. (Amended by D260: the
-  idle default is now 300 seconds and every agent event resets the timer.)
-- A timeout returns `timed_out` with `SUBAGENT_IDLE_TIMEOUT` or
-  `SUBAGENT_DURATION_TIMEOUT`, preserving the latest partial assistant output
-  where available. Fatal provider errors, parent aborts, and explicit
-  per-definition `maxTurns` remain unchanged.
-- `maxTurns` is now optional (`none`, `0`, and omission mean unlimited), with
-  explicit values capped at 80. Definitions may override the watchdogs via
-  `idle-timeout` and `max-duration` within their documented bounds; invalid
-  values warn and fall back to defaults. (Amended by D260: the builtins each
-  declare an explicit backstop rather than running unlimited.)
-- Builtin `explorer` gains `Bash` for bounded repository inspection while
-  `code-reviewer` remains read-only. Shared status types, runtime timing,
-  delegation topology, i18n, and E2E coverage expose the new timeout outcome.
-- See ADR 0119, `03-runtime/02-agent-runtime.md` §5f,
-  `03-runtime/08-error-codes.md`, `03-runtime/09-logging-and-observability.md`,
-  and E2E-155.
-
-## 2026-08-25 — Collapsing the work panel restores the base window bounds
-
-- Decision D255 supersedes ADR 0033. The renderer still lays the work panel
-  out as an in-flow flex column, but requests a native reservation equal to the
-  committed panel width before presenting it. Exit keeps the panel mounted
-  until the zero-width reservation succeeds, so folding the right panel returns
-  the application window to its chat-only bounds instead of letting MainChat
-  consume the released column.
-- The target-state reservation planner, constrained-display behavior, Browser
-  measured-bounds sync, Main-owned native edge resize, and session-scoped panel
-  state remain unchanged. See ADR 0122 and E2E-056.
-
-## 2026-08-25 — Window controls use native taskbar minimize
-
-- Decision D256 amends D216 / D252 for Windows/Linux renderer and native-menu
-  minimize actions. The custom top-right minimize button now uses the native
-  OS minimize transition, so the taskbar entry remains available for restore;
-  close-to-tray remains controlled only by the remembered close behavior.
-- macOS native minimize stays tray-resident, and the resident tray, close
-  preference, IPC shape, host protocol, and background lifecycle are otherwise
-  unchanged.
-- See ADR 0123, `03-runtime/01-ipc-protocol.md`,
-  `04-ux/09-interaction-patterns.md`, and E2E-124.
-
-## 2026-08-27 — Agent capability pages become one workbench
-
-- Decision D257 refines D193 / D194 and supersedes D202's page-shape clause for
-  Settings > Agent > Skills / MCP / Subagents. Each page is now one toolbar
-  (segmented level filter with counts, one search field, project picker,
-  primary actions) above one panel divided by level group headers, and all
-  three pages create, edit, and delete through host calls that already existed
-  before this change.
-- Per-row busy replaces page-wide locking, skeletons are first-paint only, and
-  enablement flips optimistically with a revert on host rejection.
-- `skills.reveal` now carries `level` and `projectPath` so a project skill with
-  no global counterpart resolves; the handler still accepts a bare id.
-- Renderer-only apart from that payload widening: no host-core change, no new
-  RPC, no storage or schema change. Every capability-state, precedence, and
-  `.agents` path rule from D193 / D194 / D202 is unchanged.
-- See ADR 0126, `04-ux/06-settings-ia.md`, and E2E-103.
-
-## 2026-08-27 — Release documentation is a version surface (D260)
-
-- Stable app version bumps / tags **must** update every version-bearing
-  surface before the tag: the shipped-locale changelog and its test list, all
-  workspace package versions (including the previously skipped
-  `docs/package.json`), the Cargo workspace + `host-core` lockfile versions,
-  `APP_VERSION`, and the release line stated in `README.md` /
-  `README.zh-CN.md` (D260, extends D164).
-- `scripts/check-release-docs.mjs` verifies the whole set; `scripts/release.mjs`
-  invokes it after bumping and refuses to commit or tag on failure.
-- Codified in the release runbook §4.1, AI development workflow matrix +
-  Definition of Done + forbidden practices, change checklist, and `AGENTS.md`.
-
-## 2026-08-26 — Transient provider failures share a bounded retry budget
-
-- Decision D259 amends D186 / D245 and ADR 0050 / ADR 0091. Non-429 transient
-  provider failures now share one bounded budget of four retries after the
-  initial attempt across request setup and stream delivery, so an upstream
-  gateway 502/503/504 recovers whether it arrives before headers or mid-stream.
-  Only the failed request is replayed; the session and its tool state are
-  untouched.
-- The budget admits `NETWORK_ERROR`, `TIMEOUT`, `STREAM_FAILED`, and retryable
-  `PROVIDER_ERROR`. Non-429 delay honors `retry-after-ms`, `retry-after`
-  seconds, then HTTP-date before a deterministic 1s/2s/4s/8s schedule, capped at
-  8 seconds, and captured headers are kept for every status that can state a
-  delay.
-- The main session, builtin subagents, and one-shot composer enhancement share
-  one policy. The 429 five-retry budget stays separate. Exhaustion records
-  `retryAttempt: 4`.
-- Authentication, model-selection, malformed-request, and context failures
-  remain terminal. No IPC, storage, host protocol, or provider-config change.
-- See ADR 0128, `03-runtime/02-agent-runtime.md` §5d,
-  `03-runtime/08-error-codes.md`, E2E-096, and E2E-149.
-
-## 2026-08-27 — The subagent idle watchdog bounds silence, not slowness
-
-- Decision D260 amends D254. Every agent event re-arms the idle timer, a single
-  streamed token arriving as `message_update` included, so the watchdog fires
-  only on total unresponsiveness. A delegate that keeps producing output is
-  never idle-terminated however slow its turn is, and the pause across tool
-  execution is unchanged.
-- Because the window now measures dead air rather than work, the default idle
-  timeout drops from 600 to 300 seconds, sized from the measured 174-second
-  p99.9 wait between a delegate's last streamed token and its next response
-  rather than from how long work may take. It must stay below the 600-second
-  `TaskWait` default so a genuinely stuck delegate settles as `timed_out`
-  within one wait instead of holding the parent for a full window and beyond.
-  The 21,600-second duration ceiling and the 10–21,600 override bounds are
-  unchanged.
-- `TaskWait` expiry now reports "Still running after Ns" and states that this
-  is not a failure and the delegates keep working, so the parent stops reading
-  an ordinary unfinished wait as a failed delegation.
-- The builtins gain a turn backstop sized to their job — `explorer` 60,
-  `code-reviewer` 50, `test-runner` 40, `fixer` 80 — replacing unlimited turns,
-  so a delegate that loops without converging ends as `truncated` with its
-  partial report rather than running to the duration ceiling.
-- No IPC, storage, host protocol, or provider-config change. See ADR 0129,
-  `03-runtime/02-agent-runtime.md` §5f, `03-runtime/08-error-codes.md`, and
-  E2E-155.
-
-## 2026-08-27 — The mounted transcript is a window, not the loaded history (D261)
-
-- Decision D261 refines ADR 0120 / D258 in the renderer. Those bounded what
-  crossed the IPC boundary and what locating a page costs; the renderer still
-  mounted every row it had paged in and kept it mounted for the session's life.
-- The mounted history becomes a trailing window: 15 rows in the first commit
-  after a session switch, a 60-row steady state, grown 40 at a time. Reaching the
-  top grows the window while it is partial and fetches an older page only once
-  the window covers all loaded history.
-- `content-visibility: auto` was already skipping layout and paint for those
-  offscreen rows, but it retains their React trees, Markdown ASTs, and Shiki
-  token arrays — the wrong resource on a low-memory Windows machine, which is
-  where the chat area was reported as progressively less responsive in a long
-  session. Windowing bounds retained memory and per-frame reconciliation at once.
-- Window growth takes the same pre-paint scroll anchor as a fetched page, because
-  both add height above the reading position. The window resets per session and
-  is clamped to the loaded history, so a stale budget cannot over-mount. The
-  hydration spacer stays scoped to the first commit: a permanent spacer under the
-  steady-state window would put a blank viewport in front of the growth trigger.
-- The conversation minimap is built from the mounted entries. It resolves a click
-  by finding the marker's node in the scroller, so the full set would have drawn
-  dashes that jump nowhere. The tradeoff is that the browser's own find-in-page
-  only reaches mounted rows.
-- No IPC, storage, host protocol, or pagination change. See ADR 0130,
-  `04-ux/08-component-spec.md` §8, and E2E-159.
-
-## 2026-08-28 — Large text pastes become session-scratch references (D262)
-
-- Text-only pastes at or below the persisted `largePasteThreshold` remain
-  native textarea input; the default is 600 characters and valid values are
-  integers from 1 through 1,000,000.
-- Larger text is transferred as exact UTF-8 `text/plain` bytes through the
-  existing paste bridge and stored under the owning session's
-  `<data_dir>/scratch/<sessionId>/pasted/` directory. The Composer inserts a
-  generated `@<temporary-name> ` token at the original caret/selection and
-  keeps its canonical path mapping in the renderer draft, including cached and
-  unanswered smart-Stop snapshots.
-- Dispatch resolves the generated token in place exactly once. It is not
-  appended as a basename, sent as a duplicate structured attachment, or
-  written into the workspace. Existing clipboard file/image chip behavior and
-  scratch cleanup remain unchanged.
-- The setting is an additive app-settings JSON field; host normalization gives
-  older settings the default without a database migration. See ADR 0131,
-  `04-ux/06-settings-ia.md`, `04-ux/07-ui-design-system.md` §8.1,
-  `04-ux/08-component-spec.md` §11.7–11.8,
-  `04-ux/09-interaction-patterns.md` §8a, and E2E-102g.
-
-## 2026-08-28 — A cross-display drag is user intent, not an OS adjustment (D263)
-
-- Decision D263 amends D255 / ADR 0122 in Main. The work-panel reservation is
-  planned from remembered base bounds and reconciled against the last rect Main
-  applied. That reconcile treated every display change as one `displayChanged`
-  boolean and reused the remembered base bounds, which is right for an OS re-fit
-  and wrong for a window the user dragged to another display.
-- Reported as issue #18 and reproducible on every release from 0.10.0: dragging
-  the window across a display boundary made it jump on pointer release. The
-  reconcile was wired to each native `move`, so it ran mid-drag and re-planned
-  from the origin display's base bounds; the target work area then clamped that
-  x to its edge and kept the old display's y. Panel state was irrelevant — a
-  closed panel requests width 0 but still re-plans and calls `setBounds`.
-- The boolean becomes a `DisplayTransition` of `none`, `os-adjusted`, or
-  `user-moved`. `os-adjusted` preserves ADR 0122 verbatim so a constrained
-  display keeps the user's intent and a roomy one restores the full reservation.
-  `user-moved` derives base bounds from where the window now is, with only the
-  origin normalized into the target display's work area. The size is kept even
-  on a smaller display, because base bounds are the restorable intent under ADR
-  0122 and a shrink would be persisted with no way back; the reservation absorbs
-  the shortfall instead.
-- Attribution keys off an unaccounted native `move` stream rather than a
-  deadline, because Electron exposes no drag-begin/drag-end pair for native
-  moves and a deadline would make correctness depend on main-process
-  scheduling and on maximized windows that defer geometry. The `move` handler
-  only marks the pending drag and defers reconciliation until the stream goes
-  quiet, so Main never fights the window server mid-drag. Display topology
-  events clear the marker first, so a hotplug right after a drag stays
-  OS-owned.
-- The same misattribution had been writing stale coordinates to
-  `window-state.json`, reopening the window on the display the user had left. A
-  `user-moved` transition now advances the remembered display key and persists,
-  normalized the same way as the reservation path because a maximized window
-  defers geometry and leaves the save as the drag's only consumer, while
-  `os-adjusted` still refuses to. An unconsumed marker is retired on a deadline
-  so it cannot leak into a later OS display change. A forced Stage Manager recovery clears
-  the pending attribution because it is not user intent.
-- No IPC, storage, or host protocol change; `window/setWorkPanelReservation`
-  keeps its shape. See ADR 0132, `03-runtime/01-ipc-protocol.md`, and E2E-160.
-
-## 2026-08-28 — Composer typing is a measured latency path (D264)
-
-- Per-keystroke lag in the chat composer had three measured causes, all on the
-  typing path and none of them a correctness bug. With the `@` menu open, each
-  keystroke fuzzy-matched up to the whole workspace file index (8000 entries)
-  and then fully sorted every match to display 50 rows; a bounded top-K
-  selection now returns the same rows in the same order for 0.25–0.78 ms per
-  keystroke instead of 2.4–3.0 ms. `filterCommands` keeps its full sort: the
-  command list is small and its comparison is grouped by command kind, where a
-  top-K pass buys nothing.
-- The auto-resize effect forced a `height: auto` measurement probe on every
-  keystroke, and each probe is a synchronous reflow. The probe cannot simply be
-  dropped, because it is the only reading that reveals the draft now needs
-  fewer rows: at a fixed applied height an overflowing box reports that height,
-  not the content's. That is also why reading at the applied height is
-  equivalent while the content overflows — the single `scrollHeight` reading is
-  then the full content height. The probe is therefore reserved for the case
-  where the box may need to shrink: applied height above the minimum and
-  content no longer filling it.
-- Republishing an unchanged `--composer-dock-height` is not free. The property
-  lives on `document.documentElement`, so every `setProperty` invalidates style
-  for the whole document, including the transcript. Skipping the write when the
-  rounded height is unchanged keeps typing inside one row off that path, and
-  height and `overflowY` are written only when the computed value differs from
-  what was last applied.
-- The remaining cost was React identity churn. `Array.prototype.filter`
-  allocates even when it drops nothing, so the reference filters now return the
-  existing array unchanged and the draft-cache serialization effect keyed on
-  `fileReferences` stops re-running per keystroke; the same no-op guard covers
-  the `workspacePath` effect and `clearDraftForKey`. `setCursor` ignores an
-  unchanged value because `onSelect` fires on every caret move, which had made
-  plain arrow-key navigation re-render the composer and re-run autocomplete
-  trigger detection.
-- No IPC, storage, host protocol, or schema change, and no new dependency.
-  Behavior is unchanged: identical menu rows and order, the same 28px one-line
-  floor, and the same seven-row cap. See `04-ux/08-component-spec.md` §11.5 and
-  US-UI-55.
-
-## 2026-08-29 — An expanded delegate run scrolls in place (D271)
-
-- Decision D271 refines D201 / D268 / ADR 0062 in the renderer. Opening one
-  delegation node inlined the delegate's entire run into the parent transcript,
-  so a delegate that made forty tool calls added forty rows at once.
-- Three unbounded surfaces were involved. `.subagent-run` had no height limit,
-  `.tool-fields` was the only detail block without the 260px cap that
-  `.tool-row-content`, `.tool-file-list` and `.tool-match-list` already carried,
-  and D268 had routed the joined `TaskWait` reports — bounded at 50k characters
-  by the runtime — into a `note`, which has no cap either.
-- The scroll deliberately sits on a new inner `.subagent-run-rows` wrapper
-  rather than on `.subagent-run`: the collapse rail is absolutely positioned at
-  `left: -8px`, outside the run's padding box, so an `overflow` on the run would
-  have clipped the rail that marks the delegate-context boundary. The heading
-  stays outside the scroll area so the attribution cannot scroll away from the
-  rows it labels.
-- The scroll area is a labelled, focusable `role="group"`, because a pointer
-  user could scroll it and a keyboard user could not otherwise reach it.
-
-## 2026-08-29 — A lifecycle row is a subagent row (D268)
-
-- Decision D268 refines D201 / D265 / ADR 0062 and ADR 0089 in the renderer.
-  D265 made every `Task` call a full-width delegation card, but left the three
-  lifecycle rows (`TaskWait`/`TaskList`/`TaskStop`) as generic tool rows. Those
-  rows are the only place a settled outcome appears — `Task` returns the moment
-  the delegate starts and says `running` forever — so they were simultaneously
-  the most informative and the least readable part of a delegation.
-- The visible defects were narrow. A lifecycle row is called with delegation
-  ids, so `getToolSummary` printed a bare UUID list; its result payload had no
-  per-tool mapping, so the body fell back to pretty-printed `delegations[]`
-  JSON; and its label read "Delegated", which is what `Task` does, not what a
-  wait or a stop does.
-- The fix reads the roster the runtime already returns. `details.delegations[]`
-  (`TaskWait`/`TaskList`) and `details.stopped[]` (`TaskStop`) carry the agent
-  name, status and registry timestamps, which is exactly what a reader needs:
-  the row summarizes by agent name with repeats counted, badges a rolled-up
-  status from the shared `chat.subagentStatus.*` vocabulary, and renders the
-  roster as a named field table led by the joined reports.
-- Deliberately unchanged: a lifecycle row is still **not** a topology node and
-  still must not inflate the subagent counts (`isDelegationActivityItem`), the
-  runtime and its `delegationId` contract are untouched, and no IPC, storage or
-  host-protocol surface moves. This is presentation only.
-
-## 2026-08-28 — One delegation reads as a card, like a fan-out (D265)
-
-- Decision D265 amends D201 / ADR 0062 in the renderer. That decision reserved
-  the delegation card for two or more `Task` calls in one activity group and
-  left a lone `Task` as a compact tool row. The same work therefore looked like
-  two different features, and the single case — the common one — was the one
-  that lost the outcome, the recorded runtime and the delegate's step count.
-- Every `Task` call in an activity group now renders as a delegation card: root
-  node, connector, one node per delegate. Nothing else about the card changes,
-  so the aggregate header, the live-open-once rule, the node disclosures and the
-  print-the-report-once rule carry over unchanged.
-- The aggregate header is count-aware. English gains `_one` forms for the four
-  status labels; Chinese has a single plural category, so its `_other` forms
-  carry every count and drop the English plural marker that made a one-node card
-  say "1 个 Subagents".
-- No IPC, storage, host protocol, or delegation-runtime change: the card is
-  still derived on both live and reload from the persisted `parentToolCallId` /
-  `agentName` attribution. See ADR 0062 §6, `04-ux/08-component-spec.md` §9.9,
-  and E2E-119.
-
-## 2026-08-28 — The titlebar band is reserved on every platform (D266)
-
-- Decision D266 fixes a macOS-only regression on the destination pages. The
-  46px band at the top of the main pane is an opaque, absolutely positioned
-  `.main-titlebar`, so scrolling route content passes underneath it on every
-  platform. Only `win32` and `linux` padded `.page-frame` for it, and that
-  reservation was framed as a window-controls concern — macOS draws its traffic
-  lights natively, so darwin looked exempt.
-- It was not. The band is opaque regardless of who draws the window controls, so
-  on macOS it covered the Plugins page header: the title row was clipped and the
-  Installed / Marketplace segmented control sat at the window's top edge.
-- `.page-frame` now reserves `--ds-toolbar-height` plus an 8px buffer on darwin
-  as well, matching what `.thread-content` already did for the transcript on all
-  three platforms. The fix covers Plugins, Scheduled, and Pull requests, since
-  they share the frame.
-- Surfaces that stack above the band keep their current treatment: the plugin
-  detail sheet renders at `z-index: 60` and still starts at the top edge, with
-  only `win32` / `linux` dropping below the band to clear the window controls.
-- Renderer CSS only: no IPC, storage, host protocol, or component-structure
-  change. See `04-ux/08-component-spec.md` §2.3 and E2E-087a.
-
-## 2026-08-29 — The project archive is one workbench, not three bands (D267)
-
-- Decision D267 revises D168's presentation for Settings → Project archive and
-  adopts the D257 one-workbench composition already used by Skills / MCP /
-  Subagents: a quiet intro line, one toolbar, one panel.
-- The overview banner is gone. It was a decorative gradient card holding four
-  `--text-xl` counter tiles, which the design system forbids outright. The four
-  page-level counters go with it: every total they carried is already legible
-  from the per-group strip counts in the panel, so restating them above the
-  toolbar duplicated numbers and gave the destination a header no sibling page
-  has. This retires D168's overview-counter requirement along with the
-  `project.statProjects`, `project.statOpen`, `project.statArchived`, and
-  `project.statSessions` keys, which are removed from both catalogs. The intro
-  is now one quiet description line, matching the capability pages.
-- The three per-section panels become one panel: Pinned / All projects /
-  Archived are non-interactive in-panel header strips with their counts, so the
-  page has one elevated frame and no heading nested inside the list. The
-  bespoke sort pill reuses the shared segmented-control primitive, and row
-  geometry matches the capability rows (32px controls, 14px list gap, a 28px
-  row glyph); the external uppercase section labels are dropped.
-- Beyond the four retired counter keys this is presentation only: row anatomy,
-  row menu grouping, search matching, the batch-of-eight session reveal,
-  activation semantics, and accessibility semantics are all unchanged. No IPC,
-  storage, host protocol, or component-ownership change, so no ADR is required.
-- See `04-ux/06-settings-ia.md`, `04-ux/07-ui-design-system.md`, E2E-038, and
-  US-UI-23.
-
-## 2026-08-29 — History continuation keeps the conversation outline reachable (D269)
-
-- Decision D269 amends D108 / D261 / ADR 0130 in the renderer. D261 made the
-  mounted history a trailing window and fed the minimap the mounted entries so
-  no dash could point at a withheld row. That was correct about dashes, but it
-  left the outline with nothing to say about the history it was hiding, and
-  D108's visibility rule then removed the rail entirely whenever the mounted
-  tail had fewer than two markers or fit one viewport.
-- Two transitions make that reachable in normal use. A bounded tail can be one
-  tool-heavy turn that collapses below one viewport, and a fetched older page
-  can land entirely outside the trailing mounted window. Neither necessarily
-  changes `scrollTop`, and the only escalation trigger was a native scroll
-  event, so upward travel could stop with older history still on disk and no
-  rail to navigate with.
-- The outline now stays present while earlier history exists — withheld loaded
-  rows (`hiddenAbove > 0`) or an older host page (`hasMoreBefore`) — and carries
-  one dotted earlier-history continuation at its top. It is a real control, not
-  a message dash: it runs the same two-stage grow-then-fetch path, is disabled
-  and labeled while a page is loading, and never claims a message preview.
-  Ordinary message dashes are still built only from mounted rows, so D261's
-  reachability rule holds exactly.
-- Progress no longer depends on a scroll event. The transcript's existing top
-  loading row is the observed boundary: while it stays inside the near-top band
-  after an underfilled tail, a fetched-but-withheld page, or a window
-  transition, the transcript keeps escalating. The near-top scroll check is
-  unchanged and now shares one threshold constant with the observer.
-- Once no earlier history remains, D108's two-marker-plus-overflow rule applies
-  unchanged, so a completed short conversation still shows no rail. Renderer
-  only: no IPC, storage, host protocol, or pagination change, and the mounted
-  window budgets are untouched.
-- See `04-ux/08-component-spec.md` §7 and §8, ADR 0130, and E2E-159.
-
-## 2026-08-30 — One model picker for both credential kinds (D270)
-
-- Decision D270 refines D237 / D240 in the renderer. Settings → Model
-  configuration carried two copies of the same model picker: the AI service
-  dialog had the full one, and the vendor account dialog had a reduced copy of
-  it that had drifted.
-- The copy shared the list and the `ModelBinding` shape but had no Advanced
-  disclosure, so an account's per-model context window, max output and thinking
-  levels were not editable, and it had no explicit binding persistence — an
-  account could not configure the same model capabilities as an AI service.
-- One shared renderer component now owns row merging, filtering, selection, the
-  custom-model entry, the chosen pane, the Advanced disclosure and the
-  explicit model-binding persistence. Both dialogs render it; only the left
-  pane heading differs, and the vendor dialog additionally passes its saving
-  state. The account dialog grows to the provider dialog's two-pane size and the
-  duplicated chosen-pane / custom-model CSS is deleted. D283 later supersedes
-  the catalog-gating clauses for thinking levels.
-- Renderer only: no IPC, host protocol, storage, or provider-config schema
-  change, so no ADR is required. The single user-visible change is that vendor
-  accounts now offer the same per-model advanced controls and explicit binding
-  persistence as AI services.
-- See `04-ux/06-settings-ia.md`, `04-ux/08-component-spec.md` §19,
-  `03-runtime/11-provider-model-system.md` §10, and E2E-162.
-
-## 2026-08-30 — Quitting stops plugins as a shutdown, not as a crash (D272)
-
-- Decision D272 refines spec 07 §3.1 in the main process. `before-quit` disposed
-  the plugin *watchers* and left the host child processes to be killed by the
-  process teardown that followed.
-- An exit nobody announced is indistinguishable from a crash. Nothing set
-  `disposing`, so the guard at the top of `handleChildExit` never applied and a
-  normal quit ran the crash path per plugin: a `PLUGIN_CRASHED` error log at
-  `exitCode: 0`, a "stopped unexpectedly" toast, and `superviseCrash` scheduling
-  restarts into an app that was closing. The toast arrived twice, because the
-  runtime and the `onPluginCrash` handler each sent one for the same event.
-- The cost was diagnostic. In one local profile 613 of 633 crash reports were
-  this, all within five seconds of `app shutdown`, which left the 20 real ones
-  effectively invisible.
-- `disposeAll()` now owns quit: mark every plugin disposing and cancel its
-  pending restarts first, in one pass, so a child that dies while a sibling is
-  still stopping is already covered; dispose watchers; then stop services and run
-  `onUnload` in parallel across plugins. The sequence is bounded — 1.5s per
-  `onUnload` (shorter than the 5s an explicit unload gets, because the user has
-  asked the app to close) and 3s overall, after which the children are killed
-  outright. The duplicate toast in `onPluginCrash` is deleted.
-- Main process only: no IPC, storage, host-protocol, or manifest change, so no
-  ADR is required. Plugins gain one guarantee they did not have — `onUnload` runs
-  on quit — and the user stops seeing failure toasts on every clean exit.
-- See `07-plugins/05-plugin-lifecycle.md` §3.1.
-
-## 2026-08-30 — A model's habitual argument name is accepted, not corrected (D273)
-
-- Decision D273 refines spec 03 §4 in the agent runtime. The tool schemas named
-  `path` and `pattern`; models sent `file_path` and `query` anyway.
-- The numbers made it a design problem rather than a model problem. Of 1679
-  failed tool calls in one local month, 852 were a parameter-name miss. 724 of
-  those were `Read` called with `file_path` — 87% of every `Read` failure, and
-  enough on its own to put `Read`'s error rate at 11%. `Write` (55), `Edit` (56),
-  `Grep` (13), and `Glob` (4) repeated the pattern with the same two aliases.
-- An argument name is a pretraining habit, not something a description can talk a
-  model out of. The rejection also came from the validator before the call
-  reached the host, so the turn was spent on an error the model had no way to
-  anticipate and, from its side, no reason to expect.
-- `Read`, `Write`, `Edit`, and `BrowserPreview` now accept `file_path` beside
-  `path`; `Glob` and `Grep` accept `query` beside `pattern`. Both spellings are
-  optional in the schema so either one validates, and the runtime folds the alias
-  onto the canonical name before anything downstream sees it — the write-lock
-  key, the `tools.execute` args, and the persisted transcript carry canonical
-  names only, so nothing below this line learns two spellings. Exactly one of
-  each pair is required; the canonical name wins when both arrive.
-- `Bash.timeout` had a second version of the same problem: 69 failures were a
-  timeout in milliseconds (600000, 900000, 1800000) against a field capped at 300
-  seconds. The schema maximum widens to 3600000 — above the largest value
-  observed, 1_800_000 — so a millisecond value validates at all, and the runtime
-  reads a value of at least 1000 as milliseconds, clamped to the honoured
-  300-second ceiling. The threshold
-  is 1000 rather than 300 deliberately: something like 301 is far more likely a
-  seconds value that overshot the cap, and rewriting it to 0.301s would be worse
-  than the error it earns today.
-- Runtime only: no IPC, storage, or host-protocol change. host-core's schemas and
-  its argument parsing are untouched, because the runtime normalizes above them
-  and `tools.list` has no other consumer.
-- See `03-runtime/03-tools-and-permissions.md` §4.
-
-## 2026-08-31 — Retry an unchanged edited prompt (D274)
-
-- Decision D274 amends D137 in the renderer. Confirming a valid user-prompt
-  edit now always dispatches the existing edit-resend/Regenerate path, even
-  when the trimmed text is identical to the original.
-- The inline controls say Retry and Cancel in the active locale. Retry keeps
-  the existing revision archive, identity-based truncation, slash-command
-  expansion, and attachment behavior; Cancel and Escape leave the prompt
-  untouched.
-- Renderer and i18n only: no IPC, storage, host-protocol, or runtime contract
-  change. See ADR 0135, `04-ux/08-component-spec.md`, and E2E-073.
-
-## 2026-08-31 — Preserve the active task boundary across context compaction (D275)
-
-- Decision D275 amends D203 / ADR 0064 in the agent runtime. Checkpoints now
-  persist an opaque `details.retainedTailMode` boundary.
-- While a provider must continue an active tool turn, the checkpoint retains
-  only the latest user message, bounded by the existing 20,000-token limit. At
-  a completed turn boundary, before a new prompt, or for manual compaction, it
-  retains no naked historical user messages; the summary is authoritative and
-  the next prompt is the new task.
-- Legacy checkpoints without the mode normalize to their latest user message.
-  The visible transcript, host-owned storage, and protocol shape are unchanged.
-  See ADR 0136, the runtime/storage/tool-result specs, and E2E-164.
-
-## 2026-08-31 — A visited session keeps its own mounted pane (D276)
-
-- Decision D276 amends D162 and ADR 0130 clauses 4–5. The chat surface mounts
-  one pane per recently visited session, bounded to three, so switching is a
-  visibility swap instead of re-pointing one transcript at different data.
-- A warm switch reveals the destination pane with its own scroll position on the
-  first frame. A cold switch keeps the current pane fully legible under the thin
-  progress track with the composer inert; the opacity dim is removed.
-- First activation still settles at the newest turn; a revisit restores that
-  pane's offset. Hidden panes keep their layout box, stay inert, and perform no
-  follow scrolling, pagination, or measurement.
-- Renderer only: no IPC, storage, host-protocol, or runtime contract change. See
-  ADR 0137, `04-ux/08-component-spec.md`, `04-ux/09-interaction-patterns.md`,
-  E2E-011, E2E-071d, and E2E-071g.
-
-## 2026-08-31 — Concurrent subagents may message each other directly (D277)
-
-- Decision D277 extends D201 / ADR 0062 / ADR 0089 without amending them. A
-  session-scoped mailbox lets concurrent delegates exchange bounded text through
-  one opt-in tool — `Peer(action=...)` — declarable in a definition's `tools:`
-  list. The `action` parameter selects the operation: `send` (with `to?`,
-  `text`, `topic?`, `inReplyTo?`), `inbox` (with `from?`), or `wait` (with
-  `timeoutSeconds?`, `from?`). The three operations were originally three tools
-  (`PeerSend` / `PeerInbox` / `PeerWait`); ADR 0140 folded them into one tool so
-  peer messaging counts and reads as a single capability.
-- It exists because the parent writes every brief before any delegate starts, so
-  it cannot always know the directions are independent. The path lock prevents a
-  torn write but not a stale premise, and relaying notes through a parent that
-  is blocked in `TaskWait` would spend the context delegation exists to protect.
-- Opt-in and default-off: no builtin declares `Peer`, so every existing
-  definition keeps ADR 0062 isolation. A definition declaring only `Peer` and no
-  working tool is refused at `Task` time.
-- Addressing is by agent name, never delegation id; the sender is bound by the
-  runtime at spawn, so `from` is not a model input. The `Peer` tool is built per
-  delegate and stays out of the session tool catalog, so the parent has no
-  second channel to its delegates.
-- Messages are in-process: no `permissionScope`, no host-core call, no tool
-  budget. Bounds are 2,000 characters per message, 64 messages per inbox
-  (oldest dropped, loss reported), 60 sends per run, and a 120-second wait
-  ceiling below the 300-second idle watchdog. Draining is destructive.
-- Peer traffic never enters the parent's model context, and a delegate is told
-  its report remains the only thing the parent reads. No cross-session
-  messaging, no messaging with the parent, no nested delegation, no durable
-  history.
-- Runtime and shared only: no IPC, storage, host-protocol, or renderer change,
-  and no `AgentEventEnvelope` change — a peer message is already a delegate tool
-  call attributed by `parentToolCallId` and `agentName`. See ADR 0138, ADR 0140,
-  `03-runtime/02-agent-runtime.md` §5f.2, and E2E-165.
-
-## 2026-09-01 — Subagent model selection (D278)
-
-- Decision D278 extends D201 / ADR 0062 / ADR 0089 in the agent runtime and
-  provider-model system. The `Task` tool gains an optional `model` parameter
-  (`"provider/modelId"`) that overrides the delegate's frontmatter pin for that
-  run. Resolution priority: Task.model → definition frontmatter pin → session
-  model.
-- `ModelBinding.availableForSubagents` (boolean, default false) is an opt-in
-  flag on provider model bindings. When enabled, the model appears in the
-  delegation catalog injected into the parent agent's system prompt. The parent
-  sees a model summary listing all available delegation models.
-- When the parent specifies a model that is not configured or not enabled for
-  delegation, the Task tool returns a tool error listing available models. An
-  exact repeat of the current session provider/model is treated as inheritance,
-  equivalent to omitting `model`, so an empty delegation catalog does not turn
-  the parent model into a false unavailable-model error.
-- Implementation clarification (2026-09-13, ADR subagent-model-opt-in):
-  `subagentProviders` may contain definition-only pins and is not an override
-  allowlist. The additive `subagentModelKeys` launch field carries opt-in
-  separately, defaults to empty, and participates in runtime reuse matching.
-  Only launch opt-in keys enter that reuse snapshot. Successfully authorized
-  on-demand results use a separate cache, must not overwrite a pin with a
-  different provider id, and do not retire an idle runtime. Repeating a
-  definition's own pin key is omit. On-demand matching uses unique provider
-  lookup. The Task catalog discloses each definition's default model.
-- Scope clarification (2026-09-15, issue #386): the opt-in governs every entry
-  point through which the AI picks a model for delegated work, not only
-  `Task.model`. A `session/collaboration/spawn` `modelKey` naming a model
-  without the opt-in is refused with `PERMISSION_DENIED` before a worker is
-  created; omitting the key, or naming the default model's own key, remains
-  inheritance. `models.list` still reports every ready model with its flag —
-  the flag advises the caller and is authoritative only in Electron main.
-
-- Models not pre-resolved at sidecar launch are resolved on-demand via the
-  `provider.resolveSubagentModel` RPC to Electron main, where credentials and
-  the models.dev snapshot live.
-- See `03-runtime/02-agent-runtime.md` §5f,
-  `03-runtime/11-provider-model-system.md` §7, and E2E-166.
-
-## 2026-09-01 — Native window edge resize settles before recovery (D279)
-
-- The main window keeps Electron's native edge and corner resize ownership on
-  every platform, including the frameless Windows/Linux shell, with the
-  existing 1040×700 minimum. Renderer drag regions do not replace OS hit
-  testing or introduce a second resize path.
-- Bounds recovery waits for a 300ms stable native bounds snapshot before it can
-  restore a tiny/shelved window. Normal base bounds remain debounced by 600ms
-  after the last resize/move event, while close still flushes the latest stable
-  state. A panel reservation's expected `setBounds` result is excluded from
-  cross-display user-move attribution.
-- No IPC, storage, host protocol, or renderer resize contract changes. This
-  refines D156/D163 and is covered by E2E-167.
-
-## 2026-09-01 — Expanded sidebar width is user-resizable (D280; superseded by D408)
-
-- The expanded sidebar owns a persisted preferred width with a `240..520px`
-  clamp and a `275px` default. The right-edge renderer handle previews width
-  from the pointer-down position, lets MainChat reflow continuously, and saves
-  only on pointer release.
-- The handle is a vertical ARIA separator. ArrowLeft/ArrowRight adjust it in
-  16px steps, Home and End select the bounds, and keyboard changes commit
-  immediately. Escape, pointer cancellation, lost ownership, and unmount roll
-  back an in-progress pointer gesture to its starting width.
-- Sidebar collapse remains independent from the preferred expanded width. No
-  IPC, native-window bounds, work-panel reservation, or project/session order
-  contract changes. See ADR 0141 and E2E-168.
-- D408 later pinned the live shell at 275px and hid the handle. D451 / ADR 0290
-  restores the resizable handle and adds collapse below 160px.
-
-
-## 2026-09-01 — Non-loopback HTTP MCP endpoints are supported (D281)
-
-- User-owned and plugin-declared MCP servers accept absolute `http://` and
-  `https://` URLs, including trusted LAN addresses. Unsupported schemes and
-  malformed URLs remain invalid.
-- The user MCP editor shows an explicit unencrypted-connection warning for
-  non-loopback HTTP. Plugin-declared endpoints still require
-  `mcp.server.remote` and a host covered by `manifest.net.domains`.
-- The MCP client turns off automatic redirects, limits the chain to five hops,
-  accepts only HTTP(S) targets, and re-checks the plugin egress policy for every
-  hop. A redirect to an undeclared host is blocked before the next request.
-- Marketplace catalog and package download rules remain unchanged: non-loopback
-  HTTP package downloads are still refused. See ADR 0142 and E2E-024K/E2E-100.
-
-## 2026-09-01 — User-renamable task titles (D282)
-
-- A task name is session metadata and can be edited from the Sidebar session
-  overflow/right-click menu or the Project archive task row. Both entry points
-  open the same localized modal editor with focus management, Escape/Cancel
-  dismissal, and a 1–80 Unicode code-point input bound.
-- The existing `session.rename` IPC/RPC path validates and trims the title at
-  the host boundary, returning `INVALID_PARAMS` for blank or overlong values.
-  A successful rename updates only `sessions.title`; it does not update
-  `updated_at`, transcript data, message count, project binding, empty-session
-  state, or historical notification title snapshots.
-- A custom title continues to suppress first-prompt automatic title generation.
-  The current summary is projected consistently in the Sidebar, topbar, Project
-  archive, and search after save and after restart. See ADR 0143 and E2E-021a.
-
-## 2026-09-01 — User-configurable thinking-level overrides (D283)
-
-- `ModelInfo` remains the raw models.dev record. An existing `ModelBinding` no
-  longer overwrites its published reasoning fields or capability tags, so a
-  catalogued reasoning model remains visible as such in Settings.
-- Settings always renders the seven canonical thinking levels. Published levels
-  seed new known-model bindings; unknown and catalogued non-reasoning models
-  show the same choices unselected and can be explicitly enabled for a
-  compatible endpoint.
-- The exact model binding owns effective thinking capability. Its explicit
-  levels are preserved at save time and used by Composer, Electron main, and
-  the sidecar without intersecting them with the catalog. Empty or `off`-only
-  bindings resolve to `off`; there is no automatic reasoning inference. No IPC,
-  storage, or host protocol change. See ADR 0144 and E2E-005/E2E-050/E2E-162/
-  E2E-163.
-
-## 2026-09-01 — Settings rail uses a compact label scale (D284)
-
-- Settings navigation uses short, parallel destination labels: General, AI,
-  Shortcuts, Instructions, Models, Skills, MCP, Subagents, Import, Projects,
-  and Info. The Chinese locale uses the corresponding concise labels 常规、AI、
-  快捷键、指令、模型、技能、MCP、子智能体、导入、项目 and 信息.
-- Visual clusters are named Preferences, Agent, Workspace, and System
-  (偏好、智能体、工作区、系统). Destination IDs, order, search behavior, and
-  content ownership remain unchanged.
-- Rail labels may stay shorter than the descriptive selected-page title, such
-  as Model configuration or Project archive, so the navigation stays aligned
-  without removing context from the content pane.
-
-## 2026-09-01 — Native macOS Intel release lane (D285)
-
-- D285 extends D126 and ADR 0145. Tag builds now use `macos-15` for arm64 and
-  `macos-15-intel` for Intel x64, alongside the existing Windows x64 and Linux
-  x64 lanes.
-- The static macOS targets expose DMG and ZIP without a fixed architecture;
-  each native runner passes the matching electron-builder flag and builds the
-  Rust host sidecar locally. The workflow rejects a runner architecture that
-  does not match the matrix entry.
-- macOS updater feeds are renamed per architecture before artifact upload and
-  merged into one `latest-mac.yml` during publication. macOS remains
-  notify-and-link until a signed in-app channel is qualified.
-
-## 2026-09-02 — Work panel outer and inner resize ownership (D286)
-
-- With the right work panel open, the outer native right edge and right corners
-  resize the panel target (`244..720px`) while preserving the base conversation
-  width. Main previews and commits that target through an Electron-local event;
-  left and other native edges retain base chat resizing.
-- The inner renderer divider resizes the base conversation width through the
-  bounded `window/setWorkPanelChatWidth` channel (`1040..10000px`) while the
-  panel reservation remains unchanged. Pointer updates are serialized and
-  cancellation restores the press-time target.
-- This is an Electron-local behavior change; the host protocol remains v9.
-  See ADR 0146 and E2E-056/E2E-167.
-
-## 2026-09-03 — Transcript settle veil and pre-paint follow (D287)
-
-- A session whose first commit is bounded (history above the initial mount
-  budget) mounts under an opaque skeleton veil in that same commit. The veil
-  covers the transcript scroller only; the docked composer stays visible and
-  usable. It lifts once the scroller's `scrollHeight` and `clientHeight` have
-  read the same for three consecutive frames, or after a 600ms cap, and fades
-  over 160ms. Each sampled frame re-pins a pinned transcript so the revealed
-  frame is at the newest turn. The minimap and jump control mount after the
-  veil lifts. Short transcripts never show it.
-- Pinned follow re-pins inside the content ResizeObserver callback, before the
-  browser paints, instead of requesting a frame from it: the requested frame
-  landed after the grown content had already painted unpinned once. The
-  content is observed on its border box so the composer's published bottom
-  reserve (padding) is a follow trigger too; the scroller itself is observed
-  so viewport resizes keep the bottom in view.
-- Sending clears the composer before the host round trip and restores the
-  draft if the store rejects the send; text typed after a failed send is never
-  overwritten. The send reads the textarea's live value, and the two silent
-  refusals (model not configured, paste still saving) now surface a toast.
-  See E2E-071i.
-
-## 2026-09-03 — User row inserted before the host round trip (D288)
-
-- The user's prompt appears in the transcript in the frame it is sent, not
-  when the host echoes it. Before this the row waited on the host's turn setup
-  (runtime launch, `session.beginTurn`, attachment preparation, persistence)
-  and a slow host left the transcript unchanged for visibly long after Enter.
-- The renderer mints the message id (`crypto.randomUUID()`), inserts the row
-  under it (`optimisticUserMessage`), and sends the id as
-  `AgentPromptRequest.messageId`. The host persists and echoes the durable row
-  under that id when it is a UUID the session does not already hold, otherwise
-  it mints its own. The echo therefore upserts the optimistic row in place; a
-  durable read that already holds the echo wins over it, and one that does not
-  yet hold it keeps the row visible (`mergeLiveSessionMessages`).
-- The optimistic row shows the typed text and its file references under their
-  source paths; the echo brings the expanded slash body, the `command` chip,
-  session-scoped attachment refs and revision metadata.
-- Withdrawal: when the send never reached the host (rejected by a pending plan,
-  or the IPC failed) the renderer removes its own row object only, so a failure
-  after persistence leaves the durable echo in place next to the error row.
-  Smart stop already treats the row as the sent prompt and pulls it back into
-  the composer. A visible session inserts into `messages`; a background session
-  (queued prompt draining) inserts into its renderer cache, where the echo
-  lands too.
-- Edit-resend follows the same path: the rewritten prompt replaces the old row
-  immediately and the host echo settles it. See E2E-071i.
-
-## 2026-09-03 — Explicitly disable application keyboard shortcuts (D289)
-
-- Application shortcut overrides have three states: an absent property uses the
-  platform default, a valid portable binding string customizes it, and explicit
-  JSON `null` means `Unbound` and dispatches nothing. Invalid strings retain the
-  existing safe fallback to the default.
-- Settings exposes Disable separately from Restore default and renders a
-  localized Unbound state. Unbound actions do not participate in conflicts and
-  remain editable. The shared state drives renderer matching, macOS menu
-  accelerators, and the global plugin launcher.
-- Unbinding `openPluginLauncher` unregisters any prior Electron global shortcut,
-  disables the Windows host hook, and removes the focused-window fallback. The
-  host hook starts disabled until Electron applies the effective settings.
-  Configurable macOS native-role menu items become role-less clickable items when
-  unbound so Electron cannot restore their default accelerator.
-- The existing settings JSON, IPC methods, protocol version, storage schema, and
-  plugin-local shortcut contract remain unchanged. See ADR 0148 and E2E-072.
-
-## 2026-09-04 — Calm running status motion in the transcript (D290)
-
-- Replace the high-contrast text shimmer used by the Working indicator and live
-  activity labels with static readable text plus compact status markers. The
-  pre-stream Working indicator uses three small staggered dots; active activity
-  labels use one small pulse marker, while tool spinners and the existing
-  assistant streaming rail retain their state feedback.
-- The marker pulse is compositor-friendly, capped at a one-second loop, and is
-  disabled under `prefers-reduced-motion`; the status remains visible as static
-  text and dots. No protocol, storage, or runtime behavior changes. See ADR
-  0149 and E2E-053/E2E-083.
-
-## 2026-09-04 — Replace the empty-home mascot sprite with a calm inline agent mark (D291)
-
-- Replace the randomized raster pose atlas in the empty-home hero with a 100px
-  inline SVG containing a compact neutral agent, a thin orbit, and one signal
-  point. The core breathes slowly and the eyes blink occasionally.
-- The mark is deterministic and decorative. Pointer hover does not alter its
-  cadence or geometry; reduced motion freezes its CSS animation while keeping
-  the same size, placement, and semantic colors.
-- No protocol, storage, or runtime behavior changes. See ADR 0150 and
-  E2E-046/E2E-099/US-UI-17.
-
-## 2026-09-04 — Keep the work panel inside the fixed application window (D292)
-
-- The work panel remains an in-flow right column. Opening and collapsing it
-  animates flex allocation inside the existing client area instead of expanding
-  or shrinking the native BrowserWindow.
-- The renderer-owned inner divider adjusts the persisted `244..720px` panel
-  width; native window edges resize only the application window and never rewrite
-  the panel preference. Escape, cancellation, and lost pointer capture restore
-  the press-time panel width.
-- The `window/setWorkPanelReservation` seam is retained for compatibility but
-  normalizes every valid request to `{ requested: 0, reserved: 0 }`. The native
-  Browser view still follows the renderer-measured panel rectangle. See ADR
-  0151 and E2E-056/E2E-160/E2E-167.
-
-## 2026-09-04 — Play an eight-frame waving mascot on empty home (D293)
-
-- Replace the empty-home inline SVG agent mark with a processed eight-frame
-  GIF in the existing 100px slot. The loop holds the idle frame briefly, then
-  plays the wave; pointer hover does not change cadence.
-- Reduced motion swaps the GIF for the still first-frame PNG through CSS. The
-  mark stays decorative with no random selection, JavaScript timer, or hover
-  state.
-- No protocol, storage, or runtime behavior changes. See ADR 0152 and
-  E2E-046/E2E-099/US-UI-17.
-
-## 2026-09-04 — Theme-specific empty-home mascot GIFs (D294)
-
-- Replace the single empty-home mascot GIF with dedicated light and dark
-  eight-frame assets plus matching still PNGs. CSS follows
-  `document.documentElement[data-theme]`; anything other than `light` uses
-  the dark pair.
-- Reduced motion still swaps to the first-frame PNG of the active theme.
-  Playback, hover, and decorative role are unchanged.
-- No protocol, storage, or runtime behavior changes. See ADR 0152 and
-  E2E-046/E2E-099/US-UI-17.
-
-## 2026-09-04 — Notification inbox lists failures only (D295)
-
-- The sidebar-footer inbox renders only `task.failed` rows, and its unread
-  badge counts only unread failures. Routine successful completions had
-  buried the rows that actually need attention.
-- Host-core still persists `task.completed` rows unchanged. They continue to
-  drive the sidebar session outcome badge and the unfocused-window native
-  notification; only the inbox popover filters them out at the renderer
-  boundary (`inboxNotifications` / `inboxUnreadCount`).
-- Mark-all-read and clear still operate on the full durable record, so hidden
-  completions are read or removed together with the visible failures. No
-  protocol or storage changes. Supersedes only the "task completion rows"
-  clause of D117.
-
-## 2026-09-04 — Extensions page draws no dividers (D296)
-
-- The Extensions destination replaces every in-flow rule with tone and
-  spacing: the header and toolbar lose their bottom borders, the segmented
-  tabs sit on a tinted pill track with the active tab raised by shadow, and
-  the installed index is a stack of soft tiles under each group label instead
-  of one hairline-separated panel. Marketplace source settings, category
-  chips, cards, empty states, the row detail block and the detail sheet's
-  install strip and sections follow the same three-layer scheme (page, tile,
-  raised). Chips that carried inset rings are filled instead.
-- Hairlines remain only on floating layers — row and page menus, tooltips,
-  the detail sheet and dialogs — where an edge is an elevation cue rather than
-  a partition. The menu group separator becomes a gap.
-- The detail sheet reserves the titlebar band on every platform, not only
-  Windows/Linux: the route surface keeps a transform after its entry
-  animation, so the sheet's fixed layer stacks inside the route and the band
-  painted over its title row on macOS.
-- Capture rig: the plugins fixture is re-seeded after the page mounts (the
-  mount refresh had been replacing it), the marketplace search and detail
-  calls are stubbed while seeded, and `pi-plugins-row-details` /
-  `pi-plugins-sheet` scenes are added. No protocol, storage, or runtime
-  behavior changes. Refines the Installed-tab clause of D169 and §3.5 of the UI
-  IA.
-
-## 2026-09-05 — Scrollbars show only on hover or while scrolling (D300)
-
-- Every renderer scroll container now uses the one quiet scrollbar defined in
-  `base.css`: 8px, trackless, thumb transparent at rest. The thumb is painted
-  only while the owning scroller is hovered (`:hover::-webkit-scrollbar-thumb`)
-  or carries `data-scrolling`, and strengthens under the pointer or while
-  dragged. Previously the global thumb was always visible at 16% ink and only
-  the two sidebar lists hid it at rest (D147, E2E-157).
-- `lib/scrollbar-reveal.ts`, installed from `main.tsx`, supplies the state CSS
-  cannot express: a passive capture `scroll` listener on `document` marks the
-  element that scrolled with `data-scrolling` and clears it 800 ms after its
-  last scroll event; a viewport scroll marks `<html>`. Programmatic scrolls
-  (pinned-follow while streaming) reveal the thumb too, matching macOS overlay
-  bars. Disposal clears every mark it set.
-- Partials no longer set `scrollbar-width` or `scrollbar-color` (ask-tool
-  options, sub-agent rows, tool fields, sidebar lists). WebKit and Chromium
-  ignore `::-webkit-scrollbar` on any element that sets either, so those
-  surfaces had been rendering an always-visible native bar instead of the
-  custom one. The sidebar lists keep their 6px width, 20% ink, and
-  focus-within reveal on top of the global rule; the code-block override is
-  removed as redundant. `interaction-polish.test.mjs` asserts the rest/reveal
-  rules and the absence of the standard properties;
-  `scrollbar-reveal.test.mjs` covers the mark lifecycle. Supersedes the
-  scrollbar clause of D147 and generalises the sidebar treatment in the UI
-  design system §sidebar. No protocol, storage, or runtime behavior changes.
-
-## 2026-09-05 — Divider-free surfaces across the app (D297)
-
-- Extends D296 from the Extensions page to every renderer surface. In-flow
-  strokes — panel rings, card outlines, row and section dividers, left rails,
-  form-field borders, inset hairline chips, the sidebar footer and rail seams,
-  the work panel's edge and header rules, the composer's elevation stroke —
-  are replaced by three tonal layers plus spacing: page, `--ds-tile`
-  (3.5% text mix; hover 6%, deep 8%) and `--ds-raised` with
-  `--ds-raised-shadow`. The tokens live in `tokens.css`; the D296
-  `--plugins-*` variables alias them.
-- Lists become stacks of tile rows with a 2–6px gap (settings rows, shortcut
-  map, capability pages, provider and model rows, project archive, session
-  import, notification inbox, version history). Selection (theme and language
-  cards, segmented controls, level filters) is a raised pill or tile plus the
-  existing check; no selected border. Form controls are tile fills with an
-  accent focus ring. Markdown loses code-block, table, blockquote and heading
-  rules (zebra rows, tile plates, spacing). Subagent trees draw connectors as
-  2px tinted bars on a tile group with raised nodes.
-- Floating layers keep their edge: menus, popovers, autocomplete, the search
-  dialog, dialogs, tooltips, toasts and hover cards retain
-  `0 0 0 0.5px border-default` plus shadow, but rules inside them are gone.
-  Control affordances (switch focus ring, scrollbar padding, spinner strokes,
-  status-dot knockouts) are not dividers and stay.
-- The theme-card check glyph takes `--ds-bg-primary` ink instead of `#fff`,
-  which was invisible on the white dark-theme accent. Style tests assert the
-  new scheme per file. No protocol, storage, or runtime behavior changes.
-  Supersedes the stroke rows of §6.4 in the UI design system and the D148
-  0.5px field stroke.
-## 2026-09-05 — Streaming replies are checkpointed and recovered (D299)
-
-- The assistant reply currently streaming in a session is checkpointed by
-  Electron main to host-core at most every 1.5 s (`session.saveInflightMessage`)
-  into `sessions/<id>.inflight.json`, one atomically replaced file per session.
-  Previously a reply became durable only at `message_end`, so an app quit,
-  sidecar crash, or restart mid-reply lost the whole text the user had already
-  watched stream; after relaunch the session showed only the prompt.
-- The checkpoint is transient. The final row of the same id removes it, a
-  `completed`/`error` turn end removes it, and the host boot sweep plus a
-  sidecar-loss `session.endTurn { recoverInflight: true }` promote a leftover
-  whose final row never landed into the transcript as the turn's `aborted`
-  assistant row. A user Stop leaves it for the arriving final row. A late
-  checkpoint for an already-indexed id is dropped. Delegate replies are not
-  checkpointed.
-- Quit flushes the checkpoints, aborts active turns through the sidecar, and
-  waits (bounded, 2 s) for their aborted rows to drain before host-core is
-  disposed. The sidecar used to be killed while host-core was already closing.
-- Renderer Stop no longer rewrites the transcript to settle a started reply;
-  it settles in memory and leaves the durable copy to the runtime's aborted
-  final row. That rewrite raced the outbox append and could delete the reply
-  it was meant to keep, and it wrote the renderer's display-capped rows back
-  over the full ones. The unanswered-prompt undo (and message delete) now
-  rewrite from the full durable transcript merged with the live rows, and the
-  undo is re-evaluated on that merge. ADR 0153, E2E-171.
-
-## 2026-09-05 — Composer drafts survive remounts and window switches (D301)
-
-- Composer drafts stay in renderer memory per session, but the cache is now a
-  module-level map rather than a `useRef` inside one Composer instance. Home
-  and docked composers still remount when the empty state toggles, and
-  `ChatSurface` still unmounts when leaving chat for Settings/Plugins/other
-  pages; those remounts previously dropped the in-memory Map, so unsent input
-  vanished on a window/page switch (issue #38).
-- The next mount hydrates from the same slot. Unmount (layout cleanup),
-  session switch, file-reference changes, and window blur/visibility-hidden
-  capture the live contenteditable value so a keystroke that has not
-  re-rendered yet is not lost. If Chromium wipes the contenteditable while the
-  window is in the background, focus/visibility restore paints the cached
-  value back. Home file references are keyed by the empty session id, not the
-  `__home__` cache key.
-- A successful send still clears only the submitting session's slot; deleting
-  a session still drops its slot; nothing is written to disk.
-  `composer-draft-cache.ts` plus `composer-draft-cache.test.mjs` cover
-  isolation, prune, remount, and Composer wiring. Extends E2E-011c. No
-  protocol, storage, or runtime behavior changes.
-
-## 2026-09-05 — An expanded delegate run follows its latest output (D302)
-
-- Decision D302 refines D271 / D071 in the renderer. D271 put a delegate's
-  nested rows in a bounded `.subagent-run-rows` scroller so expanding a
-  forty-call run would not grow the parent transcript, but that scroller had
-  no stick-to-bottom. A live card therefore stayed at the offset it had when
-  opened while thinking, tool, and answer rows appended below the viewport
-  (issue #37).
-- The nested scroller now uses the parent transcript's pinned-follow
-  contract independently: expanding pins to the newest row, content growth
-  follows the bottom while pinned, and the first real upward gesture pauses
-  follow and shows a nested jump-to-latest control. Layout clamps and
-  programmatic `scrollTo` never count as that gesture. Native overflow
-  anchoring is disabled on `.subagent-run-rows` so it cannot fight pinned
-  follow.
-- The jump control overlays a relative wrapper around the scroller, never
-  `.subagent-run`, so the absolutely positioned collapse rail stays
-  unclipped. Presentation only: no IPC, storage, host-protocol, or runtime
-  change. E2E-173.
-
-## 2026-09-05 — New sessions start at the binding default thinking level (D303)
-
-- Settings already persists `ModelBinding.defaultThinkingLevel` and E2E-163
-  requires that value to be the level a new session starts at. The home draft
-  Composer chip and `persistSessionAndSelect` instead seeded
-  `highestSupportedThinkingLevel`, so a user who chose Low still opened every
-  new session at Max (or the strongest enabled level). Launch-time fallback
-  could never reach the stored default because the session row already carried
-  that strongest level.
-- New drafts and newly persisted sessions now take the selected model's
-  binding default, clamped onto the enabled ladder. Strongest-enabled remains
-  the fallback only when the binding has no stored default. Switching models
-  on a draft without an active session also reseeds from the new model's
-  default; an existing session still preserves its current level when the new
-  model supports it.
-- No protocol, storage, or runtime clamp change. Existing session rows keep
-  their stored `thinkingLevel`. Supersedes D153. See E2E-082 / E2E-163 /
-  E2E-174.
-
-## 2026-09-05 — New Task reveals the empty destination before host IO (D305)
-
-- New Task used to await `session.list`, `session.create`, another
-  `session.list`, and `session.get` before leaving the previous transcript.
-  That chain made the click feel stuck: the old conversation stayed on screen,
-  then jumped to empty. The list refresh existed only so a first message sent
-  moments earlier would not look empty; the renderer already knows that case
-  from `runningSessions`, live rows, and submitted drafts.
-- Creating a session now clears the previous conversation on the first frame
-  and inserts the durable row from the `session.create` summary. Reusing the
-  group's latest empty session commits an empty transcript on that same frame.
-  Send and paste wait for the in-flight create instead of opening a second
-  slot; keystrokes typed on the empty home during create move onto the new
-  session.
-- Decision D305 amends D252 / ADR 0113 timing only. The reuse rule, durable
-  empty slot, and protocol/storage versions are unchanged. ADR 0154,
-  E2E-011a / E2E-011d / E2E-011g.
-
-## 2026-09-05 — Startup splash shares the macOS sidebar glass (D304)
-
-- On macOS the boot splash (`.startup-splash`) drops its opaque
-  `--ds-bg-primary` fill for the sidebar glass recipe: `--ds-sidebar-glass-tint`
-  plus the top/bottom sheen gradients, over the window's native `under-window`
-  vibrancy. The shell mounts under the splash as soon as `ready` flips, ahead
-  of the minimum dwell; behind glass it would bleed through the tint, so on
-  darwin the shell stays `visibility: hidden` while the splash is loading and
-  fades in with an opacity transition (not an animation, so the sidebar's own
-  `sidebar-in` mount animation is not replayed) under the splash's exit fade —
-  a cross-fade from glass into the opaque main pane and glass sidebar.
-- Windows and Linux keep the opaque splash; the rule is scoped to
-  `:root[data-platform="darwin"]` like the sidebar rule. Splash, sidebar, and
-  rail share one glass selector so the recipe cannot drift. The glass tokens'
-  comment now names both consumers. `macos-sidebar-vibrancy.test.mjs` asserts
-  the splash uses the tint and sheen on darwin and stays `--ds-bg-primary` in
-  the base rule. Extends §8.3 of the UI design system; no protocol, storage,
-  or runtime behavior changes. E2E-076.
-
-## 2026-09-05 — Search/read truncation is a cut, not a window (D306)
-
-- `Read.truncated` was true whenever a file continued after the returned
-  window, and the 48KB / 500-line cap cut ordinary source and spec tables.
-  Almost every Read then showed the UI truncated chip and told the model to
-  Grep, including after an explicit `offset`/`limit` that had already been
-  filled.
-- `truncated` is now true only when this result was cut short: the byte
-  budget stopped the window, a line was clipped, or Grep/Glob hid remaining
-  hits behind their caps. A filled Read window of a longer file is
-  `truncated: false`; `notice` names the next offset instead of nagging Grep.
-- Default Read window returns to 2000 lines (max 4000). `BUDGET_SEARCH` is
-  128KB / 4000 lines so that window of typical source actually fits.
-  Per-line clip is 16,384 characters so a decision-log row survives while a
-  minified one-liner still clips.
-- Decision D306 amends D033 / D194. Host-core tool results, sidecar Read
-  schema copy, and the truncated chip contract. No ADR: the field stays
-  boolean and callers that already honored `truncated` keep working. See
-  `03-runtime/16-tool-result-limits.md` and E2E-147 / E2E-175.
-
-## 2026-09-05 — Revision payloads follow the live branch (D307)
-
-- A regenerate family's active variant was archived once, on the first
-  `agent_end` after the regenerate, and never touched again. The live branch
-  kept growing: every later prompt appended to it, and a turn that ended in a
-  provider error never reached `agent_end` at all. Paging the root away and
-  back restored the archive taken at that first `agent_end` and rewrote the
-  transcript and its JSONL from it, deleting every later turn. A real session
-  had 17 messages (a turn that edited files) exposed this way.
-- Every operation that discards the live branch now writes it back over its
-  own variant first. `session.activateRevision` reads the durable transcript,
-  finds the family (root id, or the first user message stamped with that
-  `revisionRootId`), refreshes the variant the root's `activeRevision` stamp
-  names, and only then switches; when the family is present the prefix comes
-  from the transcript, not the renderer's copy. The regenerate path in the app
-  process passes `revisionIndex` to `session.saveRevision` so the discarded
-  tail refreshes its variant instead of being dropped as "already archived".
-  `session.saveActiveRevision` refreshes an already-archived index.
-- A refresh is one more line in the append-only revisions file (last record
-  for `(rootUserId, revisionIndex)` wins, as `read_revision` already did) plus
-  a `message_count` update; no index row is minted. A branch that was stamped
-  by regenerate but never archived because its turn failed is stored as a new
-  variant, so it can never bury the previous one.
-- The switch also carries each surviving message's owning `turn_id` across the
-  index rebuild (it used to reset the whole session's attribution, as
-  `replace_messages` once did) and keeps checkpoints whose anchors survive.
-- Decision D307 amends D109. Host-core `sessions.rs` / `rpc/mod.rs` and the
-  regenerate path in the app main process; no renderer change. No ADR: the
-  file format and protocol shape are unchanged, `revisionIndex` is an optional
-  parameter. See `03-runtime/04-data-storage.md` §4.9 and
-  `03-runtime/06-host-rpc-protocol.md`.
-
-## 2026-09-05 — Zhipu / Z.AI named endpoint presets (D308)
-
-- Adding 智谱 required knowing which of four URLs to paste. The add-provider
-  dialog now offers a Service select for China and international standard API
-  plus GLM Coding Plan. Choosing one fills the name, locks the published
-  Base URL, and stores the models.dev `vendorKey`.
-- Rows stay `openai_compatible` + `chat_completions`. pi-ai already speaks
-  those hosts; PI-Desktop does not add a Zhipu apiStyle or SDK.
-- Completions requests on a matching URL or vendorKey set `thinkingFormat:
-  "zai"` and `zaiToolStream: true`, because the stored provider id is a UUID
-  and cannot use pi-ai's `zai` / `zai-coding-cn` provider-name detection.
-- Decision D308 amends D024. See ADR 0155, `03-runtime/11-provider-model-system.md`,
-  `03-runtime/12-provider-config-schema.md`, and E2E-005D.
-
-## 2026-09-05 — Add-provider common path is Service + key (D309)
-
-- The add-provider form stacked Service, Name, Base URL, API key, and API
-  format. Named endpoints already know name, URL, and wire format.
-- A new dialog starts with Service. Named Zhipu / Z.AI and OpenCode Go then
-  show Service + API key and a host summary. Custom endpoint then shows Name,
-  Base URL, and API key. Advanced keeps Name (named) and API format (custom).
-- OpenCode Go moves into the Service select so users do not look for it under
-  API format.
-- Decision D309 amends D308. See ADR 0156, `04-ux/06-settings-ia.md`, and
-  E2E-005 / E2E-005B / E2E-005D.
-
-## 2026-09-05 — Custom format beside the key; top models.dev vendors (D310)
-
-- Custom endpoint now keeps API format beside the API key instead of Advanced.
-- Service lists models.dev-backed international and China first-party
-  endpoints, each with a published URL and wire style.
-- Decision D310 amends D309. See `04-ux/06-settings-ia.md` and E2E-005.
-
-## 2026-09-05 — Searchable Service picker without discovery jank (D311)
-
-- The Service control was a native `<select>` with optgroups. Opening it in
-  the overlay was sluggish, and there was no way to filter ~20 vendors.
-- It is now a searchable anchored menu, matching the default-model picker:
-  type to filter by localized name, vendor key, alias, or host; groups stay
-  International / China with Custom first.
-- Picking a named vendor no longer probes `/models` until an API key is
-  present. Typing a key no longer paints `loading` on every keystroke; the
-  hook waits for the 600 ms debounce. Switching endpoints clears the previous
-  list immediately so stale models do not linger.
-- Decision D311 amends D310. See `04-ux/06-settings-ia.md` and E2E-005 /
-  E2E-005D.
-
-## 2026-09-05 — Flat vendor Service list and Xiaomi (D312)
-
-- Service options no longer split International / China. Custom stays first,
-  then one searchable vendor list.
-- Xiaomi is a named endpoint: models.dev `vendorKey: "xiaomi"`,
-  `https://api.xiaomimimo.com/v1`, Chat Completions. Aliases `mimo` and
-  `xiaomimimo` match the catalog.
-- Decision D312 amends D310 / D311. See `04-ux/06-settings-ia.md` and
-  E2E-005.
-
-## 2026-09-05 — Shipped locale registry and language picker (D314)
-
-- Language in Settings → General was three preview cards (Auto / 简体中文 /
-  English). That does not scale, and names were hard-coded.
-- UI locales now live in `@pi-desktop/i18n`: `en`, `zh-CN`, and `tr`. Native
-  names stay endonyms. Auto still follows `app.getLocale()` through preload.
-- The Appearance card keeps Theme as three preview cards. Language is a
-  searchable picker: Auto pinned at the top with the detected native name,
-  then shipped locales. Search matches native name, English name, and id.
-- Plugin labels and the changelog stay `en` + `zh-CN` with English fallback.
-- Decision D314 amends D073. See ADR 0160, `04-ux/02-i18n-english-first.md`,
-  `04-ux/06-settings-ia.md`, and E2E-091.
-
-## 2026-09-05 — Grep prefers a system `rg` when installed (D315)
-
-- Codex searches with shell `rg` when the machine has it. PI-Desktop keeps
-  Grep as the model-facing tool and uses a user-installed `rg` as its
-  implementation backend when one is on the process PATH or Unix login PATH.
-- The result shape, 128KB / `headLimit` budget, newest-first order, and
-  explicit-`path` ignore exception stay host-defined. `rg` is exec'd with a
-  null stdin and argv, not through Bash. Spawn failure or exit 2 falls back
-  to the in-process `ignore` + `regex` searcher. `PI_DESKTOP_RG` selects a
-  binary; `PI_DESKTOP_DISABLE_RG` forces the fallback.
-- The agent still calls Grep rather than shelling out to `rg`. Read is
-  unchanged. No `rg` binary is bundled.
-- Decision D315 amends ADR 0057 / D195. See `03-runtime/03-tools-and-permissions.md`,
-  `03-runtime/02-agent-runtime.md` §7, and E2E-147.
-
-## 2026-09-05 — Searchable theme picker (D316)
-
-- Theme in Settings → General was three preview cards (System / Light /
-  Dark), with plugin themes wrapping into the same grid.
-- Appearance now uses the same searchable picker as Language: System,
-  Light, and Dark pinned at the top, plugin themes after a divider.
-  Search matches labels, descriptions, ids, and plugin ids.
-- `AppSettings.theme` and the unavailable-plugin fallback to `system`
-  are unchanged.
-- Decision D316 amends ADR 0160. See ADR 0161, `04-ux/06-settings-ia.md`,
-  and E2E-091.
-
-## 2026-09-05 — A2A addressing spans sessions on the same host (D318)
-
-- Decision D318 amends ADR 0147. The local A2A broker stays in host-core with
-  capability-token auth and durable tasks; same-context-only discovery and
-  send are lifted so two A2A-capable delegates in different open sessions can
-  coordinate.
-- `a2a.agents.list` returns every other live agent; cards carry `contextId`.
-  `a2a.message.send` may address any registered peer (omitted `to` still
-  prefers a same-session peer). Task access is membership — requester or
-  worker — not context. `A2A_CROSS_CONTEXT_DENIED` is kept on the wire list
-  and is no longer produced.
-- Live peer ids are unique across the registry: a colliding `card.name` is
-  suffix-uniquified at register and the runtime adopts the returned
-  `agentId`. `a2a.task.event` / `a2a.push` gain `recipientContextId`; each
-  session runtime delivers an event only when that field matches its
-  `sessionId`.
-- Unchanged: the parent cannot call `A2A`, settled delegates deregister, no
-  nested delegation, no remote agents. See ADR 0162,
-  `03-runtime/02-agent-runtime.md` §5f.2, and E2E-165c.
-
-## 2026-09-05 — Live/durable transcript merge keeps chronological order (D317)
-
-- Revalidating a running session used the bounded durable page as the array
-  prefix and appended every live-only row after it. A long session that had
-  accumulated more than the newest-100 page therefore painted old history at
-  the bottom of D261's trailing mounted window, hiding the just-sent user
-  prompt while the turn kept running. Stop plus another switch looked like a
-  restore because the idle path skipped the merge and showed the durable page.
-- `mergeLiveSessionMessages` now stitches in chronological order: live rows
-  older than the page stay before it, overlapping completed rows prefer the
-  durable copy, and an optimistic or streaming tail stays after it. A
-  previously appended older prefix is healed back in front when its
-  `createdAt` precedes the page.
-- Decision D317 amends ADR 0120 / D261 / ADR 0137. See
-  `04-ux/09-interaction-patterns.md` § session isolation, and E2E-177.
-
-## 2026-09-05 — Restore a missing sessions row from its transcript / outbox (D318)
-
-- A long session could vanish from the sidebar and reset the transcript to
-  the first user row while hundreds of turns sat in
-  `session-message-outbox.json`. The SQLite `sessions` row was gone;
-  `session.appendMessage` failed `session not found`; the outbox paused at
-  that head and never drained.
-- Host boot now restores every live JSONL whose sessions row is missing,
-  reinserting the row and rebuilding the search index from the file.
-  `session.appendMessage` does the same restore, or inserts a stub row
-  under the existing id when the file is also gone, so a queued outbox can
-  drain. `session.delete` drops that session's outbox entries so a stub
-  cannot resurrect a user-deleted conversation.
-- Decision D318 amends ADR 0041 / D119. See `03-runtime/04-data-storage.md`,
-  `03-runtime/07-process-model.md`, and E2E-178.
-
-## 2026-09-05 — Parent agents collaborate across conversations (D321)
-
-- Decision D321 amends ADR 0147 / ADR 0162. Agent-mode session runtimes
-  register a `kind: "parent"` A2A card for their lifetime and expose `A2A`
-  as a core parent tool so two conversations on the same host can
-  coordinate.
-- Discovery and send are kind-scoped: parents see other parents, subagents
-  see other subagents. A parent cannot address a subagent, including its
-  own, so `Task*` remains the only channel to delegates.
-- Inbound parent events queue; an idle session prepends them to the next
-  user prompt rather than auto-starting a turn. A conversation is reachable
-  after it has an Agent runtime this process.
-- See ADR 0164, `03-runtime/02-agent-runtime.md` §5f.2, and E2E-165d.
-
-## 2026-09-05 — Sent file references stay chips and open on click (D320)
-
-- Composer chips serialized to full `@path` text in the user bubble, so the
-  node the user placed in the input became a long path after send. Scratch
-  absolute paths were not clickable.
-- The transcript now renders those tokens as composer-matching leaf-name
-  chips. Workspace HTML opens in the side browser; other allowed files open
-  with the OS default application via `pi-desktop/fs/open`.
-- Decision D320 amends D209 / ADR 0070. See ADR 0163,
-  `04-ux/08-component-spec.md` §8.3 / §11.8, `04-ux/09-interaction-patterns.md`
-  §8a.2, `03-runtime/01-ipc-protocol.md` § fs, and E2E-180.
-
-## 2026-09-05 — Relative transcript paths preview and open (D322)
-
-- Relative file paths in assistant markdown were often not clickable, and
-  `./` / `../` links in a viewed markdown document resolved from the
-  workspace root instead of the file's directory.
-- The renderer now linkifies bare workspace file tokens in markdown, and
-  resolves `./` / `../` against the viewed file when previewing markdown
-  in the files tab. Parent escapes stay inert. The remark plugin is a
-  unified attacher so opening a session does not crash on `tree.type`.
-- Decision D322. See `04-ux/08-component-spec.md` §8.3 and E2E-182.
-
-## 2026-09-05 — Live parent turns stay transparent (D323)
-
-- D297 replaced the streaming left rail with a whole-turn `--ds-tile` so the
-  tint fading in/out would not reflow text. That boxed ordinary thinking,
-  tools, and answer fragments the same way as a subagent card.
-- A streaming parent turn now stays on the page background like a completed
-  turn: no rail, no reserved 14px inset, no whole-turn tile. The tile remains
-  only on the delegation card (D319) and the nested `.subagent-run`.
-- Decision D323 amends D101 / D297. See `04-ux/08-component-spec.md` §8.4 /
-  §9.9 and E2E-059a / US-UI-60.
-
-## 2026-09-05 — Idle session switch keeps a not-yet-flushed completed tail (D324)
-
-- After a turn finished, switching away and back reloaded the durable
-  `session.get` page and dropped assistant/tool rows that were still only in
-  the renderer (the persistence outbox had not flushed them yet). User
-  prompts survived because they are written before the model runs.
-- `selectSession` now merges live rows for an idle session that still has
-  live provenance, the same way a running session already did. The live
-  flag is cleared only once the durable page contains every live id.
-- Decision D324 amends D317 / ADR 0137. See
-  `04-ux/09-interaction-patterns.md` § session isolation, and E2E-183.
-
-## 2026-09-05 — Parent A2A is always in the Agent catalog (D325)
-
-- D321 registered the parent only after a successful broker mint, then
-  injected `A2A` into the catalog. A late or failed register left the
-  model with no `A2A` tool. `ToolSearch` also never lists core tools, so
-  the model treated a missing on-demand hit as "A2A does not exist".
-- Agent mode now puts `A2A` in the core catalog at runtime construction.
-  The first call (or first prompt) mints the token. The tool is never
-  deferred. Cross-conversation guidance is in the Agent system prompt
-  whenever the mode is Agent, not only after register.
-- Decision D325 amends ADR 0164 / D321. See
-  `03-runtime/02-agent-runtime.md` §5f.2 and E2E-165d.
-
-## 2026-09-05 — Withdraw A2A and Peer coordination (D326)
-
-- The in-process `Peer` mailbox (D277 / ADR 0138 / ADR 0140) and the host-core
-  A2A stack (ADR 0147 / ADR 0162 / ADR 0164 / D318 / D321 / D325) are
-  withdrawn. There is no sibling channel and no parent-to-parent channel.
-- `A2A` and `Peer` are not core tools, not assignable subagent tools, and not
-  `ToolSearch` results. A definition that names either is treated as an
-  unknown tool and dropped with a parse warning.
-- Handshake protocol version moves 10→11 and no longer advertises `"a2a"`.
-  Storage schema moves 12→13 and drops the A2A tables. A mixed v10/v11 pair
-  is rejected at handshake.
-- Decision D326 is recorded as ADR 0165, which supersedes ADR 0147, ADR 0162,
-  and ADR 0164. See `03-runtime/02-agent-runtime.md` §5f.2,
-  `03-runtime/03-tools-and-permissions.md` §10.2,
-  `03-runtime/06-host-rpc-protocol.md` §3–§4, and E2E-165.
-
-## 2026-09-06 — Completed replies survive process restart (D327)
-
-- Closing the app after a finished turn reloaded only user prompts (issue #42).
-  User rows are durable before the model runs; assistant/tool rows go through
-  the async outbox after `message_end`. D324 kept those live rows across an
-  in-process session switch; process teardown drops renderer memory.
-- `message_end` now checkpoints the finished snapshot before the outbox
-  append, and `settleIf` will not wipe a newer turn that started during that
-  write. `completed`/`error` `session.endTurn` deletes `.inflight.json` only
-  when that id is already indexed. Boot recovery promotes a leftover whose
-  turn is `completed` as a `complete` assistant row, not `aborted`.
-- Host handshake awaits the outbox drain before the renderer can `session.get`,
-  then `session.recoverInflightMessages` promotes leftover completed
-  checkpoints the outbox did not land. Boot recovery skips completed leftovers
-  so the finished outbox row can win.
-- Decision D327 amends D299 / ADR 0153 / ADR 0041. See
-  `03-runtime/04-data-storage.md` §2.1 and §5, `03-runtime/07-process-model.md`
-  §5, `03-runtime/10-session-state-machine.md` §4, E2E-171, and E2E-184.
-
-## 2026-09-06 — Parent-judged subagent lifetime (D328)
-
-- The parent agent was aborting unfinished delegates because `TaskWait`
-  expired, the model closed, and `agent_end` killed leftover runs. Idle and
-  duration watchdogs were a second, independent kill.
-- Decision D328 amends ADR 0089 / ADR 0119 / ADR 0129. The runtime no longer
-  arms idle or duration timers. Parent idle does not abort delegates. When
-  they finish, the runtime prompts the parent with their reports in the same
-  durable turn. `TaskList` / timed-out `TaskWait` carry a heartbeat. Only
-  `TaskStop` and user Stop abort a delegate.
-- See ADR 0166, `03-runtime/02-agent-runtime.md` §5f, and E2E-155.
-
-## 2026-09-06 — Agent-chosen Bash timeout (D329)
-
-- The 300-second Bash override ceiling killed long builds and rejected
-  explicit `timeout: 600` / `1800`. Default 60 seconds is unchanged.
-- Decision D329 amends D190 / D273 / ADR 0054: honour 1–21,600 seconds;
-  values above that ceiling are milliseconds, converted and clamped.
-  Timeout and abort still kill the process tree.
-- See ADR 0167, `03-runtime/03-tools-and-permissions.md` §5, and E2E-115.
-
-## 2026-09-06 — Main-owned openExternal allowlist (D330)
-
-- Chat markdown, plugin panels, the launcher, OAuth, and the embedded preview
-  could hand a raw URL to `shell.openExternal`. A clicked `file:`,
-  `javascript:`, `ms-msdt:`, or custom scheme reached the OS protocol handler.
-- Electron Main now parses every such URL. Only http(s) with a hostname and
-  `mailto:` with an address open. Disallowed URLs throw so OAuth reports
-  `opened: false` and plugins keep `INVALID_ARGUMENT`. Workspace files stay
-  on `shell.openPath`.
-- Decision D330 amends ADR 0109. See ADR 0168, `05-security/01-security.md`,
-  `07-plugins/04-plugin-security.md` §8, and E2E-185.
-
-## 2026-09-06 — Accepted `@` files stay as inline chips (D362)
-
-- Completing a workspace file from the `@` menu still replaced the trigger
-  with an empty string and stored a token-less reference. That was the
-  chips-above-textarea contract; after chips moved into the contenteditable
-  draft, only sentinel characters paint, so Enter made the file disappear.
-- Accepting a file now inserts one private-use sentinel at the caret and
-  stores that token on the reference, matching clipboard paste. Enter/Tab
-  confirm the menu and do not send. Directories still insert `@dir/` as text.
-  Workspace-relative chips still drop on project switch (absolute scratch
-  paths stay); their sentinels are stripped from the draft with them.
-- Decision D362 amends D209 / D125. See `04-ux/08-component-spec.md` §11.8,
-  `04-ux/09-interaction-patterns.md` §8a.1, and E2E-102a.
-
-## 2026-09-06 — Bundled Files preview and live workspace events (D332)
-
-- The Files plugin could not preview images, did not expose Open with default
-  app after reveal replaced the header action, polled for project switches, and
-  missed theme/locale events while docked.
-- `fs.readPreview` classifies one readable file as text, image, binary, or
-  tooLarge under the existing `fs.read` gate. Panel events now reach docked
-  views. `workspace:changed` is delivered to panels and plugin processes.
-- Decision D332 is recorded as ADR 0169. See `07-plugins/03-plugin-api.md` §3/§5/§6,
-  `04-ux/08-component-spec.md` §5.2.2, and E2E-153.
-
-## 2026-09-06 — Work-panel browser is the bundled `pi.browser` plugin (D333)
-
-- The work-panel Browser launcher, chrome, and agent CDP were a host-built
-  `HEADER_TOOLS` row plus a Main-owned guest. Files already proved a first-party
-  surface can ship as a bundled plugin; users need the same enable/disable
-  product for the whole browser without putting arbitrary web content inside a
-  sandboxed plugin view.
-- Bundled `pi.browser` owns chrome and the agent `Browser` tool. The guest
-  `WebContentsView` and debugger stay host-owned and are reached only through
-  public `pi.browser.*` gated by `browser.cdp`. Guest bounds are clamped to the
-  calling plugin view. Raw CDP is allowlisted (cookies/storage/Target/Fetch
-  denied). Host `BrowserPreview` stays a Plan-safe facade and fails if the
-  plugin is disabled. No protocol/schema bump.
-- Decision D333 amends ADR 0019 / 0104 / 0105 / 0108. See ADR 0170,
-  `07-plugins/03-plugin-api.md`, and E2E-008b.
-
-## 2026-09-07 — Contained in-chat image display (D334)
-
-- Pasted/uploaded images are stored as extension-less `attachments/<sha256>`
-  blobs. The renderer origin cannot load them, so history turns showed a chip
-  instead of the picture, and `fs/open` treated the ref as workspace-relative.
-- `fs/read`, `fs/reveal`, and `fs/open` now share `resolveOpenablePath`
-  (workspace, scratch, attachments, plus the blob ref). Reads `realpath` the
-  target. `fs/readImageDataUrl` returns only a bounded image data URL.
-  Client `mimeType` cannot reclassify a non-image extension.
-- Decision D334 is recorded as ADR 0172. See `03-runtime/01-ipc-protocol.md`,
-  `04-ux/08-component-spec.md` §8.3, and E2E-187.
-
-## 2026-09-07 — Host-owned plugin completions and session context (D336)
-
-- Plugins could register tools but could not list authenticated models, read
-  the current LLM context, or spend the user's provider quota on a side call.
-- `pi.models.list`, `pi.session.getLlmContext`, and `pi.agent.complete` are
-  public host APIs. Credentials and the wire call stay in Electron main.
-  Session context is bound to the in-flight tool session (D019 amended).
-- The bundled first-party Advisor UX is temporarily not shipped. The public
-  APIs remain available to explicitly installed plugins.
-- Decision D336 is recorded as ADR 0174. See `07-plugins/03-plugin-api.md`,
-  `07-plugins/13-plugin-permissions-matrix.md`, and E2E-188 / E2E-189.
-
-## 2026-09-07 — OpenCode Go session routing headers (D337)
-
-- OpenCode Go rejects LLM requests that omit `x-opencode-session`
-  (`MissingSessionID`). pi-ai 0.85 does not emit that header; the official Pi
-  coding-agent injects it in the agent layer.
-- Decision D337 amends ADR 0116: agent-runtime sends `x-opencode-session`,
-  `x-opencode-client: pi-desktop`, and a PI-Desktop `User-Agent` on session,
-  subagent, prompt-enhancement, and plugin one-shot requests to OpenCode Go
-  and any `opencode.ai` host, using the durable conversation id.
-- See `03-runtime/02-agent-runtime.md` §6.2, `03-runtime/11-provider-model-system.md`,
-  `03-runtime/12-provider-config-schema.md`, ADR 0116, and E2E-005D.
-
-## 2026-09-07 — Explain quiet active turns with live agent activity status (D338)
-
-- The transcript showed a generic running timer before the first event, but a
-  provider wait, retry backoff, or parent-side delegated-work wait could still
-  leave no row that explained the delay. Users could only infer activity from
-  the Stop button.
-- The existing normalized `status` event now carries an optional runtime-owned
-  `AgentActivity` phase: `starting`, `waiting-model`, `retrying`, or
-  `waiting-subagents`. The renderer stores it per session and renders one
-  compact localized status row with elapsed time; it does not add a percentage,
-  duplicate progress card, or alter abort semantics.
-- Decision D338 is recorded as ADR 0175. See `03-runtime/01-ipc-protocol.md`,
-  `03-runtime/02-agent-runtime.md`, `04-ux/09-interaction-patterns.md`, and
-  E2E-008c / E2E-094.
-
-## 2026-09-07 — Per-provider User-Agent override (D339)
-
-- Gateways and vendor subscriptions inspect User-Agent. pi-ai, Anthropic OAuth,
-  OpenCode, and Codex each stamp a different default, and Codex overwrites
-  User-Agent after extra headers. The schema listed `headers` but never stored
-  or sent them.
-- Decision D339: each AI-service and OAuth row may store optional
-  `config_json.userAgent`. Empty keeps adapter defaults. A non-empty value is
-  last-writer `User-Agent` on that row's outbound HTTP via a fetch wrapper plus
-  stream-option headers. Advanced UI only; first OAuth login does not collect
-  it. `matches()` includes `userAgent`.
-- See ADR 0176, `03-runtime/12-provider-config-schema.md`, and E2E-005G.
-
-## 2026-09-08 — Per-provider custom HTTP headers (D341)
-
-- Gateways need more than User-Agent. ADR 0176 left the schema `headers` map
-  unimplemented and used a sparse single-field Advanced editor.
-- Decision D341: each AI-service and OAuth row may store optional
-  `config_json.headers`. Empty keeps adapter defaults. A non-empty map is
-  last-writer on that row's outbound HTTP via a fetch wrapper plus
-  stream-option headers. Leftover `userAgent` migrates into
-  `headers["User-Agent"]`. Reserved auth and hop-by-hop keys are rejected.
-  Advanced UI is a compact key/value editor. First OAuth login does not
-  collect headers. `matches()` includes the map.
-- See ADR 0178, `03-runtime/12-provider-config-schema.md`, and E2E-005G.
-
-## 2026-09-08 — User-configurable outbound proxy (D340)
-
-- Model calls, marketplace downloads, updates, and the in-app browser each
-  used a different HTTP stack, and none of them honored a product setting.
-  Node `fetch` in the sidecar ignored the OS proxy.
-- Settings → General → Network adds System / Direct / Custom. Custom is one
-  HTTP or SOCKS5 URL plus a loopback bypass. Chromium sessions, main
-  `net.fetch`, sidecar undici, and host-core marketplace curl share it.
-  Workspace Bash does not inherit proxy credentials.
-- Decision D340 is recorded as ADR 0177. See `04-ux/06-settings-ia.md`,
-  `03-runtime/07-process-model.md`, and E2E-190.
-
-## 2026-09-08 — Main-owned picker capabilities (D344)
-
-- The composer picker previously returned native absolute paths to the renderer,
-  which could then replay arbitrary paths through `composer/importFiles`; it also
-  advertised folders while the importer rejected directories.
-- Picker IPC now stores user-selected paths in Electron main behind a short-lived,
-  sender-bound, one-shot token. Import accepts only that token and a durable
-  session id, while the MVP picker offers regular files only.
-- Decision D344 is recorded as ADR 0181. See `03-runtime/01-ipc-protocol.md`,
-  `04-ux/08-component-spec.md` §11.7–11.8, and E2E-102h.
-
-## 2026-09-08 — Custom global UI type scale (D343)
-
-- The `--text-*` ramp is a frozen set of relative sizes. Window zoom scales
-  layout together with text and is not a type preference. A reading-only px
-  field would leave two type sizes in one window.
-- Settings → General → Appearance adds Font size: Starbucks-style cup
-  presets Tall / Grande / Venti / Trenta plus a percentage slider (80%–150%), persisted as
-  optional `AppSettings.fontScale` (`1` = product ramp). The renderer sets
-  `--font-scale` so every `--text-*` step and shared Lucide icon scales in
-  proportion.
-- Decision D343 is recorded as ADR 0180. See `04-ux/06-settings-ia.md`,
-  `04-ux/07-ui-design-system.md`, and E2E-193.
-
-## 2026-09-08 — P0 international shell locales (D346)
-
-- Ship complete German, Spanish, and French shell catalogs, searchable native
-  names, regional base-locale resolution, and matching in-app changelog
-  catalogs. Extend `AppSettings.language` with `de`, `es`, and `fr` without a
-  host protocol, storage schema, or IPC version change.
-- Decision D346 is recorded as ADR 0183. See `04-ux/02-i18n-english-first.md`,
-  `04-ux/06-settings-ia.md`, and E2E-091.
-
-## 2026-09-08 — Composer-docked context usage inspector (D347)
-
-- The compact context inspector hung under the newest assistant turn and
-  scrolled out of reach. Collaborators agreed to move the single entry next
-  to the model picker rather than keep two copies of the same numbers.
-- Decision D347: the inspector lives in the composer right toolbar, left of
-  the model × reasoning chip, and always mirrors the newest assistant turn
-  that reported usage. The trigger is the ring plus percentage. The popover
-  heading is remaining tokens plus percentage; inner section rules stay
-  forbidden (D297). Assistant meta keeps the model badge.
-- See ADR 0184, `04-ux/08-component-spec.md` §8.3 / §11.3, and E2E-060d.
-
-## 2026-09-08 — macOS sidebar uses the source-list vibrancy material (D348)
-
-- The washed-gray dock reproduced with a **dark app theme and a dark OS** on
-  macOS 26. Syncing `nativeTheme.themeSource` alone would fix dark-app +
-  light-OS; it does not keep `under-window` charcoal when Liquid Glass still
-  paints a light plate under dark appearance. That is why the material changes
-  from D304's `under-window` to `sidebar`.
-- Decision D348: the main window uses Electron `vibrancy: "sidebar"`.
-  `nativeTheme.themeSource` follows the app theme preference (`system` /
-  `light` / `dark` / plugin base) so native menus and the vibrancy plate match
-  the renderer. The assignment is process-wide, so Windows/Linux
-  `shouldUseDarkColors` at window creation also follows the app preference
-  next to `windowSetBackgroundColor`. Re-apply when a `plugin:` theme
-  disappears. Only re-set vibrancy when `themeSource` actually changes. The
-  thin `--ds-sidebar-glass-tint` recipe is unchanged. Amends D304.
-- `macos-sidebar-vibrancy.test.mjs` asserts the sidebar material, preference
-  mapping, settings/pluginChanged apply path, and the darwin live-window
-  vibrancy guard. See `04-ux/08-component-spec.md` §1.7 and US-UI-74 / E2E-076.
-
-## 2026-09-08 — Session title summaries and focus-aware native task notifications (D359/D350)
-
-- The initial prompt remains visible immediately as a normalized 48-character
-  fallback. After the first turn, Electron resolves the session's effective
-  provider/model and runs the main-owned `session/summarizeTitle` one-shot with
-  thinking disabled; the renderer persists a successful result through
-  `session.rename`.
-- Renderer-local session metadata persists `manualTitle`. Automatic title
-  generation skips that marker and any persisted title that is neither a known
-  default nor the first-prompt fallback, so manual and already-summarized titles
-  survive renderer restart without a host schema change.
-- Native task completion and interactive prompt alerts share an Electron IPC
-  entry but have explicit `kind` values. Task banners are suppressed whenever
-  the main window is visible and focused, including focused background sessions;
-  interactive prompts retain exact-visible-session suppression so a focused
-  background request still alerts. Durable task insertion remains D117's
-  visibility decision and plugin notifications remain separate.
-- See ADR 0186 / ADR 0187, `03-runtime/01-ipc-protocol.md`,
-  `03-runtime/02-agent-runtime.md`, `04-ux/08-component-spec.md`, and
-  E2E-021a / E2E-065.
-
-## 2026-09-08 — Preserve distinct credentials during model configuration import (D351)
-
-- CC Switch can store multiple named profiles at one gateway endpoint. Endpoint-only
-  import matching created the first row and silently skipped profiles with
-  different API keys.
-- Import equivalence now includes normalized endpoint, API style, and the
-  credential. Same-endpoint profiles with different keys create independent
-  providers and remain selectable in Composer; unchanged credentials remain
-  idempotently skipped.
-- Electron main resolves existing API keys through the host secret boundary
-  for matching. Raw values never reach the renderer, logs, or provider metadata.
-- Decision D351 amends D342 and ADR 0179. It is recorded as ADR 0188 and is
-  covered by E2E-209. No host protocol or storage schema change.
-
-## 2026-09-08 — Parent fatal error aborts leftover delegates (D352)
-
-- D328 kept leftover delegates running after parent idle so long jobs could
-  finish. A terminal parent 429 still closed the durable turn and showed
-  Continue, while a subagent on another model kept `isRunning` true.
-- Decision D352 amends D328 / ADR 0166. Parent idle is unchanged. A terminal
-  parent error aborts leftover delegates, skips the resume prompt, and leaves
-  the session idle so Continue is accepted. The failed TurnOutcomeCard survives
-  a later `agent_end`.
-- See ADR 0189, `03-runtime/02-agent-runtime.md` §5f, and E2E-155.
-
-## 2026-09-09 — Disambiguate Intel macOS release artifacts (D353)
-
-- The native macOS lanes could produce generic version-only installer names,
-  making the Intel download easy to confuse with the arm64 download.
-- Decision D353 amends D285 / ADR 0145: the Intel x64 lane passes target-specific
-  electron-builder patterns and publishes `PI-Desktop-<version>-Intel.dmg` and
-  `PI-Desktop-<version>-Intel-mac.zip`. The x64 updater feed keeps those URLs
-  and checksums; arm64 keeps the generic macOS names.
-- This is a release-asset naming change only. Updater ownership, signing, and
-  notify-and-link delivery remain unchanged. See E2E-092.
-
-## 2026-09-09 — Label both macOS release architectures (D354)
-
-- D353 left the arm64 macOS asset with a generic version-only name while using
-  `-Intel` only for the x64 asset, so `PI-Desktop-0.14.4.dmg` still did not
-  identify its architecture.
-- Decision D354 amends D353 / ADR 0145: both native lanes pass target-specific
-  naming templates and publish `-arm64` or `-x64` DMG/ZIP suffixes. The
-  per-architecture updater feeds keep the final URLs and checksums.
-- This changes release asset naming only. Updater ownership, signing, and
-  notify-and-link delivery remain unchanged. See E2E-092.
-
-## 2026-09-09 — Last-request occupancy in the context inspector (D355)
-
-- The composer inspector mixed last-message occupancy with a visual-turn sum,
-  so cache read and turn total could exceed the context window after a tool
-  loop.
-- Decision D355 amends D103 / D184 / D244 / D347 / ADR 0047 / ADR 0103 /
-  ADR 0184: occupancy, remaining capacity, used/window counts, turn total,
-  and provider cache/input/output/reasoning/hit-rate are the last
-  usage-bearing assistant message. Occupancy is
-  `input + output + reasoning + cacheRead + cacheWrite`. Speed and the
-  aggregate tool row still describe the visual turn.
-- Renderer only. Host completed-turn rollups and Token Insights stay additive
-  billing. See ADR 0193 and E2E-060d.
-
-## 2026-09-09 — Optional subagent thinking override and readable selected levels (D356)
-
-- The subagent editor now offers inherit-session, do-not-send, and the seven
-  canonical thinking levels. Do-not-send is stored as `thinkingLevel: omit`.
-- `omit` keeps the agent's bookkeeping state at `off` but uses the low-level
-  provider stream so no thinking override is synthesized. Existing inheritance
-  and explicit `off` remain distinct.
-- Model-configuration thinking chips use an accent/inverted-text selected state
-  in both themes so enabled levels are obvious. No storage schema or protocol
-  version change is required. See ADR 0194 and E2E-203.
-
-## 2026-09-09 — Viewport-fixed work panel toggle (D357)
-
-- Decision D357 amends D128 / D207 / D221 and ADR 0068 / ADR 0085. AppShell
-  owns one viewport-fixed toggle at the top-right of every non-Settings route.
-  It is the pointer equivalent of `Cmd/Ctrl + J`: it reveals the active
-  session's retained context without creating a tab and collapses a visible
-  panel without deleting tabs. With no session it is disabled.
-- The toggle is the sole panel-level collapse control. The work-panel header
-  keeps resource close only. Windows/Linux window controls stay viewport-fixed
-  at the window's right edge; while the panel is open the header reserves that
-  band plus the toggle so close-tab remains reachable.
-- No host protocol, IPC channel, or native application-menu command. Artifact
-  triggers and session-scoped contexts are unchanged. See ADR 0195 and
-  E2E-056 / E2E-070 / US-UI-57.
-
-## 2026-09-09 — Windows portable exe without installer (D364)
-
-- Windows tag releases published only `PI-Desktop-Setup-<version>.exe`, which
-  company environments that whitelist a single executable or block installers
-  cannot run.
-- Decision D364 amends D120 / D126 / ADR 0022: the Windows x64 lane publishes
-  `PI-Desktop-Portable-<version>.exe` alongside the NSIS installer. The
-  portable target does not write `latest.yml`. Packaged portable runs
-  (`PORTABLE_EXECUTABLE_FILE`) use notify-and-link delivery; NSIS keeps
-  in-app download and quit-and-install. Data stays in the existing application
-  data directory. Portable requests user execution level.
-- See ADR 0197 and E2E-211.
-
-## 2026-09-09 — Name every quiet interval on the live activity row (D365)
-
-- ADR 0175 named only `waiting-model`, `retrying`, and `waiting-subagents`.
-  Compaction, silent-turn recovery, the post-tool gap before the next request,
-  and `starting` still looked like a stuck generic wait. A parent wait on
-  delegates also omitted what those delegates were doing.
-- Decision D365 amends D338 / ADR 0175: `AgentActivity` adds `preparing`,
-  `compacting`, and `recovering`; `starting` is shown as its own label; and
-  `waiting-subagents` carries a live running snapshot (`name`, `lastPhase`,
-  `lastToolName`) that updates on child tool/thinking changes, not on every
-  token. The row stays one compact inline status and does not restore an
-  activity-group capsule.
-- See ADR 0198, `03-runtime/01-ipc-protocol.md`, `03-runtime/02-agent-runtime.md`,
-  `04-ux/09-interaction-patterns.md`, and E2E-008c / E2E-094.
-
-> D366 is unassigned. It was first used for the plugin session import decision,
-> which was renumbered to D367 / ADR 0200 while syncing with `main`, and then
-> for a docs-deploy-only-from-releases decision (with ADR 0199) that was
-> reverted on 2026-09-09. Both D366 and ADR 0199 stay retired; do not reuse
-> them. D376 is likewise unassigned: `main` renumbered the remote-control
-> amendment it briefly carried to D374 and assigned D375 to the rollout
-> sequence, so D376 stays retired too.
-
-## 2026-09-09 — Host-owned plugin session import and ownership API (D367)
-
-- External-history plugins need durable import/read/update/delete operations, but
-  the existing in-flight `session.getLlmContext` and core `session.import`
-  boundaries are not safe plugin ownership boundaries.
-- Decision D367 / ADR 0200 adds the P0/P1 `pi.session` methods: `import`,
-  `importBatch`, `list`, `get`, `listMessages`, `rename`, and `delete`.
-  `contributes.sessionSources` is required for every source. Host-core generates
-  ids and scopes all operations to `(pluginId, source, externalId)` ownership;
-  imports never activate project/provider/model bindings.
-- Schema v14 adds `session_import_origins` and `sessions.deleted_at`; protocol
-  v11 remains unchanged. Trash preserves the transcript for owner-only purge.
-  P2/P3 create, message mutation, binding, batch-delete, and tag APIs remain
-  deferred. See ADR 0200 and E2E-214/E2E-215.
-
-## 2026-09-09 — Explicit plugin project ids and host-owned session refresh (D368)
-
-- Imported sessions need an explicit way to belong to a durable project, but
-  exposing `workspace.set` to plugins would also change the user's active
-  workspace. Plugin writes also need a host-owned renderer refresh path.
-- Decision D368 / ADR 0201 adds permission-gated `pi.project.create({ path })`.
-  It creates or reuses a project and returns its host-generated id without
-  activating the workspace. Import items may provide an existing `projectId`;
-  omitted ids remain unbound, and historical origin paths do not become tool
-  roots. List/get projections report the explicit binding.
-- Electron main emits `pi-desktop/session/event/changed` after successful plugin
-  imports, renames, and deletes; the renderer reuses `refreshSessions()`, while
-  skipped imports emit nothing and closed project tabs are not reopened. See
-  E2E-216.
-
-## 2026-09-09 — Effective subagent thinking metadata (D369)
-
-- Delegation cards need the thinking level actually passed to each child run,
-  not a value re-derived from the parent or definition after the target model
-  clamps it.
-- Decision D369 / ADR 0202 adds effective `modelId` and `thinkingLevel` to the
-  immediate `Task` result, `SubagentRunResult`, and lifecycle snapshots. The
-  topology node and side-dock header show the raw canonical non-`off` level
-  after the model name; `off`, `omit`, and unsupported reasoning remain
-  model-only. No host protocol, storage schema, provider request, or lifecycle
-  behavior changes. D395 / ADR 0221 removes translation of the canonical value.
-  See E2E-219.
-
-## 2026-09-09 — Explicit unsigned macOS first-launch helper (D371; amended by D406)
-
-- The default macOS lane remains unsigned, and a downloaded trusted artifact can
-  still be blocked by Apple's quarantine check with a misleading damaged-app
-  message. The existing `xattr -cr` note was terminal-only and broader than
-  the launch failure requires.
-- Decision D371 / ADR 0204 adds an executable `PI-Desktop-macOS-open.command`
-  to every macOS distribution. The DMG places it in a visible first-launch row
-  below the drag-to-Applications gesture.
-- The helper searches only `/Applications/PI-Desktop.app` and
-  `~/Applications/PI-Desktop.app`, verifies `CFBundleIdentifier` is
-  `com.pi-desktop.app`, removes only `com.apple.quarantine` recursively when
-  present, and opens PI-Desktop. It never uses `sudo`, accepts no arbitrary
-  path, and does not replace Developer ID signing or notarization. The opening
-  note keeps the explicit trusted-source warning and a narrow Terminal
-  fallback. See E2E-196b.
-
-## 2026-09-09 — Local MCP control plane for desktop operations (D370)
-
-- An external Agent needs to drive the running desktop for project, session,
-  Agent, workspace, and reviewed application operations, while the deferred
-  remote Gateway / WebUI boundary remains unchanged.
-- Decision D370 / ADR 0203 adds an opt-in Streamable HTTP MCP server inside
-  Electron Main. It binds to `127.0.0.1`, authenticates with a persistent
-  random bearer token, validates supplied Origins against loopback hostnames,
-  writes a mode-restricted connection manifest, and delegates to the same
-  registered IPC handlers used by the renderer.
-- Named tools cover the common project/session/Agent flow; `pi_desktop_invoke`
-  reaches an explicit risk-tagged operation catalog. Secret channels and
-  renderer-only native pickers are excluded, while dangerous operations require
-  `confirm: true`. Successful external mutations reuse the existing renderer
-  session-change event so visible state follows the control call.
-- The endpoint is local-only and fail-soft at startup; it does not create a
-  remote authentication, cloud sync, or second permission implementation. See
-  `02-architecture/01-architecture.md`, `03-runtime/01-ipc-protocol.md`,
-  `05-security/01-security.md`, and E2E-220.
-
-## 2026-09-10 — Tighten the local MCP control-plane boundary (D372)
-
-- D370's first catalog still exposed native pickers (`plugin/loadDev`),
-  secret-write provider/OAuth/MCP paths, and `session/configure` without
-  confirmation, and treated session reads as renderer mutations.
-- Decision D372 amends ADR 0203: the first-version catalog is the
-  project/session/Agent/workspace flow plus reviewed reads; secret-shaped
-  arguments are stripped; `session/configure` is dangerous; listen addresses
-  are asserted loopback; protocol versions are negotiated rather than echoed;
-  results including `structuredContent` are bounded; renderer session refresh
-  is mutation-only. See E2E-220.
-
-## 2026-09-10 — Remote Agent Control uses a dedicated Host boundary (D373)
-
-- Remote control is a post-MVP capability and must not expose the existing
-  Electron IPC, `host.proxy`, or Rust host-core stdio boundary.
-- Decision D373 / ADR 0205 defines a logical Agent Host that owns Sessions,
-  Turns, event cursors, approvals, attachments, workspace policy, and crash
-  recovery. A production Gateway owns identity, routing, rate limits,
-  revocation, and audit, while the Agent Host connects outbound.
-- RACP v1 keeps the semantic operation model independent of transport:
-  WebSocket JSON-RPC is the primary interactive binding, HTTP/JSON + SSE is
-  the browser binding, and gRPC over TLS is the native/Gateway binding. The
-  bindings share event sequences, snapshots, idempotency, authorization, and
-  error semantics. See the remote architecture, protocol, security, and
-  rollout specifications and E2E-221 through E2E-230.
-## 2026-09-10 — Amend the remote Agent Control target before implementation (D374)
-
-- A review of the D373 draft against the shipped desktop found that the
-  remote approval vocabulary was narrower than the local
-  `allow-once` / `allow-session` / `deny` and Plan/Goal permission-mode
-  contracts, that pending permission requests were connection state rather
-  than Host state, that per-token deltas would exhaust the replay window,
-  that three required bindings and two IDLs were more than v1 can carry, and
-  that browsers cannot satisfy header-only authentication on WebSocket and
-  SSE.
-- Decision D374 amends ADR 0205: `RACP-WS` is the only normative v1 binding
-  with `RACP-HTTP` as the browser profile and `RACP-GRPC` reserved; typebox
-  in `packages/shared` is the single contract source; the first deliverable
-  is the headless `packages/agent-host` module that desktop IPC, local MCP,
-  and RACP all call; cursors are `{ epoch, sequence }` with ephemeral deltas
-  and an in-memory first log; the turn queue moves into the Host; host-core
-  exposes `permissions.pending`; remote approvals carry the full local
-  decision vocabulary; a remote permission ceiling defaults to `ask`; the
-  approval lifetime becomes a bounded Host policy for remote subscribers;
-  the Host link is a relay profile; browser clients use a cookie profile;
-  the Gateway identity source is decided at R3; and the first deployment is
-  single-tenant. See the amended remote architecture, protocol, security,
-  and rollout specifications and E2E-221 through E2E-230.
-
-## 2026-09-10 — Sequence remote control around recorded demand (D375)
-
-- Issues #176 and #140 ask to operate projects on a remote Linux or WSL
-  machine from the local desktop; issue #100 asks for task and approval
-  notifications on Telegram, WeChat, Slack, or a webhook with simple commands
-  back. No recorded request asks for a browser or phone client of the
-  desktop, and the maintainer has publicly committed to #100.
-- Decision D375 amends ADR 0205 a second time: rollout R2 becomes the
-  SSH-tunnel remote Host, with a `pi-host` bundle downloaded from GitHub
-  Releases by a bootstrap script uploaded over the user's own SSH session,
-  checksum-verified, bound to loopback, paired with the desktop, reached
-  through a port forward on the `RACP-WS` header profile, and rendered by the
-  unchanged renderer through a desktop RACP client adapter under
-  `lib/api.ts`. RACP gains the remote-host profile (`session/configure`,
-  `session/fork`, `session/rename`, `session/delete`, `session/compact`,
-  `workspace/list`, `workspace/read`, `workspace/diff`, `terminal/*`) and the
-  reverse tool relay (`tools/advertise`, `tool/execute`) in the same
-  milestone, which is not split. A remote session lives on its Host; provider
-  configuration is written over SSH; the SSH-paired desktop device is exempt
-  from the remote permission ceiling unless `applyCeilingToPairedDevices` is
-  set; queued turns are persisted by host-core and held after a restart; the
-  remote approval lifetime defaults to 30 minutes. R3 becomes the outbound
-  messaging integration, webhook first. The Gateway, browser profile, and
-  gRPC binding stay specified but unscheduled, and the Gateway identity
-  source is fixed to the PI account service of the pi-backend specification.
-  See the amended remote specifications and E2E-231 / E2E-232.
-
-## 2026-09-10 — Remote control stays user-local: no first-party identity (D385)
-
-- The maintainer requires that a user's client never authenticate through a
-  service the project operates and that remote control stay entirely on the
-  user's own machines and infrastructure.
-- Decision D385 amends ADR 0205 a third time and withdraws D375 item 10: no
-  project-operated identity, account, or relay service is in the path; the
-  only credential a client holds is a device token issued by the user's own
-  Host at pairing; a Gateway, if ever scheduled, is self-hosted by the user
-  and admits clients with those Host-issued credentials; OIDC federation and
-  the pi-backend account service are out of scope. The Host's only outbound
-  connections are the user's SSH hosts, the user's own messaging channels,
-  the model providers the user configured, and the read-only GitHub Releases
-  download of `pi-host`. The SSH-tunnel topology, device pairing, and the
-  messaging integration already satisfy the rule.
-
-## 2026-09-10 — Persist the Host-owned turn queue in host-core (D386)
-
-- D375 moved queued prompts into the Host and chose persistence; the
-  headless Agent Host module needs a store that survives a restart and never
-  starts work by itself, and host-core owns SQLite exclusively.
-- Decision D386 / ADR 0213 adds schema v15 with the `turn_queue` table and
-  the additive `session.queuePush` / `session.queueList` /
-  `session.queueRemove` / `session.queuePrioritize` methods. Push is idempotent per principal and key,
-  bounded at eight entries per session, and cascades with session deletion.
-  The module restores entries when host-core answers, holds every restored
-  session until a controller attaches, and drains one entry only after the
-  active turn's terminal event. Protocol stays v11; the renderer's in-memory
-  queue is retired, and its "send now" becomes RACP `turn/prioritize` plus
-  a graceful stop.
-
-
-## 2026-09-10 — Trusted extensions run in the Agent sidecar (D387)
-
-- Plugins are sandboxed and run outside the agent, which is right for
-  distributed, untrusted code but leaves no surface for code that must sit
-  on the agent loop itself: tools that execute in-process, hooks on every
-  turn and provider request, and slash commands with session context.
-- Decision D387 / ADR 0214 adds trusted extensions as the second extension
-  surface. The contract is the `ExtensionAPI` of `pi-coding-agent`, adopted
-  at the same pinned version as `pi-ai` and `pi-agent-core`; the sidecar
-  reuses its loader and `ExtensionRunner`, one Runner per session, with the
-  API implemented over the runtime's existing hooks. Extensions are labelled
-  "Trusted extension", disabled until the user enables each entry, and
-  discovered from `~/.pi/agent/extensions`, `<workspace>/.pi/extensions`, or
-  a manual path; D007 stays: `~/.pi` is never imported. Every API member is
-  Supported, Deferred (v2), or Unsupported; unsupported members are inert
-  with a diagnostic and never throw; terminal-UI surfaces stay unsupported.
-  Plugins, host-core RPC, protocol version, and schema are untouched in v1;
-  the new traffic is sidecar proxy methods and Electron IPC. Delivery starts
-  with the bundling spike (E2E-245). Spec:
-  `07-plugins/16-trusted-extensions.md`; scenarios E2E-241 to E2E-245.
-## 2026-09-10 — Extend provider retries and show bounded progress (D378)
-
-- The runtime-owned provider retry budgets surfaced short provider outages
-  earlier than the product target, and the active-turn row showed only a retry
-  number without the current wait or its bound.
-- Decision D378 amends D245 / D259 and ADR 0091 / ADR 0128: both the HTTP 429
-  and admitted non-429 transient provider paths receive ten retries after the
-  initial attempt, with setup and stream failures sharing one counter per error
-  class. The two classes stay separate, pi-ai's nested retry remains disabled,
-  and non-429 waits stay at the 8-second cap after the 1/2/4-second schedule.
-- `PROVIDER_RETRY_MAX_RETRIES` becomes the shared runtime/renderer budget
-  constant. The active-turn status derives a countdown from the existing
-  `retryDelayMs` and `since` fields and renders the attempt bound, for example
-  `Retrying in 0s · attempt 9/10`. No host protocol, storage schema, provider
-  configuration, or unrelated recovery policy changes. See ADR 0206 and
-  E2E-096 / E2E-149.
-
-## 2026-09-10 — Name downgraded and non-native builds at boot (D380)
-
-- Installing 0.14.5 over a data directory that 0.14.6-rc.4 had migrated to
-  schema 14 produced three silent host restarts and "Can't reach the local
-  service"; only `logs/host/runtime.log` said `database schema version 14 is
-  newer than supported 13`. An Intel macOS build on Apple Silicon likewise ran
-  under Rosetta with no hint.
-- Decision D380 extends the Linux glibc guard pattern (E2E-195): Electron
-  parses host-core's schema refusal from the last stderr, stops supervising on
-  the first failure, and pushes `hostStatus` with `DB_SCHEMA_TOO_NEW` plus both
-  schema numbers so the banner can say which version to install. Boot also
-  detects a non-native build (`sysctl.proc_translated` on macOS, `os.machine()`
-  elsewhere) and ships `archMismatch` on the boot status; the renderer shows a
-  dismissible hint naming Intel / Apple Silicon. No new error code: both keep
-  `HOST_UNAVAILABLE` and reuse the status-token `message` channel. No downward
-  migration is attempted. See E2E-239 / E2E-240.
-
-## 2026-09-10 — Allow three same-path mutation recovery failures (D379)
-
-- The previous repeat guard ended a prompt after two counted failures on one
-  `Edit` path or recognized shell patch key. That boundary could stop the model
-  while it was still applying a distinct recovery hint from the prior failure.
-- Decision D379 amends D186 and ADR 0087 / ADR 0207: the same-path mutation
-  guard allows three counted failures per prompt. Recoverable error codes keep
-  their one-code grace, successful mutations clear the path history, and the
-  third counted failure returns `terminate: true` with
-  `MUTATION_RETRY_BUDGET_EXHAUSTED`. The same limit applies to recognized shell
-  patch commands. No IPC, storage, host-protocol, or tool-result shape changes.
-  See E2E-140 / E2E-141.
-
-## 2026-09-10 — Plugin desktop control requires native user consent (D377)
-
-- A code and documentation review found that a plugin holding
-  `desktop.control` could run `dangerous` catalog operations (session
-  delete, permission-mode change, tool approval) with no human in the loop:
-  the shared controller's `confirm: true` is set by the plugin itself, and
-  the only confirmation was whatever card the plugin chose to draw. The same
-  review found the Electron `fetch` service let an allowlisted host redirect
-  a plugin request to an undeclared host, that `manifest.main` and
-  `ui.panel` skipped path containment, and that the spec 15 security
-  denylist and ignore layers had never been implemented in host-core.
-- Decision D377 (ADR 0208): a `dangerous` desktop operation from a plugin
-  needs the plugin's `confirm: true` and then the user's answer to a
-  host-owned native dialog that names only the catalog operation,
-  description, and a bounded argument preview; refusals and headless hosts
-  fail with `PERMISSION_DENIED`. The MCP contract (D372) is unchanged.
-- In the same change, without new decisions: `pi.net.fetch` has one path,
-  the runtime hop loop that re-checks `net.domains` before every redirect;
-  `manifest.main` and `ui.panel` are validated and resolved inside the
-  plugin; host-core enforces the spec 15 security denylist
-  (`WORKSPACE_PATH_DENIED`), app defaults, `.pi-desktopignore`, and
-  `<data_dir>/ignore` for unscoped walks; the path resolver follows
-  dangling symlinks so a write through one cannot leave the workspace; and
-  a `tools.execute` for an unknown session returns `SESSION_NOT_FOUND`
-  instead of inheriting the global workspace. See E2E-234 through
-  E2E-238.
-
-## 2026-09-10 — PowerShell 7 as a selectable Windows command shell (D381)
-
-- Issue #151: a Windows user who installs PowerShell 7 (`pwsh.exe`) had no way to
-  run `Bash` under it. PowerShell 7 installs side by side with, and never
-  replaces, the in-box 5.1 that ADR 0054's `windows-powershell` entry resolves,
-  and the catalog exposed no other entry: `crates/host-core/src/tools/shell.rs`
-  had no `pwsh.exe` resolution path, and `COMMAND_SHELL_IDS` listed four IDs.
-- Decision D381 (ADR 0209) adds the stable ID `windows-pwsh` ("PowerShell 7") to
-  the Windows catalog, amending ADR 0054 §1. It resolves
-  `%ProgramFiles%\\PowerShell\\7\\pwsh.exe` (plus `%ProgramW6432%` when the host
-  process is 32-bit), then `pwsh.exe` on PATH; a miss returns `SHELL_NOT_FOUND`
-  naming both searched locations. It keeps the `powershell` dialect and the
-  pinned non-interactive script, and it is never selected implicitly, so the
-  platform default and existing users' shells are unchanged.
-- Protocol, storage, and tool surfaces are additive: `CommandShellId` gains one
-  member while the folded settings validation and the first-available fallback
-  need no new code path, and no RPC method, tool name, or schema migration is
-  added. See E2E-112.
-
-## 2026-09-10 — A settled subagent reads back why it failed (D382)
-
-- A delegate that ended `failed`, `timed_out`, or `aborted` showed only its
-  outcome capsule and an elapsed time. The reason existed but had no reader:
-  `SubagentRunResult.error` travels on the delegation roster entry, while a
-  node and its dock render the `Task` row's own result, which ADR 0089 fixes at
-  `running` the moment the delegate starts. A delegate that died before
-  emitting a message row therefore left a panel of steps and no explanation.
-- Decision D382: the delegation's `error: { code, message }` is collected from
-  the lifecycle rows' `details.delegations[]` and `details.stopped[]` with the
-  same last-write-wins rule as the settled status, and the dock closes with an
-  error card that reuses the transcript error card's visual language and its
-  `errors.<code>` vocabulary, falling back to the localized
-  `chat.subagentStatus.*` outcome when a code is not registered. The card
-  follows a non-success terminal outcome rather than the error field alone, so
-  a completed or running delegate never shows one. No runtime, IPC, storage, or
-  tool-result change: the runtime already reported the error, and this stops
-  discarding it. See `04-ux/08-component-spec.md` §5.7 and E2E-198.
-
-## 2026-09-10 — A delegate can declare its own output limit (D383)
-
-- A subagent definition could bound its turns but not its response length.
-  `maxTurns` ran through the frontmatter, the record, the input, the editor
-  draft and the runtime, while the only output bound a delegate had was the
-  one its model binding published: `ModelBinding.maxTokens` in
-  `packages/agent-runtime/src/model-capabilities.ts` caps every caller of that
-  model, so raising it for one long-winded delegate raised it for the session
-  too. `SubagentDefinition`, `SubagentDraft` and `UserSubagentRecord` had no
-  `maxTokens`, and `SubagentRun` never passed one.
-- Decision D383 (ADR 0210): a definition may declare `maxTokens`, parsed under
-  the same loose key spellings as `maxTurns` and bounded by a 200000 ceiling.
-  Omitting it, `none` or `0` follows the model's published limit; a value
-  outside 1–200000 is treated as a typo that is reported and ignored or
-  clamped rather than forwarded. The declared value overrides `maxTokens` on
-  the model the delegate builds for itself, so the adapter's derived
-  `max_tokens` / `max_completion_tokens` / `max_output_tokens` carry it while
-  the session's own requests keep the model binding. It is stored in the
-  capability document's frontmatter and edited beside the turn limit in the
-  editor's existing Advanced disclosure. No new IPC, tool-result, or storage
-  shape: the field rides the existing subagent record and input. See E2E-119 /
-  E2E-155.
-
-## 2026-09-10 — Plan-safe plugin actions and summon-window shortcut (D384)
-
-*(the summon-window half is superseded by D438, which replaced the pair, and by
-D439, which moved the toggle off the macOS close-window chord; the plan-safe
-plugin-action opt-in below stays)*
-
-- Plan and Goal modes could not invoke plugin tools at all, even for
-  read-only actions like fetching a URL through the bundled Browser
-  plugin, and the keyboard shortcut catalog only exposed a close-window
-  binding with no symmetric way to bring a tray-hidden window back.
-- Decision D384 amends ADR 0052 / ADR 0053 with a per-action plugin
-  opt-in: a plugin tool may declare a `planSafeActions` list naming the
-  exact actions it considers safe in contract modes. The runtime hides
-  plugins without such a list in Plan and Goal, the host admits the
-  declared list in `tools.execute`, and the desktop runner rejects any
-  call whose action is not in the list. The bundled Browser plugin
-  declares `["navigate", "snapshot", "screenshot", "console"]`; the
-  mutating actions stay Agent-only. The shortcut catalog gains
-  `summonWindow` (`Mod+Shift+W`) in the `window` group, paired with
-  `closeWindow` (`Mod+W`), and the desktop main process registers it
-  through `globalShortcut` and the native menu. See ADR 0211 and
-  E2E-PLAN-005.
-
-## 2026-09-17 — One window toggle replaces the summon/close pair (#360, D438)
-
-- Issue #360 item 3 asks for the summon-window and hide/close-window global
-  shortcuts to become one key. D384 shipped the opposite arrangement —
-  `summonWindow` (`Mod+Shift+W`) as the "symmetrical counterpart" of
-  `closeWindow` (`Mod+W`), mirrored by `04-ux/09-interaction-patterns.md` §1.1 —
-  so D438 supersedes exactly that half of D384; the plan-safe plugin-action
-  opt-in from the same decision is untouched. The numbering skips D435 and D437,
-  which other in-flight work already claims.
-- The catalog ships one `toggleWindow` id in the `window` group, and
-  `closeWindow` and `summonWindow` leave `KEYBOARD_SHORTCUT_IDS`, so neither
-  retired chord is spent on anything: neither is a shipped default, registered
-  with `globalShortcut`, a settings row, or a menu accelerator, and the freed
-  `Mod+Shift+W` becomes available to plugins again. D439 later moved the
-  toggle's own default off `Mod+W`, which D438 had chosen; the merged id, the
-  toggle semantics, and the migration below are unchanged by that.
-- Pressing the key is a decision, not a close. `windowToggleAction` hides a
-  visible, focused window through `Window.hide()` and otherwise shows and
-  focuses it (hidden, minimized, or behind another application all count as
-  "not visible"). `Window.hide()` is the whole hide path, so the Windows/Linux
-  close-behaviour prompt, its `Quit` choice, `window-all-closed`, and
-  `before-quit` are never reached, no window is destroyed, and the app keeps
-  running; the tray icon, the same key, or macOS application activation brings
-  the window back. `windowControl("close")` remains the window's own close
-  button, which is still the only way into the close behaviour.
-- Persisted `settings.keybindings` can still name the two retired ids, and the
-  same rule applies in both processes: `migrateKeybindingOverrides` folds the
-  map as it is read — in Electron main before it registers accelerators or
-  builds the menu, and in the renderer store before any consumer sees it — so
-  no surface can act on the retired ids. The rules are ordered and idempotent:
-  an existing `toggleWindow` override wins unchanged; otherwise the first
-  retired entry that carries a *binding* wins, `closeWindow` first because
-  hiding is the toggle's primary job; a retired entry that is only `null` is
-  honoured when no binding competes, so an explicit unbind is never replaced by
-  a shipped default; and a stored value equal to its own retired default carries
-  no intent (the settings UI deletes overrides that match a shipped default), so
-  `Mod+W`/`Mod+Shift+W` values are dropped rather than resurrected. Nothing is
-  rewritten in storage: the folded map is what the next shortcut save persists,
-  and an older release reading a newer map simply ignores the unknown id.
-- The window-visibility key is a supported global shortcut on macOS, Windows,
-  and Linux, so it is documented as one: menu label and settings row are
-  localized in all eight catalogs, and the settings card shows a single Window
-  row instead of two contradictory ones.
-- See ADR 0211 (amended), `04-ux/09-interaction-patterns.md` §1.1 and §1.4,
-  `04-ux/06-settings-ia.md` (shortcuts tab), `07-plugins/03-plugin-api.md`,
-  `07-plugins/04-plugin-security.md`, `03-runtime/01-ipc-protocol.md`
-  (`NATIVE_MENU_ACTIONS`), E2E-072, and
-  `apps/desktop/test/window-toggle-shortcut.test.mjs`.
-
-## 2026-09-17 — The window toggle avoids the macOS close-window chord (#360, D439)
-
-- D438 merged the pair onto `Mod+W`, but that binding cannot be the default of a
-  *process-wide* accelerator: macOS spends `Cmd+W` on its own close-window
-  command, so claiming it globally takes the chord away from every other
-  application instead of only closing this window. `Mod+W` is therefore the one
-  key the toggle must not hold.
-- The catalog now ships `toggleWindow` on `Alt+Shift+W` — no platform modifier,
-  so it is one chord on macOS, Windows, and Linux — which collides with no
-  shipped default, no reserved editing chord, and no platform command. The
-  merge, the hide/show semantics, and the fold of the retired
-  `closeWindow`/`summonWindow` overrides stay exactly as D438 defined them.
-- On macOS `Mod+W` is now also refused to plugins (`isReservedKeybinding`), so
-  the platform keeps the chord it owns even though the app no longer uses it.
-- A stored `toggleWindow` value that only repeats a default this release ships
-  or already superseded carries no user intent, so the fold drops it: a profile
-  that persisted the short-lived `Mod+W` default moves to `Alt+Shift+W` instead
-  of freezing the macOS chord, while a real rebind (`Ctrl+Alt+T`) and an
-  explicit unbind (`null`) survive untouched, and a retired customization still
-  wins over a dropped superseded default.
-- The number is D439 because D435 and D437 were already claimed by other
-  in-flight work. **Note**: this log currently carries two `D438` entries — the
-  window-toggle merge above (#360, the pre-rebind decision) and the Git-checkout
-  decision (ADR 0273) near the end of the file. The latter was appended after the
-  toggle's D438 had merged, so its number needs to move to D440 or the next free
-  id; this entry does not rewrite another decision's text.
-- See ADR 0211 (amended again), `04-ux/09-interaction-patterns.md` §1.1 and
-  §1.4, `04-ux/06-settings-ia.md` (shortcuts tab), `07-plugins/03-plugin-api.md`,
-  `07-plugins/04-plugin-security.md`, E2E-072, and
-  `apps/desktop/test/window-toggle-shortcut.test.mjs`.
-
-## 2026-09-10 — Remove diagnostic timing log streams (D385)
-
-- The timing-only process log streams introduced by D137/D183 are retired:
-  sidecar `[timing]` records, host `tool timing` records, boot phase timing,
-  updater timing records, the dedicated `timing` category, and
-  `PI_DESKTOP_TIMING` are no longer emitted.
-- Key lifecycle, state-change, permission, tool, plugin, provider, persistence,
-  updater, and error records remain. Existing audit fields and UI/protocol
-  duration metadata remain unchanged because they support security forensics,
-  transcript presentation, and bounded provider diagnostics rather than verbose
-  process logging.
-- Existing timing files are historical local data and are not deleted or
-  migrated automatically.
-
-## 2026-09-11 — Agent extensions are a plugin contribution (D388)
-
-- D387 shipped ExtensionAPI modules as a second surface with its own
-  registry, settings tab, and enablement store. The maintainer wants one
-  surface: a pi CLI extension should become a PI-Desktop plugin and be
-  installed, enabled, scoped, and shown like one.
-- Decision D388 / ADR 0215 amends D387: modules are declared as
-  `contributes.agentExtensions` and gated by the new high-risk permission
-  `agent.extension`; the manifest is invalid without it, and a plugin whose
-  recorded grants omit it loads with the modules skipped and audited.
-  Enablement and project scope are the plugin's. "Import pi extension"
-  copies a pi CLI extension into `<dataDir>/plugins/imported/<slug>` with a
-  generated manifest and registers it as a development plugin; the confirm
-  before the picker is the trust decision. The standalone registry, its
-  store file, the Settings destination, and the list / enable / rescan /
-  add-path / remove channels are removed; the plugin row shows the
-  `agentExtension` capability, the permission, load state, registered
-  names, and diagnostics. The sidecar loader, Runner, hooks, command and
-  prompt bridges are unchanged. Marketplace distribution of plugins holding
-  `agent.extension` waits for signing. Spec 16 §1 to §3, §10.2, §11;
-  E2E-241 to E2E-245 re-executed on plugin-form fixtures.
-
-## 2026-09-10 — DeepSeek reasoning_content replay on aggregators (D389)
-
-- DeepSeek thinking mode requires every replayed assistant message to include
-  `reasoning_content`. Turns that produced no thinking still need the field as
-  `""`; omitting it returns HTTP 400.
-- pi-ai auto-detects that flag only when `model.provider === "deepseek"` or the
-  base URL contains `deepseek.com`. PI-Desktop stores a UUID as `model.provider`,
-  so SiliconFlow, Volcengine, custom proxies, and other aggregators never match.
-- Decision D389 amends D024: Completions rows whose `vendorKey`, URL, model id,
-  or catalog `family` identifies DeepSeek receive
-  `requiresReasoningContentOnAssistantMessages: true`. `thinkingFormat` is not
-  changed by that match, so OpenRouter and other aggregators keep their existing
-  thinking wire shape. See E2E-005E and `03-runtime/11-provider-model-system.md`.
-
-## 2026-09-10 — Regenerates truncate under the host RPC lock
-
-- Retry, regenerate, and edit-resend used to load the whole transcript in
-  Electron main, archive the discarded tail, and `session.replaceMessages` the
-  kept prefix. That JSON-RPC line is one NDJSON record: an 80 MB session both
-  exceeds the 64 MiB stdin cap and races the 130 s client deadline, leaving
-  `turns.status = running` after the UI has failed (issue #211).
-- `session.truncateFrom` now performs the cut, the leftover-turn abort, and the
-  discarded-branch archive inside one host call. `agent/prompt` loads only a
-  bounded `session.get` for launch configuration.
-- Oversized control-pipe lines are drained and answered with `LIMIT_EXCEEDED`
-  instead of ending the stdin reader.
-- Decision D390 and ADR 0216 define this. See
-  `03-runtime/04-data-storage.md` §4.9/§7,
-  `03-runtime/06-host-rpc-protocol.md` §4, `03-runtime/01-ipc-protocol.md`,
-  and E2E-246.
-
-
-## 2026-09-11 — Host stdout sender must not outlive serve
-
-- ADR 0216 stopped regenerate from shipping the kept transcript and stopped an
-  oversize line from killing the stdin reader. On Windows that was not enough:
-  the Alt+Space hook held a strong stdout sender, so after stdin ended the
-  writer thread never stopped, host-core stayed alive, and Electron reported
-  `host RPC timeout: session.replaceMessages` (issue #211).
-- The hook now stores a weak sender. Serve waits at most 5 s for the stdout
-  writer. Electron rejects a request line over 64 MiB before writing.
-  Host-side `LIMIT_EXCEEDED` peeks the JSON-RPC id from the truncated prefix.
-- Decision D391 and ADR 0217 define this. See
-  `03-runtime/07-process-model.md`, `03-runtime/06-host-rpc-protocol.md` §7,
-  and E2E-247.
-
-## 2026-09-11 — Selection overlay for quotes (D-LOCAL-selection-overlay)
-
-*(Retired by ADR 0268 on 2026-09-16: the feature and its surfaces were removed, and these IDs stay retired and must not be reused. The record is kept for history.)*
-
-- Quote no longer has to be reached at the end of the answer: a non-empty text
-  selection inside one transcript row floats one overlay **above** it, centered
-  on the selection and clamped into its clipping ancestors' rects (the transcript
-  scroller is one) and capped by the top of the docked composer. It is portaled
-  like the app's other body-portaled popovers and follows the selection while the
-  thread scrolls, rather than hiding.
-- The overlay offers Add to chat (`chat.addToChat`), Ask in side chat
-  (`chat.askInSideChat`) and Copy (`chat.copy`). Add to chat writes the excerpt
-  into the active session's composer draft under D-LOCAL-message-quotes's quote contract; Ask in
-  side chat forks at that row and sends the excerpt as that child's prompt, so
-  the question is answered in the panel instead of the visible conversation; Copy
-  writes the Markdown to the clipboard. Every action clears the native selection,
-  a drag that crosses rows raises no overlay, and a read-only projection renders
-  none.
-- The excerpt is recovered from the rendered DOM instead of
-  `Selection.toString()`: a range touching a formula expands to the whole formula
-  and quotes KaTeX's `application/x-tex` annotation as `$…$` or `$$…$$`; a code
-  block becomes a fence with its language and a delimiter longer than any
-  backtick run inside it; a table row becomes one `a | b` line; inline code keeps
-  its backticks and file-reference chips keep their code text. The row action and
-  the overlay share this one recovery path.
-- The 2000-character cap, the `> ` blockquote, the `chat.quoteSource`
-  attribution, focus, and the no-send/no-session/no-transcript-write boundaries
-  are unchanged. Two deviations from the reference implementation are deliberate,
-  because the quote lands in a Markdown draft this app renders back: formulas use
-  `$…$` / `$$…$$` (remark-math), and table rows use `a | b`. Renderer-only; no
-  protocol, storage-schema, IPC, or permission change beyond the composer's
-  `data-composer-dock` hook. See ADR message-quotes-and-side-chats and E2E-CHAT-quote-prefill, E2E-CHAT-selection-markdown, E2E-CHAT-selection-side-chat.
-
-## 2026-09-11 — Response annotations as prompt attachments (D-LOCAL-response-annotations)
-
-*(Retired by ADR 0268 on 2026-09-16: the feature and its surfaces were removed, and these IDs stay retired and must not be reused. The record is kept for history.)*
-
-- Selecting text in an assistant turn and choosing Add to chat attaches a
-  **numbered annotation** to that turn: an id, the anchored turn, the excerpt
-  (Markdown, 2000-character cap), an empty comment field, and capture order as
-  the numbering. Annotations are renderer-owned session state; re-annotating the
-  same excerpt is a no-op, and they are neither persisted nor sent on their own.
-- The answer body is left alone: this app never inserts a marker into the text the
-  user reads. A `:codex-annotation{index="N"}` directive the model writes (the
-  instruction asks it to cite every annotation it addresses) renders as a small
-  numbered reference whose tooltip is the excerpt, and no marker joins a
-  selection, quote, or copy. The composer shows one attachment chip with the
-  count, whose tooltip lists `N. excerpt`, plus one control that drops them all.
-  The chip never enters the editable text, so D209's smart Stop and D301's draft
-  retention are untouched.
-- A send with annotations composes `# Response annotations:` + the instruction +
-  `<response-annotations>` with `[{"text","annotation","source":{"messageId"}}]` +
-  `## My request:` + the user's text, and consumes them. The visible draft, the
-  optimistic row, the sidebar title, and the edit seed stay annotation free; a
-  stored prompt that carries the block is displayed as its request.
-- Quoting a user message and the side chat's Add to main chat keep D-LOCAL-message-quotes's draft
-  quote. No protocol, storage-schema, IPC channel, or permission change. See
-  ADR response-annotations and E2E-CHAT-annotation-attachments, E2E-CHAT-annotation-session-state.
-- *(Amended 2026-09-12.)* Add to chat, and the assistant turn's annotate action,
-  open a compact comment editor instead of attaching silently: the excerpt is
-  snapshotted before focus collapses the selection, the comment is multiline and
-  optional, Save attaches or updates the annotation with the comment in
-  `annotation`, and Cancel/Escape discards it without sending. Re-annotating an
-  excerpt that is already attached reopens that annotation's editor, and the
-  composer's count chip opens a list where each excerpt's comment can be edited
-  or that item removed beside the existing clear-all. The editor belongs to the
-  session it was opened in, and a save for an annotation that was already sent
-  or removed changes nothing. No protocol, storage-schema, IPC channel, or
-  permission change.
-- *(Floating-index amendment, ADR floating-annotation-index.)* The user-requested collapsible floating
-  index replaces the composer popover. Matching source badges and non-interactive
-  highlights use renderer-only text offsets, never inserted Markdown. Locate reveals
-  history and releases follow mode; duplicate identity now includes source row and
-  selected occurrence. List/badge/prompt numbering stays identical. Send-scoped
-  lifecycle and host boundaries remain unchanged. See E2E-CHAT-annotation-source-index.
-## 2026-09-11 — Right panel uses a tab strip and data-driven add menu (D399)
-
-- Issue #229 replaces the right panel's combined resource menu with a
-  horizontally scrollable header tab strip and a fixed tight `+` trigger. Only
-  the strip scrolls; tabs use ARIA tab semantics, close on their own hover or
-  focus affordance and middle-click, and keep the active resource in view.
-- The `+` menu has one **Tools & panels** group: host-owned Review followed by
-  the current scoped `contributes.views` metadata. Files and Browser remain
-  plugin data rather than a renderer hardcoded list. Shortcut labels are
-  conditional on a real binding. The same list is used by the no-tab New
-  launcher, so closing the final tab keeps the panel open instead of hiding it.
-- The viewport-fixed toggle remains the sole collapse control and keeps the
-  existing customizable `Mod+J` binding. Its icon has explicit collapsed and
-  expanded states, and its localized tooltip/accessibility name includes the
-  resolved binding when present.
-- A new profile starts with a 360px panel width inside the existing 244–720px
-  range; persisted widths are left unchanged. No protocol, storage schema,
-  plugin manifest, or native-window reservation changes. ADR 0224, UX §4–§5,
-  and E2E-056 define the shipped behavior.
-
-## 2026-09-11 — Reserve chat width for composer controls (D401)
-
-- MainPane and its chat surface retain a 515px minimum when the sidebar or
-  in-flow work panel changes width. Side docks cannot consume or paint over the
-  reserved composer space.
-- The composer toolbar stays on one row with non-shrinking left and right
-  control groups. Mode and permission labels remain single-line and ellipsize
-  inside their chips when localized text is longer than the label slot.
-- No IPC, storage, or native-window reservation changes. See ADR 0226 and
-  E2E-168.
-- D408 supersedes the live 515px floor with a 450px MainChat floor.
-
-## 2026-09-11 — Long-press the project title to reorder (D402)
-
-- Retained project groups no longer render a reorder grip. A 400ms still
-  press on the project title arms a pointer reorder; pointer travel beyond
-  8px before that delay cancels the press so a click still selects the
-  project and toggles collapse.
-- After the title is armed, moving the pointer highlights another group in
-  the same pinned/archived bucket; release inserts before or after that
-  group from the pointer's vertical midpoint. ArrowUp/ArrowDown on the
-  focused title is the keyboard path, and Escape cancels an active drag.
-- Reordering still writes contiguous normalized-path `order` values and
-  switches the renderer-local project sort to `manual`. Host workspace
-  identity, session ordering, and on-disk directories are unchanged.
-- Decision D402 amends D399 / D093 / ADR 0227. See ADR 0228 and E2E-253.
-
-## 2026-09-11 — Press-and-move project title reorder (D403)
-
-- Mouse and pen reorder by pressing the project title and moving 8px. A
-  click with no qualifying movement still selects the project and toggles
-  collapse. Touch does not start a reorder so the list can scroll.
-- An accent insertion line shows before or after the target group from the
-  pointer's vertical midpoint. ArrowUp/ArrowDown and Escape are unchanged.
-- Decision D403 amends D402 / D093 / ADR 0228. See ADR 0229 and E2E-253.
-
-## 2026-09-11 — Skill ships with the Agent core tool set (D404)
-
-- `Skill` joins the Agent-mode core tool set, so its schema is present on the
-  first provider request whenever the skill catalog is non-empty. It is no
-  longer part of the deferred catalog and never appears under `# On-demand
-  tools`.
-- Registration is unchanged: the tool exists only with a non-empty catalog, and
-  Plan and Goal still omit it entirely. Every other on-demand capability and
-  `ToolSearch` itself keep their lazy behavior.
-- Decision D404 amends D174 / D185 / ADR 0048 / ADR 0219. See ADR 0230 and
-  E2E-254.
-
-## 2026-09-11 — Ideographic comma opens the slash menu (D405)
-
-- A `、` committed as the first character of an empty composer draft is
-  rewritten to `/` before trigger detection runs, so a Chinese IME reaches the
-  ordinary slash menu without switching input methods.
-- Only that position is rewritten: a `、` anywhere later in the draft stays
-  ordinary punctuation, and the `@` file menu is unaffected.
-- Decision D405 amends D123 / D139 / ADR 0024. See ADR 0231 and E2E-255.
-
-## 2026-09-12 — Keep macOS DMG opening guidance text-only (D406)
-
-- macOS DMGs expose `PI-Desktop-macOS-opening-help.txt` with the Finder label
-  `If app won't open, read this.txt` and no longer include or expose the executable
-  `PI-Desktop-macOS-open.command`.
-- macOS ZIP packages retain both the opening note and the executable helper.
-  The note provides the narrow Terminal fallback for trusted unsigned builds;
-  signed and notarized builds do not need it.
-- Decision D406 amends D371 / ADR 0204. See ADR 0232 and E2E-196b.
-
-## 2026-09-12 — Restore archived projects after session import (D407)
-
-- A core or plugin import that adds a new project-bound session clears the
-  renderer's archived presentation state for that session's normalized project
-  path during the import-triggered refresh.
-- Pathless sessions, skipped imports, history-only plugin paths, and ordinary
-  refreshes preserve archive state. The host model and all existing IPC,
-  plugin, storage, and data-format contracts remain unchanged.
-- Decision D407 records the issue #250 fix. See ADR 0236 and E2E-257.
-
-## 2026-09-13 — Prioritize MainChat in the three-column shell (D408)
-
-- The in-flow shell treats MainChat as the first-priority column: a hard 450px
-  minimum, a panel capped by the live budget (`client width - 450px - expanded
-  sidebar`, no fixed maximum), and an expanded sidebar that yields at the
-  threshold while its
-  exit animation still counts toward the shared budget.
-- A manual sidebar reopen spends work-panel width first and otherwise targets
-  460px. Closing the panel restores only a sidebar the layout collapsed; a
-  manual collapse stays collapsed.
-- The native window never participates: the reservation seam stays at zero and
-  no panel width or x-offset geometry is applied.
-- Preview mode unmounts MainChat and gives the client area to the work panel
-  beside the sidebar. AppShell supplies a window-level chrome row for shell
-  actions and native controls; macOS reserves 88px in windowed mode and 8px in
-  fullscreen when the sidebar is collapsed.
-- Decision D408 records the issue #267 behavior. See ADR 0238 and
-  E2E-LAYOUT-three-column-width-priority.
-
-## 2026-09-13 — Host-owned session collaboration messages (D409)
-
-- Rust host-core owns a durable ledger for plugin-mediated messages between real
-  Session IDs. A delivery is bound to its actual durable target turn before
-  execution, and the result is derived from that turn's persisted terminal
-  state rather than assistant-text polling.
-- The reviewed plugin gateway authenticates the source from the active Agent
-  tool invocation. Existing target sessions retain their project, model,
-  context, and permission configuration; new workers inherit the initiating
-  session's project and permission ceiling.
-- Completion callbacks are durable and at-most-once. Session-message
-  provenance is persisted with transcript rows and is immutable across
-  replacement or regeneration. Restart recovery retains queued work but never
-  replays an unclaimed or interrupted turn automatically.
-- Decision D409 amends ADR 0237, ADR 0165, and ADR 0213. See ADR 0239 and
-  E2E-PLUGIN-session-orchestrator-real-workers.
-
-## 2026-09-13 — Independent session discovery and navigable collaboration projections (D410)
-
-- The reviewed plugin gateway exposes a bounded `session/collaboration/list`
-  read for non-deleted Agent sessions, including sessions created outside
-  Session Orchestrator. It returns no project paths, credentials, transcripts,
-  or message previews; `send` continues to use the real Session ID and the
-  existing host authorization path.
-- Sidebar collaboration summaries now carry readable provider/model labels and
-  bounded creator/created-session references. The renderer presents those
-  references as keyboard-focusable navigation buttons and opens the durable
-  session through the existing selection path.
-- Decision D410 amends ADR 0239. See ADR 0240 and
-  E2E-SESSION-independent-top-level-communication /
-  E2E-SESSION-hover-card-model-and-links.
-
-## 2026-09-12 — Steer the active turn with Alt+Enter
-
-- Normal Send/Enter remains a Host-owned follow-up; Alt+Enter submits input to
-  the current durable turn using a required expected turn id.
-- Reuse pi-agent-core steering at the next model-request boundary, preserve
-  started tools, and retain the active model/workspace/permission configuration.
-- Stop and ended targets reject without redirecting input to another turn.
-  Accepted input remains history without independent replay after cancellation.
-- Journal accepted user input with a provisional preceding reply when needed;
-  finalize only an indexed streaming assistant in place and retain completed
-  message idempotency. See ADR active-turn-steering and E2E-AGENT-alt-enter-steers-active-turn.
-
-### Unified transcript reading and complete search navigation
-
-[ADR transcript-reading-ownership](/adr/transcript-reading-ownership) amends
-[ADR session-content-search](/adr/session-content-search) with one renderer
-reading view for ordinary history and search, shared by MainChat and the subagent
-dock. Live/model caches remain canonical. Nested targets receive capped parent
-Task context through additive `navigationParent`; parser source offsets locate
-hidden Markdown and file-chip matches. Read ownership rejects interrupted pages,
-and explicit message actions hydrate canonical input when history is partial or
-text is capped. Validation: E2E-SESSION-content-search-and-message-navigation.
-
-## 2026-09-13 — Harden session collaboration navigation and delivery
-
-- Collaboration references now carry `available`. A reference to a session that was
-  deleted or is otherwise gone is reported with `available: false`; the renderer renders
-  it as text instead of a navigation control, and opening a session that no longer exists
-  reports a visible error instead of committing an empty transcript.
-  `session_collaboration_messages.source_session_id` intentionally has no foreign key, so
-  a delivery record survives deletion of its sender and is reported as unavailable.
-- The six `session/collaboration/*` operations are first-party-plugin-only: they require
-  an authenticated plugin tool invocation context, so they are excluded from the
-  MCP-visible catalog while remaining available through `pi.desktop.listOperations` and
-  `pi.desktop.invoke`. This amends the "same reviewed operation catalog" claim of
-  ADR 0203 / D370 and the `desktop.control` row of the plugin permission matrix.
-- Settling a delivery now asserts that the conditional `queued` to `running` claim
-  actually changed a row, so losing that race cannot create a second turn for one
-  delivery, and `spawn` evaluates its worker limits inside the same transaction as the
-  session insert.
-- Electron delivery settlement no longer drops a settlement recorded before a host
-  restart, and a drain that is already running picks up settlements queued during it
-  instead of deferring them to an unrelated trigger. A persisted delivery failure keeps a
-  stable `CODE: message` form.
-- Review fixes for the orchestration refresh path bound the model-catalog lookup work per
-  read instead of relying on cache eviction, and replace E2E boot conditions that could
-  not fail with observations the probe does not itself guarantee.
-- See ADR 0239, ADR 0240, E2E-SESSION-hover-card-model-and-links.
-
-### Global sidebar conversation pins (issue #306)
-
-[ADR global-sidebar-pins](/adr/global-sidebar-pins) amends ADR 0016: conversation
-pins occupy one global section above standalone and project history, including
-closed or collapsed projects. Archive visibility and session sorting still
-apply. Pins carry project context and are removed from normal history before
-date grouping and row limits. Persisted metadata and host ownership stay intact.
-Validation contract: E2E-SIDEBAR-global-pinned-conversations.
-
-## 2026-09-13 — Vendor the file view as an updatable plugin (issue #304)
-
-- The work panel's file view is no longer `pi.files`. It is a vendored copy of
-  the third-party `pi.file-manager` release, shipped from
-  `apps/desktop/resources/plugins/` and recorded in its own `UPSTREAM.md`. The
-  old plugin is removed, and host-core drops its stale registry row on the next
-  launch.
-- Bundled means default and non-removable, not frozen: a bundled plugin can be
-  updated from the marketplace, that update survives the next launch, and a
-  build that ships a strictly newer version still wins. `uninstall` refuses by
-  ID against what the build ships, not by the row's `source`, so an updated
-  plugin stays uninstallable and a plugin dropped from a build is removable
-  again.
-- A marketplace entry is offered as an update only when it is strictly newer.
-  Equality is not an update, and an older catalog version is not one either.
-- Editing writes stay inside the plugin's own process, which keeps the workspace
-  path jail, atomic writes, conflict detection, and its write audit. The host
-  gateway does not mediate them: a manifest cannot declare a whole-tree write.
-- See ADR 0241 (supersedes ADR 0105), ADR 0104, E2E-153,
-  E2E-PLUGIN-bundled-plugin-keeps-a-marketplace-update.
-
-## 2026-09-14 — Delta-only coalesced streaming updates (D412)
-
-- Append-only `message_update` frames carry `stream: "delta"` and the new
-  chunk only. Growing `content`/`thinking` stay in the runtime accumulator and
-  in `message_end`. Retry replacements still send a full snapshot.
-- A 16ms coalescer concatenates pending deltas and flushes before tool,
-  terminal, abort, error, and retry events so order is preserved.
-- AgentHost applies deltas to live items and skips a hot-path `JSON.stringify`
-  for small delta frames. Inflight checkpoints reconstruct the snapshot from
-  the same deltas. The renderer concatenates same-frame deltas, then patches
-  the live row. Unchanged activity parts keep object identity.
-- Protocol version remains 11. See ADR 0242, E2E-STREAM-long-turn-keeps-realtime,
-  and issue #299.
-
-## 2026-09-13 — Skill market public-HTTPS catalog fetch (D413)
-
-- Skill Market search/fetch run in Electron main. Renderer CSP still forbids
-  the network. Install is existing `skills.create`.
-- Shared `isSafePublicHttpsUrl` / `isPublicHostname` / `isPublicIpLiteral` are
-  the syntactic classifier. Main re-checks DNS and every redirect hop.
-- Scanned ids are sanitized to host `valid_capability_id`. Preview shows the
-  assembled body; over 128 KiB is not written.
-- See ADR 0243, E2E-SKILL-MARKET-NET-BOUNDARY / EXPANSION / INSTALL / ID-ALIGN,
-  and issue #287.
-
-## 2026-09-14 — Harden the MCP market public-network boundary (D414)
-
-- MCP market source and catalog endpoint validation is shared by Renderer and
-  Electron Main. It accepts credentials-free public HTTPS only and rejects
-  loopback, private, CGNAT, link-local, multicast, reserved, documentation,
-  benchmark, ULA, and site-local address ranges, including mapped and
-  compatible IPv6 forms.
-- Main resolves each hostname immediately before the request and pins the
-  selected public address to the HTTPS socket. Redirects are followed manually,
-  checked and pinned at every hop, and limited to five hops. Source responses
-  are capped at 4 MiB, calls accept at most 16 sources, and browse/search
-  caches are bounded by age, key count, and entry count.
-- Registry npm/PyPI package versions and runtime/package arguments are retained
-  in install templates. Only `streamable-http` public HTTPS remotes are mapped;
-  remote header placeholders become explicit install values. Cross-origin MCP
-  redirects do not forward caller headers.
-- Manual user-owned MCP configuration keeps ADR 0142's explicit local/LAN
-  endpoint policy. See ADR 0245 and E2E-MCP-MARKET-*.
-
-## 2026-09-14 — Opt-in subagent inheritance of the parent tool catalog (D415)
-
-- A subagent definition may declare `tools: inherit` (alone or with assignable
-  extras). Builtins stay on today's whitelist.
-- At spawn the runtime unions the live `toolCatalog` minus Task*, mode
-  switches, `asktool`, `new_context`, and `ToolSearch`. Skill/MCP/plugin tools
-  the parent is allowed to call are included; child ToolSearch/new_context do
-  not mutate parent runtime state.
-- host-core keeps the `inherit` token so inherit-only documents load and
-  Settings round-trips them. See ADR 0246, issue #215, PR #319, and
-  E2E-SUBAGENT-inherit-parent-tools.
+  `03-runtime/06-host-rpc-protocol.md`、`04-ux/06-settings-ia.md`、
+  `04-ux/08-component-spec.md` §7.3/§8.3/§11.5，
+  `04-ux/09-interaction-patterns.md` §3A 和 E2E-084。
+
+## 2026-08-06 — 重建上下文压缩以匹配 Codex
+
+- 上一轮引用了 Codex，然后在四个上实施了相反的做法
+很重要。 Codex 仅同步压缩，通过以下方式测量整个上下文
+  默认情况下，为每个发出一个 `ContextCompaction` 项和一个 `Warning`
+  压缩，并有一个真正的面向模型的工具（`new_context`）。 D200 的背景
+  部分还指出 Codex 没有这样的工具，这是错误的。用户
+  在被告知可以逆转不可察觉性后，询问 Codex 的机制
+  他们早些时候要求进行一轮。
+- 压缩再次内联。后台预计算，其70%的限制，
+  增量范围触发，删除三个空闲调用点；
+  当上下文与 `hardLimit` 或模型交叉时，`prepareNextTurn()` 会进行压缩
+  称为 `new_context`，与 Codex 的 `should_roll_over` 匹配。
+- 检查点携带摘要以及最近的用户消息，仅此而已。圆周率
+  切割点仍然标记边界，但其分叉前缀和最近的尾部
+  被折叠回摘要输入中，因此没有消息离开模型上下文
+  未被发现——仅过滤尾部就会导致数据丢失的错误。
+  保留最新的优先到 20,000 个令牌，交叉消息被截断
+  而不是被丢弃，并且助理消息会带着他们的工具调用，所以
+  没有孤立的呼叫到达提供商。
+- 两个 Codex 系列都存在：摘要路径和 `fresh_window` 翻转
+  不需要摘要并安装固定的标记文本。家庭是一个
+  内部开关（构造选项，然后
+  `PI_DESKTOP_COMPACTION_STRATEGY`)，设置和 i18n 中不存在，因为没有
+  用户可以从设置行判断权衡，Codex 不会询问他们
+  到。
+- `new_context` 是无参数的，带有 Codex 的逐字描述，位于
+主机无确认白名单，并且永远不能分配给子代理。两个
+  预算提醒 — `clamp(hardLimit * 0.15, 8k, 32k)` 和 2,000 个代币
+  剩余 - 附加到当前回合的系统提示中，每回合领取一次
+  检查点窗口，并且从未保留或显示。
+- host-core 保持整个检查点链，每条记录有效，因为
+  每次压缩的记录行必须在重新启动、重写和分叉后继续存在。
+  `compaction_end` 丢弃 `phase` 并携带 `mark` 而不是 `status`；的
+  记录在每个检查点覆盖的消息后面绘制一个分隔行，并且
+  每一次成功的压缩都会引发一次警告。上下文检查器
+  保持其路线，现在是最新的标记。
+- 故意与法典存在三个偏差：摘要先于保留的内容
+  用户，因为 `buildSessionContext` 修复了该顺序，`hardLimit` 保持不变
+  “窗口 - 输出储备”而不是窗口的 90%（我们没有单独的
+  全窗防护），并且该工具在两个系列中注册，而不是
+  只有翻滚一。
+- 决定D203和ADR 0064修改D200 / ADR 0061并恢复D158 / ADR 0030的
+  可见性属性。请参阅 `03-runtime/01-ipc-protocol.md` §6，
+  `03-runtime/02-agent-runtime.md` §5.1、`03-runtime/03-tools-and-permissions.md`
+  §2/§10.1，`03-runtime/04-data-storage.md` §2.1，
+  `03-runtime/16-tool-result-limits.md` §4、`04-ux/08-component-spec.md`
+  §7.3/§7.4/§8.4a/§11.5、`04-ux/09-interaction-patterns.md` §3A 和 E2E-084。
+
+## 2026-08-06 — `Task` 工具背后的有界子代理
+
+- 会话可以将一项独立的工作委托给子代理并获得
+  返回一份书面报告。定义是 Markdown 文档——四个
+内联内置函数（`explorer`、`code-reviewer`、`test-runner`、`fixer`）以及
+  `~/.agents/subagents/*.md` 下已启用的全局用户文档，每次发射重新读取，
+  上限为 16，格式错误的文件降级为发射诊断。没有项目级子代理能力来源。
+- 定义从 Read/Glob/Grep/BrowserPreview/ 声明其自己的 `tools`
+  Bash/Edit/Write 并且在声明无时为只读 (`Read, Glob, Grep`)。一个
+  委托永远不会从其会话继承突变权限，无法访问插件，
+  技能、模式或元工具，并且没有自己的 `Task` 工具。它的调用运行
+  通过相同的 `tools.execute` 主机路径，因此包含和许可
+  模式不变。
+- 定义可能会固定 `model: <provider>/<model>`，每次启动时解析一次
+  Electron 主要针对配置的提供程序（通过 id、供应商密钥或显示名称，
+  最多 8 个不同的提供商）。无法解析的引脚使 `Task` 调用失败，并显示
+  工具错误而不是回退到会话模型。
+- `Task` 仅在 Agent 模式下提供。扇出来自执行模式：
+  会话 Agent 运行 `toolExecution: "parallel"`，所有其他工具都是
+  `sequential`，并且只有全 `Task` 批次同时运行，上限为 4
+  插槽和每个代表在其自己的 `maxTurns`（默认 24，最大 80）。的
+  sidecar 通过 `PathMutex` 序列化相同路径 `explorer`/`code-reviewer` 调用。
+- 父模型上下文获得有界报告（12k 字符），但什么也没有
+  否则。委托消息和工具行被发出并保存
+  消息 `meta` 中的 `parentToolCallId` / `agentName`，但运行时会跳过
+  重建上下文时它们，并且委托的终止崩溃为
+  工具结果而不是达到 Electron main 的回合处理。
+- 转录本将属性行嵌套在其 `Task` 行内一层，并且
+  让他们远离回合流和小地图。一台 `Task` 保持紧凑；
+  活动组中的两个或多个派生一张仅渲染器委派卡
+  具有聚合状态和主代理到委托拓扑。节点重用
+  现有行披露、结构化结果和嵌套行。拓扑结构是
+  源自实时和重新加载时的持久归因，不添加任何协议或
+  存储形状，并且既不发明委托依赖性，也不发明不可用的
+  父摘要节点。待处理的权限请求成为每个会话队列：
+  仅头应答、ID 匹配删除、中止时拒绝整个队列以及
+  卡片上注明了提出请求的代表以及后面有多少人在等待。
+- 决策 D201 和 ADR 0062 定义了这一点。参见
+  `03-runtime/02-agent-runtime.md` §5f/§7.2b/§8，
+  `03-runtime/03-tools-and-permissions.md` §10.2，
+  `03-runtime/04-data-storage.md` §4.7a，
+  `04-ux/03-permission-ux.md` §6a、`04-ux/08-component-spec.md` §9.9，以及
+  E2E-119。
+
+## 2026-08-07 — 空屋使用直接底部任务入口
+
+- 空聊天主页使用直接底层输入框并保留英雄和可选
+  在一个可滚动区域中加载内容。
+- 家庭输入框是该地区的最低保留兄弟，所以它仍然存在
+  清单内容在底部可见，同时短时间独立滚动
+  窗户。
+- 决策 D204 和 ADR 0066 定义布局。参见
+  `04-ux/01-ui-ia.md`、`04-ux/07-ui-design-system.md`、
+`04-ux/08-component-spec.md` 和 E2E-063 / US-UI-64。
+
+## 2026-08-07 — 空置房屋获得开发者入门指南（已取代）
+
+- 空置的房屋现在有四个紧凑的本地化开发商启动项目
+  英雄所以中间表面很有用，但不会成为营销面板。
+- 激活启动器可以预先填充并集中输入框。它不发送
+  提示或创建会话轮，并且短窗口滚动仍然保留
+  访问每个块。
+- D205 决定在 D206 取代 D204 之前定义了该修正案。参见
+  `04-ux/01-ui-ia.md`、`04-ux/07-ui-design-system.md`、
+  `04-ux/08-component-spec.md` 和 E2E-063 / US-UI-64。
+
+## 2026-08-07 — 空置的家删除了开发者入门卡
+
+- 空荡荡的家不再渲染开发任务卡、入门字形或
+  上下文快速操作。
+- 英雄、可选的入门清单和直接底部输入框保留；
+  任务输入直接在编辑器中启动。
+- 决定 D206 取代 D205，同时保留 D204 的可滚动布局。参见
+  `04-ux/01-ui-ia.md`、`04-ux/07-ui-design-system.md`、
+  `04-ux/08-component-spec.md` 和 E2E-063 / US-UI-34 / US-UI-48。
+
+## 2026-08-07 — 工作面板获得直接键盘输入点
+
+- `Cmd/Ctrl + J` 是名为 `openWorkPanel` 的可自定义渲染器快捷方式。
+  它揭示了活动会话在提交时保留的工作面板上下文
+  宽度，无需创建资源选项卡；上下文菜单仍然是
+  创建审阅、终端、浏览器或文件。没有活动会话并且
+  设置页面是无操作上下文。
+- 工件驱动的资源创建、会话所有权、后台事件
+  隔离、塌陷行为和宽度持久性保持不变。
+- D207 决定取代了 D128 的无全局快捷方式条款并修改了 D142 的条款
+  无启动器演示。参见 ADR 0068、`04-ux/01-ui-ia.md`、
+  `04-ux/08-component-spec.md`、`04-ux/09-interaction-patterns.md` 和
+  E2E-056。
+
+## 2026-08-10 — 本机路径错误恢复，没有错误转向失败
+
+- Read 仅限文件，Glob 仅限目录，Grep 接受文件或
+  目录；目录读取错误包括结构化 Glob 恢复参数。
+- 恢复的工具错误在其自己的行上仍然可见，但不再转动
+  包含处理组成终端破坏面。
+- D185 的延迟 Agent 搜索工具保持不变。决策 D208 和 ADR
+  0069 定义兼容工具和转录合同。
+
+## 2026-08-10 — Composer 文件参考使用紧凑草稿芯片
+
+- 已完成的工作区文件选择和粘贴的会话草稿文件现已上线
+  作为渲染器拥有的、会话范围的引用，而不是公开它们的
+  文本区域中的规范路径。
+- 输入框仅显示可移动的叶子名称芯片。完整路径仍然可用
+  工具提示和辅助技术，重复的叶子名称保留不同的
+  规范身份。
+- 紧接着现有提交调度程序之前，引用在之后序列化
+  具有未更改的带引号或不带引号的 `@path` 语法的可见文本。参考-
+  仅发送、斜杠模板和 Agent/Plan/Goal 别名保留其现有的
+  行为；失败的发送保留文本和参考。
+- 接受的发送仅保留其内存中的 session/turn-scoped 副本
+  预序列化草案，而未答复的智能停止仍然是可能的。那
+  停止恢复原始文本和碎片；回复内容开始后，中止
+  保留部分转录本并且不恢复草稿。
+- `ComposerPastedFile.name` 是经过消毒的原始叶子标签，而 `path`
+  保留 UUID 支持的绝对存储名称。剪贴板字节，暂存
+  遏制、清理、主机 RPC、存储模式和提供商有效负载仍然存在
+  不变。
+- D209 和 ADR 0070 决定修改了 D124 / ADR 的草案提交条款
+  0024 和 D197 / ADR 0059。参见 `03-runtime/01-ipc-protocol.md` §13c，
+  `03-runtime/03-tools-and-permissions.md` §4b，
+  `04-ux/07-ui-design-system.md` §8.1，`04-ux/08-component-spec.md` §11.7–11.8，
+  `04-ux/09-interaction-patterns.md` §8a 和 E2E-102/E2E-102a。
+
+## 2026-08-11 — 全球角落使用受 Apple 启发的形状层次结构
+
+- 固定半径使用常规 4/6/8/10/12/14/16/18/20/24px 梯子。紧凑且
+  中型桌面控件使用圆角矩形；明确的药丸和圆圈
+  标记仍然保留用于语义胶囊、等宽图标控件、
+  开关、轨道、头像和点。
+- 嵌套曲面的角对齐时遵循 Apple 的同心度规则：
+  外半径等于内半径加上边缘之间的插入量。
+  结构全宽外壳面板保持方形。
+- 输入框通过共享半径比例保持其 20px 可见半径。
+  实验性 `corner-shape` 渲染被推迟，因为 Electron 37 的
+  Chromium 138 运行时不支持它。
+- 决策 D210 修改了 D072 之前的像素保留半径阶梯，没有
+  改变其仅令牌强制执行。 ADR 0071 记录理由。参见
+  `04-ux/07-ui-design-system.md` §6.2 和 US-UI-72。
+
+## 2026-08-11 — 全局插件启动器和不间断的下一回合准备
+
+- macOS 上的 Option+Space 和 Windows/Linux 上的 Alt+Space 打开居中、
+  无框架插件启动器。它按中文名称搜索可启动面板，
+  完整拼音、拼音声母、标准化name/id和描述，然后打开
+  通过现有面板主机突出显示的结果。
+- 在积极回答期间，输入框草稿和模式、思考和许可
+  下一回合的选择仍可编辑，而发送仍处于禁用状态。的
+  主机报告空闲后，渲染器仅刷新最新的完整选择。
+- 用户停止的部分响应保留经过的持续时间和确切的提供商
+  存在时输出；如果没有最终使用，则回落到明显近似的值
+  输出计数，以便生成吞吐量能够在持久性和重新加载中幸存下来。
+- 决策 D211/D212 和 ADR 0072/0073 定义本机窗口 IPC，
+  运行中配置和转录元数据合同。参见
+  `03-runtime/01-ipc-protocol.md`、`03-runtime/02-agent-runtime.md`、
+  `04-ux/07-ui-design-system.md`、`04-ux/08-component-spec.md`、
+  `04-ux/09-interaction-patterns.md` 和 E2E-120。
+
+## 2026-08-12 — 插件可以请求和发送本机通知
+
+- 为了兼容性，`pi.ui.notify` 仍然是应用内 Toast。插件与
+  现有 `notify` 权限获得 `getNotificationPermission`，
+  `requestNotificationPermission` 和 `showNativeNotification` API。
+- 本机插件通知对象仍由 Electron main 持有。该 API
+  返回尽力而为的 `granted` / `denied` / `unknown` / `unsupported` 状态，
+  因为 Electron 没有跨平台的只读权限查询。原生插件通知不会创建
+  持久的任务收件箱行或会话激活事件。
+  激活事件。
+- 决策 D213 和 ADR 0074 定义了公共 API 以及与
+  D117的应用程序拥有的任务通知合约。参见
+  `07-plugins/01-plugin-system.md`、`07-plugins/03-plugin-api.md`、
+  `07-plugins/13-plugin-permissions-matrix.md` 和 E2E-122。
+
+## 2026-08-12 — 开发插件获得明确的权限上限重新加载
+
+- 自动开发插件重新加载继续拒绝清单权限
+  添加，保留无声扩大的边界。
+- 插件页面现在提供 `source: "dev"` 行的重新加载。新的
+  `plugin/reload` 调用解析注册的文件夹，通过
+  现有的 Electron 运行时路径，并用当前的
+  宣布权限为其新的上限。
+- 决策 D214 和 ADR 0075 定义了该添加剂 renderer/main IPC 表面。
+  主机RPC和存储架构版本保持不变；看到
+  `07-plugins/10-plugin-devex.md`、`07-plugins/12-plugin-ipc-and-host-services.md`、
+  和E2E-022B。
+
+## 2026-08-12 — Windows 保留插件启动器和弦
+
+- Windows' `Alt+Space` 系统菜单保留可能会导致 Electron 的全局
+  当应用程序未聚焦时，快捷方式注册失败。主持人
+  核心现在拥有一个用于默认绑定的窄低级键盘钩子，
+  消耗和弦，并发出 `keyboard.shortcut` 至 Electron。 Electron
+切换现有的启动器窗口；自定义绑定继续使用
+  正常 Electron 全局快捷路径。
+- 决策 D215 和 ADR 0076 定义了这种附加主机集成。协议
+  版本 9 和存储架构 11 保持不变。
+
+## 2026-08-13 — 插件启动器渲染器在启动后预热
+
+- Electron 在主应用及后端完成启动后创建并加载保留的插件启动器，
+  同时保持窗口隐藏。
+- 预热期间收到的快捷键会复用同一个进行中的创建 promise；
+  预热失败后仍可重试，每次显示窗口时也仍会刷新插件目录。
+- 决策 D217 和 ADR 0080 仅取代 D211/ADR 0072 中首次使用时延迟创建的条款。
+  IPC、host RPC、协议 v9 和存储架构 v11 均保持不变。
+
+## 2026-08-12 — 审批卡聚焦工件并记住模式
+
+- Plan/Goal 批准卡现在仅显示标题、主持人创建的工件
+  opener/path、拒绝和批准。已提交 question/description，状态，
+  validity/deadline，并且不会呈现内联警告。
+- 选择的询问/接受编辑/自动批准模式会被记住
+  渲染器本地设备首选项并成为下一个批准的默认值；
+  询问仍然是安全的后备措施。
+- 标题派生的工件文件名保留 Unicode 字母数字字符，以便
+  本地化的计划标题仍然可以识别。主机现有内部
+  截止日期仍然是 compatibility/fail-closed 边界，但不会暴露
+  批准卡。
+- 决策 D215 和 ADR 0076 修改 D189/ADR 0053。协议和存储版本
+  保持不变。
+
+## 2026-08-14 — 插件启动器记住最近打开过的插件
+
+- 由快捷键唤起的启动器把每个成功打开的插件 id 记录在渲染器本地的
+  `localStorage` 里，并在查询为空时按最近使用顺序显示，因此上一次打开的
+  插件始终只差一个 Enter。
+- 一旦键入，搜索相关性仍是权威，最近使用只在同等相关的匹配之间做决胜；
+  存储损坏或不可用时降级为原有的名称顺序，不影响启动。
+- 决策 D219 细化 D211 的呈现。IPC、主机 RPC、协议 v9 与存储架构 v11
+  均保持不变。
+
+## 2026-08-14 — 新任务在带上输入之前不进历史
+
+- 点击「新任务」现在打开一份未持久化的草稿：渲染器不再在点击时调用
+  `session.create`（也不再复用旧的空草稿）。第一条消息 —— 或者粘贴的
+  文件附件，它们需要一个会话来挂靠 —— 才让会话落地，随后它以提示词为标题
+  出现在侧边栏历史里。
+- 第一条消息之前在输入框工具栏做的选择（模式、思考等级、权限模式、模型）
+  保留在草稿上，并在会话创建时应用；只动工具栏不会产生任何历史行。
+- 侧边栏的历史过滤器会丢掉标题仍为默认未命名值的会话，这既隐藏了本次
+  改动之前遗留的空草稿，也隐藏了将来任何意外产生的空会话。
+- 决策 D220 取代 D088/D093 中复用空草稿的条款：在首次输入之前不存在草稿
+  会话，所以没有什么可复用。协议 v9、主机 RPC 与存储架构 v11 保持不变；
+  改动局限在渲染器 store、Composer 与 Sidebar。
+
+## 2026-08-21 — 新任务立即创建一个持久化的空槽位
+
+- 「新任务」现在按当前项目或「临时」分组最近一个未归档的会话来解析。最新会话
+  为空时直接选中并复用；最新会话非空时，先真正创建一个空会话、刷新进侧边栏
+  并选中，然后才接受第一条提示。
+- 渲染器对同一分组的「新任务」请求做串行化，因此快速连点不会竞争插入多个空
+  会话。这条规则由项目分组和无路径的「临时」会话共用；当最新会话是较新的
+  非空会话时，更早的空行会被有意保留不动。
+- `SessionSummary.messageCount` 由 host-core 从 `sessions.last_seq` 派生，取代
+  标题启发式作为「空」的判定。空行可见；标题本地化和手动重命名仍是展示层
+  关注点。
+- 决策 D252 取代 D220 与 ADR 0084。启动首页仍是未持久化的渲染器草稿，但显式
+  的「新任务」是急切且持久的。`messageCount` 在协议 v9 内属于增量字段；存储
+  架构 v11 不变。参见 ADR 0113 以及 E2E-011b / E2E-011d / E2E-011e。
+
+## 2026-08-14 — 工作面板快捷键改为切换而不只是打开
+
+- `Cmd/Ctrl + J`（`openWorkPanel`）现在既能揭示关闭的工作面板，也能折叠
+  可见的工作面板，走的是与标题栏折叠控件相同的 store action。折叠会保留
+  会话的标签、活动资源、浏览器资源和已提交宽度，因此再按一次即可恢复
+  之前的界面。
+- 快捷键 id 仍为 `openWorkPanel`，使现有的按键覆盖继续有效；只有
+  设置 → 快捷键 里的标签改成描述「切换」。
+- 无活动会话与设置页里的空操作上下文、由工件驱动的资源创建、会话归属，
+  以及后台事件隔离，均保持不变。
+- 决策 D221 修订 D207，并推翻 ADR 0068 当初否决的切换方案；D128 与 D142
+  的其余条款仍然成立。参见 ADR 0085、`04-ux/01-ui-ia.md`、
+  `04-ux/08-component-spec.md`、`04-ux/09-interaction-patterns.md`
+  以及 E2E-056。协议 v9、主机 RPC、IPC 通道与存储架构 v11 保持不变。
+
+## 2026-08-14 — 一条记录下来的更改是列表行，不是卡片
+
+- 审阅更改卡拍平成 `.tool-row` 节奏上的单行（24px 行高、披露 V 形、
+  等宽路径、右侧 `+`/`−` 计数）：1px 边框、2px 状态导轨、图标板、状态
+  胶囊、第二行元信息、阴影，以及浅色主题的白色填充全部去掉，只留悬停
+  填充作为唯一的行装饰。默认 280px 的审阅面板原先把大部分宽度花在这些
+  装饰上，而不是花在路径上。
+- 状态现在以 Git 风格的字母（`A`/`M`/`D`）承载，并用既有的按状态强调色
+  着色，因此从不单靠颜色传达；本地化的状态词 —— 以及已回滚状态，该行以
+  删除线呈现 —— 保留在行的无障碍名称里。展开的 hunk、带哈希保护的回滚、
+  `aria-expanded`/`aria-controls` 披露语义与消息归属均不变；回滚变成一个
+  无边框的文字操作。
+- 审阅标签的摘要条去掉图标、着色带和胶囊边框，标签主体也去掉内嵌填充，
+  使列表读起来是平的。自审阅标签变成会话更改历史以来就没有任何界面渲染过
+  的 Git-diff 时代 `.diff-file*` 规则被删除（`.diff-file-counts` 保留，
+  改名 `.diff-counts`）。
+- 决策 D222 细化 D097 的审阅标签与消息归属卡片的呈现；审阅的真值模型、
+  回滚语义与面板归属规则仍然成立。仅涉及呈现：参见
+  `04-ux/08-component-spec.md` §4.2/§4.4/§4.5 与 §5。协议 v9、主机 RPC、
+  IPC 通道与存储架构 v11 保持不变。
+
+## 2026-08-14 — PI-Desktop 始终是一个常规 macOS 应用
+
+- 插件启动器窗口向 Electron 请求了 `visibleOnFullScreen` 却没有带
+  `skipTransformProcessType`，于是 Electron 对整个进程执行了
+  `TransformProcessType(kProcessTransformToUIElementApplication)`，
+  PI-Desktop 从 Dock 和 Cmd+Tab 中消失。ADR 0080 的启动预热让这件事
+  每次启动都发生。启动器现在传入 `skipTransformProcessType: true`；
+  进程类型永不被转换，且 `app.dock.hide()`/`app.setActivationPolicy`
+  在主进程中仍然禁止使用。
+- 启动器保留 `canJoinAllSpaces` 与 `FullScreenAuxiliary`：它仍然覆盖每一个
+  常规 Space 以及 PI-Desktop 自己的全屏窗口。覆盖另一个应用的全屏 Space
+  这件事被放弃 —— macOS 把它留给附属类应用 —— 从那种 Space 里唤起启动器
+  会激活 PI-Desktop。
+- macOS 激活时除 `activate` 之外也从 `did-become-active` 恢复外壳，条件是
+  应用已启动、未在退出且没有可见窗口，因此 Cmd+Tab 与 App Exposé 能让
+  隐藏到托盘的窗口重新出现（D216/ADR 0078），而启动器和插件面板的激活
+  不会移动主窗口。
+- 决策 D223 约束 ADR 0072 的启动器窗口并补全 D216 的恢复路径；ADR 0080 的
+  预热与启动器延迟预算仍然成立。参见 ADR 0086、
+  `03-runtime/07-process-model.md` §5 与 E2E-127。协议 v9、主机 RPC、
+  IPC 通道与存储架构 v11 保持不变。
+
+## 2026-08-14 — 揭示出来但没有资源的工作面板列出它的四个工具
+
+- `Cmd/Ctrl+J` 揭示面板而不创建标签，这让主体成了标题栏下方的一片空白。
+  主体现在渲染一个空状态 —— 平铺图标、标题、一行文案 —— 后面跟着标题菜单
+  列出的同样四个工具（审阅、终端、浏览器、文件），呈现为朴素的 28px 入口行。
+- 一行调用的是与菜单中同名项相同的「创建或选中」路径，因此不可能产生重复
+  标签。这些行只在主体完全没有标签时存在；快捷键本身仍然什么都不创建，
+  从而保持 D128 由工件驱动的入口模型 —— 这些行是用户的选择，不是揭示面板
+  的副作用。
+- 空主体不暴露为 `role="tabpanel"`，因为没有标签为它命名；它的行是位于
+  一个以「工具」命名的 `role="group"` 内部的按钮。
+- 面板的所有空状态（无资源主体与每个标签自己的）现在共用一个
+  `WorkTabEmpty` 组件，采用应用其余部分已经在用的比例
+  （`.ext-empty`、`.projects-empty`）：38px 圆形平铺图标、标题、弱化文案，
+  并在 34ch 而不是 48ch 换行，因为面板可以只有 244px 宽。
+- 入口行保持克制 —— 悬停填充与聚焦环，没有卡片、没有主视觉插画、没有大
+  图标 —— 因此这不会把 D206 从空首页移除的东西重新引入，也仍然处在
+  design-system §14「不做营销式空状态」的范围之内。
+- 「打开项目」空状态里不放操作按钮：`openProject()` 会重置面板上下文并
+  隐藏面板，那个按钮会撤销提供它的那个界面。
+- 决策 D224 仅涉及渲染器。协议、主机 RPC 与存储架构保持不变。
+
+## 2026-08-14 — 上下文用量检查器改为点击打开
+
+- 检查器触发器不再在 `pointerenter` 或获得焦点时打开。一次点击 —— 或在
+  聚焦按钮上按 `Enter`/`Space` —— 切换该面板，那个为了让面板在触发器与
+  面板之间存活而设的 140ms 悬停宽限关闭计时器随之删除。阅读 token 分解、
+  滚动工具列表、在面板内选中文本，这些都比一只飘走的指针活得更久，而悬停
+  模型偏偏惩罚它们。
+- 关闭是显式的：再次激活、在触发器与面板之外的捕获阶段 pointerdown，
+  或者 `Escape`（它还会把焦点还给触发器）。原有的「触发器滚出视野即关闭
+  面板」规则仍然成立，body 层面的避让式定位也一样（ADR 0047 §6）。
+- 该面板不再是 tooltip。它带上 `role="dialog"` 与本地化的 `Context` 标签；
+  触发器把 `aria-describedby` 换成 `aria-haspopup="dialog"`，并保留
+  `aria-expanded`/`aria-controls`。键盘用户得到的是一个稳定的面板，而不是
+  一个失焦即消失的面板。
+- 决策 D225 修订 D184/ADR 0047，且仅涉及渲染器。协议、主机 RPC 与存储
+  架构保持不变。
+
+## 2026-08-14 — 运行行的命令属于它的头部，而不是正文
+
+- 展开一个 `run` 行时，开头是它刚刚在折叠头部打印过的命令，于是读者见到的
+  第一样东西就是自己已经看过的那一行，而他们为之展开的输出从它下面才开始。
+  正文现在只承载命令产生的通道（Output、Errors）；命令只出现一次，在头部。
+- 因此头部长出了正文不再提供的两样东西。V 形旁边的复制按钮给出命令的原始
+  写法 —— 头部的摘要被挤成一行，所以那不是被复制的内容 —— 结果则用词写出
+  （`Done`、`Failed`、`Denied`、`Working…`），配一个同色调的点。命令运行时
+  这个点脉动，取代该行的旋转指示器；含义由标签承载，所以色调只是装饰，
+  `prefers-reduced-motion` 下它静止。
+- 扣下命令的开关是 `hideSummaryArg`，这个选项的含义是「折叠行已经显示了这个
+  参数」。`PermissionCard` 不带它构建自己的呈现，因此继续显示它正在询问的
+  那条命令，那正是这张卡的全部意义。通用参数回退因为同样的理由被抑制：
+  一条因为头部会显示而被扣下的命令，不该在它什么都没打印时又作为参数回来。
+- 头部是一个 flex 行，容纳披露按钮、复制按钮和一个仅供指针的 V 形，因为按钮
+  不能嵌套在按钮里。悬停填充从 header 移到 head，这样它不会在新控件下方
+  提前中止，而 `:has()` 让无法展开的行不取填充。复制与 V 形在悬停、聚焦或
+  展开之前保持安静；状态标签始终可见。V 形仅为指针复制 header 的作用
+  （`aria-hidden`、`tabIndex={-1}`），可见状态同时充当该行的 live region，
+  因此结果只被播报一次而不是两次。
+- 这取代了被撤回的原地终端卡：那个方案因为在成绩单内部复刻面板装饰而被回退。
+  该行保留标准的披露形态，只补上读者原本缺的东西。
+- 决策 D226 细化 D192 的结构化工具呈现，且仅涉及渲染器。协议、主机 RPC、
+  IPC 通道与存储架构保持不变。参见 `04-ux/08-component-spec.md`
+  §9.2/§9.3/§9.5/§9.10 与 E2E-129。
+
+## 2026-08-14 — 运行行报告的是命令做了什么
+
+- 该行的结果原本取自工具调用的状态，因此只要某一层忘了把调用标为失败，
+  一条以 1 退出的命令也能读作 `Done`。现在它读自 shell 自己的报告：
+  `exitCode` 非零就是 `Failed`，被杀掉、根本没报退出码的 shell 也是
+  `Failed`，只有 `exitCode: 0` 才是 `Done`。主机在标记 Bash 结果时早就
+  应用了这条规则；该行不再依赖它在上游被应用过。
+- 不报退出码的工具回退到调用的状态。两者都没有的行 —— 一次导入、一条写了
+  一半的消息 —— 什么都不说，而不是声称成功，并把播报交回隐藏的 live region。
+  失败自动展开跟随派生出来的结果，因此失败的命令总会展开它自己的行，
+  无论是哪一层发现的。
+- 展开的正文去掉它的卡片。`run` 行的各个块去掉标题、边框、填充和逐块复制
+  按钮，把输出留成朴素的等宽文本，读起来就像它来源的那个终端。260px 上限
+  及其滚动保留：一次长构建不该把成绩单的其余部分埋掉。
+- 去掉标题会让 `Errors` 只靠色调区分，因此每个通道的名称仍然为辅助技术
+  渲染 —— 视觉上隐藏，语义上在场。
+- 决策 D227 细化 D226，且仅涉及渲染器。协议、主机 RPC、IPC 通道与存储
+  架构保持不变。参见 `04-ux/08-component-spec.md` §9.2/§9.3/§9.5/§9.10
+  与 E2E-129。
+
+## 2026-08-14 — 流中限流走有界重试
+
+> 已于 2026-08-19 被 D245 取代；下面的「只重试一次」行为作为历史决策保留，
+> 不再是现行的 provider 策略。
+
+- 流中出现的 HTTP 429 现在被归类为可重试的 `PROVIDER_RATE_LIMITED`，与
+  `STREAM_FAILED`、`NETWORK_ERROR`、`TIMEOUT` 一起走运行时的同回合有界重放
+  路径：一次 750 ms 可中止的退避，把失败的助手消息从模型上下文移除，然后用同
+  一个可见的助手气泡把该回合重放一次。
+- 重试预算不变 —— 每条提示一次同回合重试。第二次 429 仍是终态，照常发出助手
+  错误以及带 `retryAttempt: 1` 与 `providerStatus: 429` 详情的生命周期 `error`
+  事件，因此转录保留手动重试操作。
+- 请求建立阶段的 429 此前已由 pi-ai 的一次有界重试覆盖（尊重 `Retry-After`，
+  上限 8 秒）；本决策补上流开始之后那层包装无法再介入的空档。
+- 决策 D233 细化 D186，仅涉及运行时。协议、主机 RPC、IPC 通道和存储架构不变。
+  参见 `03-runtime/02-agent-runtime.md` §5d、`03-runtime/08-error-codes.md`、
+  ADR 0091 和 E2E-149。
+
+## 2026-08-15 — 被停止的修改循环要把话说出来
+
+- D186 的重复保护对同路径 `Edit` 的每次失败一视同仁，因此它允许的两次失败可能都被花在
+  那些已经告诉模型下一步该做什么的错误上。`EDIT_TAG_MISMATCH`、`EDIT_TAG_UNKNOWN` 与
+  `EDIT_LINES_UNSEEN` 各自交回了实时 tag 或被扣下的内容，因此现在每一个在每条路径上都有
+  一次免费尝试。其余每个代码仍在第一次出现时计数，而一次落盘的写入会清除该路径的历史。
+- 该保护通过终止工具批次来停止循环，而 pi-agent-core 把这读作“没有更多工作”。因此本轮
+  以一张失败的工具卡结束且没有最终消息，与一个选择什么都不说的模型无法区分。runtime
+  现在用 `MUTATION_RETRY_BUDGET_EXHAUSTED` 敲定该 assistant 行——可重试，因此会话记录
+  保留它的重试入口——并发出对应的错误事件，这也让该 turn 被记为 `error` 而不是
+  `completed`。
+- 决策 D228 修订 D186，且仅涉及运行时。协议、主机 RPC、IPC 通道与存储 schema 均未改变。
+  参见 `03-runtime/18-line-anchored-edit-contract.md` §9.3、
+  `03-runtime/03-tools-and-permissions.md` §4d、
+  `03-runtime/08-error-codes.md` §3.3、ADR 0089，以及 E2E-140/E2E-141。
+
+## 2026-08-15 — 文件权限带着范围，删除可以恢复
+
+- 三个 fs 权限原本是覆盖整个工作区的开关：`fs.read.workspace` 能读到
+  `.env`，而 `recursive: false` 只约束单次 `fs.remove` 调用 —— 一次 `glob`
+  加一个循环就能覆盖整棵树。现在权限只说明插件是否可以碰文件；
+  `manifest.fs` 按模式说明可以碰哪些，glob 相对该模式的 root。`fs.read`
+  可以申请整棵树 —— 出口被限制在 `manifest.net.domains` 之内，宽读不再
+  能把任何东西带出去 —— 但 `fs.write` 与 `fs.delete` 在校验阶段就会被拒绝
+  整树模式。
+- 每次 `pi.fs.*` 调用按固定顺序经过四道闸门，且后一道只能否决：声明 ∩ 已授权、
+  两侧的 `realpath` 包含性检查（因此一个指向工作区之外的软链在字符串比较
+  放行的地方失败）、无条件的凭据拒绝清单加上主机自己的数据目录，最后是
+  声明的范围。范围之外则原生询问用户 —— 拒绝 / 允许一次 / 本会话允许 ——
+  会话级答复只存在内存里，随进程消亡。没有同意服务的主机选择拒绝，而不是
+  假定同意。
+- 删除是被限量的，而不只是被划定范围，因为它是重跑插件也无法撤销的那一个
+  操作。`own: true` 允许插件删除它自己写过的东西，由它自己数据目录里的
+  路径+mtime 台账记录，用户一旦编辑该文件即失效；其余都需要声明范围。
+  删除走 `shell.trashItem`，保持非递归，并以每滚动分钟 50 次刹车。主机
+  不为提供撤销而复制用户的任何数据 —— 操作系统回收站就是全部机制。
+- `root: "userSelected"` 用常驻权力换取触达范围：`pi.fs.requestDirectory()`
+  请用户挑一个目录，目录内不需要 manifest 范围，句柄仅存在内存。这正是
+  让「整盘」类插件在没有永久授权的情况下仍然成立的东西。
+- 划分范围之前的旧权限名仍可安装，并在加载时被降级：`fs.read.workspace`
+  保留整棵树，`fs.write.workspace` 在 manifest 说明写哪里之前什么都写不了，
+  `fs.delete.workspace` 变成 `own: true`。能力被缩减，而不是留一个洞；
+  市场预检与 `pi-plugin check` 都会指出这次降级，好让作者比用户先看到。
+- 决策 D229 延续 ADR 0008 D009，并落实
+  `07-plugins/13-plugin-permissions-matrix.md` 承诺过却从未强制的确认策略。
+  manifest 新增 `fs`，`pi.fs.remove` / `pi.fs.requestDirectory` 加入受托管
+  API；主机 RPC 与存储架构在其余方面保持不变。参见 ADR 0088、
+  `07-plugins/02-plugin-manifest-schema.md` §5.2、
+  `07-plugins/04-plugin-security.md` §6 以及
+  `07-plugins/13-plugin-permissions-matrix.md`。
+
+## 2026-08-16 — 主动后台子代理委托
+
+- `Task` 不再阻塞：它在后台启动一个委托并立即返回 `delegationId`。三个
+  新的 Agent 模式核心工具驱动生命周期 —— `TaskWait`（收敛运行中的委托，
+  `mode: "any"` + `minCompleted` 提前收敛，已结算的委托可按 id 重读）、
+  `TaskList`（状态报告）和 `TaskStop`（停止运行中的委托）。运行时持有
+  每会话委托注册表；回合结束、父级中止或销毁时仍在运行的委托会被停止。
+- 基础系统提示词新增 `## Delegation` 章节（目录非空时），列出积极触发
+  模式 —— 并行探索、对抗审查、多文件实现、省上下文的搜索、批量分片 ——
+  以及收敛规则；`Task` 描述重写为以这些触发模式开头。
+- 内置增长为四个：`explorer` 按 omo-slim 风格重写（工具选择指引、并行
+  搜索、`<files>`/`<answer>` 报告格式）；新增可写的 `fixer`，从完整规格
+  实现多文件改动（`tools: [Read, Glob, Grep, Edit, Write, Bash]`、
+  `maxTurns: 40`、`<summary>`/`<changes>`/`<verification>` 报告格式）。
+- 内置定义与用户定义可声明 `permission: inherit | ask | accept-edits |
+  auto`（默认 `inherit`）。sidecar 将作用域附加到委托的 `tools.execute`
+  调用；host-core 在该模式下裁决调用，而不是使用会话的有效权限模式，契约
+  模式的硬拒绝和外部路径门禁仍然生效。项目定义不得声明作用域：它随仓库
+  一起到来，因此该声明在解析时被丢弃并留下警告，其委托在会话的有效模式下
+  运行。`fixer` 随 `accept-edits` 发布，因此它在工作区内免提示写入，而
+  Bash 和外部路径保持会话行为。
+- `TaskWait` 会阻塞回合，因此 `timeoutSeconds` 默认 600 秒、上限 900 秒。
+  超时不是失败 —— 它返回已完成的报告和一句“再调一次”的提示，所以低上限
+  只花一次往返，却换来可响应的停止。
+- `MAX_SUBAGENT_CONCURRENCY` 变为每会话 10 个运行委托的上限；会话已有
+  10 个委托在运行时 `Task` 以工具错误失败。
+- 决策 D231 修订 D201/ADR 0062，触及 sidecar、host-core 的
+  `tools.execute` 权限裁决、内置定义、系统提示词和渲染器的工具呈现映射。
+  参见 ADR 0089 与 `03-runtime/02-agent-runtime.md` §5f/§5f.1。
+
+## 2026-08-17 — 插件面板将可见表面交给插件
+
+- 插件面板窗口现在在 macOS、Windows 和 Linux 上均使用无框窗口。preload
+  在每个平台预留相同的透明 46px 安全区，并仅在右上角绘制固定胶囊，其中包含
+  最小化、最大化或还原、关闭三个按钮。
+- 主机不再渲染 manifest 标题或开发安全区提示。插件拥有标题、工具栏、背景和
+  其他所有可见面板界面；固定或粘性界面使用现有的
+  `--pi-plugin-titlebar-height` 变量，插件自己的拖拽区域可以使用
+  `-webkit-app-region: drag`。
+- 决策 D234 修订 D218 / ADR 0081 以及 D232 / ADR 0082。私有的验证发送方
+  控制通道、封闭 Shadow DOM、本地化标签、主题自适应胶囊、`window.pluginBridge`、
+  protocol v9 和存储架构保持不变。参见 ADR 0092、`07-plugins/01-plugin-system.md`、
+  `04-ux/07-ui-design-system.md` 和 E2E-024D。
+
+## 2026-08-17 — 插件面板保持严格的 46px 拖拽带
+
+- 插件面板在每个平台均严格预留 46px 的透明主机拖拽带。普通流内容按该数值
+  偏移，除胶囊外，拖拽带内的点击不可用。
+- 主机不渲染面板标题。开发面板显示本地化的非交互提示，说明顶部 46px 仅用于
+  拖拽；生产面板隐藏该提示。简约胶囊固定在右上角的拖拽带内，提供最小化、最大化
+  或还原、关闭按钮。
+- 决策 D235 修订 D234 / ADR 0092。页面自适应胶囊继续使用封闭 Shadow DOM、本地化
+  标签、焦点和 reduced-motion 行为、私有的验证发送方控制通道、`window.pluginBridge`、
+  protocol v9 和存储架构。参见 ADR 0093 和 E2E-024D。
+
+## 2026-08-18 —— 每个数据目录只允许一个桌面实例
+
+- 应用已在运行时再次启动 PI-Desktop，不会再开出第二份应用。Electron 主进程在
+  接触数据目录之前先取得单实例锁，重复启动的进程会在创建窗口、托盘、子进程或
+  日志行之前退出。
+- 运行中的实例通过托盘“显示”所用的同一条路径恢复并聚焦主窗口来响应这次启动，
+  因此已关闭或隐藏到托盘的窗口会回来，而不是旁边多出一个 shell。
+- 决策 D236 保护 D002 的单一 SQLite 写者以及围绕它的那些单例（outbox、托盘、
+  启动器快捷键、更新器）。锁的作用域是安装本身，因此使用自有
+  `PI_DESKTOP_DATA_DIR` 的运行 —— E2E 测试装置、截图装置、并行 profile ——
+  启动方式不变。IPC、宿主协议和存储架构均未变化。参见 ADR 0094、
+  `03-runtime/07-process-model.md` 和 E2E-150。
+
+## 2026-08-18 — 厂商账户（OAuth）登录
+
+- 提供商行现在可以用厂商订阅账户认证。pi-ai 的七个 OAuth 厂商 ——
+  anthropic、openai-codex、github-copilot、openrouter、kimi-coding、xai、
+  radius —— 一次性全部支持，因为卡片列表由
+  `models.getProviders().filter(p => p.auth.oauth)` 派生，而不是写死。
+  `registerBunOAuthFlows()` 在启动时调用一次：pi-ai 用变量说明符的动态
+  import 加载流程，electron-vite 无法打包这条路径。
+- 凭据存放在既有的加密密钥存储中，使用新引用
+  `secret:provider:<id>:oauth`，与该行的 API 密钥并存（而非取代）。
+  `has_secret` 放宽为“任一种凭据”，使既有的就绪判断保持正确；
+  `has_oauth` 与非敏感的 `oauthAccountLabel` 是新增字段。`auth_kind` 新增
+  `oauth` —— 它本来就是自由字符串，因此主机协议 v9 与存储架构 v10 不变。
+  删除提供商会同时删除两个引用及两条 `secrets_meta` 记录。
+- Electron 主进程拥有登录/退出：`oauth.ts` 在 `secrets.*` 之上实现 pi-ai 的
+  `CredentialStore`，按提供商串行化 `modify` 以满足带锁刷新，并通过
+  `providersOauthVendors/Start/Respond/Cancel/Logout` 与
+  `pi-desktop/providers/oauth/event` 事件流把 `AuthInteraction` 桥接到
+  渲染层。浏览器回调、设备码、单选与手动贴码都走同一条事件流，因此单个
+  对话框渲染厂商要求的任何形态，取消会中止本地回调服务器或轮询循环。
+- sidecar 按请求解析认证。OAuth 行以 `apiKey: ""` 启动；运行时注入
+  `resolveAuth`，它调用宿主代理方法 `provider.resolveAuth`。主进程在本地
+  应答 —— 绝不转发给 host-core —— 并先用每次启动重写的绑定表校验
+  `(sessionId, providerId)`，然后返回短时 `ModelAuth`（`apiKey`/`headers`/
+  `baseUrl`，Copilot 正是靠 `baseUrl` 绑定它自己的账户端点）。刷新令牌
+  永不离开主进程，sidecar 拿到的东西严格少于密钥行今天下发的长期密钥。
+- `matches()` 不需要新字段：厂商行的 `apiKey` 恒为 `""`，每次启动新建的
+  `resolveAuth` 闭包在 `JSON.stringify` 中消失，因此 OAuth 会话跨回合复用
+  同一个温热运行时。
+- 模型发现与连接测试改走账户：`providers.listModels` 读取
+  `models.getAvailable`（它已应用厂商自己的 `filterModels`，因此 Copilot
+  只列出订阅包含的模型），连接测试通过解析认证来证明账户，而不是探测
+  `/models`。行的 `apiStyle` 跟随所选模型 —— Copilot 跨越多种线路 API ——
+  并新增两种样式：`openai_codex_responses` 与 `pi_messages`。
+- 设置 → 模型配置在提供商列表上方新增“厂商账户”分区；已登录的行显示账户
+  徽标，其对话框用该徽标替换 API 密钥输入框。
+- 决策 D237 扩展 D028/D031，触及 host-core 的密钥与提供商模块、Electron
+  主进程、代理运行时的 provider binding 以及设置界面。参见 ADR 0095 与
+  `03-runtime/14-secrets-storage.md`。
+
+## 2026-08-18 —— 相互独立的厂商 OAuth 账户
+
+- D240 修订 D237 / ADR 0095。提供商行 id 就是 OAuth 账户身份，每次登录都创建
+  一个新行，即使 `vendorKey` 与已有账户相同。每一行各自拥有自己的 pi-ai
+  集合、凭据存储、刷新串行化链和 `secret:provider:<id>:oauth` 引用。
+- 设置现在每个概念只有一个归属：「厂商账户」渲染并移除 OAuth 行；「AI 服务」
+  只渲染 API 密钥 / 自定义行。已连接的 OAuth 行仍可在默认模型控件中被选中，
+  移除它则会清空或修复指向已删除 id 的默认值。
+- sidecar 绑定一组精确的 OAuth 提供商 id，main 按该 id 解析认证。子智能体的
+  厂商 / 名称别名只在唯一时才被接受，因此重复的厂商账户不会被误选。参见
+  ADR 0098、`03-runtime/11-provider-model-system.md` 和 E2E-151。
+
+## 2026-08-18 —— 内置子智能体继承父会话权限模式
+
+- 内置 `fixer` 不再声明 `permission: accept-edits`；与其他内置定义一样，默认
+  使用 `permission: inherit`，并采用父会话的有效权限模式。
+- 在 `auto` 下，内置委托的工作区内、高风险和明确外部路径操作与父会话一样自动放行；
+  `ask` 与 `accept-edits` 保留原有审批边界，合格的内置或用户定义上的显式非
+  `inherit` scope 仍是有意的覆盖。
+- 决策 D242 修订 D231 / ADR 0089。host-core 的外部路径门禁和 containment 检查不变；
+  修复移除了意外的内置 scope 覆盖，而没有放宽安全边界。参见 ADR 0100、
+  `03-runtime/02-agent-runtime.md` §5f/§5f.1 和 E2E-142。
+
+## 2026-08-18 —— 按模型能力选择图片附件的传输方式
+
+- 剪贴板图片仍是紧凑的结构化输入框引用，不会被插成 base64，也不会被强制变成
+  可见的 `@path` 文本。Electron main 依据会话根目录校验来源，并把图片字节存
+  在 `<data>/attachments/<sha256>` 下；持久化的用户消息只存引用、类型、名称、
+  MIME 类型和大小。
+- 精确的 pi-ai 模型记录决定视觉能力。`input.includes("image")` 的模型通过
+  sidecar 以瞬态 image block 收到合格的图片。未知 / 自定义模型、非视觉模型以及
+  超过 10 MB 内联上限的图片改走安全的 scratch / 项目路径回退；重放的内容存储
+  图片使用会话内的 `replayed/` 副本。渲染器的发现流程不能把未知模型提升为
+  视觉模型。
+- 决策 D243 修订 D197 / ADR 0059 中关于图片的部分。它修复了观察到的 GPT 视觉
+  缺口，既没有把 provider 逻辑搬进渲染器，也没有把二进制数据放进主机持久化。
+  参见 ADR 0101、`03-runtime/01-ipc-protocol.md` §5.1/§13c、
+  `03-runtime/04-data-storage.md`、`04-ux/08-component-spec.md` §11.7–11.8
+  和 E2E-102c–102e。
+
+## 2026-08-19 —— models.dev 成为首选模型目录
+
+- D266 修订 D136 / ADR 0027。Electron main 以有界超时加载公开的
+  `https://models.dev/api.json` 目录，并按厂商 key 或归一化后的 API URL 匹配
+  提供商记录。设置、Composer 和运行时的模型元数据优先使用匹配到的记录。
+- 目录把显示名、上下文 / 输出上限、输入模态、推理选项、工具调用与结构化输出
+  标志以及价格映射到既有的模型界面。请求从不携带 API 密钥或 OAuth 凭据。
+  `catalogSource` 在渲染器元数据里区分 models.dev 与 pi-ai 回退，不改动主机
+  schema。
+- 若远程目录无法加载或没有匹配记录，则由钉住版本的 pi-ai 目录提供已知的原生
+  模型和适配器兼容性。回退之后，自定义或账户特定的提供商发现以及显式 ID 仍然
+  可用。参见 ADR 0133、`03-runtime/11-provider-model-system.md`、
+  `03-runtime/13-model-catalog-and-selection.md` 和 E2E-066/E2E-080/E2E-154。
+
+## 2026-08-19 — 工作面板成为插件扩展点
+
+- 决策 D246。插件通过 `contributes.views`（id、纯文本或本地化标题、图标 token、
+  HTML 入口、排序）声明工作面板表面，由新的低风险权限 `ui.view` 把关。
+  `ui.view` 与 `ui.panel` 相互独立，因此插件可以只提供停靠视图、只提供独立窗口，
+  或两者兼有。
+- 视图渲染为主进程持有的 `WebContentsView`，按渲染进程测量的矩形定位 —— 这正是
+  预览浏览器自 D100 起使用的机制 —— 并完整复用插件已有的隔离：同一套沙箱
+  preload、与该插件面板窗口相同的 `persist:pi-plugin-<id>` 分区，以及同一份
+  `net.domains` 出口过滤。出口策略与分区名提取为共享函数，使两种放置方式无法
+  漂移。`<iframe>` 方案被否决，因为 Electron 无法为 iframe 单独分配会话分区，
+  那会让停靠视图的隔离严格弱于它所替代的独立窗口。
+- 图标是宿主拥有的封闭 token 列表，而非插件提供的标记：图标绘制在宿主 chrome
+  内，插件 SVG 会成为注入面，并让插件得以伪装成宿主。未知 token 降级为字母瓷砖，
+  而不是让校验失败。
+- 视图列表按激活范围过滤，这与贡献主题（`pluginThemes`，刻意不过滤，因为所选主题
+  是全局唯一设置）不同。视图属于项目内的工作，因此按项目范围限定的插件不得在别处
+  提供它。打开时会重新校验权限、范围与入口是否存在；渲染进程从不是权威。
+- 决策 D247。审阅、终端与文件迁出宿主，作为随应用打包的官方插件走同一条
+  `contributes.views` 通道，只保留浏览器一个内置工具。这为插件 API 引入了第一方
+  消费者，使 API 的缺口变成已发布功能的缺陷。它需要新的 `pi.review.*` 与
+  `pi.terminal.*` API；`terminal.pty` 被划为 critical，因为 PTY 等同于以用户身份
+  任意执行，这一代价是有意承担的，而不是用第一方私有特权绕开。
+- 参见 ADR 0104、ADR 0105、`07-plugins/02-plugin-manifest-schema.md` §4/§5/§7、
+  `07-plugins/03-plugin-api.md` §6、`07-plugins/13-plugin-permissions-matrix.md`
+  §2/§3、`04-ux/08-component-spec.md` §5 与 E2E-152。
+
+## 2026-08-18 —— 紧凑的上下文用量摘要
+
+- 上下文检查器保留点击 / 键盘触发、剩余百分比、已用 / 窗口计数、本轮合计、
+  已完成回合速度、精确的 provider 数值、聚合工具摘要、检查点摘要、body 级
+  portal、定位、点击外部关闭以及 Escape 焦点返回。
+- 默认面板变成一段简短摘要：回合 / 速度数值去掉外框，provider 与工具用量变成
+  紧凑的行内行；逐工具行、占比条、来源徽章、解释估算的段落和已用容量表盘全部
+  移除。聚合工具总数前的 `~` 仍表示这是估算值。
+- 决策 D244 修订 D103 / D184 / ADR 0047。协议、存储、运行时计量和模型元数据
+  保持不变。参见 ADR 0103、`04-ux/08-component-spec.md` 和 E2E-060d / US-UI-61。
+
+## 2026-08-19 —— OpenCode 风格的有界 provider 429 重试
+
+- HTTP 429 现在在请求建立和流恢复两个阶段都由运行时拥有的同一套策略处理。
+  预算为首个请求之后五次重试，跨阶段共享，并在 pi-ai 内嵌的重试包装里禁用。
+- 重试保持静默且可中止。`retry-after-ms`、`retry-after` 秒数和 HTTP 日期值
+  优先于 2 秒起步的指数退避；正向 25% 抖动与 30 秒上限保证客户端有界。失败
+  响应的状态和头部从 fetch 捕获，因为 pi-ai 常规的响应回调不暴露建立阶段的
+  失败。
+- 主会话与内置子智能体复用可见的助手行，并抑制中间的生命周期 / 错误事件。
+  预算耗尽时发出一个终态 `PROVIDER_RATE_LIMITED` 错误，带
+  `retryAttempt: 5` 与 `providerStatus: 429`；在等待期间中止不会再发起任何
+  后续 provider 请求。
+- 认证、模型选择、请求格式错误和上下文失败仍是终态。其他瞬时 provider 失败
+  仍保留一次建立阶段或流中重试，直到 D258 为它们提供独立的共享有界预算。
+- 决策 D245 修订 D186 与 D233。参见 ADR 0091、
+  `03-runtime/02-agent-runtime.md` §5d、`03-runtime/08-error-codes.md` 和
+  E2E-149。
+
+## 2026-08-19 — 文件成为第一个内置插件
+
+- 决策 D248 落实 D247 的第一步。浏览项目现在由随应用打包的 `pi.files` 插件承担，
+  与任何第三方插件一样经由 `contributes.views` 进入面板，宿主工具列表不再包含
+  文件条目。审阅与终端在其能力成为插件 API 之前仍保持内置。
+- 内置插件带有 `source: "builtin"`。host-core 在每次启动时依据 Electron 通过
+  `PI_DESKTOP_BUILTIN_PLUGINS_DIR` 报告的目录协调注册表，因此应用更新会刷新版本
+  与贡献，而属于用户的两项状态 —— 是否启用、激活范围 —— 会被保留。它们不可卸载，
+  只能禁用；新版本不再附带的插件不会留下孤儿注册行。
+- 只有「工具」发生了迁移。`file:<path>` 选项卡是对话产生的工件 —— 对话打开的文件
+  链接或计划检查点 —— 仍归宿主所有，与审阅的工件完全一致。审阅迁移时将适用同样的
+  划分。
+- 编写该插件立刻验证了 D247 的前提：`fs.glob` 返回的是上限 500 条、不含目录的扁平
+  文件列表，无法支撑惰性目录树，因此在既有 `fs.read` 权限下新增了 `pi.fs.list`。
+  它施加与 `glob` 相同的守卫 —— 声明范围、deny-list、受保护路径、跳过重目录 ——
+  因为列目录本身就是一次读取；目录始终返回，使范围很窄时仍能得到可导航的树。
+- 参见 ADR 0105、`07-plugins/03-plugin-api.md` §3/§6、
+  `07-plugins/13-plugin-permissions-matrix.md` §2、
+  `04-ux/08-component-spec.md` §5 与 E2E-153。
+
+## 2026-08-19 — 面板内置工具定为终端与浏览器
+
+- 决策 D249 修订 D247 / ADR 0105，并终结它开启的迁移。三项计划迁移中的两项基于其
+  自身理由被取消；文件保持已迁移状态。
+- **终端保持宿主内置。** 将其做成插件需要 `terminal.pty` 权限，而一旦发布，任何
+  第三方插件都可申请以用户身份任意执行。相对于「让终端走公开通道」所换回的收益，
+  这是过宽的信任边界；仅对内置插件开放 PTY 通道则属于 D247 明令禁止的私有后门，
+  同样被否决。该权限不予引入。
+- **审阅保持宿主所有，并重新归类为产物面板。** 其数据依 ADR 0043 属「消息所有」
+  —— 每次成功的工作区 Write/Edit 各自携带有界的 `details.review` 记录，与对话一同
+  持有 —— 因此迁移它只会把这份所有权搬进宿主，再通过桥交还回去。改为套用 D248 的
+  「工具 vs 产物」划分，审阅回到它本就所处的位置：由 Write/Edit 产物创建与重建，
+  正如 `file:<path>` 标签由文件链接创建。
+- 因此审阅退出工具启动器 —— 启动器面向用户主动挑选的表面 —— 但仍是宿主渲染的活动
+  标签类型。关闭它不会丢失任何东西：逐条改动的内联卡片仍留在对话中。
+- `HEADER_TOOLS` 现为终端与浏览器。文件是内置插件，审阅与 `file:<path>` 属于产物
+  表面，插件贡献的视图并列显示在工具旁。
+- 参见 ADR 0105、`04-ux/08-component-spec.md` §5 与 E2E-153。
+
+## 2026-08-19 —— 内置命令面精简为核心五条
+
+- 决策 D250 将第一方 registry 冻结为 `builtin.session.new`、
+  `builtin.agent.compact` 和三个 `builtin.mode.*` 条目。对应的内置输入框别名
+  只有 `/new`、`/compact`、`/agent-mode`、`/plan-mode` 和 `/goal-mode`。
+- 会话删除、中止、项目、设置、插件、日志、重命名、命令面板、窗口重载和 DevTools
+  条目从 registry 与渲染器 dispatch 中移除；遗留的 `newChat`、`openProject`、
+  `openSettings` 别名也一并移除。专用界面工作流和插件命令不受影响。
+- 模式别名保留一次性 `/mode <prompt>` 行为：先切换模式，再将剩余文本作为可见用户
+  回合发送。旧别名不再是受支持的内置契约。
+- 参见 ADR 0106、`04-ux/04-builtin-commands.md`、ADR 0024、ADR 0034 和 E2E-117。
+
+## 2026-08-19 —— 移除面板内置交互式终端
+
+- 决策 D251 取代 D249 以及 ADR 0019/0105 中关于终端的条款。工作面板不再拥有
+  交互式 shell；需要交互式 shell 时使用外部终端。
+- 浏览器仍是宿主提供的工作面板工具；文件仍由 `pi.files` 插件提供，审阅和
+  `file:<path>` 仍是工件表面，插件贡献的视图继续可用。
+- Agent Bash 保持非交互式并归对话所有：命令、输出、状态、复制行为和终端图标
+  不变。本次移除只删除 PTY UI、IPC、类型、依赖、打包配置和相关测试。
+- 不新增插件 PTY 权限或内置插件私有替代通道。参见 ADR 0108、E2E-058。
+
+## 2026-08-24 —— Windows 任务栏最小化保留任务栏条目
+
+- 决策 D252 针对 Windows 原生任务栏路径修订 D216 / ADR 0078。点击已聚焦窗口的
+  任务栏按钮完成普通的原生最小化，并保留 PI-Desktop 的任务栏条目。再次点击
+  恢复并聚焦窗口；窗口只是被遮挡时点击该条目仍保持现有的置前行为。
+- 渲染器 / 菜单发起的显式最小化操作仍驻留托盘，macOS / Linux 的原生最小化
+  路径也一样。常驻托盘、后台进程、窗口边界、IPC 和存储契约不变。
+- 参见 ADR 0117、`03-runtime/07-process-model.md`、
+  `04-ux/09-interaction-patterns.md` 和 E2E-124。
+
+## 2026-08-24 —— 渲染器拥有的排队提示与平滑的「立即发送」
+
+- 决策 D253 为智能体运行期间发送的提示增加一个按会话、仅存于渲染器的 FIFO
+  队列。队列保存可见的提示及其草稿快照，支持单独移除，切换会话后依然存在，
+  并有意不做持久化、重启后不重放。
+- 输入框只有一个提交槽位。运行进行中时，非空草稿显示「发送」并追加到队列；
+  空草稿显示「停止」，因此用户清空草稿即可露出立即停止操作。所属会话的
+  `agent_end` 之后，渲染器通过既有的 `agent/prompt` 路径排出一项。「立即发送」
+  把一项提升到队首并调用增量的 `pi-desktop/agent/stop`；sidecar 设置
+  pi-agent-core 的一次性 `shouldStopAfterTurn` 标志，于是当前的助手回复 / 工具
+  批次跑完、持久化回合正常关闭之后，优先的提示才开始。立即中止保持现有行为，
+  且从不清空队列。
+- 这改变了渲染器状态归属并新增一个公开的 Electron IPC 通道，但不改动 host-core
+  协议 v9、存储架构 v11 或「同时只有一个运行中回合」的约束。参见 ADR 0118 和
+  E2E-011f。
+
+## 2026-08-24 —— 子智能体采用事件驱动的空闲与总时长超时
+
+- 决策 D254 用 600 秒的空闲看门狗和 21,600 秒的总时长上限取代默认的子智能体
+  回合数上限。空闲计时器在回合、消息和工具生命周期事件时重置，并在工具执行
+  期间暂停；总时长计时器包含工具执行。（由 D260 修订：空闲默认值现为 300 秒，
+  且每个智能体事件都会重置计时器。）
+- 超时返回 `timed_out`，并带 `SUBAGENT_IDLE_TIMEOUT` 或
+  `SUBAGENT_DURATION_TIMEOUT`，尽可能保留最新的部分助手输出。provider 致命
+  错误、父级中止和按定义显式设置的 `maxTurns` 保持不变。
+- `maxTurns` 现在可选（`none`、`0` 和省略都表示无限制），显式值上限 80。定义
+  可以在文档给出的范围内通过 `idle-timeout` 和 `max-duration` 覆盖看门狗；非法
+  值告警并回退到默认。（由 D260 修订：各内置定义都声明一个显式的兜底回合数，
+  而不是无限运行。）
+- 内置 `explorer` 获得 `Bash` 用于有界的仓库检查，`code-reviewer` 仍为只读。
+  共享状态类型、运行时计时、委托拓扑、i18n 和 E2E 覆盖都暴露新的超时结果。
+- 参见 ADR 0119、`03-runtime/02-agent-runtime.md` §5f、
+  `03-runtime/08-error-codes.md`、`03-runtime/09-logging-and-observability.md`
+  和 E2E-155。
+
+## 2026-08-25 —— 折叠工作面板恢复基础窗口边界
+
+- 决策 D255 取代 ADR 0033。渲染器仍把工作面板布局为文档流内的 flex 列，但在
+  呈现它之前先请求一份等于已提交面板宽度的原生预留。退出时面板保持挂载，直到
+  零宽度预留成功为止，因此折叠右侧面板会让应用窗口回到仅聊天的边界，而不是
+  让 MainChat 吞掉释放出来的那一列。
+- 目标状态预留规划器、受限显示器下的行为、Browser 的测量边界同步、由 Main
+  拥有的原生边缘调整大小，以及会话作用域的面板状态都保持不变。参见 ADR 0122
+  和 E2E-056。
+
+## 2026-08-25 —— 窗口控件使用原生任务栏最小化
+
+- 决策 D256 针对 Windows / Linux 的渲染器与原生菜单最小化操作修订 D216 /
+  D252。自定义的右上角最小化按钮现在使用操作系统原生的最小化过渡，因此任务栏
+  条目仍可用于恢复；关闭到托盘仍只由记住的关闭行为控制。
+- macOS 的原生最小化仍驻留托盘；常驻托盘、关闭偏好、IPC 形状、主机协议和后台
+  生命周期在其他方面不变。
+- 参见 ADR 0123、`03-runtime/01-ipc-protocol.md`、
+  `04-ux/09-interaction-patterns.md` 和 E2E-124。
+
+## 2026-08-27 —— 智能体能力页面合并为一个工作台
+
+- 决策 D257 细化 D193 / D194，并取代 D202 中关于设置 > 智能体 > 技能 / MCP /
+  子智能体页面形态的条款。每个页面现在都是一条工具栏（带计数的分段级别筛选、
+  一个搜索框、项目选择器、主操作按钮）加一块按级别分组标题分隔的面板，而且三
+  个页面都通过本次改动之前就已存在的 host 调用完成新建、编辑和删除。
+- 按行的忙碌状态取代整页锁死，骨架屏只在首次绘制时出现，启用开关先乐观翻转、
+  被 host 拒绝时回滚。
+- `skills.reveal` 现在携带 `level` 和 `projectPath`，因此没有全局同名记录的项目
+  级技能也能解析；处理器仍然接受裸 id。
+- 除了这一处载荷放宽之外都只改渲染层：没有 host-core 改动、没有新 RPC、没有存储
+  或 schema 变更。D193 / D194 / D202 里关于能力状态、优先级和 `.agents` 路径的
+  规则全部不变。
+- 参见 ADR 0126、`04-ux/06-settings-ia.md` 和 E2E-103。
+
+## 2026-08-27 —— 发布文档是版本面（D260）
+
+- 稳定版应用的版本提升 / 打标签**必须**在打标签之前更新每一个带版本的面：
+  已发布语言的变更日志及其测试清单、所有工作区包的版本（包括此前被跳过的
+  `docs/package.json`）、Cargo 工作区 + `host-core` 锁文件的版本、`APP_VERSION`，
+  以及 `README.md` / `README.zh-CN.md` 中声明的发布线（D260，扩展 D164）。
+- `scripts/check-release-docs.mjs` 校验整套内容；`scripts/release.mjs` 在提升
+  版本后调用它，失败时拒绝提交或打标签。
+- 已写入发布运行手册 §4.1、AI 开发工作流矩阵 + 完成定义 + 禁止做法、变更清单
+  和 `AGENTS.md`。
+
+## 2026-08-26 —— 瞬时 provider 失败共享一份有界重试预算
+
+- 决策 D259 修订 D186 / D245 与 ADR 0050 / ADR 0091。非 429 的瞬时 provider
+  失败现在在请求建立和流传输两个阶段共享一份有界预算：首次尝试之后四次重试，
+  因此上游网关的 502/503/504 无论出现在响应头之前还是流中都能恢复。只重放
+  失败的那次请求；会话及其工具状态不受影响。
+- 该预算接纳 `NETWORK_ERROR`、`TIMEOUT`、`STREAM_FAILED` 和可重试的
+  `PROVIDER_ERROR`。非 429 的延迟依次尊重 `retry-after-ms`、`retry-after` 秒数、
+  HTTP 日期，然后才是确定性的 1s/2s/4s/8s 序列，上限 8 秒；凡是能声明延迟的
+  状态都会保留捕获到的头部。
+- 主会话、内置子智能体和一次性输入框增强共用同一策略。429 的五次重试预算
+  保持独立。预算耗尽记录 `retryAttempt: 4`。
+- 认证、模型选择、请求格式错误和上下文失败仍是终态。不改动 IPC、存储、主机
+  协议或 provider 配置。
+- 参见 ADR 0128、`03-runtime/02-agent-runtime.md` §5d、
+  `03-runtime/08-error-codes.md`、E2E-096 和 E2E-149。
+
+## 2026-08-27 —— 子智能体空闲看门狗限制的是沉默，不是慢
+
+- 决策 D260 修订 D254。每个智能体事件都会重新武装空闲计时器，包括以
+  `message_update` 到达的单个流式 token，因此看门狗只在完全无响应时触发。
+  持续产出的委托无论回合多慢都不会被空闲终止，工具执行期间的暂停不变。
+- 由于这个窗口现在度量的是「空气死寂」而不是工作量，默认空闲超时从 600 秒
+  降到 300 秒；它按实测的委托最后一个流式 token 到下一次响应之间 174 秒的
+  p99.9 等待来定，而不是按工作可能需要多久。它必须低于 600 秒的 `TaskWait`
+  默认值，这样真正卡住的委托能在一次等待内落定为 `timed_out`，而不是拖住
+  父级整整一个窗口甚至更久。21,600 秒的总时长上限和 10–21,600 的覆盖范围
+  不变。
+- `TaskWait` 到期现在报告「Still running after Ns」，并说明这不是失败、委托
+  仍在工作，这样父级不再把一次普通的未完成等待当成失败的委托。
+- 各内置定义获得与其职责匹配的回合兜底 —— `explorer` 60、`code-reviewer` 50、
+  `test-runner` 40、`fixer` 80 —— 取代无限回合，因此循环不收敛的委托会以
+  `truncated` 结束并带上部分报告，而不是一直跑到总时长上限。
+- 不改动 IPC、存储、主机协议或 provider 配置。参见 ADR 0129、
+  `03-runtime/02-agent-runtime.md` §5f、`03-runtime/08-error-codes.md` 和
+  E2E-155。
+
+## 2026-08-27 —— 已挂载的转录是一个窗口，而不是已加载的历史（D261）
+
+- 决策 D261 在渲染器中细化 ADR 0120 / D258。它们限定了什么可以跨过 IPC 边界、
+  定位一页要花多少代价；但渲染器仍然把分页取回的每一行都挂载出来，并在会话
+  整个生命周期里保持挂载。
+- 已挂载的历史变成一个尾部窗口：会话切换后的第一次提交挂 15 行，稳态 60 行，
+  每次增长 40 行。到达顶部时，窗口未满则先增长；只有当窗口覆盖了全部已加载
+  历史，才去取更早的一页。
+- `content-visibility: auto` 本来已经跳过了这些屏外行的布局与绘制，但它保留
+  了它们的 React 树、Markdown AST 和 Shiki token 数组 —— 在低内存的 Windows
+  机器上这是错的资源，而报告聊天区在长会话中越来越迟钝的正是这种机器。
+  窗口化同时限制了驻留内存和每帧的协调开销。
+- 窗口增长与取回一页采用相同的绘制前滚动锚定，因为两者都在阅读位置上方增加
+  高度。窗口按会话重置并钳制在已加载历史之内，因此过期的预算不会过度挂载。
+  水合占位条只作用于第一次提交：稳态窗口下方若有永久占位条，会在增长触发点
+  之前放一个空白视口。
+- 会话小地图由已挂载的条目构建。它通过在滚动容器里找到标记对应的节点来响应
+  点击，因此若用完整集合，画出的短线会跳到无处。代价是浏览器自带的页内查找
+  只能触及已挂载的行。
+- 不改动 IPC、存储、主机协议或分页。参见 ADR 0130、
+  `04-ux/08-component-spec.md` §8 和 E2E-159。
+
+## 2026-08-28 —— 大段文本粘贴成为会话临时文件引用（D262）
+
+- 不超过持久化 `largePasteThreshold` 的纯文本粘贴仍使用原生文本区域输入；默认值为 600 个字符，有效值为 1 至 1,000,000 的整数。
+- 更大的文本通过现有粘贴桥以准确的 UTF-8 `text/plain` 字节传输，并保存到所属会话的 `<data_dir>/scratch/<sessionId>/pasted/` 目录。Composer 在原始插入符号/选择处插入生成的 `@<temporary-name> ` 标记，并将规范路径映射保留在渲染器草稿中，包括缓存和未答复的智能停止快照。
+- 发送时在原位置只解析生成的标记一次；不会追加 basename、作为重复结构化附件发送，或写入工作区。现有剪贴板文件/图像芯片行为和临时目录清理保持不变。
+- 该设置是应用设置 JSON 中的新增字段；主机规范化会为旧设置提供默认值，不需要数据库迁移。参见 ADR 0131、`04-ux/06-settings-ia.md`、`04-ux/07-ui-design-system.md` §8.1、`04-ux/08-component-spec.md` §11.7–11.8、`04-ux/09-interaction-patterns.md` §8a 和 E2E-102g。
+
+## 2026-08-28 —— 跨显示器拖动是用户意图，而非系统调整（D263）
+
+- 决策 D263 修订 Main 中的 D255 / ADR 0122。工作面板保留基于记住的基边界进行规划，
+  并针对 Main 最后应用的矩形协调后续本机增量。该协调把所有显示器变化压成一个
+  `displayChanged` 布尔量并复用记住的基边界，这对系统重新适配是正确的，
+  对用户拖到另一块显示器的窗口则是错误的。
+- 报告为 issue #18，自 0.10.0 起的每个版本都可复现：把窗口拖过显示器边界后，
+  松开鼠标时窗口会跳动。协调挂在每个本机 `move` 上，因此在拖动过程中就以原显示器的
+  基边界重排，目标工作区域再把该 x 夹到边缘，并保留旧显示器的 y。面板状态无关紧要
+  —— 关闭的面板请求宽度 0，但仍会重排并调用 `setBounds`。
+- 布尔量变为 `none`、`os-adjusted`、`user-moved` 三态的 `DisplayTransition`。
+  `os-adjusted` 逐字保留 ADR 0122，使受限显示器保持用户意图、宽敞显示器恢复完整保留。
+  `user-moved` 以窗口当前位置推导基边界，仅规范化原点进入目标显示器工作区域；
+  即使目标显示器更小也保留尺寸，因为基边界是 ADR 0122 下可恢复的用户意图，
+  收缩会被持久化且无法撤销，缺口由保留量吸收。
+- 归属依据未被消费的本机 `move` 流而不是时间期限，因为 Electron 没有为本机移动
+  提供 drag-begin/drag-end 事件对，而期限会让正确性取决于主进程调度以及推迟几何的
+  最大化窗口。`move` 处理器只标记待处理的拖动，并把协调推迟到移动流稳定之后，
+  因此 Main 不会在拖动过程中与窗口服务器抢位置。显示器拓扑事件会先清除标记，
+  所以拖动之后的热插拔仍归属系统。
+- 同一处误判此前会把过期坐标写入 `window-state.json`，使窗口在用户已离开的显示器上
+  重新打开。`user-moved` 现在会推进记住的显示器键并持久化，并按保留路径同样的方式
+  规范化，因为最大化窗口会推迟几何、让这次保存成为该拖动的唯一消费者；
+  `os-adjusted` 仍拒绝持久化。未被消费的标记会在期限后退休，
+  因此不会泄漏到之后的系统显示器变化中。
+- 不改动 IPC、存储或主机协议；`window/setWorkPanelReservation` 保持其形状。
+  参见 ADR 0132、`03-runtime/01-ipc-protocol.md` 和 E2E-160。
+
+## 2026-08-28 —— Composer 输入是一条被测量过的延迟路径（D264）
+
+- 聊天输入框的逐键延迟有三个被测量出来的原因，全都落在输入路径上，
+  没有一个是正确性缺陷。`@` 菜单打开时，每次按键都会对最多整个工作区文件索引
+  （8000 条）做模糊匹配，再对全部匹配做完整排序，只为显示 50 行；
+  现在的有界 top-K 选择返回同样顺序的同样行，每次按键从 2.4–3.0 ms 降到
+  0.25–0.78 ms。`filterCommands` 保留完整排序：命令列表很小，
+  且其比较按命令类型分组，top-K 在那里没有收益。
+- 自动调整高度的 effect 此前每次按键都强制一次 `height: auto` 测量探针，
+  而每次探针都是一次同步重排。这个探针不能简单去掉，因为只有它能揭示
+  草稿现在需要更少的行数：在固定的已应用高度上，溢出的文本框报告的是该高度，
+  而不是内容高度。这同时也解释了为什么在内容溢出时按已应用高度读取是等价的
+  —— 那一次 `scrollHeight` 读数就是完整的内容高度。因此探针只保留给
+  文本框可能需要收缩的情形：已应用高度高于最小值，且内容不再填满它。
+- 重新发布未变化的 `--composer-dock-height` 并不是免费的。该属性挂在
+  `document.documentElement` 上，因此每次 `setProperty` 都会使整个文档
+  （包括转录区）的样式失效。在取整后的高度未变化时跳过写入，
+  使一行之内的输入不再走那条路径；高度与 `overflowY` 也只在计算值
+  与上次应用的值不同时才写入。
+- 剩下的开销是 React 的身份抖动。`Array.prototype.filter` 即使不丢弃任何元素
+  也会分配新数组，因此引用过滤器现在在无删减时返回原数组，
+  以 `fileReferences` 为键的草稿缓存序列化 effect 不再每次按键重跑；
+  同样的空操作保护也覆盖 `workspacePath` effect 和 `clearDraftForKey`。
+  `setCursor` 会忽略未变化的取值，因为 `onSelect` 在每次光标移动时都会触发，
+  这曾使单纯的方向键导航都会重渲染输入框并重跑自动完成触发检测。
+- 不改动 IPC、存储、主机协议或 schema，也不新增依赖。行为保持不变：
+  菜单行与顺序一致、同样的 28px 单行下限、同样的七行上限。
+  参见 `04-ux/08-component-spec.md` §11.5 和 US-UI-55。
+
+## 2026-08-29 —— 展开的委托运行过程在原处滚动（D271）
+
+- 决策 D271 在渲染层细化 D201 / D268 / ADR 0062。展开一个委派节点会把委托的
+  整个运行过程内联进父级转录，因此一个执行了四十次工具调用的委托会一次新增四十行。
+- 涉及三处没有高度约束的表面：`.subagent-run` 没有任何高度上限；`.tool-fields`
+  是唯一没有 260px 上限的细节块，而 `.tool-row-content`、`.tool-file-list`、
+  `.tool-match-list` 早已具备；D268 又把运行时限制在 50k 字符的 `TaskWait`
+  合并报告放进了同样没有上限的 `note`。
+- 滚动特意挂在新的内层容器 `.subagent-run-rows` 上，而不是 `.subagent-run`：
+  折叠导轨绝对定位在 `left: -8px`，位于运行块内边距盒之外，在运行块上设置
+  `overflow` 会裁掉那条标示委托上下文边界的导轨。标题留在滚动区之外，因此归属
+  信息不会从它所标注的行上滚走。
+- 该滚动区是带标签、可获焦的 `role="group"`：指针用户本可滚动它，而键盘用户
+  否则无法抵达。
+
+## 2026-08-29 —— 生命周期行就是子智能体行（D268）
+
+- 决策 D268 在渲染层细化 D201 / D265 / ADR 0062 与 ADR 0089。D265 让每个 `Task`
+  调用都成为整宽委派卡片，但把三个生命周期行（`TaskWait`/`TaskList`/`TaskStop`）
+  留作通用工具行。而这些行是最终结果唯一出现的地方——`Task` 在委派启动的那一刻
+  就返回，之后永远显示 `running`——因此它们既是信息量最大、也是可读性最差的部分。
+- 可见缺陷很具体：生命周期行以委派 ID 作为参数，于是 `getToolSummary` 打印出一串
+  裸 UUID；其结果载荷没有按工具的映射，正文退回到 `delegations[]` 的格式化 JSON；
+  标签写作“已委派”，而那是 `Task` 的动作，不是等待或停止的动作。
+- 修复方式是读取运行时本就返回的名册。`details.delegations[]`（`TaskWait`/`TaskList`）
+  与 `details.stopped[]`（`TaskStop`）携带子智能体名称、状态和注册表时间戳，正是
+  读者需要的信息：该行按名称生成摘要并对重复者计数，用共享的
+  `chat.subagentStatus.*` 文案汇总状态，并把名册渲染为命名字段表格，前置合并后的报告。
+- 有意保持不变：生命周期行**仍然不是**拓扑节点，仍不得抬高子智能体数量
+  （`isDelegationActivityItem`）；运行时及其 `delegationId` 契约不动；IPC、存储与
+  主机协议面均未移动。本次仅涉及呈现。
+
+## 2026-08-28 —— 单个委派也读作一张卡片，与扇出一致（D265）
+
+- 决策 D265 在渲染层修订 D201 / ADR 0062。原决策把委派卡片保留给同一活动分组中
+  两个及以上的 `Task` 调用，单个 `Task` 仍退回紧凑工具行。于是同一件事看起来像
+  两个不同功能，而单个这一常见情形恰恰是丢失结果、记录的运行时长和委派步骤数的
+  那一个。
+- 现在活动分组里的每个 `Task` 调用都渲染为委派卡片：根节点、连接线、每个委派一个
+  节点。卡片其余部分不变，聚合标头、直播时只自动展开一次的规则、节点折叠以及
+  报告只打印一次的规则都原样沿用。
+- 聚合标头按数量措辞。英文为四个状态标签新增 `_one` 形式；中文只有一个复数类别，
+  因此其 `_other` 形式承担所有数量，并去掉了让单节点卡片显示“1 个 Subagents”的
+  英文复数标记。
+- 不改动 IPC、存储、主机协议或委派运行时：卡片仍然在直播和重载两条路径上，由持久化
+  的 `parentToolCallId` / `agentName` 归属推导。参见 ADR 0062 §6、
+  `04-ux/08-component-spec.md` §9.9 和 E2E-119。
+
+## 2026-08-28 — 标题栏带在所有平台上都预留空间（D266）
+
+- 决策 D266 修复目的页面上仅出现在 macOS 的回归。主窗格顶部的 46px
+  带是不透明、绝对定位的 `.main-titlebar`，因此可滚动的路由内容在所有平台
+  上都从它下方经过。但只有 `win32` 和 `linux` 为 `.page-frame` 做了填充，
+  而那条保留被描述为窗口控件问题 — macOS 原生绘制交通灯，于是 darwin
+  看起来可以豁免。
+- 并不能。无论窗口控件由谁绘制，该带都是不透明的，所以在 macOS 上它遮住了
+  插件页面标头：标题行被裁切，已安装 / 插件市场分段控件贴到了窗口顶边。
+- `.page-frame` 现在在 darwin 上也保留 `--ds-toolbar-height` 加 8px 缓冲，与
+  `.thread-content` 已经在三个平台为记录区做的事一致。因为共用该框构，
+  修复同时覆盖插件、定时任务和合并请求页面。
+- 叠在带之上的表面保持现有处理：插件详情侧面板在 `z-index: 60` 渲染，
+  仍从顶边开始，只有 `win32` / `linux` 下降到带下方以避开窗口控件。
+- 仅渲染层 CSS：无 IPC、存储、宿主协议或组件结构变更。参见
+  `04-ux/08-component-spec.md` §2.3 和 E2E-087a。
+
+## 2026-08-29 — 项目存档是一个工作台，而不是三个堆叠带（D267）
+
+- 决策 D267 修订 D168 对设置 → 项目存档的演示层规定，采用技能 / MCP /
+  子智能体已在使用的 D257 一个工作台构成：一条安静的引导行、一个工具栏、
+  一个面板。
+- 概述横幅被移除。它是一张装饰渐变卡片，承载四个 `--text-xl` 计数器格，
+  而设计系统明确禁止这种处理。四个页面级计数器随之一并移除：它们承载的
+  每个总计都已能从面板内的分组条计数中读出，因此在工具栏上方重述这些数字
+  既重复了数字，也让该目的地拥有了兄弟页面都没有的页头。这撤销了 D168 对
+  概览计数器的要求，并停用 `project.statProjects`、`project.statOpen`、
+  `project.statArchived` 和 `project.statSessions` 键，两个语言包中均已删除。
+  引导区现在是一条安静的说明行，与能力页面一致。
+- 三个每部分面板合并为一个面板：固定 / 所有项目 / 已存档成为带计数的
+  面板内非交互标题条，因此页面只有一个高架框，列表内也不再嵌套标题。
+  定制排序药丸控件改用共享分段控件基元，行几何与能力页面行一致
+  （32px 控件、14px 列表间距、28px 行字形）；外部大写部分标签被移除。
+- 除上述四个停用的计数器键外，其余仅为演示层变更：行剖析、行菜单分组、
+  搜索匹配、八个一批的会话显示、激活语义和无障碍语义全部不变。无 IPC、
+  存储、宿主协议或组件归属变更，因此不需要新的 ADR。
+- 参见 `04-ux/06-settings-ia.md`、`04-ux/07-ui-design-system.md`、E2E-038 和
+  US-UI-23。
+
+## 2026-08-29 —— 历史续接让会话大纲始终可达（D269）
+
+- 决策 D269 在渲染器中修订 D108 / D261 / ADR 0130。D261 把已挂载历史变成尾部
+  窗口，并把已挂载条目喂给小地图，因此没有短线能指向被扣留的行。这在短线上
+  是对的，但让大纲对它藏起来的历史无话可说；随后 D108 的可见性规则又在已
+  挂载尾部少于两个标记或能放进一个视口时把整条导轨移除。
+- 两种过渡让这种情况在正常使用中就会出现：有界尾部可能是一个塌缩到不足一屏
+  的工具密集回合，取回的更早一页也可能整体落在尾部挂载窗口之外。两者都不一定
+  改变 `scrollTop`，而唯一的升级触发是原生滚动事件，于是向上的行程可能在磁盘
+  上还有更早历史、却没有导轨可用的情况下停下。
+- 现在只要还有更早的历史 —— 已加载但被扣留的行（`hiddenAbove > 0`）或主机上
+  更早的一页（`hasMoreBefore`）—— 大纲就保持存在，并在顶部带一条点状的
+  「更早历史」续接项。它是真正的控件，不是消息短线：走同样的两阶段先增长后
+  取页路径，页在加载时禁用并标注，从不声称有消息预览。普通消息短线仍只由
+  已挂载行构建，因此 D261 的可达性规则严格成立。
+- 推进不再依赖滚动事件。转录既有的顶部加载行就是被观察的边界：在尾部不足一
+  屏、取回但被扣留的一页或窗口过渡之后，只要它仍停在近顶带内，转录就持续
+  升级。近顶滚动检查不变，且现在与观察器共用一个阈值常量。
+- 一旦不再有更早历史，D108 的「两个标记 + 溢出」规则原样适用，因此已完成的
+  短会话仍不显示导轨。仅涉及渲染器：不改动 IPC、存储、主机协议或分页，挂载
+  窗口预算也不动。
+- 参见 `04-ux/08-component-spec.md` §7 与 §8、ADR 0130 和 E2E-159。
+
+## 2026-08-30 —— 两种凭据共用一个模型选择器（D270）
+
+- 决策 D270 在渲染层细化 D237 / D240。设置 → 模型配置此前带着同一个模型选择器的
+  两份拷贝：AI 服务对话框是完整的那一份，厂商账户对话框是已经走偏的简化拷贝。
+- 拷贝那一份共用列表与 `ModelBinding` 形状，却没有“高级”折叠区，因此账户的按模型
+  上下文窗口、输出上限与思考等级都无法编辑；它也没有保存时的收敛处理——账户可能
+  持久化运行时会丢弃的思考等级，而对话框仍把它算作已启用。
+- 现在由一个共享渲染组件负责行合并、筛选、勾选、自定义模型输入、已选面板、“高级”
+  折叠区，以及向已发布等级集合的收敛。两个对话框都渲染它；只有左栏标题不同，厂商
+  账户对话框额外传入自己的保存状态。账户对话框放大到提供商对话框的双栏尺寸，
+  重复的已选面板与自定义模型 CSS 一并删除。
+- 仅渲染层：不涉及 IPC、主机协议、存储或提供商配置架构改动，因此不需要 ADR。
+  唯一的用户可见变化是厂商账户现在拥有与 AI 服务相同的按模型高级设置，并获得
+  同样的保存时收敛。
+- 参见 `04-ux/06-settings-ia.md`、`04-ux/08-component-spec.md` §19、
+  `03-runtime/11-provider-model-system.md` §10 与 E2E-162。
+
+## 2026-08-30 —— 退出时插件按关闭停止，而不是按崩溃（D272）
+
+- 决策 D272 在主进程细化规格 07 §3.1。`before-quit` 之前释放的是插件的 *监听*，
+  把宿主子进程留给紧随其后的进程拆除去杀。
+- 没有人宣告过的退出与崩溃无法区分。没有任何地方设置 `disposing`，因此
+  `handleChildExit` 顶部的守卫从未生效，一次正常退出会按插件走完崩溃路径：一条
+  `exitCode: 0` 的 `PLUGIN_CRASHED` 错误日志、一个"意外停止"提示，以及
+  `superviseCrash` 把重启排进一个正在关闭的应用。提示来了两次，因为运行时和
+  `onPluginCrash` 处理器各为同一事件发了一次。
+- 代价体现在诊断上。在某个本地配置里，633 条崩溃上报有 613 条属于此类，全部落在
+  `app shutdown` 后五秒内，真正的那 20 条因此几乎不可见。
+- 现在由 `disposeAll()` 负责退出：先在一趟里把每个插件标记为正在释放并取消其待
+  处理的重启，这样某个子进程在同伴还在停止时死掉也已被覆盖；释放监听；然后并行
+  停止服务并运行 `onUnload`。整个过程有界——每个 `onUnload` 1.5s（短于显式卸载
+  的 5s，因为用户已经要求应用关闭），整体 3s，超时后直接杀掉子进程。
+  `onPluginCrash` 中重复的提示被删除。
+- 仅主进程：不涉及 IPC、存储、主机协议或清单改动，因此不需要 ADR。插件获得一条
+  此前没有的保证——退出时 `onUnload` 会运行——用户也不再在每次干净退出时看到
+  失败提示。
+- 参见 `07-plugins/05-plugin-lifecycle.md` §3.1。
+
+## 2026-08-30 —— 模型习惯的参数名被接受，而不是被纠正（D273）
+
+- 决策 D273 在 Agent 运行时细化规格 03 §4。工具 schema 写的是 `path` 和
+  `pattern`；模型照旧发 `file_path` 和 `query`。
+- 数字把它从模型问题变成了设计问题。某个本地月份里 1679 次失败的工具调用中，852 次
+  是参数名不匹配。其中 724 次是 `Read` 传了 `file_path`——占全部 `Read` 失败的
+  87%，仅此一项就把 `Read` 的错误率推到 11%。`Write`（55）、`Edit`（56）、
+  `Grep`（13）和 `Glob`（4）以同样的两个别名重复了这一模式。
+- 参数名是预训练习惯，不是一段描述能劝退的东西。而且拒绝发生在调用到达主机之前的
+  校验器里，于是这个回合花在了一个模型无从预料、从它那侧也没有理由预料的错误上。
+- 现在 `Read`、`Write`、`Edit` 和 `BrowserPreview` 在 `path` 之外接受
+  `file_path`，`Glob` 和 `Grep` 在 `pattern` 之外接受 `query`。两种拼写在 schema
+  中都是可选的，任一都能通过校验，运行时在下游任何环节看到之前就把别名折叠到规范名
+  上——写锁的键、`tools.execute` 的参数、持久化的转录只带规范名，因此这条线以下没有
+  任何地方需要认识两种拼写。每一对恰好要求提供其一；两个都给时规范名胜出。
+- `Bash.timeout` 是同一问题的第二个版本：69 次失败是按毫秒给的超时
+  （600000、900000、1800000），而字段上限是 300 秒。schema 上限放宽到 3600000——高于观察到的最大值
+  1_800_000——好让毫秒值根本能通过校验，运行时把不小于 1000 的值按毫秒读取并夹到实际
+  生效的 300 秒上限。阈值取 1000 而不是 300 是刻意的：
+  像 301 这样的值更可能是一个越过上限的秒值，把它改写成 0.301s 会比它今天得到的错误
+  更糟。
+- 仅运行时：不涉及 IPC、存储或主机协议改动。host-core 的 schema 及其参数解析保持不
+  变，因为运行时在它们之上完成归一化，而 `tools.list` 没有别的消费方。
+- 参见 `03-runtime/03-tools-and-permissions.md` §4。
+
+## 2026-08-31 —— 不变的已编辑提示也执行重试（D274）
+
+- 决策 D274 修订渲染层的 D137。确认一个有效的用户提示编辑后，现在始终
+  分派现有的编辑-重发/重新生成路径，即使修剪后的文本与原文完全相同。
+- 内联控件在当前语言中显示“重试”和“取消”。重试保留现有的修订存档、
+  按消息身份截断、斜杠命令展开和附件行为；取消和 Escape 保持提示不变。
+- 仅涉及渲染层和 i18n：不改动 IPC、存储、主机协议或运行时契约。参见
+  ADR 0135、`04-ux/08-component-spec.md` 和 E2E-073。
+
+## 2026-08-31 —— 在上下文压缩期间保留活动任务边界（D275）
+
+- 决策 D275 修订代理运行时的 D203 / ADR 0064。检查点现在持久化不透明的
+  `details.retainedTailMode` 边界。
+- 提供商必须继续活动工具回合时，检查点只保留最新的用户消息，并沿用现有的
+  20,000 令牌上限。终止回合边界、发送新提示之前或手动压缩时，不保留裸的历史
+  用户消息；摘要是权威内容，下一条提示就是新任务。
+- 没有该模式的旧检查点归一化为最新的用户消息。可见转录本、主机所有权的存储和
+  协议形状不变。参见 ADR 0136、运行时／存储／工具结果规格和 E2E-164。
+
+## 2026-08-31 —— 访问过的会话各自保留一个已挂载面板（D276）
+
+- 决策 D276 修订 D162 以及 ADR 0130 的第 4、5 条。会话区为最近访问过的每个
+  会话挂载一个面板，上限三个，因此切换是可见性交换，而不是把同一个转录重新
+  指向另一份数据。
+- 热切换在第一帧就揭示目的地面板及其自身的滚动位置。冷切换让当前面板保持
+  完全可读，仅以顶部细进度条标示等待，同时输入框不可交互；不透明度调暗已
+  移除。
+- 首次激活仍定位到最新一轮；重新访问恢复该面板自己的偏移。隐藏面板保留布局
+  盒、保持惰性，且不执行跟随滚动、分页或测量。
+- 仅涉及渲染层：不改动 IPC、存储、主机协议或运行时契约。参见 ADR 0137、
+  `04-ux/08-component-spec.md`、`04-ux/09-interaction-patterns.md`、
+  E2E-011、E2E-071d 和 E2E-071g。
+
+## 2026-08-31 —— 并发子智能体可以直接互相传递消息（D277）
+
+- 决策 D277 扩展 D201 / ADR 0062 / ADR 0089，不修订它们。一个会话作用域的邮箱
+  让并发的委托通过一个可选加入的工具 —— `Peer(action=...)` —— 交换有界文本，
+  可在定义的 `tools:` 列表中声明。`action` 参数选择操作：`send`（带 `to?`、
+  `text`、`topic?`、`inReplyTo?`）、`inbox`（带 `from?`）或 `wait`（带
+  `timeoutSeconds?`、`from?`）。这三个操作最初是三个工具
+  （`PeerSend` / `PeerInbox` / `PeerWait`）；ADR 0140 把它们并成一个工具，
+  让对等消息在计数和阅读上都是单一能力。
+- 它存在的原因是父级在任何委托开始之前就写好了每一份简报，因此不可能总是
+  知道各方向彼此独立。路径锁能防止撕裂写入，却防不住过期前提；而通过一个
+  阻塞在 `TaskWait` 里的父级转发便条，会耗掉委托本来要保护的上下文。
+- 可选加入且默认关闭：没有内置定义声明 `Peer`，因此每个现有定义都保持
+  ADR 0062 的隔离。只声明 `Peer` 而没有任何工作工具的定义在 `Task` 时被拒绝。
+- 按智能体名称寻址，从不按委托 id；发送者由运行时在 spawn 时绑定，因此
+  `from` 不是模型输入。`Peer` 工具按委托单独构建，不进入会话工具目录，因此
+  父级没有通往委托的第二条通道。
+- 消息在进程内：没有 `permissionScope`、没有 host-core 调用、不占工具预算。
+  上限为每条消息 2,000 字符、每个收件箱 64 条（丢弃最旧的并报告丢失）、每次
+  运行 60 次发送，以及低于 300 秒空闲看门狗的 120 秒等待上限。排空是破坏性的。
+- 对等流量从不进入父级的模型上下文，委托会被告知它的报告仍是父级唯一读取的
+  内容。没有跨会话消息、没有与父级的消息、没有嵌套委托、没有持久历史。
+- 仅涉及运行时和 shared：不改动 IPC、存储、主机协议或渲染器，也不改动
+  `AgentEventEnvelope` —— 对等消息本来就是一次由 `parentToolCallId` 和
+  `agentName` 归属的委托工具调用。参见 ADR 0138、ADR 0140、
+  `03-runtime/02-agent-runtime.md` §5f.2 和 E2E-165。
+
+## 2026-09-01 —— 子智能体模型选择（D278）
+
+- 决策 D278 在智能体运行时和 provider 模型系统中扩展 D201 / ADR 0062 /
+  ADR 0089。`Task` 工具获得可选的 `model` 参数（`"provider/modelId"`），在该次
+  运行中覆盖委托 frontmatter 钉住的模型。解析优先级：Task.model → 定义
+  frontmatter 钉住值 → 会话模型。
+- `ModelBinding.availableForSubagents`（布尔值，默认 false）是 provider 模型
+  绑定上的可选加入标志。启用后，该模型出现在注入父智能体系统提示的委托目录
+  里。父级看到的模型摘要列出所有可用于委托的模型。
+- 父级指定的模型未配置或未启用委托时，Task 工具返回一个列出可用模型的工具
+  错误。与当前会话 provider/model 完全相同的重复视为继承，等价于省略
+  `model`，因此空的委托目录不会把父级模型变成一个假的「模型不可用」错误。
+- 实现澄清（2026-09-13，ADR subagent-model-opt-in）：`subagentProviders`
+  可包含仅供定义固定使用的模型，不是覆盖许可列表。新增启动字段
+  `subagentModelKeys` 单独表达许可，缺省为空，并参与运行时复用判断。
+  只有启动许可键进入复用快照。按需授权写入独立缓存，不得用不同 provider id
+  覆盖固定模型，也不会替换空闲运行时。重复定义自己的固定键视为省略 `model`。
+  按需匹配使用唯一提供商查找。Task 目录同时展示各定义的默认模型。
+- 范围澄清（2026-09-15，issue #386）：该许可约束所有让 AI 为委派工作挑选模型
+  的入口，不只是 `Task.model`。`session/collaboration/spawn` 的 `modelKey`
+  指向未勾选的模型时，在创建 worker 之前以 `PERMISSION_DENIED` 拒绝；省略该键
+  或写出默认模型自己的键仍按继承处理。`models.list` 依旧返回全部就绪模型及其
+  标志——该标志只是给调用方的提示，权威判断仅在 Electron main。
+- sidecar 启动时未预解析的模型通过发往 Electron main 的
+  `provider.resolveSubagentModel` RPC 按需解析，凭据和 models.dev 快照都在
+  那里。
+- 参见 `03-runtime/02-agent-runtime.md` §5f、
+  `03-runtime/11-provider-model-system.md` §7 和 E2E-166。
+
+## 2026-09-01 —— 原生窗口边缘调整大小在恢复前等待稳定（D279）
+
+- 决策 D279 保留 Electron 在所有平台上的原生窗口边缘和角落调整大小所有权，
+  包括无边框的 Windows/Linux 外壳，并继续使用 1040×700 的最小尺寸。渲染层
+  拖动区域不会替代操作系统命中测试，也不会引入第二条调整大小路径。
+- 边界恢复会等待原生边界快照稳定 300ms 后，才可能恢复过小或被收起的窗口。
+  正常基础边界会在最后一次调整大小/移动事件后去抖 600ms 保存，关闭时仍会
+  刷新最新的稳定状态。工作面板预留产生的预期 `setBounds` 结果不会被计入跨
+  显示器用户移动归因。
+- 不涉及 IPC、存储、宿主协议或渲染层调整大小契约。这是对 D156/D163 的细化，
+  并由 E2E-167 覆盖。
+
+## 2026-09-01 —— 展开侧边栏宽度可由用户调整（D280；由 D408 取代）
+
+- 展开侧边栏拥有持久化的首选宽度，范围为 `240..520px`，默认 `275px`。
+  右边缘渲染器手柄从按下位置预览宽度，让 MainChat 连续回流，并只在指针
+  释放时保存。
+- 手柄是垂直 ARIA 分隔器。左右方向键按 16px 调整，Home 和 End 选择边界，
+  键盘操作立即提交。Escape、指针取消、捕获丢失和卸载会将正在进行的指针
+  手势回滚到起始宽度。
+- 侧边栏折叠独立于首选展开宽度。不新增 IPC、原生窗口边界、工作面板预留或
+  项目/会话顺序契约。参见 ADR 0141 和 E2E-168。
+- D408 取代了本宽度契约在当前 shell 中的行为：展开侧边栏固定为 275px，
+  历史上的调整大小手柄会隐藏。
+
+## 2026-09-01 —— 支持非回环 HTTP MCP 端点（D281）
+
+- 用户拥有和插件声明的 MCP 服务器都接受绝对的 `http://` 和 `https://` 地址，
+  包括可信的局域网地址。不支持的 scheme 和格式错误的 URL 仍然无效。
+- 用户 MCP 编辑器会对非回环 HTTP 显示明确的未加密连接警告。插件声明的端点
+  仍然需要 `mcp.server.remote`，且主机必须被 `manifest.net.domains` 覆盖。
+- MCP 客户端关闭自动重定向，最多允许五跳，只接受 HTTP(S) 目标，并在每一跳
+  重新检查插件出网策略。跳转到未声明主机时，会在下一次请求前阻止。
+- Marketplace catalog 和插件包下载规则不变：非回环 HTTP 包下载仍然拒绝。
+  参见 ADR 0142 以及 E2E-024K/E2E-100。
+
+## 2026-09-01 —— 任务标题可由用户重命名（D282）
+
+- 任务名称属于会话元数据，可从侧边栏会话溢出/右键菜单或项目存档中的任务行
+  编辑。两个入口共用同一个本地化模态编辑器，支持焦点管理、Escape/取消关闭，
+  并将输入限制为 1–80 个 Unicode 码点。
+- 现有 `session.rename` IPC/RPC 路径在主机边界校验并去除首尾空白；空标题或超长
+  标题返回 `INVALID_PARAMS`。成功重命名只更新 `sessions.title`，不会更新
+  `updated_at`、转录、消息数、项目绑定、空会话状态或历史通知标题快照。
+- 自定义标题会继续阻止首条 prompt 的自动标题生成。保存及重启后，侧边栏、顶栏、
+  项目存档和搜索都从当前摘要显示标题。参见 ADR 0143 和 E2E-021a。
+
+## 2026-09-01 —— 用户可配置的思考等级覆盖（D283）
+
+- `ModelInfo` 仍是原始的 models.dev 记录。已有的 `ModelBinding` 不再覆盖其
+  发布的推理字段或能力标签，因此目录中的推理模型在设置里仍按推理模型显示。
+- 设置始终渲染七个规范思考等级。发布的等级为新的已知模型绑定提供初始值；
+  未知模型和目录中的非推理模型显示同一组未选中的选项，可以为兼容端点显式
+  启用。
+- 精确的模型绑定决定有效的思考能力。它的显式等级在保存时被保留，并由
+  Composer、Electron main 和 sidecar 直接使用，不与目录求交集。空或仅 `off`
+  的绑定解析为 `off`；没有自动的推理推断。不改动 IPC、存储或主机协议。参见
+  ADR 0144 和 E2E-005/E2E-050/E2E-162/E2E-163。
+
+## 2026-09-01 —— 设置导轨采用紧凑标签层级（D284）
+
+- 设置导航使用简洁且处于同一层级的目的地标签：常规、AI、快捷键、指令、模型、
+  技能、MCP、子智能体、导入、项目和信息。英文使用对应的 General、AI、
+  Shortcuts、Instructions、Models、Skills、MCP、Subagents、Import、Projects
+  和 Info。
+- 视觉分组命名为偏好、智能体、工作区和系统（Preferences、Agent、Workspace、
+  System）。目的地 ID、顺序、搜索行为和内容归属保持不变。
+- 导轨标签可以短于选中页面的描述性标题，例如“模型配置”或“项目归档”，让导航
+  保持整齐，同时不丢失内容窗格中的上下文。
+
+## 2026-09-01 —— 原生 macOS Intel 发布通道（D285）
+
+- D285 扩展 D126 和 ADR 0145。标签构建现在使用 arm64 的 `macos-15` 和
+  Intel x64 的 `macos-15-intel`，同时保留现有的 Windows x64 和 Linux x64 通道。
+- 静态 macOS 目标提供 DMG 和 ZIP，但不固定架构；每个本机运行器传入匹配的
+  electron-builder 架构参数，并在本地构建 Rust 主机 sidecar。工作流程会拒绝
+  与矩阵条目不匹配的运行器架构。
+- macOS 更新源会在上传工件前按架构重命名，并在发布阶段合并为一个
+  `latest-mac.yml`。在签名的应用内通道完成资格验证前，macOS 仍使用通知和链接模式。
+
+## 2026-09-02 —— 工作面板外侧与内侧调整大小的归属（D286）
+
+- 右侧工作面板打开时，外侧的原生右边缘和右侧角落调整的是面板目标宽度
+  （`244..720px`），同时保持基础会话宽度不变。Main 通过一个 Electron 本地事件
+  预览并提交该目标；左侧和其他原生边缘仍调整基础聊天宽度。
+- 内侧的渲染器分隔条通过有界的 `window/setWorkPanelChatWidth` 通道
+  （`1040..10000px`）调整基础会话宽度，面板预留保持不变。指针更新被串行化，
+  取消时恢复按下时的目标值。
+- 这是 Electron 本地的行为改动；主机协议仍为 v9。参见 ADR 0146 和
+  E2E-056/E2E-167。
+
+## 2026-09-03 —— 转录落定遮罩与绘制前贴底（D287）
+
+- 首次提交是有界的（历史超过初始挂载预算）的会话，会在同一次提交里于一层
+  不透明的骨架遮罩下挂载。遮罩只覆盖转录滚动区域；停靠的输入框保持可见可用。
+  当滚动区域的 `scrollHeight` 与 `clientHeight` 连续三帧读数相同，或达到
+  600ms 上限时揭开，并在 160ms 内淡出。每个采样帧都会把仍固定的转录重新贴底，
+  因此揭开的那一帧已位于最新回合。小地图和跳转控件在遮罩揭开后才挂载。短转录
+  不会显示遮罩。
+- 固定跟随改为在内容 ResizeObserver 回调内、浏览器绘制之前直接贴底，而不是
+  在回调里申请一帧：申请的帧落在变高的内容已经以未贴底状态绘制一次之后。内容按
+  border-box 观察，因此输入框发布的底部预留（padding）变化也会触发跟随；同时观察
+  滚动容器本身，让视口尺寸变化时底部仍然可见。
+- 发送时在主机往返之前就清空输入框，若 store 拒绝发送则恢复草稿；发送失败后
+  用户新输入的文字绝不会被覆盖。发送读取 textarea 的实时值，并且两处静默拒绝
+  （模型未配置、粘贴仍在保存）现在会弹出提示。参见 E2E-071i。
+
+## 2026-09-03 —— 用户行在主机往返之前插入（D288）
+
+- 用户的提示在发送的那一帧就出现在转录里，而不是等主机回显。此前该行要等主机
+  完成回合准备（运行时启动、`session.beginTurn`、附件准备、落库），主机变慢时
+  按下 Enter 后转录会明显长时间不变。
+- 渲染进程生成消息 id（`crypto.randomUUID()`），以该 id 插入行
+  （`optimisticUserMessage`），并通过 `AgentPromptRequest.messageId` 传给主机。
+  当该 id 是会话中尚不存在的 UUID 时，主机以它持久化并回显持久行，否则自行
+  生成。因此回显会原位 upsert 乐观行；已包含回显的持久读取优先于乐观行，尚未
+  包含的则保留该行可见（`mergeLiveSessionMessages`）。
+- 乐观行显示输入的文字及按源路径列出的文件引用；回显带来展开后的斜杠命令正文、
+  `command` 芯片、会话作用域的附件 ref 以及修订元数据。
+- 撤回：发送从未到达主机时（被待处理的计划拒绝，或 IPC 失败），渲染进程只移除
+  自己的行对象，因此落库之后的失败会让持久回显与错误行并存。智能停止已把该行
+  视为已发送的提示并拉回输入框。可见会话插入 `messages`；后台会话（排队提示
+  排空）插入其渲染缓存，回显也落在那里。
+- 编辑重发走同一路径：改写后的提示立刻替换旧行，主机回显再将其落定。参见
+  E2E-071i。
+
+## 2026-09-03 —— 显式禁用应用键盘快捷键（D289）
+
+- 应用快捷键覆盖有三种状态：属性缺失使用平台默认值，合法的可移植绑定字符串
+  表示自定义，显式的 JSON `null` 表示「未绑定」（Unbound）且不派发任何操作。
+  非法字符串保留现有的安全回退到默认值。
+- 设置把「禁用」与「恢复默认」分开展示，并渲染本地化的未绑定状态。未绑定的
+  操作不参与冲突检测，且仍可编辑。这份共享状态驱动渲染器匹配、macOS 菜单
+  加速键和全局插件启动器。
+- 解绑 `openPluginLauncher` 会注销任何先前的 Electron 全局快捷键、禁用 Windows
+  宿主钩子并移除聚焦窗口回退。宿主钩子在 Electron 应用有效设置之前保持禁用。
+  可配置的 macOS 原生角色菜单项在解绑时变为无角色的可点击项，使 Electron 无法
+  恢复其默认加速键。
+- 现有的设置 JSON、IPC 方法、协议版本、存储架构和插件本地快捷键契约保持不变。
+  参见 ADR 0148 和 E2E-072。
+
+## 2026-09-04 —— 转录中平静的运行状态动效（D290）
+
+- 用静态可读文本加紧凑的状态标记，取代「工作中」指示器和实时活动标签所用的
+  高对比文字闪光。流开始前的「工作中」指示器使用三个错开的小圆点；活动中的
+  活动标签使用一个小脉冲标记，而工具旋转指示和既有的助手流式导轨保留各自的
+  状态反馈。
+- 标记脉冲对合成器友好，循环上限一秒，并在 `prefers-reduced-motion` 下禁用；
+  状态仍以静态文本和圆点保持可见。不改动协议、存储或运行时行为。参见 ADR
+  0149 和 E2E-053/E2E-083。
+
+## 2026-09-04 —— 用平静的行内智能体标记取代空首页的吉祥物精灵图（D291）
+
+- 用一个 100px 的行内 SVG 取代空首页主视觉里随机的位图姿势图集，SVG 包含一个
+  紧凑的中性智能体、一圈细轨道和一个信号点。核心缓慢呼吸，眼睛偶尔眨动。
+- 该标记是确定性的装饰元素。指针悬停不改变它的节奏或几何；减少动效时冻结其
+  CSS 动画，同时保持同样的尺寸、位置和语义颜色。
+- 不改动协议、存储或运行时行为。参见 ADR 0150 和 E2E-046/E2E-099/US-UI-17。
+
+## 2026-09-04 —— 让工作面板留在固定的应用窗口内（D292）
+
+- 工作面板仍是文档流内的右侧列。打开与折叠通过在现有客户区内做 flex 分配
+  动画完成，而不是扩大或缩小原生 BrowserWindow。
+- 渲染器拥有的内侧分隔条调整持久化的 `244..720px` 面板宽度；原生窗口边缘只
+  调整应用窗口，从不改写面板偏好。Escape、取消和丢失指针捕获都恢复按下时的
+  面板宽度。
+- `window/setWorkPanelReservation` 接缝为兼容而保留，但把每个合法请求归一化为
+  `{ requested: 0, reserved: 0 }`。原生 Browser 视图仍跟随渲染器测量的面板
+  矩形。参见 ADR 0151 和 E2E-056/E2E-160/E2E-167。
+
+## 2026-09-04 —— 空首页播放八帧挥手吉祥物（D293）
+
+- 用一张经处理的八帧 GIF 取代空首页的行内 SVG 智能体标记，占用现有的 100px
+  槽位。循环先短暂停留在待机帧，然后播放挥手；指针悬停不改变节奏。
+- 减少动效时通过 CSS 把 GIF 换成静态的第一帧 PNG。该标记保持装饰性，没有随机
+  选择、JavaScript 计时器或悬停状态。
+- 不改动协议、存储或运行时行为。参见 ADR 0152 和 E2E-046/E2E-099/US-UI-17。
+
+## 2026-09-04 —— 按主题区分的空首页吉祥物 GIF（D294）
+
+- 用专门的浅色和深色八帧素材加对应的静态 PNG 取代单一的空首页吉祥物 GIF。
+  CSS 跟随 `document.documentElement[data-theme]`；除 `light` 以外的值都使用
+  深色那一对。
+- 减少动效时仍换成当前主题的第一帧 PNG。播放、悬停和装饰角色不变。
+- 不改动协议、存储或运行时行为。参见 ADR 0152 和 E2E-046/E2E-099/US-UI-17。
+
+## 2026-09-04 —— 通知收件箱只列出失败（D295）
+
+- 侧边栏页脚的收件箱只渲染 `task.failed` 行，未读徽章也只统计未读的失败。
+  例行的顺利完成此前把真正需要关注的行淹没了。
+- host-core 仍原样持久化 `task.completed` 记录。它们继续驱动侧边栏会话结果
+  徽标和窗口未聚焦时的原生通知；只有收件箱浮层在渲染进程边界把它们过滤掉
+  （`inboxNotifications` / `inboxUnreadCount`）。
+- 标记全部已读和清除仍作用于完整的持久记录，因此隐藏的完成记录会与可见的
+  失败一起被读取或删除。协议与存储不变。仅取代 D117 中"任务完成行"的条款。
+
+## 2026-09-04 —— 扩展页不再绘制分割线（D296）
+
+- 扩展目标页把所有页内线条换成色调与间距：标头和工具栏去掉底边线，分段选项
+  卡放在带底色的胶囊轨道上、当前项以投影抬起，已安装列表由每组标签下堆叠的
+  柔和色块行组成，不再是一块细线分隔面板。市场来源设置、分类芯片、卡片、空
+  状态、行详情块以及详情抽屉的安装条与各节都遵循同一套三层方案（页面、色块、
+  抬起）。原本带内嵌描边的芯片改为填充。
+- 细线只保留在浮层——行菜单与页面菜单、提示气泡、详情抽屉和对话框——那里的
+  边缘是层级提示而非分区。菜单分组分隔线改为留白。
+- 详情抽屉在所有平台都预留标题栏区带，而不只是 Windows/Linux：路由表面在入场
+  动画结束后仍保留 transform，抽屉的固定层因此叠在路由内部，macOS 上区带曾
+  盖住其标题行。
+- 截图装置：插件夹具在页面挂载后重新注入（挂载时的刷新曾把它覆盖掉），注入
+  期间桩掉市场搜索与详情调用，并新增 `pi-plugins-row-details` /
+  `pi-plugins-sheet` 场景。协议、存储与运行时行为不变。细化 D169 的已安装页
+  条款及 UI IA §3.5。
+
+## 2026-09-05 —— 滚动条只在悬停或滚动时显示（D300）
+
+- 渲染进程的每个滚动容器现在都使用 `base.css` 定义的同一套安静滚动条：8px、
+  无轨道、静止时滑块透明。只有所属滚动容器被悬停（`:hover::-webkit-scrollbar-thumb`）
+  或带有 `data-scrolling` 时才绘制滑块，指针悬停在滑块上或拖动时加深。此前全局
+  滑块以 16% 文字色常显，只有侧边栏两个列表在静止时隐藏（D147、E2E-157）。
+- `lib/scrollbar-reveal.ts` 由 `main.tsx` 安装，补上 CSS 表达不了的状态：在
+  `document` 上以被动捕获方式监听 `scroll`，给发生滚动的元素打上 `data-scrolling`
+  标记，并在其最后一次滚动事件 800 毫秒后清除；视口滚动则标记 `<html>`。程序化
+  滚动（流式输出时的固定跟随）同样会显示滑块，与 macOS 覆盖式滚动条一致。释放时
+  清除它设置过的所有标记。
+- 各样式分片不再设置 `scrollbar-width` 或 `scrollbar-color`（提问工具选项、子智能体
+  行、工具字段、侧边栏列表）。WebKit 与 Chromium 会在设置了任一属性的元素上忽略
+  `::-webkit-scrollbar`，因此这些表面此前渲染的是常显的原生滚动条而非自定义样式。
+  侧边栏列表在全局规则之上保留 6px 宽度、20% 文字色和 focus-within 显示；代码块
+  的覆盖规则因冗余而移除。`interaction-polish.test.mjs` 断言静止/显示规则以及标准
+  属性不存在；`scrollbar-reveal.test.mjs` 覆盖标记的生命周期。取代 D147 的滚动条
+  条款，并把 UI 设计系统侧边栏节的处理推广为全局。协议、存储与运行时行为不变。
+
+## 2026-09-05 —— 全应用去边框化（D297）
+
+- 把 D296 从扩展页推广到渲染进程的每个表面。页内的描边——面板环、卡片轮廓、
+  行与节的分隔线、左侧导轨、表单字段边框、内嵌细线芯片、侧边栏页脚与导轨接缝、
+  工作面板的边缘与标头线、输入框的层级描边——全部换成三层色调加间距：页面、
+  `--ds-tile`（文字色 3.5% 混合；悬停 6%、加深 8%）以及 `--ds-raised` 加
+  `--ds-raised-shadow`。标记定义在 `tokens.css`；D296 的 `--plugins-*` 变量成为其别名。
+- 列表变为以 2–6px 间距堆叠的色块行（设置行、快捷键表、能力页、服务与模型行、
+  项目归档、会话导入、通知收件箱、版本历史）。选中态（主题与语言卡片、分段控件、
+  级别筛选）是抬起的胶囊或色块加已有对勾，不画选中边框。表单控件为色块填充加
+  强调色焦点环。Markdown 去掉代码块、表格、引用块与标题的线条（斑马行、色块、
+  留白）。子智能体树在色块组上用 2px 着色条作连接线，节点抬起。
+- 浮层保留边缘：菜单、弹出层、自动补全、搜索对话框、对话框、提示、吐司与悬停卡
+  保留 `0 0 0 0.5px border-default` 加阴影，但其内部的线条已移除。控件本身的形态
+  （开关焦点环、滚动条内边距、加载圈描边、状态点挖空）不是分隔线，予以保留。
+- 主题卡片的对勾字形改用 `--ds-bg-primary` 墨色，而非在深色主题的白色强调色上
+  不可见的 `#fff`。样式测试按文件断言新方案。协议、存储与运行时行为不变。取代
+  UI 设计系统 §6.4 的描边行与 D148 的 0.5px 字段描边。
+## 2026-09-05 —— 流式回复会被检查点保存并恢复（D299）
+
+- 会话中正在流式输出的助手回复由 Electron 主进程至多每 1.5 秒通过
+  `session.saveInflightMessage` 检查点到 host-core，写入
+  `sessions/<id>.inflight.json`，每个会话一个原子替换的文件。此前回复只在
+  `message_end` 时才持久化，因此应用退出、sidecar 崩溃或回复中途重启会丢掉用户
+  已经看着流式输出的全部文本；重启后会话只剩下提示。
+- 检查点是临时的。同一 id 的最终行会移除它，`completed`/`error` 的回合结束会移除
+  它，而主机启动扫描以及 sidecar 丢失时的 `session.endTurn { recoverInflight: true }`
+  会把最终行从未落盘的残留检查点提升为该回合的 `aborted` 助手行写入转录。用户停止
+  不动检查点，留给即将到达的最终行处理。已被索引的 id 的迟到检查点会被丢弃。子代理
+  回复不做检查点。
+- 退出时先刷写检查点，再通过 sidecar 中止活动回合，并在 host-core 释放前有界等待
+  （总计 2 秒）其中止行经由发件箱落盘。此前 sidecar 在 host-core 已经关闭时才被杀掉。
+- 渲染器的停止不再为了落定已开始的回复而重写转录；它只在内存中落定，把持久副本
+  留给运行时自己的中止最终行。那次重写与发件箱追加竞争，可能删除它本想保留的回复，
+  并且会把渲染器显示截断过的行写回覆盖完整行。未应答提示的撤销（以及消息删除）
+  现在从完整持久转录与实时行的合并结果重写，并在该合并结果上重新判定撤销。
+  ADR 0153、E2E-171。
+
+## 2026-09-05 —— 输入框草稿在卸载和切窗后仍保留（D301）
+
+- 输入框草稿仍按会话留在渲染器内存中，但缓存改为模块级 Map，而不再是某一个
+  Composer 实例里的 `useRef`。空态切换时首页/停靠输入框仍会卸载再挂载，离开聊天
+  进入设置/插件/其他页面时 `ChatSurface` 仍会卸载；这些卸载以前会丢掉内存 Map，
+  因此未发送的输入在切窗口/切页面后消失（issue #38）。
+- 下一次挂载从同一槽位恢复。卸载（layout cleanup）、会话切换、文件引用变化，以及
+  窗口失焦/可见性隐藏，都会捕获 contenteditable 的实时值，以免尚未重渲染的按键
+  丢失。若 Chromium 在窗口位于后台时清空 contenteditable，聚焦/可见性恢复会把缓存
+  值重新绘制回去。首页文件引用按空会话 id 归属，而不是 `__home__` 缓存键。
+- 成功发送仍只清除提交该请求的会话槽位；删除会话仍丢掉其槽位；不写磁盘。
+  `composer-draft-cache.ts` 与 `composer-draft-cache.test.mjs` 覆盖隔离、清理、卸载
+  再挂载和 Composer 接线。扩展 E2E-011c。协议、存储与运行时行为不变。
+
+## 2026-09-05 —— 展开的委托运行过程跟随最新输出（D302）
+
+- 决策 D302 在渲染层细化 D271 / D071。D271 把委托的嵌套行放进有界的
+  `.subagent-run-rows` 滚动区，以免展开一个四十次工具调用的运行过程撑高父级
+  转录，但该滚动区没有吸底。实时卡片因此停在展开时刻的偏移，思考、工具和
+  回答行在视口下方追加（issue #37）。
+- 嵌套滚动区现在独立使用父级转录的吸底跟随契约：展开时钉在最新一行，钉住时
+  内容增长跟随底部，第一次真正的向上手势暂停跟随并显示嵌套的「回到最新」
+  控件。布局夹持和程序性 `scrollTo` 都不算那次手势。`.subagent-run-rows`
+  关闭原生 overflow anchoring，以免对抗吸底。
+- 跳转控件叠在滚动区外层的相对定位包装上，绝不放在 `.subagent-run` 上，因此
+  绝对定位的折叠导轨不会被裁掉。仅涉及呈现：不改动 IPC、存储、主机协议或
+  运行时。E2E-173。
+
+## 2026-09-05 —— 新会话从绑定的默认思考等级开始（D303）
+
+- 设置页已经持久化 `ModelBinding.defaultThinkingLevel`，E2E-163 也要求新会话从该
+  等级开始。但首页草稿 Composer 芯片和 `persistSessionAndSelect` 却用
+  `highestSupportedThinkingLevel` 播种，所以用户把默认设为“低”后，每个新会话仍从
+  Max（或最高已启用等级）开始。启动时的回退链也永远轮不到存储的默认值，因为会话
+  行在建号时已经被写成最高档。
+- 新草稿和新建会话现在取所选模型绑定的默认思考等级，并钳位到已启用档位。只有绑
+  定没有存储默认值时才回落到最高已启用档。在没有活动会话的草稿上切换模型也会按
+  新模型的默认值重新播种；已有会话在新模型支持当前等级时仍保留该等级。
+- 协议、存储和运行时钳位规则不变。已有会话行保留其存储的 `thinkingLevel`。
+  取代 D153。见 E2E-082 / E2E-163 / E2E-174。
+
+## 2026-09-05 —— 新建任务在主机 IO 之前露出空目标（D305）
+
+- 新建任务以前要等 `session.list`、`session.create`、再一次 `session.list`
+  和 `session.get` 才离开上一场转录。这段链路让点击像卡住：旧对话留在屏幕上，
+  然后才跳到空态。列表刷新只是为了避免刚发出的第一条消息仍被当成空会话；
+  渲染器已经能从 `runningSessions`、实时行和已提交草稿判断这种情况。
+- 创建会话现在第一帧就清掉上一场对话，并从 `session.create` 摘要插入持久行。
+  复用该组最新空会话时，同一帧提交空转录。发送和粘贴会等待进行中的创建，
+  而不是再开一个槽位；创建期间在空首页打的字会迁到新会话。
+- 决策 D305 只修正 D252 / ADR 0113 的时序。复用规则、持久空槽位和协议/存储
+  版本不变。ADR 0154，E2E-011a / E2E-011d / E2E-011g。
+
+## 2026-09-05 —— 启动页复用 macOS 侧边栏玻璃态（D304）
+
+- macOS 上启动页（`.startup-splash`）去掉不透明的 `--ds-bg-primary` 底色，改用
+  侧边栏同款玻璃配方：`--ds-sidebar-glass-tint` 加上下 sheen 渐变，叠在窗口原生
+  `under-window` vibrancy 之上。`ready` 一翻转 shell 就会挂载到启动页之下、早于
+  最短停留结束；在玻璃后面它会透过 tint 漏出来，因此 darwin 上启动页加载期间
+  shell 保持 `visibility: hidden`，退出淡出时再以 opacity transition 淡入（不用
+  animation，避免侧边栏自身的 `sidebar-in` 挂载动画被重放），与启动页交叉过渡到
+  不透明主面板和玻璃侧边栏。
+- Windows 与 Linux 仍保留不透明启动页；规则与侧边栏一样限定在
+  `:root[data-platform="darwin"]`。启动页、侧边栏和导轨共用同一套玻璃选择器，避免
+  配方漂移。玻璃 token 的注释同时标注两个使用方。
+  `macos-sidebar-vibrancy.test.mjs` 断言 darwin 下启动页使用 tint 与 sheen，
+  基础规则仍为 `--ds-bg-primary`。扩展 UI 设计系统 §8.3；无协议、存储或运行时
+  行为变化。E2E-076。
+
+## 2026-09-05 —— 搜索/读取截断表示切断，而不是窗口（D306）
+
+- `Read.truncated` 以前只要文件在返回窗口之后还有内容就为真，而 48KB /
+  500 行上限会切断普通源码和规格表。于是几乎每次 Read 都亮起 UI 截断芯片，
+  并让模型去 Grep，哪怕调用方已经用 `offset`/`limit` 填满了窗口。
+- `truncated` 现在仅在本次结果被切断时为真：字节预算打断窗口、某行被剪辑，
+  或 Grep/Glob 的上限挡住了剩余命中。填满的 Read 窗口即使文件更长也是
+  `truncated: false`；`notice` 写出下一个偏移，而不再催促 Grep。
+- 默认 Read 窗口回到 2000 行（最大 4000）。`BUDGET_SEARCH` 为 128KB / 4000 行，
+  让典型源码的该窗口实际装得下。单行剪辑为 16,384 个字符，规格表行能完整
+  返回，压缩后的超长单行仍会被剪。
+- 决策 D306 修订 D033 / D194。涉及 host-core 工具结果、sidecar 的 Read schema
+  文案，以及截断芯片契约。不新增 ADR：字段仍是布尔值，已经尊重 `truncated`
+  的调用方继续有效。见 `03-runtime/16-tool-result-limits.md` 与 E2E-147 /
+  E2E-175。
+
+## 2026-09-05 —— 修订载荷跟随实时分支（D307）
+
+- 一个重新生成系列的活动变体只在重新生成后的第一次 `agent_end` 归档一次，
+  之后再不碰它。而实时分支一直在生长：之后的每条提示都追加在上面，以
+  provider 错误结束的回合更是根本到不了 `agent_end`。把根消息切走再切回，
+  会恢复第一次 `agent_end` 时的归档，并据此重写转录本及其 JSONL，把之后
+  的每一回合都删掉。一个真实会话里有 17 条消息（一个改过文件的回合）正
+  暴露在这种风险下。
+- 现在每个会丢弃实时分支的操作都先把它写回自己的变体。
+  `session.activateRevision` 读取持久转录本，找到该系列（根 id，或第一条
+  带该 `revisionRootId` 标记的用户消息），刷新根消息 `activeRevision` 标记
+  所指的变体，然后才切换；当该系列存在时，前缀取自转录本而不是渲染进程
+  的副本。应用主进程的重新生成路径向 `session.saveRevision` 传入
+  `revisionIndex`，让被丢弃的尾部刷新它的变体，而不是被当作"已归档"直接
+  丢掉。`session.saveActiveRevision` 对已归档索引做刷新。
+- 刷新只是在追加式修订文件里多写一行（同一 `(rootUserId, revisionIndex)`
+  以最后一条为准，`read_revision` 本来就是这样）并更新 `message_count`；
+  不新建索引行。被重新生成标记过、但因回合失败从未归档的分支会存为新变体，
+  因此永远不会覆盖之前的变体。
+- 切换同时把每条幸存消息所属的 `turn_id` 带过索引重建（以前会把整个会话
+  的归属清零，和 `replace_messages` 早先的问题一样），并保留锚点仍存在的
+  检查点。
+- 决策 D307 修订 D109。涉及 host-core 的 `sessions.rs` / `rpc/mod.rs` 与
+  应用主进程的重新生成路径；渲染进程不改。不新增 ADR：文件格式和协议形状
+  不变，`revisionIndex` 是可选参数。见 `03-runtime/04-data-storage.md` §4.9
+  与 `03-runtime/06-host-rpc-protocol.md`。
+
+## 2026-09-05 —— 智谱 / Z.AI 命名端点预设（D308）
+
+- 添加智谱要先知道四个 URL 中该粘贴哪一个。添加提供商对话框现在提供一个
+  「服务」选择器，包含中国区和国际标准 API 以及 GLM Coding Plan。选中一项会
+  填入名称、锁定公布的 Base URL，并存储 models.dev 的 `vendorKey`。
+- 行仍是 `openai_compatible` + `chat_completions`。pi-ai 已经能与这些主机对话；
+  PI-Desktop 不新增智谱 apiStyle 或 SDK。
+- 匹配 URL 或 vendorKey 的补全请求会设置 `thinkingFormat: "zai"` 与
+  `zaiToolStream: true`，因为存储的提供商 id 是 UUID，无法使用 pi-ai 按
+  `zai` / `zai-coding-cn` 提供商名的检测。
+- 决策 D308 修订 D024。参见 ADR 0155、`03-runtime/11-provider-model-system.md`、
+  `03-runtime/12-provider-config-schema.md` 和 E2E-005D。
+
+## 2026-09-05 —— 添加提供商的常见路径是「服务 + 密钥」（D309）
+
+- 添加提供商表单原先把服务、名称、Base URL、API 密钥和 API 格式堆在一起。
+  命名端点本来就知道名称、URL 和线路格式。
+- 新对话框从「服务」开始。命名的智谱 / Z.AI 和 OpenCode Go 随后显示服务 +
+  API 密钥和一段主机摘要。自定义端点随后显示名称、Base URL 和 API 密钥。
+  「高级」保留名称（命名端点）和 API 格式（自定义端点）。
+- OpenCode Go 移入「服务」选择器，用户不必再到 API 格式下面找它。
+- 决策 D309 修订 D308。参见 ADR 0156、`04-ux/06-settings-ia.md` 和
+  E2E-005 / E2E-005B / E2E-005D。
+
+## 2026-09-05 —— 自定义格式放在密钥旁；models.dev 头部厂商（D310）
+
+- 自定义端点现在把 API 格式放在 API 密钥旁边，而不是「高级」里。
+- 「服务」先列出由 models.dev 支撑的国际与中国一方端点，每个都带公布的 URL
+  和线路风格。
+- 决策 D310 修订 D309。参见 `04-ux/06-settings-ia.md` 和 E2E-005。
+
+## 2026-09-05 —— 可搜索的服务选择器，发现不再卡顿（D311）
+
+- 「服务」原先是带分组的原生下拉框，在对话框里打开很卡，也无法过滤约 20 个厂商。
+- 现改为与默认模型选择器相同的可搜索锚定菜单：按显示名、vendor key、别名或主机过滤；分组仍是国际 / 国内，自定义端点在最前。
+- 选择命名厂商在填入 API 密钥前不再探测 `/models`。输入密钥不会在每次按键时进入 loading；hook 等待 600 ms 防抖。更换端点会立刻清空上一份列表。
+- 决策 D311 修订 D310。见 `04-ux/06-settings-ia.md` 与 E2E-005 / E2E-005D。
+
+## 2026-09-05 —— 服务按厂商平铺并加入小米（D312）
+
+- 服务选项不再分国际 / 国内。自定义端点仍在最前，其后是可搜索的单一厂商列表。
+- 小米是命名端点：models.dev `vendorKey: "xiaomi"`，`https://api.xiaomimimo.com/v1`，Chat Completions。别名 `mimo`、`xiaomimimo`。
+- 决策 D312 修订 D310 / D311。见 `04-ux/06-settings-ia.md` 与 E2E-005。
+
+## 2026-09-05 —— 已发布语言注册表与语言选择器（D314）
+
+- 设置 → 常规的语言原先是三张预览卡（跟随系统 / 简体中文 / English），无法扩展，名称也是写死的。
+- 界面语言现在列在 `@pi-desktop/i18n`：`en`、`zh-CN`、`tr`。本地名称保持 endonym。「跟随系统」仍通过 preload 跟随 `app.getLocale()`。
+- 外观卡的主题仍是三张预览卡。语言改为可搜索选择器：顶部钉住「跟随系统」并显示检测到的本地名称，然后列出已发布语言。搜索匹配本地名称、英文名称和 id。
+- 插件标签和更新日志仍为 `en` + `zh-CN`，其它语言回退到英文。
+- 决策 D314 修订 D073。见 ADR 0160、`04-ux/02-i18n-english-first.md`、`04-ux/06-settings-ia.md` 与 E2E-091。
+
+## 2026-09-05 —— Grep 在本机有 `rg` 时优先使用（D315）
+
+- Codex 在本机有 `rg` 时用 shell 搜索。PI-Desktop 仍把 Grep 作为面向模型的工具，只在进程 PATH 或 Unix login PATH 上找到用户安装的 `rg` 时把它当作实现后端。
+- 结果形状、128KB / `headLimit` 预算、按修改时间新到旧、以及显式 `path` 的 ignore 例外仍由 host 定义。`rg` 以空 stdin 和 argv 直接 exec，不经过 Bash。spawn 失败或 exit 2 回退到进程内 `ignore` + `regex`。`PI_DESKTOP_RG` 指定二进制；`PI_DESKTOP_DISABLE_RG` 强制回退。
+- 代理仍应调用 Grep，而不是在 Bash 里跑 `rg`。Read 不变。安装包不自带 `rg`。
+- 决策 D315 修订 ADR 0057 / D195。见 `03-runtime/03-tools-and-permissions.md`、`03-runtime/02-agent-runtime.md` §7 与 E2E-147。
+
+## 2026-09-05 —— 可搜索主题选择器（D316）
+
+- 设置 → 常规的主题原先是三张预览卡（系统 / 浅色 / 深色），插件主题会挤进同一网格。
+- 外观卡现在与语言使用同一可搜索选择器：顶部钉住系统、浅色、深色，插件主题在分隔线之后。搜索匹配名称、描述、id 和插件 id。
+- `AppSettings.theme` 以及不可用插件主题回退到 `system` 不变。
+- 决策 D316 修订 ADR 0160。见 ADR 0161、`04-ux/06-settings-ia.md` 与 E2E-091。
+
+## 2026-09-05 —— A2A 寻址跨越同一宿主上的会话（D318）
+
+- 决策 D318 修订 ADR 0147。本地 A2A broker 仍留在 host-core，带能力令牌认证和
+  持久化任务；「仅限同一上下文」的发现与发送限制被解除，因此两个处于不同打开
+  会话中、具备 A2A 能力的委托可以协作。
+- `a2a.agents.list` 返回所有其他活跃智能体；卡片携带 `contextId`。
+  `a2a.message.send` 可以寻址任何已注册的对端（省略 `to` 时仍优先同会话对端）。
+  任务访问按成员资格 —— 请求方或执行方 —— 而不是按上下文。
+  `A2A_CROSS_CONTEXT_DENIED` 保留在线路列表中，但不再产生。
+- 活跃对端 id 在整个注册表内唯一：冲突的 `card.name` 在注册时加后缀去重，运行
+  时采用返回的 `agentId`。`a2a.task.event` / `a2a.push` 增加
+  `recipientContextId`；每个会话运行时只在该字段与自己的 `sessionId` 匹配时才
+  投递事件。
+- 不变：父级不能调用 `A2A`，已落定的委托会注销，没有嵌套委托，没有远程智能体。
+  参见 ADR 0162、`03-runtime/02-agent-runtime.md` §5f.2 和 E2E-165c。
+
+## 2026-09-05 —— 实时/持久化记录合并保持时间顺序（D317）
+
+- 再验证一个仍在跑的会话时，曾把有界持久化页当作数组前缀，把每条实时独有行追加在后面。长会话一旦积累超过最新 100 条，D261 的尾部挂载窗口就会把旧历史画在底部，刚发送的用户提示被藏起来，回合却继续跑。停止后再切换一次看起来像“恢复”，是因为空闲路径跳过了这次合并，只显示持久化页。
+- `mergeLiveSessionMessages` 现在按时间顺序缝合：早于该页的实时行留在前面，重叠的已完成行以持久化副本为准，乐观或流式尾巴留在后面。若更早的前缀曾被追加到页后，当其 `createdAt` 早于该页时把它治回前面。
+- 决策 D317 修订 ADR 0120 / D261 / ADR 0137。见 `04-ux/09-interaction-patterns.md` 的会话隔离，以及 E2E-177。
+
+## 2026-09-05 —— 从记录文件 / outbox 恢复缺失的 sessions 行（D318）
+
+- 长会话可能从侧边栏消失，记录被重置成第一条用户行，同时数百个回合堆在 `session-message-outbox.json`。SQLite `sessions` 行没了；`session.appendMessage` 因 `session not found` 失败；outbox 卡在队头不再排空。
+- 主机启动现在会恢复每一个 sessions 行缺失的活 JSONL，重新插入该行并根据文件重建搜索索引。`session.appendMessage` 做同样的恢复；文件也不在时用同一个 id 插入占位行，以便排队的 outbox 能排空。`session.delete` 丢掉该会话的 outbox 条目，以免占位把用户已删除的对话救回来。
+- 决策 D318 修订 ADR 0041 / D119。见 `03-runtime/04-data-storage.md`、`03-runtime/07-process-model.md` 与 E2E-178。
+
+## 2026-09-05 —— 父智能体跨对话协作（D321）
+
+- 决策 D321 修订 ADR 0147 / ADR 0162。Agent 模式的会话运行时在其生命周期内
+  注册一张 `kind: "parent"` 的 A2A 卡片，并把 `A2A` 作为核心父级工具暴露出来，
+  因此同一宿主上的两个对话可以协作。
+- 发现与发送按 kind 划定范围：父级看到其他父级，子智能体看到其他子智能体。
+  父级不能寻址子智能体，包括它自己的，因此 `Task*` 仍是通往委托的唯一通道。
+- 入站的父级事件排队；空闲会话把它们前置到下一条用户提示，而不是自动开始
+  一个回合。一个对话在本进程拥有 Agent 运行时之后才可达。
+- 参见 ADR 0164、`03-runtime/02-agent-runtime.md` §5f.2 和 E2E-165d。
+
+## 2026-09-05 —— 已发送的文件引用保持芯片并可点击打开（D320）
+
+- 输入框芯片发送后变成完整 `@path` 文本，用户刚放进输入框的节点被挤成一长串路径；临时目录的绝对路径也无法点击。
+- 对话区现在把这些标记画成与输入框一致的叶子名芯片。工作区 HTML 在侧边浏览器预览；其余允许的文件通过 `pi-desktop/fs/open` 用系统默认应用打开。
+- 决策 D320 修订 D209 / ADR 0070。见 ADR 0163、`04-ux/08-component-spec.md` §8.3 / §11.8、`04-ux/09-interaction-patterns.md` §8a.2、`03-runtime/01-ipc-protocol.md` 的 fs，以及 E2E-180。
+
+## 2026-09-05 —— 转录中的相对路径可预览并打开（D322）
+
+- 助手 Markdown 里的相对文件路径经常不可点击，而在查看的 Markdown 文档中，
+  `./` / `../` 链接是从工作区根目录而不是该文件所在目录解析的。
+- 渲染器现在把 Markdown 中裸露的工作区文件标记链接化，并在文件标签页预览
+  Markdown 时把 `./` / `../` 相对于当前查看的文件解析。向上逃逸的父路径保持
+  惰性。remark 插件是一个 unified attacher，因此打开会话不会因 `tree.type`
+  崩溃。
+- 决策 D322。参见 `04-ux/08-component-spec.md` §8.3 和 E2E-182。
+
+## 2026-09-05 —— 实时的父级回合保持透明（D323）
+
+- D297 用整回合的 `--ds-tile` 取代了流式左导轨，这样色调淡入淡出不会让文本
+  重排。但这把普通的思考、工具和答案片段像子智能体卡片一样装进了盒子。
+- 正在流式输出的父级回合现在与已完成回合一样留在页面背景上：没有导轨、没有
+  预留的 14px 缩进、没有整回合的 tile。tile 只保留在委托卡片（D319）和嵌套
+  的 `.subagent-run` 上。
+- 决策 D323 修订 D101 / D297。参见 `04-ux/08-component-spec.md` §8.4 / §9.9 和
+  E2E-059a / US-UI-60。
+
+## 2026-09-05 —— 空闲切换保留尚未刷入的已完成尾巴（D324）
+
+- 回合一结束，切走再切回来会加载持久化 `session.get` 页，丢掉仍只存在于渲染器里的助手/工具行（持久化 outbox 尚未刷入）。用户提示能留下，是因为它们在模型运行前就写入了。
+- `selectSession` 现在对仍有实时来源的空闲会话也合并实时行，和仍在运行的会话一样。只有当持久化页包含每一个实时 id 时才清掉实时标记。
+- 决策 D324 修订 D317 / ADR 0137。见 `04-ux/09-interaction-patterns.md` 的会话隔离，以及 E2E-183。
+
+## 2026-09-05 —— 父级 A2A 始终在 Agent 目录中（D325）
+
+- D321 只在 broker 成功签发令牌之后才注册父级，然后把 `A2A` 注入目录。注册
+  迟到或失败会让模型没有 `A2A` 工具。`ToolSearch` 也从不列出核心工具，于是
+  模型把按需查找未命中当成「A2A 不存在」。
+- Agent 模式现在在运行时构造时就把 `A2A` 放进核心目录。首次调用（或首条
+  提示）签发令牌。该工具从不延迟。只要模式是 Agent，跨对话指引就在 Agent
+  系统提示里，而不只在注册之后。
+- 决策 D325 修订 ADR 0164 / D321。参见 `03-runtime/02-agent-runtime.md` §5f.2
+  和 E2E-165d。
+
+## 2026-09-05 —— 撤回 A2A 与 Peer 协作（D326）
+
+- 进程内的 `Peer` 邮箱（D277 / ADR 0138 / ADR 0140）和 host-core 的 A2A 栈
+  （ADR 0147 / ADR 0162 / ADR 0164 / D318 / D321 / D325）被撤回。没有兄弟通道，
+  也没有父级到父级的通道。
+- `A2A` 与 `Peer` 不是核心工具、不是可分配的子智能体工具，也不是 `ToolSearch`
+  的结果。命名了任一者的定义被视为未知工具，带解析告警丢弃。
+- 握手协议版本从 10 升到 11，不再宣告 `"a2a"`。存储架构从 12 升到 13，并删除
+  A2A 表。v10/v11 混合配对在握手时被拒绝。
+- 决策 D326 记录为 ADR 0165，它取代 ADR 0147、ADR 0162 和 ADR 0164。参见
+  `03-runtime/02-agent-runtime.md` §5f.2、
+  `03-runtime/03-tools-and-permissions.md` §10.2、
+  `03-runtime/06-host-rpc-protocol.md` §3–§4 和 E2E-165。
+
+## 2026-09-06 —— 已完成回复在进程重启后仍然存在（D327）
+
+- 回合结束后关闭应用再打开，只剩用户提示（issue #42）。用户行在模型运行前就落盘；助手/工具行走异步 outbox，在 `message_end` 之后才写入。D324 在同进程切会话时缝上了这些实时行；进程退出后渲染器内存没了。
+- `message_end` 现在在 outbox 追加之前检查点完成快照，`settleIf` 不会清掉写入期间开始的新回合。`completed`/`error` 的 `session.endTurn` 仅在该 id 已索引时才删除 `.inflight.json`。启动恢复把回合已是 `completed` 的残留检查点提升为 `complete` 助手行，而不是 `aborted`。
+- 主机握手在渲染器能够 `session.get` 之前等待 outbox 排空，然后 `session.recoverInflightMessages` 提升 outbox 未能落盘的已完成残留检查点。启动恢复会跳过已完成残留，以便完整的 outbox 行先写入。
+- 决策 D327 修订 D299 / ADR 0153 / ADR 0041。见 `03-runtime/04-data-storage.md` §2.1 和 §5、`03-runtime/07-process-model.md` §5、`03-runtime/10-session-state-machine.md` §4、E2E-171 和 E2E-184。
+
+## 2026-09-06 —— 由父级判断子智能体寿命（D328）
+
+- 父智能体之前会中止未完成的委托：`TaskWait` 到期、模型收尾，然后 `agent_end`
+  杀掉残留的运行。空闲和总时长看门狗则是第二条独立的杀死路径。
+- 决策 D328 修订 ADR 0089 / ADR 0119 / ADR 0129。运行时不再武装空闲或总时长
+  计时器。父级空闲不会中止委托。委托完成时，运行时在同一个持久化回合内把
+  它们的报告作为提示交给父级。`TaskList` / 超时的 `TaskWait` 携带心跳。只有
+  `TaskStop` 和用户的「停止」会中止委托。
+- 参见 ADR 0166、`03-runtime/02-agent-runtime.md` §5f 和 E2E-155。
+
+## 2026-09-06 —— 由智能体选择的 Bash 超时（D329）
+
+- 300 秒的 Bash 覆盖上限会杀掉长构建，并拒绝显式的 `timeout: 600` / `1800`。
+  默认 60 秒不变。
+- 决策 D329 修订 D190 / D273 / ADR 0054：接受 1–21,600 秒；超过该上限的值视为
+  毫秒，转换后再钳制。超时和中止仍会杀掉整个进程树。
+- 参见 ADR 0167、`03-runtime/03-tools-and-permissions.md` §5 和 E2E-115。
+
+## 2026-09-06 —— 主进程拥有的 openExternal 白名单（D330）
+
+- 聊天 Markdown、插件面板、启动器、OAuth 和嵌入预览都可能把原始 URL 交给
+  `shell.openExternal`。用户点击 `file:`、`javascript:`、`ms-msdt:` 或自定义
+  scheme 时会进入操作系统协议处理器。
+- Electron Main 现在解析每一条这样的 URL。只有带主机名的 http(s) 和带地址的
+  `mailto:` 会打开。不允许的 URL 会抛错，因此 OAuth 报告 `opened: false`，插件
+  仍返回 `INVALID_ARGUMENT`。工作区文件继续走 `shell.openPath`。
+- 决策 D330 修订 ADR 0109。见 ADR 0168、`05-security/01-security.md`、
+  `07-plugins/04-plugin-security.md` §8 与 E2E-185。
+
+## 2026-09-06 —— 接受的 `@` 文件保留为行内芯片（D362）
+
+- 从 `@` 菜单完成工作区文件时，仍会把触发符替换为空字符串并存储无哨兵引用。
+  那是芯片位于文本区域上方时的约定；芯片迁入 contenteditable 草稿后，只有哨兵字符会绘制，因此 Enter 会让文件消失。
+- 接受文件现在会在光标处插入一个私用区哨兵，并把该哨兵存到引用上，与剪贴板粘贴一致。Enter/Tab 确认菜单且不发送。目录仍插入 `@dir/` 文本。工作区相对芯片在切换项目时仍会丢弃（绝对 scratch 路径保留），其哨兵一并从草稿中剥离。
+- 决策 D362 修订 D209 / D125。见 `04-ux/08-component-spec.md` §11.8、
+  `04-ux/09-interaction-patterns.md` §8a.1 与 E2E-102a。
+
+## 2026-09-06 —— 随应用打包的 Files 预览与实时工作区事件（D332）
+
+- Files 插件无法预览图片；Reveal 替换标题操作后不再提供“用默认应用打开”；
+  用轮询检测项目切换；停靠视图收不到主题/语言事件。
+- `fs.readPreview` 在现有 `fs.read` 门控下把一份可读文件分类为 text、image、
+  binary 或 tooLarge。面板事件会同时发给停靠视图。`workspace:changed` 会投递给
+  面板和插件进程。
+- 决策 D332 记录为 ADR 0169。见 `07-plugins/03-plugin-api.md` §3/§5/§6、
+  `04-ux/08-component-spec.md` §5.2.2 与 E2E-153。
+
+## 2026-09-06 —— 工作面板浏览器是随应用打包的 `pi.browser` 插件（D333）
+
+- 工作面板 Browser 启动项、chrome 和代理 CDP 原先是宿主 `HEADER_TOOLS` 行加上
+  Main 拥有的访客页。Files 已经证明第一方面可以走随应用打包插件；用户需要对
+  整个浏览器同样的启用/禁用产品，但不能把任意网页放进沙盒插件视图。
+- 随应用打包的 `pi.browser` 拥有 chrome 和代理 `Browser` 工具。访客
+  `WebContentsView` 和调试器仍由宿主拥有，只能通过受 `browser.cdp` 门控的公开
+  `pi.browser.*` 访问。访客页边界夹紧到调用插件视图。原始 CDP 走白名单
+  （拒绝 cookies/storage/Target/Fetch）。宿主 `BrowserPreview` 仍是 Plan 安全门面，
+  插件禁用时失败。不升协议/schema。
+- 决策 D333 修订 ADR 0019 / 0104 / 0105 / 0108。见 ADR 0170、
+  `07-plugins/03-plugin-api.md` 与 E2E-008b。
+
+## 2026-09-07 —— 受限的会话内图片显示（D334）
+
+- 粘贴/上传的图片存为无扩展名的 `attachments/<sha256>` blob。渲染器源无法加载它们，历史回合只显示芯片；`fs/open` 还把该引用当成工作区相对路径。
+- `fs/read`、`fs/reveal`、`fs/open` 共用 `resolveOpenablePath`（工作区、scratch、attachments，以及 blob 引用）。读取会 `realpath`。`fs/readImageDataUrl` 只返回有界图片 data URL。客户端 `mimeType` 不能把非图片扩展名重新分类。
+- 决策 D334 记录为 ADR 0172。见 `03-runtime/01-ipc-protocol.md`、`04-ux/08-component-spec.md` §8.3 与 E2E-187。
+
+## 2026-09-07 —— 宿主代发的插件补全与会话上下文（D336）
+
+- 插件可以注册工具，但不能列出已认证模型、读取当前 LLM 上下文，也不能用用户的额度打一次侧向补全。
+- `pi.models.list`、`pi.session.getLlmContext`、`pi.agent.complete` 是公开宿主 API。凭据和线路调用留在 Electron main。会话上下文绑定到进行中的工具会话（修订 D019）。
+- 随应用打包的 Advisor UX 暂时不发布；公共 API 仍可供显式安装的插件使用。
+- 决策 D336 记录为 ADR 0174。见 `07-plugins/03-plugin-api.md`、`07-plugins/13-plugin-permissions-matrix.md` 与 E2E-188 / E2E-189。
+
+## 2026-09-07 —— OpenCode Go 会话路由头（D337）
+
+- OpenCode Go 会拒绝缺少 `x-opencode-session` 的 LLM 请求（`MissingSessionID`）。
+  pi-ai 0.85 不发这个头；官方 Pi coding-agent 在智能体层注入它。
+- 决策 D337 修订 ADR 0116：agent-runtime 在发往 OpenCode Go 及任何 `opencode.ai`
+  主机的会话、子智能体、提示增强和插件一次性请求上发送 `x-opencode-session`、
+  `x-opencode-client: pi-desktop` 和 PI-Desktop 的 `User-Agent`，使用持久化的
+  对话 id。
+- 参见 `03-runtime/02-agent-runtime.md` §6.2、`03-runtime/11-provider-model-system.md`、
+  `03-runtime/12-provider-config-schema.md`、ADR 0116 和 E2E-005D。
+
+## 2026-09-07 —— 用实时智能体活动状态解释安静的活动回合（D338）
+
+- 转录在第一个事件之前显示一个通用的运行计时器，但 provider 等待、重试退避
+  或父级等待委托工作时仍可能没有任何一行来解释延迟。用户只能从「停止」按钮
+  推断还在活动。
+- 既有的归一化 `status` 事件现在携带一个可选的、由运行时拥有的 `AgentActivity`
+  阶段：`starting`、`waiting-model`、`retrying` 或 `waiting-subagents`。渲染器
+  按会话保存它，并渲染一条带已用时间的紧凑本地化状态行；不增加百分比、不
+  重复进度卡片，也不改变中止语义。
+- 决策 D338 记录为 ADR 0175。参见 `03-runtime/01-ipc-protocol.md`、
+  `03-runtime/02-agent-runtime.md`、`04-ux/09-interaction-patterns.md` 和
+  E2E-008c / E2E-094。
+
+## 2026-09-07 —— 按提供商覆盖 User-Agent（D339）
+
+- 网关和厂商订阅会检查 User-Agent。pi-ai、Anthropic OAuth、OpenCode 和 Codex
+  各自打上不同的默认值，Codex 还会在额外头部之后覆盖 User-Agent。schema 列出
+  了 `headers`，却从未存储或发送它们。
+- 决策 D339：每个 AI 服务和 OAuth 行可以存储可选的 `config_json.userAgent`。
+  为空时保留适配器默认值。非空值通过 fetch 包装加流选项头部，成为该行出站
+  HTTP 上最后写入的 `User-Agent`。仅在高级 UI 中提供；首次 OAuth 登录不收集它。
+  `matches()` 包含 `userAgent`。
+- 参见 ADR 0176、`03-runtime/12-provider-config-schema.md` 和 E2E-005G。
+
+## 2026-09-08 —— 按提供商自定义 HTTP 头（D341）
+
+- 网关需要的不只是 User-Agent。ADR 0176 留下了未实现的 schema `headers` 映射，
+  并使用一个稀疏的单字段高级编辑器。
+- 决策 D341：每个 AI 服务和 OAuth 行可以存储可选的 `config_json.headers`。
+  为空时保留适配器默认值。非空映射通过 fetch 包装加流选项头部，在该行出站
+  HTTP 上最后写入。遗留的 `userAgent` 迁移到 `headers["User-Agent"]`。保留的
+  认证键和逐跳键被拒绝。高级 UI 是一个紧凑的键 / 值编辑器。首次 OAuth 登录
+  不收集头部。`matches()` 包含该映射。
+- 参见 ADR 0178、`03-runtime/12-provider-config-schema.md` 和 E2E-005G。
+
+## 2026-09-08 —— 用户可配置的出站代理（D340）
+
+- 模型请求、市场下载、更新和内置浏览器各自走不同 HTTP 栈，都没有产品设置。sidecar 里的 Node `fetch` 不使用系统代理。
+- 设置 → 常规 → 网络增加系统 / 直连 / 自定义。自定义是一个 HTTP 或 SOCKS5 URL 加上回环绕过。Chromium 会话、main `net.fetch`、sidecar undici 与 host-core 市场 curl 共用它。工作区 Bash 不继承代理凭据。
+- 决策 D340 记录为 ADR 0177。见 `04-ux/06-settings-ia.md`、`03-runtime/07-process-model.md` 与 E2E-190。
+
+## 2026-09-08 —— 从本地智能体存储导入模型配置（D342）
+
+- 设置 → 导入已经能扫描会话。同一批工具还把提供商地址、模型 id 和 API 密钥写在本机配置里，用户否则要在模型页重填。
+- 增加独立的模型配置卡片：显式扫描 Claude Code / Codex / OpenCode / Pi / CC Switch，密钥留在主进程扫描缓存，通过 `providers.create` 写入。OAuth/订阅令牌不复制。仅跳过相同归一化端点、API 风格和凭据的等价提供商；同一端点的不同凭据保持独立。D007 的禁止自动导入仍然有效（ADR 0188）。
+- 决策 D342 记录为 ADR 0179。见 `04-ux/06-settings-ia.md`、`04-ux/08-component-spec.md` §18.5 与 E2E-192。
+
+## 2026-09-08 —— 模型配置导入保留不同凭据（D351）
+
+- CC Switch 可以在同一个网关端点保存多个命名配置档案。仅按端点去重会
+  创建第一个记录，并静默跳过使用不同 API 密钥的其余档案。
+- 导入等价性现在同时比较归一化端点、API 风格和凭据。同一端点的不同密钥
+  创建独立提供商，并继续出现在 Composer 的模型菜单中；未变化的凭据仍会
+  幂等跳过。
+- Electron main 通过宿主密钥边界解析已有 API 密钥用于比较。原始值不会进入
+  渲染器、日志或提供商元数据。
+- 决策 D351 修订 D342 和 ADR 0179，记录为 ADR 0188，并由 E2E-192 覆盖。
+  不改变主机协议或存储 schema。
+
+## 2026-09-08 —— 主进程拥有的选择器能力（D344）
+
+- 输入框的文件选择器此前把原生绝对路径返回给渲染器，渲染器随后可以通过
+  `composer/importFiles` 重放任意路径；它还宣称支持文件夹，而导入器拒绝目录。
+- 选择器 IPC 现在把用户选中的路径存在 Electron main 里，放在一个短期、绑定
+  发送方、一次性的令牌之后。导入只接受该令牌和持久化的会话 id，MVP 选择器
+  只提供常规文件。
+- 决策 D344 记录为 ADR 0181。参见 `03-runtime/01-ipc-protocol.md`、
+  `04-ux/08-component-spec.md` §11.7–11.8 和 E2E-102h。
+
+## 2026-09-08 —— 自定义全局文字缩放（D343）
+
+- `--text-*` 阶是一组相对尺寸。窗口缩放会把布局一起放大，不是文字偏好。只改阅读区的 px 会让同一窗口出现两套字号。
+- 设置 → 常规 → 外观增加字体大小：杯型档位中杯 / 大杯 / 超大杯 / 超超大杯，加上 80%–150% 滑杆，持久化为可选 `AppSettings.fontScale`（`1` = 产品字号阶）。渲染器设置 `--font-scale`，全部 `--text-*` 台阶和共享 Lucide 图标按比例缩放。
+- 决策 D343 记录为 ADR 0180。见 `04-ux/06-settings-ia.md`、`04-ux/07-ui-design-system.md` 与 E2E-193。
+
+## 2026-09-08 —— P0 国际外壳语言（D346）
+
+- 发布完整的德语、西班牙语和法语外壳目录、可搜索的本地语言名、区域到基础语言
+  的解析，以及匹配的应用内变更日志目录。`AppSettings.language` 扩展 `de`、`es`
+  和 `fr`，不改动主机协议、存储架构或 IPC 版本。
+- 决策 D346 记录为 ADR 0183。参见 `04-ux/02-i18n-english-first.md`、
+  `04-ux/06-settings-ia.md` 和 E2E-091。
+
+## 2026-09-08 —— 输入框工具栏中的上下文用量检查器（D347）
+
+- 紧凑上下文检查器原先挂在最新助手回合下方，会话一滚动就够不着。协作者同意把唯一入口移到模型选择器旁，而不是两处显示同一份数字。
+- 决策 D347：检查器放在输入框右侧工具栏、模型 × 推理芯片左侧，始终对应当前最新一条已报告用量的助手回合。触发器是圆环加百分比。弹层标题为剩余 tokens + 百分比；内部分隔线仍然禁止（D297）。答案下方的助理元只保留模型徽章。
+- 见 ADR 0184、`04-ux/08-component-spec.md` §8.3 / §11.3 与 E2E-060d。
+
+## 2026-09-08 —— 按焦点区分本机通知投递（D350）
+
+- PR #84 为 asktool、工具权限和 Plan 审批询问增加本机通知时，扩大了现有
+  `showNative` handler 的范围。这也让聚焦的背景终端完成显示本机横幅，违反了
+  E2E-065。
+- 决策 D350：应用拥有的终端调用使用 `kind: "task"`，仍然只在未聚焦时投递。
+  交互询问调用使用 `kind: "interactive"`，仅在确切询问会话已在聚焦窗口中可见时
+  抑制，因此聚焦其他会话时可以通知。省略或未知值默认为 `task`；交互询问仍在
+  持久任务收件箱之外，插件本机通知继续使用独立 API。
+- 决策 D350 记录为 ADR 0187。见 `03-runtime/01-ipc-protocol.md`、
+  `04-ux/08-component-spec.md`、`04-ux/09-interaction-patterns.md` 与 E2E-065a。
+
+## 2026-09-08 —— macOS 侧边栏改用 source-list vibrancy 材质（D348）
+
+- 洗灰侧栏在 **深色应用主题 + 深色系统外观** 的 macOS 26 上也能复现。只同步
+  `nativeTheme.themeSource` 能修深色应用 + 浅色系统；当 Liquid Glass 在深色外观
+  下仍画出浅色底板时，压不住 D304 的 `under-window`。所以材质改为 `sidebar`。
+- 决策 D348：主窗口改用 Electron `vibrancy: "sidebar"`。
+  `nativeTheme.themeSource` 跟随应用主题偏好（`system` / `light` / `dark` /
+  插件 base），让原生菜单和毛玻璃底板与渲染器一致。该赋值是进程级的，因此
+  Windows/Linux 创建窗口时的 `shouldUseDarkColors` 也会跟随应用偏好，与
+  `windowSetBackgroundColor` 一致。`plugin:` 主题消失时重新 apply。只有
+  `themeSource` 真正变化时才 `setVibrancy`。薄的 `--ds-sidebar-glass-tint`
+  配方不变。修正 D304。
+- `macos-sidebar-vibrancy.test.mjs` 断言 sidebar 材质、偏好映射、设置/
+  pluginChanged 路径，以及 darwin 存活窗口守卫。见
+  `04-ux/08-component-spec.md` §1.7 与 US-UI-74 / E2E-076。
+
+## 2026-09-08 —— 会话标题摘要与按焦点区分的原生任务通知（D349/D350）
+
+- 首条提示会立即显示规范化的 48 字符回退标题。首轮完成后，Electron 根据会话的有效提供商/模型运行关闭推理的 `session/summarizeTitle` 单次请求；渲染器通过 `session.rename` 持久化成功结果。
+- 渲染器本地会话元数据持久化 `manualTitle`。自动标题会跳过该标记，也会跳过既不是已知默认标题、也不是首条提示回退标题的持久化标题，因此手动标题和已有摘要在重启后不会被覆盖。
+- 原生任务完成通知和交互式提示共用 Electron IPC 入口，但使用明确的 `kind`。主窗口可见且聚焦时（包括聚焦在后台会话时）抑制任务横幅；交互式提示仍只抑制当前可见会话，因此聚焦的后台请求仍会提醒。持久任务插入仍遵循 D117，插件通知保持独立。
+- 见 ADR 0186 / ADR 0187、`03-runtime/01-ipc-protocol.md`、`03-runtime/02-agent-runtime.md`、`04-ux/08-component-spec.md` 与 E2E-021a / E2E-065。
+
+## 2026-09-08 —— 父级终态错误中止残留委托（D352）
+
+- D328 让父级空闲后残留委托继续跑，好让长任务收尾。父级 429 耗尽后持久回合已经以 `error` 结束并显示“继续”，另一个模型上的子智能体却仍把 sidecar 标成忙碌。
+- 决策 D352 修订 D328 / ADR 0166。父级空闲行为不变。父级终态错误会中止残留委托、跳过续跑提示，并把会话恢复为空闲，这样“继续”会被接受。失败的 TurnOutcomeCard 不会被随后的 `agent_end` 盖成已完成。
+- 见 ADR 0189、`03-runtime/02-agent-runtime.md` §5f 与 E2E-155。
+
+## 2026-09-09 —— 区分 Intel macOS 发布工件（D353）
+
+- 原生 macOS 通道可能生成只有版本号的通用安装包名称，用户容易把 Intel
+  下载误认为 arm64 下载。
+- 决策 D353 修订 D285 / ADR 0145：Intel x64 通道向 electron-builder 传入
+  目标专用命名模板，发布 `PI-Desktop-<version>-Intel.dmg` 和
+  `PI-Desktop-<version>-Intel-mac.zip`。x64 更新源保留这些 URL 和校验和，
+  arm64 继续使用通用 macOS 名称。
+- 这只改变发布工件命名；更新器归属、签名和通知加链接交付模式保持不变。
+  见 E2E-092。
+
+## 2026-09-09 —— 明确标注两个 macOS 发布架构（D354）
+
+- D353 让 x64 工件使用 `-Intel` 后缀，却让 arm64 工件继续使用只有版本号的
+  通用名称，因此 `PI-Desktop-0.14.4.dmg` 仍无法标明架构。
+- 决策 D354 修订 D353 / ADR 0145：两个本机通道都传入目标专用命名模板，发布带
+  `-arm64` 或 `-x64` 后缀的 DMG/ZIP。按架构的更新源保留最终 URL 和校验和。
+- 这只改变发布工件命名；更新器归属、签名和通知加链接交付模式保持不变。
+  见 E2E-092。
+
+## 2026-09-09 —— 上下文检查器按最后一次请求计算占用（D355）
+
+- 输入框检查器把最后一条消息的占用和视觉回合加总混在一起，工具循环之后
+  缓存读取和本轮合计会大于上下文窗口。
+- 决策 D355 修订 D103 / D184 / D244 / D347 / ADR 0047 / ADR 0103 / ADR 0184：
+  占用、剩余容量、已用/窗口计数、本轮合计，以及模型缓存/输入/输出/推理/
+  命中率，都取最后一条已报告用量的助手消息。占用为
+  `input + output + reasoning + cacheRead + cacheWrite`。速度和聚合工具行
+  仍描述该视觉回合。
+- 仅渲染器改动。宿主已完成回合汇总和 Token Insights 仍做账单累加。
+  参见 ADR 0193 与 E2E-060d。
+
+## 2026-09-09 —— 可选的子智能体思考覆盖与可读的已选等级（D356）
+
+- 子智能体编辑器现在提供「继承会话」、「不发送」和七个规范思考等级。「不发送」
+  存储为 `thinkingLevel: omit`。
+- `omit` 让智能体的记账状态保持 `off`，但使用底层 provider 流，因此不会合成
+  任何思考覆盖。现有的继承和显式 `off` 仍然是不同的。
+- 模型配置里的思考芯片在两种主题下都使用强调色 / 反色文字的选中态，让已启用
+  的等级一目了然。不需要改动存储架构或协议版本。参见 ADR 0194 和 E2E-203。
+
+## 2026-09-09 —— 固定在视口的工作面板切换按钮（D357）
+
+- 决策 D357 修订 D128 / D207 / D221 以及 ADR 0068 / ADR 0085。AppShell 在每个
+  非设置路由的右上角拥有一个固定在视口的切换按钮。它是 `Cmd/Ctrl + J` 的指针
+  等价物：揭示当前会话保留的上下文而不创建标签页，折叠可见面板而不删除标签页。
+  没有会话时它被禁用。
+- 该切换按钮是唯一的面板级折叠控件。工作面板头部只保留资源关闭。Windows /
+  Linux 的窗口控件仍固定在窗口右边缘；面板打开时，头部预留该带加切换按钮，
+  以便关闭标签页仍可触及。
+- 没有主机协议、IPC 通道或原生应用菜单命令。Artifact 触发器和会话作用域的
+  上下文不变。参见 ADR 0195 和 E2E-056 / E2E-070 / US-UI-57。
+
+## 2026-09-09 —— Windows 免安装便携版 exe（D364）
+
+- Windows 标签发布此前只提供 `PI-Desktop-Setup-<version>.exe`，公司环境若只能
+  白名单单个可执行文件或禁止安装程序，就无法运行。
+- 决策 D364 修订 D120 / D126 / ADR 0022：Windows x64 通道在 NSIS 安装程序之外
+  发布 `PI-Desktop-Portable-<version>.exe`。便携版目标不写入 `latest.yml`。
+  已打包的便携版运行（`PORTABLE_EXECUTABLE_FILE`）使用通知加链接交付；NSIS
+  仍走应用内下载并在退出时安装。数据仍在现有应用数据目录。便携版请求
+  user 执行级别。
+- 参见 ADR 0197 与 E2E-211。
+
+## 2026-09-09 —— 为每个安静间隔命名活动行（D365）
+
+- ADR 0175 只命名了 `waiting-model`、`retrying` 和 `waiting-subagents`。
+  压缩上下文、空回复补救、工具结束后到下一次请求之间的空隙，以及
+  `starting`，仍然看起来像卡住的泛化等待。父级等待委托时也不说明
+  那些 Subagent 正在做什么。
+- 决策 D365 修订 D338 / ADR 0175：`AgentActivity` 增加 `preparing`、
+  `compacting`、`recovering`；`starting` 用自己的标签展示；
+  `waiting-subagents` 带上仍在运行目标的实时快照（`name`、`lastPhase`、
+  `lastToolName`），只在子级工具/思考变化时更新，而不是每个 token。
+  该行仍是一条紧凑的内联状态，不恢复活动组上的状态胶囊。
+- 参见 ADR 0198、`03-runtime/01-ipc-protocol.md`、
+  `03-runtime/02-agent-runtime.md`、`04-ux/09-interaction-patterns.md`，
+  以及 E2E-008c / E2E-094。
+
+> D366 未分配。它先被用于插件会话导入决策，该决策在与 `main` 同步时重编号为 D367 / ADR 0200；随后又被用于"仅在发版时部署文档站"决策（配 ADR 0199），该决策已于 2026-09-09 回退。D366 与 ADR 0199 均已退役，不要复用。D376 同样未分配：`main` 将其短暂承载的远程控制修订重编号为 D374，并把 D375 分配给了发布排序决策，因此 D376 也保持退役。
+
+## 2026-09-09 —— 宿主拥有的插件会话导入与归属 API（D367）
+
+- 外部历史迁移插件需要持久的导入/读取/更新/删除能力，但现有的进行中
+  `session.getLlmContext` 和核心 `session.import` 并不是安全的插件归属边界。
+- 决定 D367 / ADR 0200 增加 P0/P1 `pi.session` 方法：`import`、
+  `importBatch`、`list`、`get`、`listMessages`、`rename` 和 `delete`。每个来源
+  必须由 `contributes.sessionSources` 声明。主机生成 id，并按
+  `(pluginId, source, externalId)` 归属限制所有操作；导入不会激活项目、provider
+  或 model 绑定。
+- Schema v14 增加 `session_import_origins` 和 `sessions.deleted_at`；协议仍为
+  v11。Trash 为归属插件保留转录本以便 purge。P2/P3 创建、消息变更、绑定、
+  批量删除和标签 API 继续延期。参见 ADR 0200 和 E2E-214/E2E-215。
+
+## 2026-09-09 —— 显式插件项目 id 与宿主拥有的会话刷新（D368）
+
+- 导入会话需要显式归属持久化项目，但向插件暴露 `workspace.set` 还会改变用户当前工作区；插件写入也需要由宿主拥有的渲染器刷新路径。
+- 决策 D368 / ADR 0201 增加受权限保护的 `pi.project.create({ path })`。它创建或复用项目并返回宿主生成的 id，但不会激活工作区。导入项可以提供已有的 `projectId`；省略时仍保持未绑定，历史来源路径不会变成工具根目录。list/get 投影会报告显式绑定。
+- Electron 主进程在插件导入、重命名和删除成功后发送 `pi-desktop/session/event/changed`；渲染器复用 `refreshSessions()`，跳过的导入不发送事件，已关闭的项目标签页不会被重新打开。参见 E2E-216。
+
+## 2026-09-09 —— 子智能体的有效思考元数据（D369）
+
+- 委托卡片需要的是实际传给每个子运行的思考等级，而不是在目标模型钳制之后
+  从父级或定义重新推导出来的值。
+- 决策 D369 / ADR 0202 把有效的 `modelId` 和 `thinkingLevel` 加进 `Task` 的即时
+  结果、`SubagentRunResult` 和生命周期快照。拓扑节点和侧边停靠栏头部在模型名
+  之后显示原始规范的非 `off` 等级；`off`、`omit` 和不支持的推理仍只显示模型。
+  不改动主机协议、存储架构、provider 请求或生命周期行为。D395 / ADR 0221
+  移除了规范值的翻译。参见 E2E-219。
+
+## 2026-09-09 —— 未签名 macOS 首次启动助手（D371；由 D406 修订）
+
+- 默认 macOS 通道仍保持未签名；下载的可信工件仍可能因为 Apple 的 quarantine
+  检查而被阻止，并显示容易误解的“应用已损坏”。原有的 `xattr -cr` 说明只能
+  在终端执行，而且清理范围超过了启动失败所需的范围。
+- 决策 D371 / ADR 0204 为每个 macOS 分发包加入可执行的
+  `PI-Desktop-macOS-open.command`。DMG 会把它放在“拖入 Applications”手势下方
+  的可见首次启动区域。
+- 助手只查找 `/Applications/PI-Desktop.app` 和
+  `~/Applications/PI-Desktop.app`，并先校验 `CFBundleIdentifier` 为
+  `com.pi-desktop.app`；在存在时递归删除唯一的 `com.apple.quarantine` 属性，
+  然后打开 PI-Desktop。它不使用 `sudo`，不接受任意路径，也不替代 Developer ID
+  签名或公证。打开说明保留可信来源警告和更窄范围的终端备用命令。参见 E2E-196b。
+
+## 2026-09-09 —— 桌面操作的本地 MCP 控制面（D370）
+
+- 外部 Agent 需要驱动运行中的桌面完成项目、会话、Agent、工作区和已审查的应用操作，
+  同时延后的远程 Gateway / WebUI 边界保持不变。
+- 决策 D370 / ADR 0203 在 Electron Main 内增加默认关闭的 Streamable HTTP MCP 服务。
+  服务只绑定 `127.0.0.1`，使用持久化随机 bearer token，校验回环 Origin，写入受权限保护
+  的连接清单，并委托给与渲染器相同的已注册 IPC 处理器。
+- 命名工具覆盖常见项目/会话/Agent 流程；`pi_desktop_invoke` 访问显式的风险标记操作目录。
+  排除密钥通道和渲染器专属原生选择器，危险操作要求 `confirm: true`。成功的外部变更复用
+  现有渲染器会话变更事件，使可见状态跟随控制调用。
+- 端点仅限本地并在启动失败时降级，不创建远程认证、云同步或第二套权限实现。参见
+  `02-architecture/01-architecture.md`、`03-runtime/01-ipc-protocol.md`、
+  `05-security/01-security.md` 和 E2E-220。
+
+## 2026-09-10 —— 收紧本地 MCP 控制面边界（D372）
+
+- D370 的第一版目录仍暴露了原生选择器（`plugin/loadDev`）、provider/OAuth/MCP
+  密钥写入路径，以及无需确认的 `session/configure`，并把会话读取当成渲染器变更。
+- 决策 D372 修订 ADR 0203：第一版目录改为项目/会话/Agent/工作区流程加上已审查的
+  只读操作；剥离密钥形态参数；`session/configure` 视为危险；监听地址必须是回环；
+  协议版本协商而不是回显；包括 `structuredContent` 在内的结果有界；渲染器会话刷新
+  仅限变更操作。参见 E2E-220。
+
+## 2026-09-10 —— 远程 Agent Control 使用专用 Host 边界（D373）
+
+- 远程控制属于 MVP 后能力，不得暴露现有 Electron IPC、`host.proxy` 或 Rust
+  host-core stdio 边界。
+- 决策 D373 / ADR 0205 定义逻辑 Agent Host，由它拥有 Sessions、Turns、事件游标、
+  审批、附件、工作区策略和崩溃恢复。生产 Gateway 拥有身份、路由、速率限制、撤销和
+  审计；Agent Host 通过出站链路连接。
+- RACP v1 保持语义操作模型与传输解耦：WebSocket JSON-RPC 是主要交互绑定，
+  HTTP/JSON + SSE 是浏览器绑定，TLS 上的 gRPC 是原生/Gateway 绑定。各绑定共享事件
+  序列、快照、幂等、授权和错误语义。参见远程架构、协议、安全、发布规格以及
+  E2E-221 至 E2E-230。
+## 2026-09-10 —— 在实现前修订远程 Agent Control 目标（D374）
+
+- 将 D373 草案与已上线的桌面对照评审后发现：远程审批词汇比本地的
+  `allow-once` / `allow-session` / `deny` 和 Plan/Goal 权限模式契约更窄；待处理的
+  权限请求是连接状态而不是 Host 状态；逐 token 的 delta 会耗尽回放窗口；三个必需
+  绑定加两套 IDL 超出 v1 的承受范围；浏览器无法在 WebSocket 和 SSE 上满足仅头部认证。
+- 决策 D374 修订 ADR 0205：`RACP-WS` 是 v1 唯一规范绑定，`RACP-HTTP` 是浏览器
+  profile，`RACP-GRPC` 保留；`packages/shared` 中的 typebox 是唯一契约来源；首个交付物
+  是无 Electron 依赖的 `packages/agent-host` 模块，桌面 IPC、本地 MCP 和 RACP 都调用它；
+  游标为 `{ epoch, sequence }`，delta 为瞬态事件，首个日志放在内存；回合队列移入 Host；
+  host-core 暴露 `permissions.pending`；远程审批携带完整本地决策词汇；远程权限上限默认
+  `ask`；审批寿命成为面向远程订阅者的有界 Host 策略；Host link 是中继 profile；浏览器
+  客户端使用 cookie profile；Gateway 身份源在 R3 时决定；首个部署为单租户。参见修订后的
+  远程架构、协议、安全、发布规格以及 E2E-221 至 E2E-230。
+
+## 2026-09-10 —— 按已记录的需求排序远程控制（D375）
+
+- #176 与 #140 要求从本地桌面操作远程 Linux 或 WSL 机器上的项目；#100 要求把任务与
+  审批通知推送到 Telegram、微信、Slack 或 Webhook 并能回传简单指令。没有任何已记录的
+  请求要求浏览器或手机端控制桌面，而维护者已公开承诺 #100。
+- 决策 D375 第二次修订 ADR 0205：rollout R2 改为 SSH 隧道远端 Host，`pi-host` 包由
+  经用户自己的 SSH 会话上传的引导脚本从 GitHub Releases 下载并校验 checksum，只绑定
+  loopback，与桌面配对，经端口转发以 `RACP-WS` header profile 连接，并由不变的
+  renderer 通过 `lib/api.ts` 下的桌面 RACP 客户端适配层渲染。RACP 新增远端 Host
+  profile（`session/configure`、`session/fork`、`session/rename`、`session/delete`、
+  `session/compact`、`workspace/list`、`workspace/read`、`workspace/diff`、
+  `terminal/*`）和同一里程碑内的反向工具中继（`tools/advertise`、`tool/execute`），
+  R2 不拆分。远程会话存在于其 Host 上；provider 配置经 SSH 写入；SSH 配对的桌面设备
+  豁免远程权限上限，除非设置 `applyCeilingToPairedDevices`；排队回合由 host-core
+  持久化并在重启后挂起；远程审批寿命默认 30 分钟。R3 改为出站消息集成，Webhook 优先。
+  Gateway、浏览器 profile 和 gRPC 绑定保留规格但不排期，Gateway 身份源定为 pi-backend
+  规格中的 PI 账号服务。参见修订后的远程规格以及 E2E-231 / E2E-232。
+
+## 2026-09-10 —— 远程控制保持用户本地化：不引入第一方身份（D385）
+
+- 维护者要求用户的客户端绝不经由项目方运营的服务认证，远程控制必须完全留在用户
+  自己的机器与基础设施上。
+- 决策 D385 第三次修订 ADR 0205 并撤回 D375 第 10 条：链路中不存在任何项目方运营的
+  身份、账号或中继服务；客户端持有的唯一凭据是用户自己的 Host 在配对时签发的设备
+  token；Gateway 若日后排期，由用户自托管并以这些 Host 签发的凭据准入；OIDC 联合与
+  pi-backend 账号服务不在远程控制范围内。Host 的出站连接只有用户的 SSH 主机、用户
+  自己的消息渠道、用户配置的模型 provider，以及只读的 GitHub Releases `pi-host`
+  下载。SSH 隧道拓扑、设备配对和消息集成本已满足该规则。
+
+## 2026-09-10 —— 在 host-core 中持久化 Host 拥有的回合队列（D386）
+
+- D375 把排队的 prompt 移入 Host 并选择持久化；无头 Agent Host 模块需要一个能在重启后
+  存活且绝不自行启动工作的存储，而 host-core 独占 SQLite。
+- 决策 D386 / ADR 0213 增加 schema v15 的 `turn_queue` 表以及增量的
+  `session.queuePush` / `session.queueList` / `session.queueRemove` / `session.queuePrioritize` 方法。push 按主体与
+  幂等 key 幂等，每会话最多八条，随会话删除级联。模块在 host-core 就绪后恢复条目，把每个
+  恢复的会话挂起到 controller 接入，并且只在活动回合终止事件之后释放一条。协议保持 v11；
+  renderer 的内存队列已退役，其“立即发送”成为 RACP `turn/prioritize` 加优雅停止。
+
+## 2026-09-10 — 启动时明确指出降级安装与非原生构建（D380）
+
+- 在被 0.14.6-rc.4 迁移到 schema 14 的数据目录上安装 0.14.5，会静默重启 host
+  三次并显示“无法连接本地服务”；只有 `logs/host/runtime.log` 写着 `database
+  schema version 14 is newer than supported 13`。Intel macOS 构建在 Apple
+  Silicon 上同样通过 Rosetta 运行而没有任何提示。
+- 决策 D380 扩展 Linux glibc 守卫模式（E2E-195）：Electron 从最后一段
+  stderr 解析 host-core 的 schema 拒绝信息，首次失败即停止监管，并推送带
+  `DB_SCHEMA_TOO_NEW` 和两个 schema 版本号的 `hostStatus`，横幅据此说明应安装
+  哪个版本。启动时还会检测非原生构建（macOS 用 `sysctl.proc_translated`，其他
+  平台用 `os.machine()`），并在启动状态上附带 `archMismatch`；渲染层显示可关闭
+  的提示，标注 Intel / Apple Silicon。不新增错误码：两者都沿用
+  `HOST_UNAVAILABLE`，复用 `message` 的状态令牌通道。不尝试向下迁移。见
+  E2E-239 / E2E-240。
+
+## 2026-09-10 — 同一路径允许三次突变恢复失败（D379）
+
+- 之前的重复保护会在同一个 `Edit` 路径或已识别的 shell 修补键累计两次失败后结束提示。
+  这个边界可能会在模型仍在应用上一次失败返回的不同恢复提示时过早停止。
+- 决策 D379 修订 D186 与 ADR 0087 / ADR 0207：同一路径的突变保护器在每个提示内允许
+  累计三次失败。可恢复错误代码仍各有一次宽限，成功突变会清除该路径历史，第 3 次计数
+  的失败返回 `terminate: true` 与 `MUTATION_RETRY_BUDGET_EXHAUSTED`。已识别的 shell
+  修补命令使用同一上限。不改变 IPC、存储、主机协议或工具结果结构。见 E2E-140 / E2E-141。
+
+## 2026-09-10 —— 插件桌面控制需要原生用户同意（D377）
+
+- 一次代码与文档评审发现：持有 `desktop.control` 的插件可以在没有人参与的情况下
+  运行 `dangerous` 目录操作（删除会话、更改权限模式、批准工具）：共享控制器的
+  `confirm: true` 由插件自己设置，唯一的确认只是插件选择绘制的任何卡片。同一次评审
+  还发现 Electron 的 `fetch` 服务允许白名单中的主机把插件请求重定向到未声明的主机，
+  `manifest.main` 与 `ui.panel` 跳过了路径包含检查，而规格 15 的安全拒绝名单与忽略
+  层从未在 host-core 中实现。
+- 决策 D377（ADR 0208）：来自插件的 `dangerous` 桌面操作需要插件给出
+  `confirm: true`，然后由用户在宿主拥有的原生对话框中作答；该对话框只写明目录中的
+  操作、描述和有界的参数预览；拒绝与无界面的宿主都以 `PERMISSION_DENIED` 失败。
+  MCP 契约（D372）不变。
+- 同一变更中不新增决策的部分：`pi.net.fetch` 只有一条路径，即在每次重定向前重新
+  检查 `net.domains` 的运行时跳转循环；`manifest.main` 与 `ui.panel` 在插件内部
+  校验并解析；host-core 对未限定范围的遍历强制执行规格 15 的安全拒绝名单
+  （`WORKSPACE_PATH_DENIED`）、应用默认值、`.pi-desktopignore` 和
+  `<data_dir>/ignore`；路径解析器会跟随悬空符号链接，因此经由它的写入无法离开工作区；
+  对未知会话的 `tools.execute` 返回 `SESSION_NOT_FOUND`，而不是继承全局工作区。
+  参见 E2E-234 至 E2E-238。
+
+## 2026-09-10 — 将 PowerShell 7 作为 Windows 可选命令 Shell (D381)
+
+- 问题 #151：Windows 用户安装 PowerShell 7（`pwsh.exe`）后无法让 `Bash` 在它下面
+  运行。PowerShell 7 与 ADR 0054 中 `windows-powershell` 条目所解析的随系统内置
+  5.1 并排安装，且从不替换它，而目录中没有其它可选条目：
+  `crates/host-core/src/tools/shell.rs` 没有 `pwsh.exe` 解析路径，
+  `COMMAND_SHELL_IDS` 只列出四个 ID。
+- 决策 D381（ADR 0209）在 Windows 目录中新增稳定 ID `windows-pwsh`
+  （"PowerShell 7"），并修订 ADR 0054 §1。解析顺序为
+  `%ProgramFiles%\PowerShell\7\pwsh.exe`（宿主进程为 32 位时追加
+  `%ProgramW6432%`），再到 PATH 上的 `pwsh.exe`；解析失败返回
+  `SHELL_NOT_FOUND` 并列出两处已搜索位置。它沿用 `powershell` 方言与既有的
+  非交互式脚本，且从不会被隐式选中，因此平台默认值与既有用户的 shell 保持不变。
+- 协议、存储与工具面均为增量改动：`CommandShellId` 新增一个成员，而折叠的
+  设置校验与首个可用回退无需新代码路径，也没有新增 RPC 方法、工具名或schema 迁移。
+  参见 E2E-112。
+
+## 2026-09-10 —— 已结束的 Subagent 会读回自己失败的原因（D382）
+
+- 以 `failed`、`timed_out` 或 `aborted` 结束的委派，只显示结果胶囊和耗时。原因其实
+  存在但没有读者：`SubagentRunResult.error` 挂在委派名册条目上，而拓扑节点及其侧边
+  栏详情渲染的是 `Task` 行自身的结果——按 ADR 0089，它在委派启动的那一刻就被固定为
+  `running`。因此在发出任何消息行之前就死掉的委派，只会留下一个满是步骤、毫无解释的
+  面板。
+- 决策 D382：从生命周期行的 `details.delegations[]` 与 `details.stopped[]` 收集委派的
+  `error: { code, message }`，使用与已定状态相同的"后写覆盖"规则；侧边栏详情的结尾
+  用一张错误卡片收束，复用转录错误卡片的视觉语言与 `errors.<code>` 词表，代码未登记时
+  回退到本地化的 `chat.subagentStatus.*` 结果标签。卡片跟随"非成功终态"而非仅跟随错误
+  字段，因此已完成或仍在运行的委派永远不会显示它。不改运行时、IPC、存储或工具结果：
+  运行时早就在上报该错误，这里只是不再丢弃它。参见 `04-ux/08-component-spec.md` §5.7
+  与 E2E-198。
+
+## 2026-09-10 —— 子代理可以声明自己的输出上限（D383）
+
+- 子代理定义此前只能限制轮数，不能限制响应长度。`maxTurns` 贯穿 frontmatter、
+  记录、输入、编辑器草稿与运行时，而委托唯一拥有的输出上限来自其模型绑定：
+  `packages/agent-runtime/src/model-capabilities.ts` 中的 `ModelBinding.maxTokens`
+  会限制该模型的所有调用方，因此为一个话多的委托调高它，会话自身也会被一起调高。
+  `SubagentDefinition`、`SubagentDraft` 与 `UserSubagentRecord` 都没有 `maxTokens`，
+  `SubagentRun` 也从不传入。
+- 决策 D383（ADR 0210）：定义可以声明 `maxTokens`，按与 `maxTurns` 相同的宽松键名
+  解析，并以 200000 为天花板。省略、`none` 或 `0` 表示跟随模型已发布的上限；
+  超出 1–200000 的值视为笔误，会被报告并忽略或钳制，而不会转发。声明的值会覆盖委托
+  为自己构建的模型上的 `maxTokens`，因此适配器派生出的 `max_tokens` /
+  `max_completion_tokens` / `max_output_tokens` 都会带上它，而会话自身的请求仍沿用
+  模型绑定。它存储在能力文档的 frontmatter 中，并在编辑器既有 Advanced 折叠区的
+  轮次上限旁编辑。不新增 IPC、工具结果或存储结构：该字段沿用既有的子代理记录与输入。
+  见 E2E-119 / E2E-155。
+
+## 2026-09-10 — 移除诊断性 timing 日志流（D385）
+
+- 移除 D137/D183 引入的仅用于 timing 的进程日志流：sidecar `[timing]` 记录、
+  host `tool timing` 记录、启动阶段 timing、更新器 timing、独立的 `timing` 类别
+  以及 `PI_DESKTOP_TIMING` 不再输出。
+- 保留关键的生命周期、状态变更、权限、工具、插件、provider、持久化、更新器和错误记录。
+  既有审计字段以及 UI/协议中的时长元数据保持不变，因为它们用于安全取证、成绩单展示和
+  有界的 provider 诊断，而不是用于生成冗余进程日志。
+- 既有 timing 文件属于历史本地数据，不会自动删除或迁移。
+
+## 2026-09-11 —— Agent 扩展成为插件贡献点（D388）
+
+- D387 把 ExtensionAPI 模块作为第二个扩展面交付，带有自己的注册表、设置标签和启用
+  存储。维护者要求只有一个扩展面：pi CLI 扩展应当成为 PI-Desktop 插件，像插件一样
+  安装、启用、限定范围和展示。
+- 决策 D388 / ADR 0215 修订 D387：模块以 `contributes.agentExtensions` 声明，由新增的
+  高风险权限 `agent.extension` 门控；没有该权限的 manifest 无效，记录的授权中缺少它的
+  插件照常加载但跳过模块并记审计。启用与项目范围归插件所有。“导入 pi 扩展”把 pi CLI
+  扩展复制到 `<dataDir>/plugins/imported/<slug>` 并生成 manifest，注册为开发插件；
+  选择器之前的确认即信任决定。独立注册表、其存储文件、设置目的地以及 list / enable /
+  rescan / add-path / remove 通道全部移除；插件行显示 `agentExtension` 能力、权限、加载
+  状态、已注册名称和诊断。sidecar 的 loader、Runner、hooks、命令与提示桥接不变。持有
+  `agent.extension` 的插件的市场分发等签名到位。规格 16 §1 至 §3、§10.2、§11；
+  E2E-241 至 E2E-245 已在插件形态夹具上重新执行。
+
+## 2026-09-10 —— 聚合端点上回放 DeepSeek 的 reasoning_content（D389）
+
+- DeepSeek 思考模式要求回放的每条 assistant 消息都带 `reasoning_content`。当轮没有思考内容时仍需该字段为空串 `""`；缺字段会返回 HTTP 400。
+- pi-ai 只在 `model.provider === "deepseek"` 或 Base URL 含 `deepseek.com` 时自动打开该开关。PI-Desktop 把 UUID 存成 `model.provider`，因此硅基流动、火山方舟、自定义中转和其他聚合网关永远匹配不上。
+- 决策 D389 修订 D024：`vendorKey`、URL、模型 ID 或目录 `family` 能识别为 DeepSeek 的 Completions 行设置 `requiresReasoningContentOnAssistantMessages: true`。该匹配不改 `thinkingFormat`，因此 OpenRouter 等聚合器保持原有思考线路。见 E2E-005E 与 `03-runtime/11-provider-model-system.md`。
+
+## 2026-09-10 —— 重新生成在主机 RPC 锁下截断
+
+- 重试/重新生成曾把整份 kept transcript 经 `session.replaceMessages` 送进一条 NDJSON，超大会话会在 130 秒超时或 64 MiB stdin 上限处失败（issue #211）。
+- 现在由 `session.truncateFrom` 在主机锁内完成截断、中止残留 running 回合并归档被丢弃的尾巴。`agent/prompt` 只为启动配置做有界 `session.get`。
+- 超长控制管道行以 `LIMIT_EXCEEDED` 应答，不再结束 stdin 读取器。
+- 决策 D390 与 ADR 0216。见 E2E-246。
+
+## 2026-09-11 —— 主机 stdout 发送端不得比 serve 更长寿
+
+- ADR 0216 让重试不再整包传输 transcript，超长行也不再结束 stdin 读取器。在 Windows 上这还不够：Alt+Space 钩子持有 stdout 发送端的强引用，stdin 结束后写线程不退出，host-core 变成僵尸，Electron 报 `host RPC timeout: session.replaceMessages`（issue #211）。
+- 钩子改为只保留弱引用。serve 最多等写线程 5 秒。Electron 在写入前拒绝超过 64 MiB 的请求行。主机侧 `LIMIT_EXCEEDED` 从截断前缀里取出 JSON-RPC id。
+- 决策 D391 与 ADR 0217。见 `03-runtime/07-process-model.md`、`03-runtime/06-host-rpc-protocol.md` §7 与 E2E-247。
+
+## 2026-09-11 —— Composer 与传输使用生效的图像输入覆盖（D392）
+
+- 高级模型设置按 provider/model binding 保存 `supportsImages` 三态值。缺失或
+  `null` 跟随已发布模型记录；`true` 或 `false` 为该端点显式启用或禁用图像输入。
+- Composer 模型行、附件状态和 Electron main 传输共同使用 binding 的生效能力。
+  不修改共享的已发布 `ModelInfo`；没有显式覆盖的未知/自定义模型仍保持保守行为。
+- 决策 D392 修订 D243 / ADR 0101。见 ADR 0218、
+  `03-runtime/13-model-catalog-and-selection.md` §11.2、
+  `04-ux/08-component-spec.md` §11.7–11.8 与 E2E-163。
+
+## 2026-09-11 —— Composer 中用户调用的 Skills（D393）
+
+- D174 的模型调用目录仍负责 Skill 正文加载和安全契约，但不提供面向用户的 slash 条目，
+  使已经知道所需工作流的用户难以发现活跃 Skills。
+- D393 / ADR 0219 将激活的内置、插件和用户 Skills 作为 composer `/` 菜单末尾的独立分组。
+  选择后插入精确 id；Electron main 重新验证当前项目范围，并要求模型调用本地 `Skill` 工具。
+  输入的命令仍作为 transcript chip 保留，不新增主机协议或持久化 schema。
+
+## 2026-09-11 —— Windows 工作面板 chrome 保持单一资源操作组（D394）
+
+- 打开的工作面板标题栏只保留一个紧凑资源切换器。资源关闭通过现有统一上下文菜单行完成，
+  因此 Windows 原生关闭控件旁边不再出现第二个 `X`。
+- 视口固定的工作面板开关仍是唯一的面板折叠控件。子代理详情使用返回箭头，
+  Windows/Linux 原生控件仍固定在窗口边缘。
+- 决策 D394 修订 D154 / D357 / ADR 0195。这是仅渲染器的变更，不改变面板状态、窗口几何、
+  IPC、协议或存储。见 ADR 0220 与 E2E-067。
+
+## 2026-09-11 —— UI 中的规范思考等级值（D395）
+
+- 思考等级是稳定的协议值，但本地化会使同一个 provider/runtime 设置随应用语言变化。
+- 决策 D395 / ADR 0221 修订 D369 / ADR 0202：Composer、模型配置和委派界面直接显示
+  `off`、`minimal`、`low`、`medium`、`high`、`xhigh` 和 `max`。这些值从所有语言目录中移除；
+  有效元数据、钳位、provider 请求、协议和存储保持不变。见 E2E-219。
+
+## 2026-09-11 —— 渲染器与插件面板滚动条统一为紧凑规则（D396）
+
+- Windows 的经典滚动条让右侧工作面板的 Files 视图明显比对话区更粗，尽管主渲染器
+  已经使用安静的自定义滚动条。侧边栏还保留了单独的宽度和滑块透明度覆盖，因此应用
+  实际上存在两套滚动条样式。
+- 决策 D396 修订 D300：渲染器中的每个滚动容器统一使用 6px、无轨道、静止时透明的
+  滚动条，以及相同的悬停、focus-within、滚动显示和拖动状态。移除侧边栏专用覆盖。
+  插件面板 preload 给停靠和独立插件文档（包括内置 Files 视图）注入同一规则和 300ms
+  的滚动显示标记。Browser 内部加载的外部网页仍由网页自己管理样式。
+- 这是仅表现层的变更，不改变协议、存储、主机运行时或外部网页行为。见
+  `04-ux/07-ui-design-system.md`、`04-ux/08-component-spec.md` 与 E2E-157。
+## 2026-09-11 —— 消息引用与渲染器拥有的侧边聊天（D-LOCAL-message-quotes）
+
+*（已由 ADR 0268 于 2026-09-16 退役：功能与相关界面均已移除，这些 ID 永久退役且不得复用；此处记录仅作历史留存。）*
+
+- 每条用户消息和每个助手回合新增 Quote 操作，与 Copy、Edit、Delete、Fork、Retry 并列。
+  它把以 `> ` 开头的 Markdown 引用块加一行 `chat.quoteSource` 归属写入当前会话的
+  composer 草稿，选区在被点击消息行内时使用选区、否则使用消息自身文本，摘录上限
+  2000 字符并带省略号，随后聚焦输入框，绝不发送。
+- Open side chat 通过现有 `session.fork` 以锚点助手消息或用户消息分叉，但不激活子会话，
+  因此主对话仍保持可见会话。子会话注册为父会话的渲染器侧边聊天，工作面板打开一个
+  `sidechat` 标签，经共享的后台转录 reducer 实时流式渲染，并提供 Add to main chat、
+  Open as a conversation、紧凑 Send/Stop 输入和现有权限卡。
+- 关闭标签或以会话方式打开子会话会移除注册及其转录投影；持久子会话仍是侧边栏、
+  会话列表和搜索中的普通会话。不改协议、存储 schema、IPC 通道或权限。
+  见 ADR message-quotes-and-side-chats 与 E2E-CHAT-quote-prefill 至 E2E-CHAT-side-chat-close。
+
+## 2026-09-11 —— 选区的引用浮层（D-LOCAL-selection-overlay）
+
+*（已由 ADR 0268 于 2026-09-16 退役：功能与相关界面均已移除，这些 ID 永久退役且不得复用；此处记录仅作历史留存。）*
+
+- 引用不再必须回到答案末尾。消息行内存在非空文本选区时，在选区**上方**悬浮一个浮层：水平居中于选区，限制在
+  裁剪祖先（转录滚动容器）的矩形内，并且不越过停靠输入区的顶边；浮层按应用其他 body portal 浮层的方式挂载，
+  并在对话滚动时跟随选区移动，而不是直接消失。
+- 浮层提供三个动作：「添加到对话」（`chat.addToChat`）按 D-LOCAL-message-quotes 的引用契约把摘录写入当前会话的 composer 草稿；
+  「在侧边聊天中提问」（`chat.askInSideChat`）以该行为锚点分叉子会话，并把摘录作为子会话的提问发送，答案在面板
+  中流式返回而不进入当前可见对话；复制（复用 `chat.copy`）把 Markdown 写入剪贴板。每个动作都会先清除原生选区；
+  跨消息行的拖选不显示浮层；只读投影不渲染浮层。
+- 摘录改为从渲染后的 DOM 还原，而不是 `Selection.toString()`。与公式相交的选区会扩展到整个公式，并取 KaTeX 的
+  `application/x-tex` 注解还原为 `$…$` 或 `$$…$$`；代码块还原为带语言的围栏，围栏长度超过片段内最长的反引号串；
+  表格每行还原为一条 `a | b` 行；行内代码保留反引号，文件引用芯片保留其代码文本。消息末尾的 Quote 操作与浮层
+  共用这一条还原路径。
+- 2000 字符上限、`> ` 引用块、`chat.quoteSource` 归属、聚焦行为，以及不发送、不建会话、不写转录的边界均未改变。
+  与参考实现的两处差异是刻意的，因为引用文本会落回本应用渲染的 Markdown 草稿：公式使用 `$…$` / `$$…$$`
+  （remark-math），表格行使用 `a | b`。仅渲染器变更；除 composer 的 `data-composer-dock` 钩子外，不改协议、
+  存储 schema、IPC 或权限。见 ADR message-quotes-and-side-chats 与 E2E-CHAT-quote-prefill、E2E-CHAT-selection-markdown、E2E-CHAT-selection-side-chat。
+
+## 2026-09-11 —— 响应批注作为提示词附件（D-LOCAL-response-annotations）
+
+*（已由 ADR 0268 于 2026-09-16 退役：功能与相关界面均已移除，这些 ID 永久退役且不得复用；此处记录仅作历史留存。）*
+
+- 在助手回合中选中文字并选择「添加到对话」，会为该回合附加一条**带编号的批注**：id、锚定的回合、摘录（Markdown，
+  上限 2000 字符）、空的评论字段，以及作为编号的捕获顺序。批注属于渲染器侧的会话状态；重复批注同一摘录不生效，
+  既不持久化，也不单独发送给宿主。
+- 回答正文保持不变：本应用不向用户阅读的文本中插入任何标记。模型写出的 `:codex-annotation{index="N"}` 指令
+  （提示词要求模型为每一条它处理的批注写出该指令）会渲染为小型编号引用，其提示为摘录；标记不参与选区、引用或复制。
+  composer 显示一个带数量的附件芯片，其提示列出 `N. 摘录`，并提供一个一键清除控件。芯片不会进入可编辑文本，因此
+  D209 的智能停止与 D301 的草稿保留均不受影响。
+- 带批注的发送会组合 `# Response annotations:` + 指令 + 含 `[{"text","annotation","source":{"messageId"}}]` 的
+  `<response-annotations>` + `## My request:` + 用户文本，并消费这些批注。可见草稿、乐观行、侧边栏标题和编辑种子都
+  不含批注内容；已存提示在展示时会还原为请求文本。
+- 引用用户消息以及侧边聊天的 Add to main chat 仍沿用 D-LOCAL-message-quotes 的草稿引用。不改协议、存储 schema、IPC 通道或权限。
+  见 ADR response-annotations 与 E2E-CHAT-annotation-attachments、E2E-CHAT-annotation-session-state。
+- *（2026-09-12 修订。）*「添加到对话」以及助手回合的批注操作会打开一个紧凑的评论编辑器，
+  而不是静默附加：摘录在选区被收起之前先做快照，评论可多行且可选；保存时把评论写入该批注的
+  `annotation`（或更新已有批注），取消/Escape 直接丢弃且不发送任何内容。再次批注已附加的摘录会
+  重新打开该批注的编辑器；composer 的数量芯片会打开批注列表，可逐条编辑评论或移除单条，并保留
+  原有的一键清除。编辑器归属于打开它的会话；对已发送或已移除批注的保存不会产生任何变更。
+  不改协议、存储 schema、IPC 通道或权限。
+- *（悬浮索引修订，ADR floating-annotation-index。）* 用可展开/收起的悬浮批注框替代输入框弹出列表。
+  原文位置显示相同编号，点击可定位并用独立浮层高亮；不向 Markdown 插入文字。
+  定位先解除自动跟随，必要时加载历史；同文案的不同位置分别编号。
+  编号与发送数组顺序一致，定位偏移不发送给模型；发送后仍清空，不新增持久化。见 E2E-CHAT-annotation-source-index。
+
+## 2026-09-11 —— 上下文用量显示偏好（D398）
+
+- 上下文用量检查器的引导数值——触发器圆弧（`strokeDashoffset`）、百分比、令牌标签、弹层标题、tooltip 与 `aria-label`——可通过 `AppSettings.contextUsageDisplay`（`"remaining"` 或 `"used"`）配置。缺省及非法值回退为 `"remaining"`。
+- 当设为 `"used"` 时，圆环按 `usedRatio` 填充，文字展示已用容量对。
+- 警告与临界颜色阈值（剩余 ≤ 25 % / ≤ 10 %）仍按剩余容量判定，不随显示模式变化。
+- 设置 → 全局 AI → 默认项新增分段控件（剩余 / 已用），位于链接打开目标之后、回车发送之前。
+- 决策 D398 修订 D347 / ADR 0184。见 ADR 0223 与 E2E-250。
+
+## 2026-09-11 —— 项目组支持手动排序（D399）
+
+- 保留的项目组显示悬停和键盘聚焦时可见的手柄。原生拖放会根据指针位置将源项目插入目标之前或之后；聚焦手柄后按 `ArrowUp`/`ArrowDown` 提供键盘操作，按 Esc 可取消拖动。
+- 重排会写入连续的规范化路径 `order` 值，并将渲染器本地的项目排序切换为 `manual`。置顶和归档优先级、项目激活、主机工作区身份、会话顺序和磁盘目录均保持不变。
+- 决策 D399 修订 D093。不引入协议、主机、IPC 或持久项目 schema 变更；详见侧边栏交互规格和 E2E-253。
+
+## 2026-09-11 —— 从有效会话上下文恢复延迟工具（D400）
+
+- 新提示或模式切换会清除内存中的延迟激活集，然后从有效会话上下文恢复
+  成功的激活证据。`ToolSearch` 行贡献 `addedToolNames`；成功的延迟工具行
+  贡献自身的工具名。
+- 恢复只保留当前模式延迟目录中的名称。错误、已中断和缺少结果的占位行会
+  被忽略，也不会解析助手/用户文本作为激活证据。主机权限、工作区遏制和
+  审核行为保持不变。
+- 决策 D400 修订 D185 / ADR 0048。见 ADR 0225 与 E2E-008a。
+
+## 2026-09-11 —— 长按项目标题重排（D402）
+
+- 保留的项目组不再渲染重排手柄。在项目标题上静止按住 400ms 后开始指针重排；该延迟前移动超过 8px 会取消按住，因此单击仍会选中项目并切换折叠。
+- 标题进入拖动后，移动指针会高亮同一置顶/归档分桶中的另一组；释放时按指针相对目标垂直中点插入其前或后。聚焦标题后按 `ArrowUp`/`ArrowDown` 是键盘路径，Escape 取消拖动。
+- 重排仍写入连续的规范化路径 `order` 值，并将渲染器本地的项目排序切换为 `manual`。主机工作区身份、会话顺序和磁盘目录保持不变。
+- 决策 D402 修订 D399 / D093 / ADR 0227。见 ADR 0228 与 E2E-253。
+
+## 2026-09-11 —— 按住标题移动即可重排（D403）
+
+- 鼠标和触控笔按住项目标题并移动 8px 开始重排。没有足够移动的单击仍会选中项目并切换折叠。触摸不会开始重排，以便列表可以滚动。
+- 强调色插入线按指针相对目标垂直中点标出前/后放置位置。`ArrowUp`/`ArrowDown` 与 Escape 不变。
+- 决策 D403 修订 D402 / D093 / ADR 0228。见 ADR 0229 与 E2E-253。
+
+## 2026-09-11 —— Skill 随 Agent 核心工具集下发（D404）
+
+- `Skill` 加入 Agent 模式核心工具集，因此只要技能目录非空，第一个 provider 请求就带有它的 schema。它不再属于延迟目录，也不会出现在 `# On-demand tools`。
+- 注册门槛不变：只有目录非空时才存在该工具，Plan 与 Goal 仍然完全不提供它。其他所有按需能力与 `ToolSearch` 本身保持原有延迟行为。
+- 决策 D404 修订 D174 / D185 / ADR 0048 / ADR 0219。见 ADR 0230 与 E2E-254。
+
+## 2026-09-11 —— 顿号打开斜杠菜单（D405）
+
+- 当输入框为空时，第 1 个字符提交的「、」会在触发检测之前改写为 `/`，中文输入法因此无需切换输入方式即可打开普通斜杠菜单。
+- 只改写该位置：出现在草稿其他位置的「、」仍是普通标点，`@` 文件菜单不受影响。
+- 决策 D405 修订 D123 / D139 / ADR 0024。见 ADR 0231 与 E2E-255。
+
+## 2026-09-12 —— macOS DMG 只保留打开说明（D406）
+
+- macOS DMG 展示 `PI-Desktop-macOS-opening-help.txt`，Finder 名称为
+  `If app won't open, read this.txt`，不再包含或暴露可执行的
+  `PI-Desktop-macOS-open.command`。
+- macOS ZIP 安装包保留打开说明和可执行助手。说明为可信未签名构建提供范围明确的
+  终端备用命令；已签名和公证版本无需执行。
+- 决策 D406 修订 D371 / ADR 0204。见 ADR 0232 与 E2E-196b。
+
+## 2026-09-12 —— 导入会话后恢复已归档项目（D407）
+
+- 核心或插件导入新增项目绑定会话时，在导入触发的刷新期间清除该会话规范化项目路径对应的渲染器归档状态。
+- 无路径会话、跳过的导入、仅有历史路径的插件会话和普通刷新保持归档状态。host 模型以及现有 IPC、插件、存储和数据格式契约保持不变。
+- 决策 D407 记录 issue #250 的修复。见 ADR 0236 与 E2E-257。
+
+## 2026-09-13 —— 三栏布局中优先保障 MainChat（D408）
+
+- 流入式外壳把 MainChat 视为第一优先列：硬下限 450px，工作面板上限为动态预算（`客户端宽度 − 450px − 展开的左栏宽度`，无固定上限）；展开的左栏在阈值处立即让位，且其 `sidebar-out` 退场动画期间仍计入共享预算。
+- 手动重开左栏优先占用右栏宽度，否则以 460px 为目标。关闭右栏只恢复由布局机制收起的左栏；手动收起保持收起。
+- 原生窗口不参与：预留 seam 保持 0，不套用任何面板宽度或 x 偏移几何。
+- 预览模式卸载 MainChat，让工作面板填充侧边栏之外的客户区。AppShell 提供窗口级
+  chrome 行承载 shell 操作和本机控件；侧边栏折叠时，macOS 窗口模式预留 88px，
+  全屏预留 8px 给交通灯。
+- 决策 D408 记录 issue #267 的行为。见 ADR 0238 与 E2E-LAYOUT-three-column-width-priority。
+
+## 2026-09-13 —— 独立会话发现与可导航协作投影（D410）
+
+- 已审查的插件网关提供有界的 `session/collaboration/list` 读取操作，返回未删除 Agent 会话，包括在 Session Orchestrator 之外创建的会话。不返回项目路径、凭据、转录或消息预览；`send` 继续使用真实 Session ID，并沿用现有 host 授权路径。
+- 侧边栏协作摘要现在带有可读的 provider/model 标签以及有界的创建者/已创建会话引用。渲染器把这些引用展示为可键盘聚焦的导航按钮，并通过现有选择路径打开持久会话。
+- 决策 D410 修订 ADR 0239。见 ADR 0240、E2E-SESSION-independent-top-level-communication 和 E2E-SESSION-hover-card-model-and-links。
+
+## 2026-09-12 —— 用 Alt+Enter 向当前回合补充指令
+
+- 普通 Send/Enter 仍是 Host 拥有的 follow-up；Alt+Enter 携带必填的预期回合 id，
+  将输入提交到当前持久回合。
+- 复用 pi-agent-core 在下一次模型请求边界消费的 steering，保留已启动工具及当前
+  模型、工作区和权限配置。
+- 正在停止或已结束的目标拒绝输入，不将其重定向到其他回合。已接收输入保留在历史中，
+  取消后不会独立重放。
+- 必要时将前一条回复的临时快照与已接收用户输入一并记入日志；只原位落定索引中的
+  流式助手，并保持已完成消息的幂等性。见 ADR active-turn-steering 和
+  E2E-AGENT-alt-enter-steers-active-turn。
+
+## 2026-09-13 —— 加固会话协作导航与投递
+
+- 协作引用现在携带 `available`。指向已删除或已不存在的会话的引用以 `available: false` 报告；渲染器把它渲染为文本而不是导航控件，打开一个已不存在的会话会报告可见错误，而不是提交空转录。`session_collaboration_messages.source_session_id` 有意不设外键，因此投递记录在发送者被删除后仍然保留，并被报告为不可用。
+- 六个 `session/collaboration/*` 操作仅限第一方插件：它们要求经过认证的插件工具调用上下文，因此被排除在 MCP 可见目录之外，同时仍可通过 `pi.desktop.listOperations` 和 `pi.desktop.invoke` 使用。这修订了 ADR 0203 / D370 的“同一审查操作目录”说法以及插件权限矩阵中的 `desktop.control` 行。
+- 结算投递时现在会断言条件式的 `queued` 到 `running` 抢占确实改变了一行，因此在该竞争中落败不会为同一次投递创建第二个回合；`spawn` 也在与会话插入相同的事务内评估其 worker 上限。
+- Electron 投递结算不再丢弃宿主重启之前记录的结算，已经在运行的 drain 会接收在其期间排队的结算，而不是把它们推迟到无关的触发条件。持久化的投递失败保持稳定的 `CODE: message` 形式。
+- 针对编排刷新路径的审查修正把模型目录查找的工作量限制为每次读取，而不再依赖缓存淘汰；并用探针本身并不保证的观察替换那些不可能失败的 E2E 启动条件。
+- 见 ADR 0239、ADR 0240、E2E-SESSION-hover-card-model-and-links。
+
+## 2026-09-13 —— 文件视图改为 vendor 的可更新插件（issue #304）
+
+- 工作面板的文件视图不再是 `pi.files`，而是第三方 `pi.file-manager` 某个发布版本的 vendor 副本，随 `apps/desktop/resources/plugins/` 打包，并在它自己的 `UPSTREAM.md` 中记录来源。旧插件被删除，host-core 会在下次启动时清掉它遗留的注册表行。
+- 内置意味着默认且不可删除，但不是被冻结：内置插件可以从市场更新，该更新会跨过下一次启动；应用自带严格更新的版本时仍以自带版本为准。`uninstall` 按「该构建是否随应用打包」以 ID 拒绝，而不是按行的 `source` 判断，因此更新过的插件依然不可卸载，而被某构建移除的插件重新可卸载。
+- 只有严格更新的市场条目才会被当作更新提供。版本相同不算，目录中更旧的版本也不算。
+- 编辑写入留在插件自己的进程内，由它维持工作区路径牢笼、原子写、冲突检测与写入审计；宿主的权限网关不介入这些调用：manifest 无法申报整树写入。
+- 见 ADR 0241（取代 ADR 0105）、ADR 0104、E2E-153、E2E-PLUGIN-bundled-plugin-keeps-a-marketplace-update。
+
+## 2026-09-14 —— 仅增量且合并的流式更新（D412）
+
+- 追加型 `message_update` 帧携带 `stream: "delta"` 以及新块本身。增长中的
+  `content`/`thinking` 留在运行时累加器和 `message_end` 里。重试替换仍发送完整快照。
+- 16ms coalescer 拼接待发送增量，并在 tool、terminal、abort、error 和 retry
+  事件前立即 flush，以保持顺序。
+- AgentHost 把增量应用到 live items，小增量帧跳过热路径上的 `JSON.stringify`。
+  进行中检查点从同一批增量重建快照。渲染器先拼接同一帧内的增量，再补丁 live 行。
+  未变化的活动 part 保持对象身份。
+- 协议版本仍为 11。见 ADR 0242、E2E-STREAM-long-turn-keeps-realtime 和 issue #299。
+
+## 2026-09-13 — 技能市场公网 HTTPS 目录拉取 (D413)
+
+- 技能市场的 search/fetch 在 Electron 主进程执行，渲染层 CSP 仍禁止出网，安装走现有 `skills.create`。
+- 共享 `isSafePublicHttpsUrl` / `isPublicHostname` / `isPublicIpLiteral` 做语法分类；主进程再检查 DNS 与每一跳 redirect。
+- 扫描 id 净化为 host `valid_capability_id`。预览展示组装正文；超过 128 KiB 不写入。
+- 见 ADR 0243、E2E-SKILL-MARKET-*、issue #287。
+
+## 2026-09-14 —— 加固 MCP 市场公网网络边界（D414）
+
+- MCP 市场源和目录端点的校验由渲染器与 Electron Main 共享。只接受无凭据的公网 HTTPS，拒绝回环、私网、CGNAT、链路本地、组播、保留、文档、基准测试、ULA 和 site-local 地址范围，并覆盖 mapped/compatible IPv6 形式。
+- Main 在每次请求前解析主机名，并把选中的公网地址固定到 HTTPS socket。重定向手动跟随，在每一跳重新检查并固定地址，最多五跳。源响应上限为 4 MiB，每次最多处理 16 个源，browse/search 缓存按时间、key 数量和条目数量限制。
+- Registry 的 npm/PyPI 版本以及 runtime/package 参数会保留到安装模板。只映射 `streamable-http` 公网 HTTPS remote；远程 header 占位符变成明确的安装表单值。跨 origin 的 MCP 重定向不会转发调用方 header。
+- 手动配置的用户 MCP 仍保留 ADR 0142 的显式本地/LAN 端点策略。见 ADR 0245 和 E2E-MCP-MARKET-*。
 
 ### Tray session shortcuts (issue #293)
 
@@ -5135,1198 +4069,471 @@ change. macOS single-click opens the menu without restoring the window;
 selection is delivered after bootstrap and uses normal session navigation.
 Validation contract: E2E-TRAY-bounded-session-navigation.
 
-## 2026-09-14 — Preserve local annotation and side-chat contracts across upstream integration
-
-*(Retired by ADR 0268 on 2026-09-16: the feature and its surfaces were removed, and these IDs stay retired and must not be reused. The record is kept for history.)*
-
-- Local ADRs now use semantic names `message-quotes-and-side-chats`,
-  `response-annotations`, and `floating-annotation-index`; former local 0223–0225
-  collided with upstream ADRs. Local D398–D400 references use `D-LOCAL-*`, and
-  local E2E-249–259 references use `E2E-CHAT-*`. Upstream identities are unchanged.
-- Upstream transcript modules, composer hooks, store slices, delta streaming,
-  work-panel tab strip/launcher, and text-only Alt+Enter steering remain canonical.
-  Quote/annotation controls and side-chat registrations have no upstream equivalent
-  and remain renderer-owned additions at those seams, not duplicate legacy modules.
-- Send/queue consumes only acknowledged unchanged annotations in the submitting
-  session. Failures retain them; concurrent edits/new attachments survive. Steering
-  leaves annotations pending, and annotation-only steering submits nothing.
-- Request-only queue previews/edit seeds hide the recognized annotation block;
-  ordinary headings and stored/wire content remain intact. Editing does not restore
-  consumed attachments. No native Pi session unification is introduced.
-- See ADR response-annotations and E2E-CHAT-annotation-ack-and-steering.
-
-## 2026-09-14 — Native Pi session continuation (D421)
-
-- Native Pi v3 sessions are discovered as source-discriminated projections and
-  continued through the coding-agent SDK against their original JSONL.
-- Rust host-core remains authoritative for Desktop SQLite and Desktop
-  transcripts; native turns never enter the Desktop outbox or create imports.
-- Exact version/newline/cwd/trust/provider/auth checks and a cooperative lease
-  with byte/leaf validation make uncertain ownership fail closed. Unsupported
-  native mutations remain explicit rather than silently succeeding.
-- See ADR 0254 and E2E-SESSION-native-pi-*.
-
-## 2026-09-14 — Git clone accepts only syntactically public hosts (D416)
-
-- Home Clone git project still accepts https/http/ssh/`git@host:path` remotes
-  without embedded passwords or `file:` URLs.
-- Hosts are classified with the shared `isPublicHostname` helper used by the
-  market guards. Private and loopback literals fail in the parser.
-- Git's own DNS/SSH is unchanged; there is no Electron Main pin.
-- See ADR 0247 and E2E-CLONE-public-hostname-rejects-private.
-
-## 2026-09-14 — Theme CSS validation only inspects CSS that runs (D417)
-
-- The `ui.theme` sanitizer masks comment bodies and string literals before the
-  `@import`, markup, and script keyword checks, one space per masked character so
-  offsets still point at the source, and keeps every `url(...)` argument verbatim
-  so a real reference is still judged by its target.
-- A character-level three-state scan, not a `/* … */` strip: in
-  `content: "/*";` the browser sees a string, and a naive strip would read a
-  comment there and hide the real `@import "x.css";` behind it.
-- `examples/plugins/hello/themes/midnight.css` loads again. Only the false
-  rejection narrows: no new capability, no format change, and sheets that never
-  name a banned token behave exactly as before. See issue #334 and E2E-024J.
-
-## 2026-09-14 — Themed package assets and native window backgrounds (D418)
-
-- `contributes.themes[].assets` declares package-relative image and font files
-  (whitelisted extensions, 4 MB summed). The host resolves each inside the plugin
-  package, refuses the dependency directory, rewrites every matching `url()` to
-  `plugin-asset://<pluginId>/<path>`, and serves it through a privileged
-  host-owned scheme whose handler answers only from the loaded plugin's declared
-  list. An undeclared reference is still refused and the raw path never reaches
-  the renderer, so the `data:`-only rule and every existing rejection are
-  unchanged. Permission stays `ui.theme`.
-- `contributes.windowAppearance.backgroundColor.{light,dark}` accepts
-  `#rrggbb` / `#rrggbbaa` behind the new `ui.window.appearance` grant. It applies
-  only while one of that plugin's themes is the selected theme and only off
-  macOS, and it is restored by derivation: the renderer recomputes the colour
-  from the persisted preference and the live catalog, so a switch, a disable, and
-  an uninstall all converge on the host palette with no stored value to unwind.
-- Built-in themes reach the same value through one shared table
-  (`packages/shared/src/theme.ts`): `BUILTIN_THEMES` holds each palette's
-  `windowBackground` once and `isThemeColorScheme` holds the built-in-id
-  question once, read by the renderer, main, the panel host, the panel preload,
-  and the theme picker. The pair `#ffffff` / `#181818` was restated in four
-  files before this, so the built-in and contributed paths could drift apart.
-  See ADR 0248, issue #335, and E2E-024J.
-
-## 2026-09-14 — The dock column is a token, not a literal (D419)
-
-- The work-panel column and the bars inside it take their surface from
-  `--ds-bg-dock` and `--ds-bg-dock-raised`. In light those are `#fafafa` and
-  `#ffffff`; in dark they are `var(--ds-bg-secondary)` and `transparent`, which
-  is exactly what the base rules resolved to before.
-- Six `:root[data-theme="light"]` literals in `work-panel.css` used to raise
-  specificity above the base rule *and* skip the variable, so the whole column
-  stayed host-coloured under any contributed theme. Those overrides are gone.
-- The design-system surface table now records both tokens, and §6.4 states the
-  rule they exist to enforce: a surface colour the shell paints must come from a
-  token. A literal inside a `:root[data-theme]` override is the failure mode.
-- Same class of hole remains in `settings.css` (rail, search fields, toggle
-  knob, capability search) and a few other sheets; see issue #339.
-
-## 2026-09-14 — Structured, bounded, and redacted process logs (D420)
-
-- Every app/host/agent NDJSON record has a stable dot-separated `event` and
-  top-level correlation fields. A normal tool call emits one completion or
-  failure record; an unexpected sidecar exit emits interruption records for
-  active tools. The tool protocol and transcript remain unchanged.
-- Central logging redacts credential formats, sensitive keys, and local paths;
-  bounds strings and structured values; and caps each record's `data` at 8 KiB.
-  Host-core audit payloads receive corresponding shaping and a serialized
-  payload cap.
-- Tool results retain outcome, error/code, duration, field names, content-block
-  count, and stdout/stderr sizes rather than copying raw arguments, output, or
-  plugin responses. Child stderr and main-process fallbacks use stable events;
-  development console mirrors contain the same sanitized record.
-- See ADR 0250 and E2E-034.
-
-## 2026-09-15 — Deleting a project removes its owned sessions (D421)
-
-- `projects.remove({ path })` is the new additive host RPC. It removes one
-  durable project row, every session attached to that row, those sessions'
-  transcript/scratch/review files, and the project's durable memory, and it
-  never touches the project folder on disk. An unknown path returns
-  `{ removed: false, sessionsRemoved: 0 }` instead of an error, and the desktop
-  removes its own record for that path anyway: a stale recent-project entry is
-  the only thing that can keep such a row visible.
-- The Projects index is a union of four sources (group projections of durable
-  rows, `pi.desktop.recentProjects`, session-derived projects, and the active
-  workspace). Deletion therefore removes the renderer-local record in the same
-  action; deleting only the database row leaves the row visible, which is why
-  the previous manual workaround also required clearing renderer storage.
-- A path that is a root of a stored multi-folder project group is refused with
-  a message so the group keeps a valid primary root; legacy single-root
-  projections delete normally.
-- The delete is refused while any attached session has a running turn (1008 /
-  `CONFLICT`, "project has running sessions"): a live turn still owns its tools
-  and working directory and is still appending to its transcript, so the bulk
-  delete waits for the project to be idle instead of resurrecting a stub
-  session afterwards. The renderer blocks the same action up front with
-  `project.deleteRunningBlocked`. Single-conversation delete keeps its current
-  semantics.
-- The action is deliberately absent from `CONTROL_OPERATION_SPECS`, so local
-  MCP control cannot delete projects. See ADR 0251 and
-  E2E-PROJECT-delete-removes-project-and-owned-sessions.
-
-## 2026-09-13 — Host turn-end event for plugins (D422)
-
-- `session:turnEnded` is delivered to plugin processes, plugin panel pages, and
-  docked views with `{ sessionId, turnId, reason }`, where `reason` is
-  `completed`, `aborted`, or `error`, once per turn actually started by
-  `session.beginTurn` (a user submission, an approved plan execution, or a
-  scheduled run).
-- The announcement runs at the end of turn teardown, after the durable
-  `session.endTurn` attempt, and carries the `turnId` of the terminal runtime
-  event rather than whichever turn is active. The plugin tool context's
-  `turnId` is populated with the same identity, forwarded from the host.
-- The finalizer is the single entry every terminal path funnels through and it
-  requires an explicit `turnId`: a terminal event that carries none, or one
-  whose turn no longer owns the session, settles nothing and announces nothing.
-  The turn's record is keyed by `(sessionId, turnId)`, so a repeat terminal
-  event joins the first claim instead of announcing twice.
-- The event needs no permission, has no ack and no replay, is not guaranteed
-  across plugin crash, reload, or host quit, and does not prove that every
-  in-flight tool of the turn has exited. No published host emits it yet: the
-  release that ships it has not been published.
-- Decision D422 is recorded by ADR 0252.
-
-## 2026-09-15 — Remove the subagent turn limit (D423)
-
-- `maxTurns` was the last definition-level kill switch left after ADR 0166
-  withdrew the idle and duration watchdogs, and the parent cannot size it: it
-  cannot see the delegate's live work, so it cannot tell a delegate that is one
-  turn from converging from one that never will. The shipped backstops (60, 50,
-  40, 80) had no derivation, and the editor's own starting state was unlimited.
-- Decision D423 removes the field from `SubagentDefinition`, the frontmatter
-  parser, `UserSubagentRecord` / `UserSubagentInput`, the host-core registry,
-  the five built-in documents, `SUBAGENT_PRESETS`, and the Subagent editor's
-  Advanced disclosure. A delegate ends only when it finishes, when the parent
-  calls `TaskStop`, when the user Stops, or when a terminal parent error aborts
-  it.
-- An existing document that declares `maxTurns` keeps loading: the key is now
-  unrecognized frontmatter and is ignored exactly like any other unknown key,
-  with no error, no warning, and no rewrite of the user's file. A definition
-  that relied on the cap therefore loses it silently.
-- The `truncated` subagent status leaves the shared run-status union, the
-  renderer outcome union, the `chat.subagentStatus` catalog entry in every
-  locale, and the delegation topology's warnings count. `timed_out` stays in
-  the type even though D328 withdrew the watchdogs that produced it.
-- No protocol version, schema version, or storage change: host-core's subagent
-  input struct still ignores unknown fields, and the registry parses Markdown
-  frontmatter rather than a table column.
-- See ADR 0253, `03-runtime/02-agent-runtime.md` §5f,
-  `04-ux/06-settings-ia.md` §7, E2E-155, and
-  E2E-SUBAGENT-legacy-turn-limit-frontmatter-is-ignored.
-
-## 2026-09-15 — Theme assets are absolute paths (D422)
-
-- ADR 0248 required theme assets to be package-relative, which forced a plugin to
-  copy a user-chosen image into its own package. A development plugin is watched
-  recursively, so every copy reloaded the plugin and closed that plugin's panel
-  window; the plugin's own data directory could not be referenced at all.
-- `normalizeThemeAssetPath` (SDK) and `normalize_theme_asset_path` (host-core) now
-  accept absolute paths only (`C:/art/bg.png`, `/art/bg.png`, or either spelled as
-  a `file:` URL). Package-relative asset references stop resolving; themes that
-  declared them are the only affected surface.
-- `pi.themes.upsert` resolves asset references in the sheet and registers them in
-  that plugin's asset map for as long as the plugin stays loaded, so a theme can
-  pick up a new image without any file write inside the package.
-- Unchanged: the extension whitelist, the summed 4 MB budget for declared assets,
-  `.`/`..` rejection, the `url()` → `plugin-asset://` rewrite, `nosniff`,
-  `no-store`, and revocation on unload. Absolute keys are percent-encoded in the
-  URL and decoded by the handler.
-- A plugin can now hand the renderer any local file it can read. Manifest-declared
-  assets stay auditable in a static file; runtime-registered ones do not survive
-  the plugin.
-- See ADR 0255, `07-plugins/02-plugin-manifest-schema.md`,
-  `07-plugins/04-plugin-security.md`, and ADR 0248 §1 (superseded for path
-  resolution).
-
-## 2026-09-15 — DeepSeek reasoning across compaction (D424)
-
-- OpenCode / third-party DeepSeek relays reject empty `reasoning_*` echoes after
-  context compaction drops assistant thinking (#296). Official `deepseek.com`
-  still accepts `""` (#223 / D389).
-- Decision D424 amends D389 / ADR 0136: restore `thinkingSignature` on history
-  rebuild; stash recent thinking in checkpoint `details.retainedReasoning` and
-  replay it after the summary; set `requiresNonEmptyReasoningReplay` for
-  non-official DeepSeek Completions rows so the pi-ai patch fills a documented
-  placeholder instead of `""`. See ADR 0256 and E2E-005E.
-
-## 2026-09-15 — Plugin real-time capabilities (D425)
-
-- Plugins gain four host-mediated capabilities: background microphone capture,
-  background playback, system-wide accelerators, and real-time bidirectional
-  connections. The host owns every device and transport; plugins exchange typed
-  frames and never receive a device handle, a raw socket, or a Node stream.
-- New permissions `audio.capture.background` (high),
-  `audio.playback.background` (medium), `keyboard.globalShortcut` (medium),
-  `net.websocket` (high), plus `contributes.globalShortcuts` (at most 8
-  accelerator → own-command entries) as the declarative form. `ui.microphone`
-  keeps its panel-scoped meaning and is not widened.
-- Shortcut registration is refused rather than taken over:
-  `SHORTCUT_CONFLICT`, `SHORTCUT_UNAVAILABLE`, `INVALID_ACCELERATOR`,
-  `LIMIT_EXCEEDED`. An accelerator can only run one of the owning plugin's own
-  commands — no key monitoring, no raw events, no hooks.
-- Implemented in this change: `keyboard.globalShortcut` and `net.websocket`
-  (host-owned sockets, confined to `manifest.net.domains`, bounded, and released
-  with the plugin). The two audio permissions are declared, present in the
-  plugin API, and gated: with the grant the host has no device backend, so every
-  call is answered with a coded `UNSUPPORTED` refusal that is audited, until the
-  device service lands. See ADR 0257,
-  `07-plugins/03-plugin-api.md`, `07-plugins/04-plugin-security.md`, and
-  E2E-PLUGIN-global-shortcut-owns-only-its-own-command.
-
-## 2026-09-15 — Trusted extension custom agents (D426)
-
-**Add the PI-Desktop `registerAgent` ExtensionAPI contract for trusted extensions. A plugin registers bounded model metadata and a `stream` or `complete` callback; the plugin owns endpoint and authentication. The sidecar exposes a redacted model registry, assigns `extension-agent:<encoded-agent-key>` ids, and routes idle `setModel` through Electron main to the existing host-owned `session.configure` binding. The host never receives or persists plugin transport credentials, and `registerProvider` is a compatibility alias for the same plugin-owned stream shape. See ADR 0258, `07-plugins/16-trusted-extensions.md`, and E2E-TRUSTED-EXTENSION-custom-agent-stream-and-binding.**
-
-The pinned upstream pi-coding-agent package has `registerProvider` but no
-`registerAgent`; the PI-Desktop member is therefore an explicit adapter contract,
-not an unreviewed upstream registry passthrough.
-
-## 2026-09-15 — Plugin-declared providers are Host-owned rows (D427)
-
-**A plugin may declare `contributes.providers`, and the Host materializes each entry as a provider row in the native Settings → Provider list, owned by that plugin (`providers.owner_plugin_id`, schema v17; row id `plugin:<pluginId>:<declaredId>`). The declaration is re-read on every load and is authoritative for its own fields, so a dropped entry is deleted together with both credential references; `providers.update` / `providers.delete` refuse a plugin-owned row with `PROVIDER_OWNED_BY_PLUGIN`. A non-empty declaration needs the new high-risk `provider.register` permission, and an `oauth` block or `authKind: "oauth"` is refused until a Host-owned login flow exists. See ADR 0259, `07-plugins/02-plugin-manifest-schema.md` §5.4, `07-plugins/13-plugin-permissions-matrix.md`, `03-runtime/04-data-storage.md` §4.3/§7, and E2E-PLUGIN-declared-provider-appears-in-the-native-provider-list.**
-
-It deliberately does not include plugin OAuth: the `provider.oauth` permission
-and a Host-owned plugin login flow are future work, so a declared provider has no
-OAuth login, token refresh, or account label today.
-
-## 2026-09-15 — Side chats materialize on first Send (#421)
-
-*(Retired by ADR 0268 on 2026-09-16: the feature and its surfaces were removed, and these IDs stay retired and must not be reused. The record is kept for history.)*
-
-Side-chat opening and selection quote prefill are renderer-only drafts. The
-first explicit nonempty Send creates the anchored child, with concurrent
-submissions deduplicated and failed drafts retained. Closing unsent drafts
-creates no history; existing children remain. See the
-[message quotes and side chats ADR](../../adr/message-quotes-and-side-chats.md)
-and E2E-CHAT-side-chat-fork.
-
-## 2026-09-15 — A tooltip never outlives its trigger (D428)
-
-- **The shared tooltip hook in `apps/desktop/src/components/ui.tsx` gains one
-  lifecycle contract: at most one themed tooltip is painted at a time
-  (claiming the slot closes the previous owner), and a visible tooltip closes
-  when its anchor unmounts, when the window loses focus, when the document is
-  hidden, on Escape, or when the pointer that revealed it leaves the anchor.
-  Every close also cancels a show that has not painted yet, so Escape or a
-  window blur inside the delay no longer paints a tooltip on an unfocused
-  window. A trigger that moves in the DOM within a quarter second without being
-  replaced keeps the tooltip instead of blinking it, and a tooltip revealed by
-  keyboard focus is not closed by unrelated pointer movement. The guard
-  listeners (window blur, visibility, Escape, pointer) are installed once for
-  the whole renderer instead of once per trigger. No delay, offset, placement,
-  or text behavior changes.**
-- **Row-level hover paint and hover-revealed row actions now follow the same
-  "still relevant?" rule: an idle row's hidden overflow control is
-  pointer-inert so the space it occupies belongs to the row — a click there
-  opens the conversation, or activates and toggles the project group, as the
-  title does — and a no-hover pointer gets the controls revealed under
-  `@media (hover: none)` so it never meets a hidden target. A window that loses
-  focus drops the row's and the project title's hover paint and hides the
-  revealed actions instead of leaving them latched.**
-- Renderer only: no protocol, storage, host, permission, or migration change.
-  See `04-ux/09-interaction-patterns.md` §6.4 and §9.1c,
-  E2E-UI-tooltip-never-outlives-its-trigger, and
-  E2E-UI-row-actions-do-not-swallow-the-row-click.
-
-Users reported a tooltip that occasionally never went away (the trigger
-unmounted, the window lost focus, or the pointer left the window without a
-leave event) and a session row whose hidden overflow control silently opened
-its menu instead of the conversation.
-
-## 2026-09-15 — Turn-queue priority block and row actions (D429)
-
-- "Send now" becomes a priority block instead of a head jump: a promoted entry
-  takes `MAX(priority) + 1` inside its session (schema v18, nullable `priority`),
-  so several promotions are delivered in the order they were clicked and the
-  waiting queue keeps its own `position` order behind them. Promoting an entry
-  that already carries a priority is `CONFLICT`, not another move.
-- The queued row gains move up, move down, and edit beside Send now and remove.
-  Move up/down swaps a waiting entry with its adjacent waiting neighbour through
-  `session.queueReorder` and never crosses the promoted block; editing removes
-  the row and returns its captured draft (text plus inline file references) to
-  the composer, and is refused while the input is non-empty.
-- A promoted row is locked until the Host delivers it: move up/down, edit, and
-  remove are disabled, and Send now reads as already decided.
-- The promoted block is delivered as adjacent user messages: the first promoted
-  entry starts the turn at the boundary and the rest are injected into that same
-  turn through the steering channel, so the model answers once for the whole
-  block instead of once per row. An injected entry's own turn is canceled; an
-  entry the runtime refuses to accept stays queued and leaves at the next
-  boundary as its own turn.
-- A settled turn is authoritative for the queue. A terminal event can be dropped
-  (Main never forwards one that names a turn it no longer owns) or never
-  emitted, and a turn left active inside the Host held its session's queue
-  forever — the "Send now, then Stop" stall. The settlement now closes the turn,
-  and a drain request that arrives while a pass is running is retried instead of
-  dropped. See ADR 0265, `03-runtime/01-ipc-protocol.md` (§5.6),
-  `03-runtime/04-data-storage.md`, `04-ux/08-component-spec.md` (§11), and
-  E2E-QUEUE-promote-orders-delivery-by-click.
-
-## 2026-09-16 — A manual disclosure keeps the reader's place (D430)
-
-- **A manual disclosure hands its own title to the scroller that owns it,
-  synchronously, before the expansion state changes.** The content
-  `ResizeObserver` still re-pins a pinned transcript on every content resize
-  (D287) and cannot tell a stream from a reader expanding a row, so the reader
-  states their intent first: the transcript leaves follow mode and the scroller
-  restores that title's viewport offset from inside the same observer, for as
-  many frames as the height keeps changing (an activity group animates its
-  `grid-template-rows`). `overflow-anchor: none` on `.thread-scroll` means this
-  has to be explicit.
-- **The anchor is the title element's offset from the scroller's top edge, not a
-  `scrollTop`, and the browser's own boundary clamping is adopted as the new
-  anchor.** A correction the content cannot reach, and a height change above the
-  title, are both handled without fighting the browser frame after frame. There
-  is no delayed "take the bottom back" compensation: the hold ends on real scroll
-  input, the jump-to-latest control, a new turn, or a navigation.
-- **Every scroll owner holds its own position and passes the hold outward.** The
-  transcript scroller and the nested delegate dock (`useFollowScroll`, D302) share
-  one controller; growing the dock grows the transcript's content, so an outer
-  scroller still in follow mode would drag the same title away.
-- **Input is attributed to the scroller that can consume it.** Only input that
-  really moves a container may release follow or a held position: a press on a
-  row, a control or an editable field is an ordinary click, a keystroke in a text
-  field belongs to the field, and input a nested scroller consumes is not the
-  outer scroller's gesture. Arrow keys still scroll and Space still activates a
-  focused title.
-- **Programmatic immediate scrolling records the `scrollTop` the scroller
-  actually reached**, and a sub-pixel tolerance is applied only to scroll events
-  no gesture produced. At DPR 1.1 follow asked for 841 and got 840.909; compared
-  strictly that fraction read as the reader scrolling up and dropped follow mode.
-  Real gestures are still compared exactly, so a one-pixel scroll unpins.
-- Renderer only: no protocol, storage, host, permission, or migration change.
-  See `04-ux/09-interaction-patterns.md` §9.1 and
-  E2E-CHAT-disclosure-toggle-keeps-reading-position.
-
-Readers reported that clicking a tool, thinking or activity title to expand it
-dragged the whole transcript up by the height of the opened detail, in a session
-that was sitting at the bottom — including after the turn had finished.
-## 2026-09-16 — The delete dialog, not the menu, owns the running-task refusal (#360, D431)
-
-- Amends the renderer half of D421. The sidebar menu and the Projects index menu
-  refused Delete project with a transient `project.deleteRunningBlocked` warning
-  whenever any of the project's sessions was running, and returned before
-  `ProjectDeleteDialog` was ever mounted. The refusal vanished with the toast
-  and left no path forward, so a project with one live task could not be deleted
-  at all — which is how #360 ("项目管理中无法真正删除项目") reads.
-- Both menus now always open the dialog. Each surface passes the project's live
-  running session ids (`runningSessions[session.id]`, over the rows it already
-  matches: `entry.sessions` in the sidebar, `sessionMatchesIndexProject` in the
-  index), and the dialog derives its copy from that prop on every render, so a
-  turn that starts or finishes while the dialog is open is reflected before the
-  user confirms.
-- The dialog adds a warning line naming `{{count}}` running sessions and swaps
-  its confirm label to `project.deleteRunningConfirm` ("Stop tasks and delete").
-  Confirming aborts exactly those sessions and only then calls `deleteProject`,
-  so removing a running turn stays a second, explicit confirmation of a stated
-  consequence. Cancelling removes nothing.
-- The host guard is unchanged: `projects.remove` still refuses with 1008 /
-  `CONFLICT` while an attached session has a running turn, and the dialog still
-  maps that refusal to `project.deleteRunningBlocked`. A turn that starts after
-  the abort loop is what that fallback covers.
-- Renderer only: no protocol, storage, host, permission, or migration change,
-  and no new default. `project.deleteRunningBlocked` keeps its meaning, copy,
-  and every translation. See ADR 0251, D421, and
-  E2E-PROJECT-delete-running-sessions-are-named-and-stopped.
-## 2026-09-16 — Plugin `workspace` fs roots follow the calling session (D432)
-
-- Every plugin `pi.fs.*` call whose mode root is `workspace` resolved the one
-  window-global visible workspace, so a plugin agent tool invoked from session B
-  (project B) read project A's root as soon as the user switched tabs, and failed
-  `NOT_FOUND` for every session at once when no workspace was visible (D093 fixed
-  the same rule for built-in tool execution; it never reached a plugin).
-- `plugin-runtime.ts` now resolves that root with a new private `fsRoot(loaded, rule)`
-  helper: the project of the tool session that invoked the call, asked for through
-  the additive host service `getWorkspacePathForSession`. `plugin-services.ts` wires
-  it from the session-to-project map it already keeps, so no new source of truth is
-  introduced.
-- Unchanged: the visible workspace stays the root for a panel-bridge call, which has
-  no tool session, and for a session the host does not track; a `userSelected` mode
-  still keeps the directory the user picked through `requestDirectory()`.
-- A session root now resolves when no workspace is visible at all, so a temporary
-  chat keeps working per session instead of failing for every session at once. A
-  panel call in that state still fails closed. `NOT_FOUND` for a `workspace` root is
-  therefore narrower: neither the invoking session's project nor a visible workspace
-  resolved.
-- No permission, realpath-containment, deny-list, or declared-scope/consent gate
-  changes, and the plugin API surface does not change: `pi.workspace.get` still
-  answers with the visible workspace and its project group.
-- See ADR 0266, `07-plugins/03-plugin-api.md` §3,
-  `07-plugins/13-plugin-permissions-matrix.md` §6, and
-  E2E-PLUGIN-fs-root-follows-the-calling-session.
-
-## 2026-09-16 — Quotes, annotations, and side chats are removed (ADR 0268)
-
-- Quote, the text-selection overlay, response annotations (comment editor,
-  floating index, source badges, composer attachment), and renderer-owned side
-  chats are removed from every surface. Message action rows keep Copy, Edit,
-  Delete, Fork, Retry, and Regenerate; the composer keeps its draft, chips, smart
-  Stop, and per-session draft slots; the work panel keeps its other tab kinds;
-  `session.fork` and the Fork action are unchanged.
-- Sends no longer compose a `# Response annotations:` block, and the display-side
-  reduction `requestTextWithoutAnnotations` is gone, so a prompt stored before the
-  removal is shown exactly as it was stored in the transcript, the edit seed, and
-  the queue preview.
-- Retired and never reusable: `D-LOCAL-message-quotes`, `D-LOCAL-selection-overlay`,
-  `D-LOCAL-response-annotations`, `D-native-sidechat-stream`, and the E2E IDs
-  E2E-CHAT-quote-prefill, E2E-CHAT-selection-markdown,
-  E2E-CHAT-selection-side-chat, E2E-CHAT-annotation-attachments,
-  E2E-CHAT-annotation-session-state, E2E-CHAT-annotation-source-index,
-  E2E-CHAT-annotation-ack-and-steering, E2E-CHAT-side-chat-fork,
-  E2E-CHAT-side-chat-stream, E2E-CHAT-side-chat-add-to-main,
-  E2E-CHAT-side-chat-promote, E2E-CHAT-side-chat-close, and
-  E2E-SESSION-native-side-chat-fork-survives-close.
-- No host protocol (v11), storage schema (v15), IPC channel, permission, or Rust
-  change. See ADR 0268.
-
-## 2026-09-16 — A control with no label states its square geometry
-
-- `.icon-btn` is shared with label-driven pills, so it takes its width from its
-  content — glyph plus 8px of side padding. Every icon-only use of it was
-  therefore taller than it was wide: the sidebar collapse control and the
-  composer's add button rendered 31×28, the composer's enhance and undo
-  controls 35×28 inside `.composer-right`, and the settings provider actions
-  30×28 from their 14px glyphs. The same control in the conversation topbar was
-  already a 28×28 square, so one function had two sizes.
-- Those controls now state `.icon-btn-square`, which pins both axes to the new
-  `--ds-control-size` (28px) token, keeps `flex: 0 0` so a crowded toolbar row
-  cannot shrink the control back out of square, and drops the side padding that
-  under the global `border-box` would leave a 12px content box for a 15px
-  glyph. Icon-only controls now match the square the topbar toggle, the
-  work-panel actions, and the send/stop controls already used.
-- `.composer-right .icon-btn` no longer sets inline padding. The label-driven
-  model/thinking chip sets its own padding with `!important`, so that
-  declaration only ever widened the icon-only controls beside it; the
-  maximizing enhance control keeps its label geometry while it is loading.
-- Renderer only: no protocol, storage, host, permission, or migration change.
-  See `04-ux/07-ui-design-system.md` §11.1 and `04-ux/08-component-spec.md`
-  §3.7.
-
-## 2026-09-16 — One geometry for every chrome icon control
-
-- The preview- and route-band lane actions (`.title-nav-btn`) rendered as 22px
-  tiles with `--radius-2xs` and a `--ds-tile` seat, beside 28px siblings: the
-  same dock toggle in the conversation topbar, the viewport-fixed work-panel
-  toggle, and the work-panel's own actions. One control, two sizes and two
-  shapes, in the same 46px band.
-- Those actions now take the shared chrome-control geometry (the `.ct-icon-btn`
-  group): a 28px square from `--ds-work-panel-toggle-size`, `flex: 0 0` so a
-  crowded band cannot squeeze them out of square, `--radius-md`, a transparent
-  seat with the semantic hover wash, and the 15px glyph every other chrome
-  control uses. `.title-nav-btn` keeps only its press feedback and active tone.
-- The preview action lane is derived from the control it reserves room for:
-  `--ds-preview-action-lane-width: calc(2 * var(--ds-work-panel-toggle-size) + 4px + 8px)`,
-  so the panel header's reserve and the buttons cannot drift apart.
-- Renderer only: no protocol, storage, host, permission, or migration change.
-  See `04-ux/08-component-spec.md` §2.
-
-## 2026-09-16 — The macOS traffic-light reserve has one source (D433)
-
-- The renderer's windowed lead-in for the macOS traffic lights was a hand-copied
-  `76px`: five declarations across `apps/desktop/src/styles/chrome.css` and
-  `apps/desktop/src/styles/work-panel.css` — `.main-titlebar-left` (`64px`, that
-  number minus the row's own 12px padding), `.conversation-topbar.ct-collapsed`
-  (`--ct-lead-inset`), `.sidebar-header`,
-  `.window-chrome-row:not(.sidebar-expanded)`, and the preview
-  `.work-panel-header` (`calc(76px + var(--ds-preview-action-lane-width))`) —
-  each with its own `[data-fullscreen="true"]` sibling. None of them was tied to
-  the `trafficLightPosition` the main process hands Electron, so either side
-  changing on its own would have drifted from the other.
-- The native geometry now has one home, `packages/shared/src/window-chrome.ts`:
-  `MAC_TRAFFIC_LIGHT_POSITION` (`{x:16,y:16}`) and
-  `MAC_TRAFFIC_LIGHT_CLUSTER_WIDTH_DIP` (`60`), with
-  `MAC_TRAFFIC_LIGHT_EDGE_DIP` (`16 + 60 = 76`) as the cluster's right edge. The
-  main process positions the buttons from those constants, and the renderer
-  injects the edge into `--ds-traffic-light-edge` at boot. Every consumer reads
-  `--ds-window-lead-inset`, which `chrome.css` composes once for
-  `:root[data-platform="darwin"]` as `--ds-traffic-light-edge` +
-  `--ds-traffic-light-gap` (`12px`) = `88px`.
-- The buttons used to sit flush against the green light, with a 0 gap. The
-  reserve now keeps `12px` of breathing room between the cluster's right edge and
-  the first shell control, which is why windowed mode moved from `76px` to
-  `88px`.
-- The per-selector `[data-fullscreen="true"]` overrides are gone. Fullscreen
-  hides the buttons, and the same token's `[data-fullscreen="true"]` rule drops
-  the reserve to the ordinary `8px` gutter for every consumer at once.
-- Windows and Linux are unchanged: `--ds-window-lead-inset` keeps its `0px`
-  default and those platforms still use the renderer-drawn controls in the 120px
-  right-side band. Plugin-panel windows create a plain frameless `BrowserWindow`
-  with no native traffic lights, so they are unaffected.
-- Renderer + shared constant only: no protocol, storage, host, permission, or
-  migration change, and no new default.
-- See `04-ux/08-component-spec.md`, `04-ux/09-interaction-patterns.md`, and
-  E2E-LAYOUT-three-column-width-priority.
-
-## 2026-09-16 — The work-panel header's buttons are one group
-
-- The work-panel header read as two clusters: the action group inside the header
-  (`+` and maximize, 4px apart) and the viewport-fixed collapse toggle outside
-  it. The separator between them was compounded from four declarations on
-  `.work-panel-actions` — `margin-right: 8px`, `padding-right: 8px`, a 1px
-  `--ds-border-subtle` divider, and a separate `--ds-work-panel-toggle-gap: 20px`
-  lane token — for a real 37px gap plus a hairline rule, so the same three
-  28px squares in the same 46px row looked like two unrelated clusters.
-- One token now spaces the whole row. `--ds-work-panel-control-gap: 4px`
-  replaces `--ds-work-panel-toggle-gap` and is the header's flex gap (tab strip
-  to action group), the `.work-panel-actions` gap (`+` to maximize), and — spent
-  by the header's right padding as
-  `calc(size + inset + control-gap)`, 44px — the gap from the action group to
-  the fixed collapse toggle. `.work-panel-actions` states spacing only: the
-  divider, inset, and margin are gone.
-- The lane still reserves the whole toggle, and the `+` trigger still clears the
-  toggle by 36px inside the lane (4px + the 28px maximize control + 4px), so the
-  `WORK_PANEL_HEADER_PROBE` 24px assertion and E2E-152's hit-region contract
-  still hold.
-- Renderer only: no protocol, storage, host, permission, or migration change,
-  and no new default. See `04-ux/08-component-spec.md` §5.2,
-  `04-ux/07-ui-design-system.md` §4.3, and
-  E2E-LAYOUT-three-column-width-priority.
-
-## 2026-09-16 — The work-panel controls are quiet icons, not filled seats
-
-- The work-panel header's `+` and maximize controls were painted with a
-  `--ds-tile` seat of their own, and the viewport-fixed collapse toggle added
-  `--ds-tile-deep` plus `--ds-raised-shadow` while `aria-pressed="true"`. In the
-  light theme that turned a row of three 28px controls into filled squares, with
-  the toggle reading as a raised circular pill floating over the panel header —
-  nothing like the top-left dock toggle and new-task controls beside them.
-- `+` and maximize now join the shared chrome-control group in `chrome.css` —
-  the same rule that seats the topbar's dock toggle, the viewport-fixed panel
-  toggle, and the preview/route-band lane actions — so they take one geometry
-  (28px square, `--radius-md`, `flex: 0 0`), one transparent seat, the semantic
-  `--ds-bg-hover` wash on pointer, and the `opacity: 0.4` disabled state. Their
-  duplicated rules in `work-panel.css` are gone; the partial keeps only the
-  action group's spacing.
-- The toggle's pressed state drops the fill and the raised shadow and keeps the
-  engaged ink, so the open state is the glyph swap plus `--ds-text-primary`.
-  `aria-pressed` still carries the state to assistive technology, and
-  `.app-work-panel-toggle` keeps its viewport-fixed ownership and `no-drag`
-  carve-out.
-- Keyboard focus is unchanged: the global `:focus-visible` outline applies as it
-  does to every other chrome icon control, so removing the retired
-  `:focus-visible` background wash costs no focus affordance.
-- Renderer only: no geometry, gap, inset, protocol, storage, host, permission, or
-  migration change, and no new token. See `04-ux/08-component-spec.md` §2.3 and
-  §5.2, `04-ux/07-ui-design-system.md` §4.3, and
-  E2E-LAYOUT-three-column-width-priority.
-
-## 2026-09-17 — Builtin subagents can be switched off (D434)
-
-- Settings > Agent > Subagents listed the five shipped defaults as read-only
-  rows while the user's own documents had an enablement switch, so one delegate
-  could not be turned off at all: copying a builtin and disabling the copy left
-  the shipped definition in the catalog, because disabled user documents are
-  filtered out before the loader merges and so shadowed nothing.
-- Every Built-in row now carries the same switch. The handle is stored in
-  `<data>/agent-capabilities/subagent-builtins.json`, a file of its own because
-  the user-document scan prunes state for ids it can never see, and host-core
-  exposes it through `agents.disabledBuiltins` / `agents.setBuiltinEnabled`.
-  Electron main hands the disabled handles to `loadSubagentDefinitions`, which
-  drops them from the delegation catalog while `subagent/catalog` still returns
-  the builtin, flagged `enabled: false`, in its new `builtins` list.
-- A switched-off builtin keeps its row, dimmed, so the switch is the way back
-  on. A user document of the same handle keeps working and keeps shadowing the
-  shipped definition, reveal and delete stay absent because a builtin is not a
-  file, and an unavailable host contributes no exclusions. See ADR 0270,
-  `04-ux/06-settings-ia.md` §2, `03-runtime/01-ipc-protocol.md` §12c, and
-  E2E-SUBAGENT-settings-lists-builtin-defaults.
-
-## 2026-09-17 — Judge a public-network address on the route the request will dial (D436)
-
-- The skill market's main-process guard classified the target host with a
-  *local* resolver while `net.fetch` dials through Chromium's proxy stack
-  (ADR 0177). Under a TUN / fake-IP resolver that answer is a synthesized
-  `198.18.0.0/15` address for a connection the app never makes, so every
-  catalog source was refused as "blocked by the app's address check"
-  (issue #419).
-- Each hop now asks the session that carries `net.fetch`
-  (`Session.resolveProxy`) for its own decision, and the shared
-  `classifyProxyRoute` reduces that answer to `proxied` / `direct` / `unknown`.
-  On a `proxied` route `isAcceptableResolvedAddress` tolerates only the
-  resolver-artifact class (`benchmark`); every real internal class and an
-  unanswered resolver still refuse. A `direct` route keeps the pre-change
-  semantics byte for byte, a `DIRECT` entry anywhere in the list is read as
-  `unknown` because Chromium may fall back to it, and `unknown` stays strict.
-- Refusals and the market's `failureDetails` now carry `route`, so a fake-IP
-  refusal on a direct route reads apart from one on an unreadable route.
-- The MCP market keeps its pinned Node HTTPS guard (ADR 0245) and is unchanged;
-  a fake-IP environment still refuses its sources.
-- See ADR 0272, `05-security/01-security.md` §4.1,
-  `03-runtime/09-logging-and-observability.md`, and
-  `06-delivery/04-e2e-test-plan.md` E2E-SKILL-MARKET-NET-BOUNDARY.
-
-## 2026-09-17 — The dock question card is a composer plate (#360, D437)
-
-- The asktool question card is mounted in the transparent composer dock
-  (`Composer.tsx` renders it as a direct `.composer-stack` child, and the
-  transcript mount is gone), yet it still painted the in-flow `--ds-tile` wash:
-  a 3.5% ink mix with no shadow. On the light page that leaves a `#f7f7f7`
-  panel with white option rows next to the composer plate below it, which is
-  how #360 item 1 ("选择交互面板缺少背景色") reads. The dock rule's own comment
-  already claimed the card "uses the same decision surface as Plan and Goal
-  approval", while `.plan-approval-bar` in that exact slot paints
-  `--ds-bg-composer` with `--ds-shadow-composer` (`04-ux/03-permission-ux.md`
-  §9, `04-ux/08-component-spec.md` §11.5).
-- `.composer-stack > .asktool-card` now paints that plate: `--ds-bg-composer`
-  with `--ds-shadow-composer` (light `#ffffff`, dark
-  `color-mix(in oklab, #212121 96%, transparent)` with the composer shadow).
-- Its controls move to the plate's inlaid tier, the layer `.plan-approval-split`
-  already uses on that same plate: `.asktool-option` and
-  `.asktool-custom-input` drop `--ds-raised` and `--ds-raised-shadow` for
-  `--ds-tile-deep`, and the hover/selected mix is rebased on `--ds-tile-deep`.
-  Without that flip the rows would be white on white in the light palette,
-  where `--ds-raised` and `--ds-bg-composer` are both `#ffffff`. The 15 px
-  option mark keeps `--ds-tile-deep` — the sidebar checkbox's mark — which
-  still reads against the inlaid row exactly as it does against the sidebar.
-- Renderer only: no protocol, storage, host, permission, migration, or
-  preference change, and no new default. Both layers are existing tokens in
-  both palettes, so a contributed theme moves the plate and the rows with
-  `--ds-bg-composer` / `--ds-tile-deep`. See
-  `04-ux/11-asktool-question-card.md`, `04-ux/07-ui-design-system.md` §6.4, and
-  E2E-078.
-
-## 2026-09-17 — A git checkout is a Create project source (D438)
-
-- The Create project dialog only collected a project name and local folders
-  (ADR 0233), and the home switcher's Clone git project entry renders inside the
-  hero of a project-bound session. A fresh installation therefore had to open an
-  unrelated local folder before any repository could be cloned.
-- The dialog now owns a source selector with two equal peers: This computer and
-  Git repository. The git source keeps the one name field (seeded from the
-  repository name until the user types), adds a repository URL field and one
-  clone destination row, and parses URLs with the switcher's `parseGitCloneUrl`
-  rules, so private, loopback, link-local, credential-bearing, and malformed
-  remotes keep Create disabled (ADR 0247).
-- Main exposes additive `project/cloneCheckout({ url, parentPath })`: it clones
-  into the explicit parent folder and returns `{ path, name }` without touching
-  the active workspace and without opening a picker. `project/clone` keeps its
-  native-picker behavior for the home switcher.
-- Project creation is unchanged: both sources call one project-slice helper,
-  `project-group/create` still writes the only durable record, and a checkout
-  becomes the primary root of the same logical group (ADR 0233).
-- Renderer plus one narrow main-process capability: no protocol, schema, host
-  RPC, permission, storage, or preference change. See ADR 0273,
-  `03-runtime/01-ipc-protocol.md` §9, `04-ux/08-component-spec.md`, and E2E-258.
-
-## 2026-09-16 — Draggable chat content width (D439)
-
-- The centered conversation band, empty-home stack, and composer share one
-  preferred max width, default 760px, persisted as
-  `AppSettings.chatContentMaxWidth`. Dual edge handles (invisible at rest;
-  a short primary-ink capsule on hover, slightly stronger while dragging)
-  change that width together so the column stays centered. Drag floor is 560px.
-
-- The live used width is `min(available pane minus 24px gutters, preferred)`,
-  so a squeezed sidebar or work panel compresses the band without rewriting
-  the preference. The collapsed-sidebar 640px ceiling is removed.
-- Assistant, tool, and decision rows follow the band. User plates stay
-  `min(82%, 600px)`. Renderer only. See ADR 0277, E2E-208, and
-  E2E-CHAT-content-width-handles.
-
-## 2026-09-17 — Session and project rows delete on the second click (D441)
-
-- The sidebar's session item and both project menus (sidebar and Projects index)
-  removed the row on the first click of Delete. Every other destructive row
-  action — the settings provider rows, vendor accounts, and the capability
-  tables — arms first and relabels the control, so the two most destructive
-  actions were the only ones that fired on a single click.
-- `hooks/use-armed-delete.ts` now owns that pattern for the whole renderer: one
-  `ARMED_DELETE_MS` (3200ms) expiry and one `useArmedDelete()`. The capability
-  pages keep importing it from `AgentCapabilityLayout`, which re-exports the
-  shared hook instead of holding a second copy with a timeout of its own, so the
-  pattern cannot drift between the settings rows and the two menus.
-- A session item arms on `session.id`; both project menus arm on a
-  `project:`-prefixed key, so a session and a project can never share an arm. An
-  armed item carries `data-armed="true"`, a danger wash, and the label
-  `nav.deleteTaskConfirm` / `project.deleteMenuConfirm` ("Delete?" / "确认删除？")
-  in all eight catalogs. The menu stays open between the two clicks, and an
-  outside press, Escape, or the expiry clears the arm without removing anything.
-- Amends D431 for the idle case: a project whose turn is still live still opens
-  `ProjectDeleteDialog`, which names those sessions and stops them before it
-  deletes, and the host's 1008 / `CONFLICT` refusal is still mapped to
-  `project.deleteRunningBlocked` on both paths. A project with no live turn is
-  removed by the same store action the dialog used, with the same success toast,
-  so its second click is the confirmation the user already gave.
-- The number is D441 because D438 was already claimed twice — by the
-  window-toggle merge (#360, D438 with the D439 rebind) and by the
-  Git-checkout decision (ADR 0273), which this log flags to move to D440.
-  This entry does not rewrite another decision's text.
-- Renderer only: no protocol, storage, host, permission, or migration change,
-  and no new default. The folder on disk is still never touched. See
-  `04-ux/09-interaction-patterns.md`, D421, D431,
-  `06-delivery/04-e2e-test-plan.md`
-  E2E-PROJECT-delete-removes-project-and-owned-sessions, and
-  `apps/desktop/test/two-step-delete.test.mjs`.
-
-## 2026-09-16 — The sidebar list rhythm is 1px / 2px / 8px
-
-- The sidebar's session lists had no rhythm to read. Rows and group headers sat
-  flush inside a group (a 0 gap), two project groups sat 2px apart, and the only
-  air was the 4px above a section label. Adjacent 28px rows painted rounded
-  hover fills that touched, so two rows read as one block, a collapsed group sat
-  as far from its neighbour as an expanded group with ten rows under it, and a
-  section label was closer to the rows above it than to the rows it introduces.
-- The lists now state one ladder: rows sit 1px apart, a project group header and
-  a section label sit 2px above their first row, a sidebar section sits 8px
-  below the one above it, and an expanded project group carries an 8px tail.
-- That tail belongs to the expanded group itself, so the spacing is decided by
-  the preceding group alone: an expanded group is followed by 8px whether the
-  next group is expanded or collapsed, and a collapsed group by 1px either way.
-  The scroller's own gap stays a uniform 1px and the difference lives in the
-  group body's inset, which leaves with the rows. Collapsing a group therefore
-  cannot fork the spacing on a neighbour's state, and cannot snap its own tail.
-- The dated labels inside a project group are ordinary rows of that rhythm
-  rather than a second level of groups: they keep no state, no disclosure, and
-  no `aria-expanded`, and their own inset becomes a symmetric 4px instead of 6px
-  above and 2px below, so a label no longer outweighs the 1px row gap it sits in.
-- `space-0.25` (1px) joins the spacing scale as the hairline step for dense list
-  rhythms; the settings rail already used 1px between its navigation items. The
-  section-gap rule no longer claims the sidebar, which has its own rhythm.
-- Two row budgets follow the pitch: the pinned body still shows eight rows
-  (233px, was 224px) and the standalone Sessions body still shows five (146px,
-  was 140px), because the 28px row grid no longer fits its own gaps inside the
-  old numbers.
-- Renderer only: no protocol, storage, host, permission, or migration change.
-  See `04-ux/07-ui-design-system.md` §6.1 and §13, and
-  `04-ux/08-component-spec.md` §6.2 and §6.6.
-
-## 2026-09-16 — The sidebar project group folds as one grid row
-
-- The rhythm above shipped with the group fold animating `max-height: 2000px →
-  0` over the 300ms slow duration, plus a separate 200ms opacity fade and a
-  padding transition. A `max-height` curve spends most of its length above the
-  content, so the visible move was a short snap at the end, and the shorter
-  opacity curve emptied the group roughly two thirds of the way through: the
-  rows disappeared first and the empty box closed afterwards. Collapsing a
-  project read as two separate animations.
-- The group body is now a one-row grid whose row animates `1fr` → `0fr` over the
-  200ms normal duration. Every frame is a real fraction of the group's measured
-  height, so the fold is a single continuous motion, and `opacity` stays 1 for
-  the whole fold — the rows leave by being clipped, not by fading.
-- The body is three layers: the grid, a clip with `min-height: 0` and
-  `overflow: hidden`, and the list that owns the 1px row gap and the fixed
-  2px / 7px inset. The inset has to sit inside the clip, because vertical
-  padding on the animating box holds a `0fr` row open and leaves the group's
-  tail behind after its rows are gone.
-- A folded group keeps its rows mounted inside the `0fr` row, so it is `inert`
-  as well as `aria-hidden` and leaves the tab order. Under
-  `prefers-reduced-motion: reduce` the fold keeps both endpoints and runs in a
-  near-zero duration.
-- The scroll budgets, the indent, the pinned and standalone lists, and the
-  shared `.sidebar-session-group-body` flex column are unchanged; only the
-  project body folds as a grid.
-- Renderer only: no protocol, storage, host, permission, or migration change.
-  See `04-ux/08-component-spec.md` §6.2 and
-  `06-delivery/04-e2e-test-plan.md` E2E-LAYOUT-sidebar-project-group-fold.
-
-## 2026-09-17 — Sidebar selection is distinct from workspace context
-
-- Project headers and project, pinned and standalone conversation rows share
-  one row-level hover surface, radius and transition. Project title buttons
-  stay transparent; selected conversation paint takes precedence over hover.
-- A project is a workspace/disclosure control, not a separate selected page.
-  The current workspace keeps its dot and all existing workspace behavior but
-  no persistent row fill, including when no conversation is selected. The
-  renderer marks that context with `data-current-workspace`, not an `active`
-  project class. Session selection remains chat-page-aware and follows the
-  destination immediately while a switch is pending.
-- Folding a selected conversation does not transfer selection to its project.
-  Keyboard focus retains its outline, action buttons retain local feedback,
-  window blur releases hover without clearing selection, and drop-target paint
-  takes precedence over hover.
-- Renderer presentation only: no persistence, workspace activation, permissions
-  or protocol changes. See `04-ux/01-ui-ia.md`, `04-ux/08-component-spec.md`,
-  `04-ux/09-interaction-patterns.md` §9.1c and
-  E2E-LAYOUT-sidebar-row-states in `06-delivery/04-e2e-test-plan.md`.
-
-## 2026-09-17 — Settings shares sidebar material and restores layout without entrance
-
-- Main and settings navigation now share `sidebar-surface`: the same opaque
-  color/image fallback on Windows/Linux and the existing native vibrancy plus
-  tint/sheen on macOS. Settings wrapper ancestry allows that native material
-  through, while its content pane and content-column titlebar remain opaque.
-  Only the inner settings content animates, not the navigation backing.
-- Built-in settings rail colors no longer diverge from the sidebar. Legacy
-  `--ds-settings-rail-bg` remains an optional shared fallback; a canonical
-  `--ds-bg-sidebar` override wins. No theme or native-window API changes.
-- Sidebar mounting no longer implies expansion. A dedicated transition hook
-  distinguishes visible collapsed-state changes from route restoration. Only
-  real collapse/expand changes animate; settings navigation cancels unfinished
-  phases, and returning restores the retained width/state without replaying
-  `sidebar-in`. Animation-end guards, scoped timeout cleanup, auto-restore and
-  reduced motion remain supported. Boot presentation uses the existing splash
-  reveal instead of a second sidebar width animation.
-- No changes to item indentation, widths, workspace state, data or permissions.
-  See `04-ux/06-settings-ia.md`, `04-ux/07-ui-design-system.md`,
-  `04-ux/08-component-spec.md` and E2E-LAYOUT-sidebar-settings in
-  `06-delivery/04-e2e-test-plan.md`.
-
-## 2026-09-17 — A route surface stops holding a stacking context after its entrance
-
-- The plugin install consent modal — and the plugin detail sheet with it — painted
-  under the opaque 46px titlebar band, so the band was not covered by the modal's
-  scrim and the band's controls stayed clickable. A route page is authored inside
-  `.route-surface`, whose entrance animation carried
-  `animation-fill-mode: both`: the fill kept the finished entrance "in effect"
-  for as long as the page was mounted, and therefore kept the surface a stacking
-  context, so an overlay rendered inside the page could not paint above the
-  chrome.
-- `.route-surface` and `.settings-content-enter` no longer carry `forwards` /
-  `both` on their entrance (`apps/desktop/src/styles/chat-shell.css`). The
-  entrance ends on the element's own state, so the fill was redundant; without it
-  the surface stops holding a stacking context once the entrance finishes, and an
-  overlay authored inside a route page paints above the titlebar band again. The
-  keyframes stay opacity-only and the entrance still plays.
-- The plugin detail sheet keeps reserving `--ds-toolbar-height` at its top
-  (`apps/desktop/src/styles/plugins.css`), because on Windows/Linux the
-  renderer-drawn window controls own that top-right corner at `z-index: 200` and
-  stay above any overlay's z-index.
-- The plugin overlays returned to `z-dialog` (40) from their off-scale `80` and
-  `60` (`plugins.css`, and the release-notes overlay with them): once the route
-  surface stopped trapping them they competed in the root stacking context, and
-  at 80 they covered the leaf popups (60) and toasts (50) a dialog raises from
-  inside itself — the install dialog's "copied" toast among them. A source test
-  pins that relationship now.
-- Renderer only: no IPC, storage, schema, protocol, or plugin-SDK change, and no
-  new default. See `04-ux/07-ui-design-system.md` §9,
-  `apps/desktop/test/settings-dialog-overlay.test.mjs`, and
-  `06-delivery/04-e2e-test-plan.md` E2E-LAYOUT-three-column-width-priority (its
-  four overlay assertions live in `scripts/e2e-three-column-layout.mjs`).
-- Not done, and recorded as a follow-up: true modality — inertness, focus
-  containment, shortcut stand-down — needs these overlays on the browser's top
-  layer (`<dialog>.showModal()`). That is blocked until the popups, tooltips, and
-  toasts they open, which are portaled to `document.body`, also move to the top
-  layer, because top-layer content paints above them and makes them unusable; an
-  attempt was withdrawn for exactly that reason.
-
-## 2026-09-18 — Prompt enhancement ships a substantive rewrite with user-overridable templates (D447)
-
-- The default enhancement prompt moves from one conservative sentence to a
-  structured system prompt plus a templated user message: role, analysis,
-  rewrite principles, an explicit do-not list, language-following rules that
-  forbid language meta notes, a length brake (about twice the draft; no 800-character cap), and an output contract. The old
-  `If the draft is already good, return it with at most minor polish` clause is
-  removed: it made the action look inert on short drafts, which is the reported
-  complaint.
-- Two constraints the old prompt lacked are now explicit: code, commands, file
-  paths, identifiers, API names, and other proper nouns must be reproduced
-  exactly, and the answer must not open with a language meta note such as
-  "The draft is in Chinese". Both are default-value decisions, not
-  implementation details, because they change what every user receives.
-- The user template becomes an `AppSettings` override
-  (`promptEnhancementUserTemplate`) with its default in
-  `packages/shared/src/prompt-enhancement.ts`; a blank override means "use the
-  default", and editing the field back to the exact default text clears the
-  override instead of freezing a copy. Storing the default text as a user value
-  was rejected: a later improvement to the default would then never reach those
-  users.
-- The system prompt stays built in and is not user-editable. It carries rules
-  the spec and E2E scenario assert, so a stored override could silently remove
-  one; host-core drops such a value if an older build wrote it. Editing the
-  system prompt remains a source change with a spec update.
-- The user template carries `{{draft}}`. host-core rejects a non-blank user
-  template without it, and each template must stay within
-  `PROMPT_ENHANCEMENT_TEMPLATE_MAX_LENGTH`; main falls back to the default if an
-  unusable value ever reaches the runtime. One matching pair of wrapping
-  quotation marks is stripped from the model's answer.
-- The settings surface is one row with a `Use a custom template` switch and the
-  subagent rows' edit icon button, opening an editor sheet, rather than inline
-  textareas or a row of labelled actions: the AI settings tab stays compact and
-  the row reads as one control cluster. The switch, not the text, decides whether
-  a stored template applies, so turning it off preserves the user's text. It is
-  enabled only once a usable template exists and saving one turns it on, because
-  an always-enabled switch would choose between two identical states before any
-  template was written.
-- `promptEnhancementProviderId` / `promptEnhancementModelId` let the rewrite run
-  on a model other than the conversation's. An unresolvable pin falls back to
-  the Composer's current model with a warning rather than failing the action.
-- The enhancement model and reasoning level move to Settings -> Models, in a
-  dedicated `Enhancement prompt` card below Defaults, whose model row is titled
-  `Default model` like the Defaults card's row (the card heading separates them). Both are decisions about which model
-  runs the rewrite, and the model page already owns the one model picker a user
-  learns; the prompt card keeps only the prompt. The enhancement-model row reuses
-  the default-model row's anchored menu rather than introducing a second picker.
-- The enhancement reasoning row lists only the levels the selected model actually
-  supports, resolved the same way a turn resolves them (binding `thinkingLevels`,
-  then the live catalog, then the provider default), and is disabled when the
-  model supports none. An earlier revision offered the full canonical ladder
-  regardless of model, which is wrong for a model without reasoning. Switching
-  model re-clamps and rewrites the stored level, so a persisted level is always
-  runnable.
-- The enhancement reasoning level becomes configurable and defaults to `off`; it
-  never inherits the conversation's effort. A rewrite rarely benefits from
-  reasoning, and reasoning is the slow path, so "follow the session" would
-  silently opt every enhancement on a reasoning model into the slowest setting.
-  The level is clamped by the resolved model's capabilities.
-- One enhancement request is bounded by a 60-second ceiling: expiry aborts the
-  in-flight call (best-effort) and races the promise so the renderer is released,
-  then fails with `TIMEOUT` instead of retrying on the session model. The
-  provider retry budget can already spend about a minute, the renderer has no
-  cancel, and a hidden second attempt would double the wait. This is a behavior
-  change for a slow provider: the action now fails visibly instead of hanging.
-- No IPC method, process boundary, storage ownership, or security boundary
-  changes; the existing `prompt/enhance` payload is unchanged. See
-  `04-ux/12-prompt-enhancement.md` §3 and §5, ADR 0121, and
-  `06-delivery/04-e2e-test-plan.md` E2E-259.
-
-## 2026-09-19 — Restore resizable sidebar width with collapse-below-threshold (D451)
-
-- Amend D408 / ADR 0238 and restore ADR 0141: the expanded sidebar is again a
-  renderer-owned `240px..520px` column (default `275px`). The right-edge handle
-  previews width from the pointer-down position, persists on release, and
-  supports ArrowLeft/ArrowRight (16px), Home, and End. Escape, cancellation,
-  lost capture, and unmount restore the press-time width.
-- A pointer width below `160px` collapses the sidebar immediately as a user
-  action. The preferred expanded width is not overwritten. Keyboard resize never
-  collapses; `Cmd/Ctrl+B` remains the keyboard fold.
-- The live maximum is the three-column remainder after MainChat's 450px floor
-  and an occupying work panel's requested width, so a user-chosen sidebar width
-  does not trip D408's yield. Work-panel growth and window shrink still collapse
-  the expanded sidebar at that threshold.
-- Renderer only: existing `pi.desktop.sidebarWidth` preference, no IPC or native
-  window change. See ADR 0290 and E2E-168.
-
-## 2026-09-19 — MCP catalogs are bounded by protocol guards, not truncated (D452)
-
-- Amend D176 / ADR 0038: the per-server `tools/list` bound stops being a silent
-  truncation at 64 tools and 8 pages. The client now follows pagination to the
-  last page under Codex-parity protocol guards — 2048 tools, 100 pages, a cursor
-  that repeats or is malformed, and 30s for the whole traversal — and a server
-  that breaks one loses its handshake instead of contributing a prefix of its
-  catalog.
-- The cap was never the prompt's protection: MCP tools reach the model as
-  deferred on-demand entries behind `ToolSearch`, and the prompt block that
-  advertises them is capped independently, so a 300-tool server costs nothing
-  until one of its tools is activated.
-- `plugin.mcp.tools.truncated` is gone. A refusal is audited as
-  `plugin.mcp.connect` / `mcp.connect` with the guard's error code and message,
-  and reaches the user as the status message of a user-configured server.
-- See ADR 0038 and E2E-024K; `apps/desktop/test/plugin-mcp.test.mjs` covers the
-  whole catalog, each guard, and the old truncation as a failing baseline.
-
-## 2026-09-19 — The Voice settings card is removed (ADR 0291)
-
-- Settings → AI no longer carries a speech section: `VoiceSettingsCard` and
-  `features/settings/voice-settings.tsx`, the AI destination's
-  `settings.speechTitle` / `settings.speechTranscribe` / `settings.speechSynthesize`
-  search keywords, the `.settings-speech-*` styles, the thirteen
-  `settings.speech*` keys in all eight shipped locale catalogs, and the seven
-  unreferenced `chat.transcribe*` / `chat.speak*` keys written for those
-  withdrawn Composer controls are gone.
-- The host capability stays: `speech/getStatus`, `speech/transcribe`,
-  `speech/synthesize`, `AppSettings.speech` validation, the two built-in
-  protocols, the `speech.adapter.register` plugin permission, and the renderer
-  API bridge are unchanged. A binding is written by a caller through the host
-  settings API, and plugins and IPC calls are its only consumers.
-- Already withdrawn, and repaired here in the docs: ADR 0281 item 5's Composer
-  transcription and draft-speech entry point — its mic and read-aloud controls
-  were removed on 2026-09-18 (`344ef4ec2`, PR #555) — and the Composer speech
-  controls `04-ux/08-component-spec.md` §2.5 described. The copy written for them
-  is retired with them.
-- Renderer only: no IPC channel, storage schema, host RPC, permission, or Rust
-  change, and no stored binding is dropped. See ADR 0291,
-  `04-ux/06-settings-ia.md`, `03-runtime/20-speech.md`, E2E-008e.
-
-## 2026-09-19 — SSH bootstrap for remote hosts (D453)
-
-- The desktop installs and pairs a `pi-host` on a machine the user already
-  reaches over SSH using the system `ssh` client, so `~/.ssh/config`, the agent,
-  and jump hosts apply unchanged and the app holds no SSH secret; `BatchMode=yes`
-  makes a host that needs an interactive password or passphrase fail with a
-  typed error instead of hanging behind an invisible prompt.
-- The desktop resolves the bundle for the remote platform at its own version,
-  holds the SHA-256 the release publishes, and refuses an unpublished target
-  (`linux-x64` only today) before any download. The uploaded script downloads,
-  verifies, and installs the bundle under the remote `$HOME`; no executable
-  bytes cross the SSH channel.
-- The script runs under `umask 077` and echoes `PI_HOST_READY` /
-  `PI_HOST_PAIRING_TOKEN`, so the single-use pairing token exists only in a work
-  file and on the SSH channel, never in a world-readable path or a URL
-  (security §3.4). `PI_HOST_READY.version` must equal the desktop's; a mismatch
-  is `HOST_VERSION_MISMATCH` (D375) and is checked before a forward exists.
-- A paired host now stores an SSH descriptor (`metadata.transport = "ssh"`)
-  instead of a URL, because the local forward port is not stable across
-  launches; the tunnel manager re-establishes `ssh -N -L` on every launch and
-  adopts the bootstrap's own live forward so pairing opens exactly one tunnel.
-  The descriptor is re-validated on every registry read, and a malformed one
-  degrades to "not an SSH host" rather than spawning `ssh` with garbage
-  arguments.
-- `pi-desktop/remoteHost/bootstrap` joins `list` / `pair` / `remove`, and the
-  `connection/pair` exchange was factored into one `exchangePairingToken` used
-  by the pasted-URL path and the bootstrap path alike.
-- Not in this slice: the terminal work-panel client (Stage 5), the reverse tool
-  relay (Stage 6), the resync watchdog, non-Linux and Windows remote targets,
-  and provider configuration over the SSH channel — a freshly bootstrapped host
-  still fails `turn/start` closed with `MODEL_NOT_CONFIGURED` until a provider is
-  configured on it. See ADR 0292, `06-delivery/07-remote-control-rollout.md` §7,
-  and `05-security/02-remote-control-security.md` §3.4.
-
-## 2026-09-19 — SSH password authentication for the bootstrap (D454)
-
-- ADR 0292 kept the app free of SSH secrets and made `BatchMode=yes` the
-  enforcer, which is the right default but leaves a machine whose only
-  credential is a password unreachable from the app — the user has to install a
-  key from a terminal first, which is the detour the bootstrap exists to
-  remove. A password may now be supplied *instead of* a key, per host, and it
-  is opt-in: with no password the argv and every other behaviour are unchanged.
-- The secret reaches the `ssh` client through OpenSSH's askpass helper
-  (`remote/ssh-askpass.ts`): `SSH_ASKPASS` points at a generated `/bin/sh`
-  script and `SSH_ASKPASS_REQUIRE=force` makes it apply without a terminal, so
-  the password is never an `ssh` argument or an environment value. Its
-  confidentiality rests on modes — a `0700` directory, a `0600` secret, a `0700`
-  helper — and the material is deleted once no child can still be prompting
-  (after an exec child closes, after a forward's port is up, or on `dispose`),
-  so nothing lingers between operations.
-- `BatchMode=yes` becomes `BatchMode=no` only for a password target, together
-  with `NumberOfPasswordPrompts=1` and `PubkeyAuthentication=no`: the helper
-  answers every prompt with the same secret, so a retry could only repeat a
-  wrong password, and repeated failures are what trip a server's own lockout.
-  Default identities are skipped so an encrypted local key cannot consume that
-  single prompt as a passphrase; password mode in Settings replaces a key.
-- The password is persisted encrypted through the same OS-keychain
-  `EncryptionPort` the device token uses, as a new optional
-  `encryptedSshSecret` in `remote-hosts.json`; the descriptor gains
-  `auth: "password"` and nothing else, so a key descriptor keeps exactly its
-  previous shape and the file's `version` stays `1`. A password that will not
-  decrypt costs the secret, not the paired host, because the device token is
-  independent of it.
-- The renderer never sees it: `RemoteHostSummary` is unchanged and the secret
-  travels beside `RemoteHostSshMetadata` (plaintext, persisted metadata) rather
-  than inside it. `assertSshPassword` rejects a line break with
-  `INVALID_ARGUMENT` before any remote command runs, because OpenSSH reads the
-  helper's answer only up to the first break; Windows is refused with
-  `HOST_BOOTSTRAP_FAILED` and a remedy, because its OpenSSH cannot execute a
-  shell-script helper. A host recorded as password-authenticated with no usable
-  secret is not opened at all, which surfaces as the host being offline.
-- Settings gains an authentication mode on the SSH form with a masked password
-  field and a reveal toggle, and the copy that promised no password was ever
-  stored is replaced in all eight shipped locales. See ADR 0293,
-  `05-security/02-remote-control-security.md` §3.4 and gate 21,
-  `02-architecture/05-remote-agent-control.md` §5.2,
-  E2E-REMOTE-HOST-ssh-password-authentication.
-
-## 2026-09-20 — Project archive is a list + inspector (D455)
-
-- Decision D455 revises D267's expanding rows for Settings → Project archive.
-  The quiet intro and toolbar stay; the single expanding list becomes compact
-  rows with a full-width inspector under the selected row (ADR 0294).
-- Clicking a row selects it and keeps Settings open. Double-click, Enter, or
-  the inspector Open action activates the project and returns to chat. Archive
-  and close still keep the destination open (D133 / D267).
-- Folders, chats (latest first, batches of eight), and the existing menu live
-  in the inspector. Archived records stay grouped and visible.
-- Presentation only: no IPC, storage, or host protocol change. See
-  `04-ux/06-settings-ia.md` and E2E-038.
-
-## 2026-09-20 — Prompt-enhancement model card moves to Settings → AI
-
-- Amend ADR 0121 and the 2026-09-18 D447 placement: the Enhancement prompt card
-  (default model + reasoning) leaves Settings → Models and sits on Settings → AI
-  immediately below Prompt enhancement, so the template and the rewrite model for
-  the same Composer action live on one destination. The card keeps its own title
-  because the model picker still needs title / current value / control. Settings
-  search indexes those rows on the AI tab. Presentation only: no IPC, storage, or
-  host-protocol change. See `04-ux/06-settings-ia.md` and
-  `04-ux/12-prompt-enhancement.md` §5.
-
-## 2026-09-20 — Prompt enhancement is one Settings → AI card
-
-- Amend the same-day two-card placement: the Enhancement prompt card is folded
-  into Prompt enhancement on Settings → AI. The custom-template switch, default
-  model, and reasoning rows share one heading. Settings search still indexes
-  `promptEnhancementModelTitle` so "增强提示词" finds the AI tab. Presentation
-  only: no IPC, storage, or host-protocol change.
-
-## 2026-09-20 — Session thinking-parameter omission (D456)
-
-- Composer, session storage, and host validation accept `thinkingLevel: omit`
-  next to the seven canonical levels. Binding chips and catalog capability
-  lists stay canonical; `omit` is a client selector, not a published level.
-- Runtime clamping keeps `omit` on a reasoning model. Agent bookkeeping stays
-  `off` and the parent stream uses the same low-level omit path as subagents,
-  so adapters send no thinking field. Explicit `off` still disables thinking.
-- The Composer reasoning menu prepends `omit` whenever the selected model
-  exposes enabled canonical levels, and the chip renders the canonical string.
-  Schema v19 rebuilds `sessions` so the CHECK includes `omit`.
-  See ADR 0295 and E2E-203a.
-
-## 2026-09-19 — Drain poison outbox entries; accept steering into a delivery turn (D597)
-
-- Decision D597 amends ADR 0041, ADR 0239, ADR active-turn-steering, and D444.
-  A host append whose error message carries a `PERMISSION_DENIED:` prefix is a
-  permanent, message-level rejection. The Electron outbox drops that row and
-  keeps draining so one poison head cannot fill the 1024-entry cap. Substring
-  matches such as `PLUGIN_PERMISSION_DENIED` still pause, as do other host
-  failures.
-- Steering into a claimed collaboration delivery turn is extra human input in
-  that session. It is exempt from the delivery content/attachment contract, does
-  not inherit the delivery's agent origin, and has any client-supplied
-  `session_message` stripped. Steering that names another session is still
-  `PERMISSION_DENIED`.
-- See `03-runtime/04-data-storage.md`, `03-runtime/06-host-rpc-protocol.md`,
-  E2E-SESSION-outbox-poison-does-not-drop-history.
-
-## 2026-09-20 — Project archive reads as an inset grouped card list
-
-- Revise D455's presentation only: the destination stays one column with the
-  detail under the selected row and no side-by-side pane, but the index is now
-  an inset grouped list in the iOS sense. Each row reads left to right as
-  identity (color glyph, name, one status tag, shortened monospace path) and
-  right to left as detail (session count, relative last-active time, disclosure
-  indicator). Rows stay tiles separated by the row gap, never by rules.
-- The selected row is the header of its own card, so the detail panel repeats no
-  name, path, or status tag: it opens with an action bar (New task, Open while
-  the project is not the live workspace, overflow menu), then the read-only
-  folder and branch facts and the sessions count, then the chats. The overflow
-  menu keeps its items, its ordering, and its two-step delete.
-- Arrow-key selection walks the rendered order (section order with the active
-  sort) instead of the index build order and moves real focus to the row it
-  selected, and the handler yields to the open card so Enter inside the detail
-  stays that control's own action. Row element ids are encoded, so two paths
-  that differ only in separators can no longer collide. An empty index shows the
-  pending indicator until the host listing settles instead of "no projects yet",
-  and the expanded card and the disclosure indicator honor reduced motion.
-- Clicking the row whose card is open closes it again, through one shared
-  toggle. Selection and the open card are separate states, so the current row
-  keeps its ring while its card is closed and the disclosure indicator turns
-  down only while the card is really open. Moving the selection with the arrow
-  keys always opens the row it landed on.
-  Presentation only: no IPC, storage, host-protocol, or
-  Presentation only: no IPC, storage, host-protocol, or
-  activation-semantics change. See `04-ux/06-settings-ia.md`,
-  `04-ux/07-ui-design-system.md`, and ADR 0294.
-## 2026-09-19 — Turn-scoped review grouping and rollback (D-turn-review)
-
-- The Review tab groups the flat snapshot history by conversation turn, cut at
-  user-message anchors in the renderer (steering stays in the current turn,
-  subagent rows belong to their parent turn). No `turn_id` is plumbed into
-  `UiMessage` or the snapshot capture path: grouping is a presentation concern
-  and stays consistent with the transcript's own turn boundaries.
-- Rewind is the primary operation for older turns, and it is NOT a chained
-  replay of per-tool snapshots: per file, the batch restores the earliest
-  active snapshot's `before` bytes once, guarded by the newest active
-  `after_hash`. The state a turn started from is exactly the before-bytes of
-  that turn's first touch of each file, so one write per file lands the target
-  state with no order-sensitive intermediate steps. Surgical rollback of a
-  single turn is offered only when every file still matches the batch's newest
-  hashes.
-- Cross-session conflicts are attributed, not merged: when the guard fails and
-  another session's active snapshot explains the current bytes, the preflight
-  names that session (`blockedBy`). There is no three-way merge, no forced
-  overwrite, and no cross-session rewind in this change.
-- The agent is told about a rollback through the next real user input, not a
-  queued turn: the renderer records an English context block and prepends it on
-  the composer send path. This keeps the agent's context consistent with the
-  workspace without spending a turn, without impersonating a queued user
-  message in the durable turn queue, and without a schema change.
-- Stated blind spots, surfaced in copy rather than solved: Bash-driven external
-  side effects are not reverted; a rollback can leave the project in an
-  intermediate state that needs a fresh build/test pass; message-level review
-  state updates that fail mid-batch are logged and left for the next reload.
+## 2026-09-14 — Upstream integration compatibility
+
+The authoritative English amendment documents semantic local ADR/E2E identities,
+acknowledgement-scoped annotation consumption, text-only Alt+Enter steering, and
+the retained upstream work-panel lifecycle. The annotation and side-chat parts of
+that amendment are retired by ADR 0268; the upstream work-panel lifecycle stays. See
+[the English decision log](./decisions-log.md#_2026-09-14-upstream-integration-compatibility).
+
+## 2026-09-14 —— Git clone 只接受语法上的公网主机（D416）
+
+- 首页「克隆 Git 项目」仍接受 https/http/ssh/`git@host:path`，并拒绝 URL 密码和 `file:`。
+- 主机名用与市场守卫相同的 `isPublicHostname` 分类。私网和回环字面量在解析阶段失败。
+- Git 自己的 DNS/SSH 不变；Electron Main 不固定 clone 连接。
+- 见 ADR 0247 与 E2E-CLONE-public-hostname-rejects-private。
+
+## 2026-09-14 —— 主题 CSS 校验只检查真正生效的 CSS（D417）
+
+- `ui.theme` 消毒器在 `@import`、标记和脚本关键字检查前遮蔽注释体与字符串字面量，
+  每个被遮蔽字符对应一个空格，偏移仍指向原文；每个 `url(...)` 参数按原样保留，
+  因此真实引用仍按目标判定。
+- 采用字符级三态扫描而非 `/* … */` 剥离：在 `content: "/*";` 中浏览器看到的是字符串，
+  朴素剥离会把它当成注释，从而藏掉其后的真实 `@import "x.css";`。
+- `examples/plugins/hello/themes/midnight.css` 恢复加载。只是收窄了误拒面：没有新增能力、
+  没有格式变化，对从不出现被禁关键字的样式表行为完全不变。见 issue #334 与 E2E-024J。
+
+## 2026-09-14 —— 主题包内资源与原生窗口背景（D418）
+
+- `contributes.themes[].assets` 声明插件包内的图片与字体文件（扩展名白名单、总量上限
+  4MB）。宿主在插件包内解析它们、拒绝依赖目录、把命中的 `url()` 改写为
+  `plugin-asset://<pluginId>/<path>`，并通过宿主自有的特权协议提供；该处理器只按已加载
+  插件自己声明的清单应答。未声明的引用仍被拒绝，原始路径不会到达渲染器，因此
+  `data:`-only 规则与既有全部拒绝行为不变。权限仍沿用 `ui.theme`。
+- `contributes.windowAppearance.backgroundColor.{light,dark}` 接受
+  `#rrggbb` / `#rrggbbaa`，需要新增的 `ui.window.appearance` 授予。它只在该插件的某个
+  主题被选中时、且仅在非 macOS 上生效；还原靠推导而非记忆——渲染器每次根据持久化偏好与
+  实时主题目录重新计算，所以切换、禁用、卸载都会收敛回宿主背景，没有需要回滚的存储值。
+- 内置主题改由同一张共享表提供该值（`packages/shared/src/theme.ts`）：`BUILTIN_THEMES`
+  只写一次每个调色板的 `windowBackground`，`isThemeColorScheme` 只写一次「这是内置
+  id」的判断，由渲染器、main、面板宿主、面板 preload 与主题选择器共同读取。此前
+  `#ffffff` / `#181818` 这对字面量散在四个文件里，内置路径与插件路径可能因此分叉。
+  见 ADR 0248、issue #335 与 E2E-024J。
+
+## 2026-09-14 —— 停靠列的颜色是标记而非字面量（D419）
+
+- 工作面板列及其内部条目栏的表面色改由 `--ds-bg-dock` 与 `--ds-bg-dock-raised`
+  提供。浅色下为 `#fafafa` 与 `#ffffff`；深色下为 `var(--ds-bg-secondary)` 与
+  `transparent`，与改动前基础规则解析出的值完全一致。
+- `work-panel.css` 里原有 6 处 `:root[data-theme="light"]` 字面量，既抬高特异度压过
+  基础规则、又不读变量，导致整列在任何插件主题下都保持宿主底色。这些覆写已删除。
+- 设计系统的表面层级表现在登记了这两个标记，§6.4 也写下了它们要维护的规则：外壳绘制的
+  表面色必须来自标记，而 `:root[data-theme]` 覆写里写字面量正是失效模式。
+- `settings.css`（导航轨、搜索框、开关钮、能力搜索）等文件另有同类洞，见 issue #339。
+
+## 2026-09-14 —— 结构化、有界且脱敏的进程日志（D420）
+
+- 每条 app/host/agent NDJSON 记录都有稳定的点号分隔 `event` 和顶层关联字段。
+  正常工具调用只产生一条完成或失败记录；sidecar 意外退出时为活动工具产生中断
+  记录。工具协议和成绩单保持不变。
+- 中心日志会脱敏凭据格式、敏感键名和本机路径，限制字符串及结构化数据，并将每条
+  记录的 `data` 限制在 8 KiB。host-core 审计 payload 经过相应整形，并限制序列化
+  payload 大小。
+- 工具结果只保留结果、错误码、时长、字段名、内容块数量以及 stdout/stderr 大小，
+  不复制原始参数、输出或插件响应。子进程 stderr 和主进程回退日志使用稳定事件；
+  开发控制台镜像与文件保持同一份已脱敏记录。
+- 见 ADR 0250 和 E2E-034。
+
+## 2026-09-15 — 删除项目会移除其所属会话 (D421)
+
+- `projects.remove({ path })` 是新增的宿主 RPC。它移除一条持久项目行、附加到该行的每个
+  会话、这些会话的转录本/scratch/review 文件以及该项目的持久记忆，并且从不触碰磁盘上的
+  项目文件夹。未知路径返回 `{ removed: false, sessionsRemoved: 0 }` 而不是报错，桌面端仍会移除
+  该路径自身的记录：只有残留的最近项目条目还能让这一行保持可见。
+- 项目索引是四个来源的并集（持久行的组投影、`pi.desktop.recentProjects`、由会话推导出的
+  项目，以及活动工作区）。因此删除会在同一操作中移除渲染器本地的记录；只删除数据库行会让
+  该行仍然可见，这也是此前的手动变通做法还需要清理渲染器存储的原因。
+- 作为已存储多文件夹项目组根目录的路径会被拒绝并给出提示消息，以便该组保留有效的
+  Primary 根目录；遗留的单根投影照常删除。
+- 只要该项目下仍有会话在运行，删除就会被拒绝（1008 / `CONFLICT`，"project has running
+  sessions"）：运行中的轮次仍拥有其工具与工作目录，并且仍在追加自己的转录本，因此批量删除
+  会等项目空闲，而不是在事后复活出一个桩会话。渲染器也通过 `project.deleteRunningBlocked`
+  提前拦截同一操作。单会话删除保持现有语义。
+- 该操作被刻意排除在 `CONTROL_OPERATION_SPECS` 之外，因此本地 MCP 控制无法删除项目。
+  见 ADR 0251 与 E2E-PROJECT-delete-removes-project-and-owned-sessions。
+
+## 2026-09-13 —— 插件的宿主回合结束事件（D422）
+
+- `session:turnEnded` 发送到插件进程、插件面板页面和停靠视图，载荷为
+  `{ sessionId, turnId, reason }`，其中 `reason` 为 `completed`、`aborted` 或
+  `error`；对 `session.beginTurn` 真正开始的每个回合（用户提交、已批准的计划执行、
+  定时运行）发送一次。
+- 该通知在回合拆除结束时、持久化的 `session.endTurn` 尝试之后发出，携带终止
+  运行时事件的 `turnId` 而不是恰好活动的回合。插件工具上下文中的 `turnId`
+  会填充同一身份，由宿主原样转发。
+- 收尾函数是所有终止路径唯一的入口，且必须显式给出 `turnId`：缺失身份的终止事件，
+  或所属回合已不再拥有该会话的终止事件，既不结算也不宣告。回合记录按
+  `(sessionId, turnId)` 作为键，因此重复的终止事件会加入首次认领，而不会宣告两次。
+- 该事件不需要权限，没有 ack 也没有重放；跨插件崩溃、重载或宿主退出的投递不作
+  保证，也不代表该回合的所有在途工具都已退出。目前尚无任何已发布宿主发出它，
+  首个包含它的版本尚未发布。
+- 决策 D422 由 ADR 0252 记录。
+
+## 2026-09-15 —— 移除子智能体轮次上限（D423）
+
+- 在 ADR 0166 撤掉空闲与总时长看门狗之后，`maxTurns` 是最后一个定义级杀死开关，而父级无法为它定值：它看不到委托的实时工作，因此无法区分「再一轮就收敛」和「永远不会收敛」。内置兜底值（60、50、40、80）没有推导依据，而编辑器自己的初始状态本来就是不限制。
+- 决策 D423 把该字段从 `SubagentDefinition`、frontmatter 解析器、`UserSubagentRecord` / `UserSubagentInput`、host-core 注册表、五个内置文档、`SUBAGENT_PRESETS` 以及子智能体编辑器的「高级」折叠区中移除。委托只在完成、父级调用 `TaskStop`、用户 Stop，或父级终态错误中止它时结束。
+- 仍声明 `maxTurns` 的既有文档继续正常加载：该键现在是无法识别的 frontmatter，会像其他未知键一样被忽略，不报错、不告警、也不改写用户文件。因此依赖该上限的定义会静默失去它。
+- `truncated` 子智能体状态从共享运行状态联合类型、渲染器结果联合类型、各语言的 `chat.subagentStatus` 目录项以及委托拓扑的警告计数中一并移除。尽管 D328 已撤掉产生它的看门狗，`timed_out` 仍保留在类型中。
+- 不改协议版本、schema 版本或存储：host-core 的子智能体输入结构仍然忽略未知字段，注册表解析的是 Markdown frontmatter 而不是表列。
+- 见 ADR 0253、`03-runtime/02-agent-runtime.md` §5f、`04-ux/06-settings-ia.md` §7、E2E-155 与 E2E-SUBAGENT-legacy-turn-limit-frontmatter-is-ignored。
+
+## 2026-09-15 — 主题资源改为绝对路径（D422）
+
+- ADR 0248 要求主题资源是包内相对路径，于是插件必须把用户选的图片复制进自己的包。
+  开发插件是递归监听的，每次复制都会重载插件并关掉该插件的面板窗口；而插件自己的
+  数据目录根本无法被引用。
+- `normalizeThemeAssetPath`（SDK）与 `normalize_theme_asset_path`（host-core）现在
+  只接受绝对路径（`C:/art/bg.png`、`/art/bg.png`，或两者的 `file:` 写法）。包内相对
+  路径不再被当作资源；受影响面仅限声明过 assets 的主题。
+- `pi.themes.upsert` 会解析主题 CSS 里的资源引用，并登记进该插件的资源表（插件加载
+  期间有效），因此换图不需要在插件包内写任何文件。
+- 保持不变：扩展名白名单、声明资源的总量 4MB 上限、`.`/`..` 拒绝、`url()` →
+  `plugin-asset://` 改写、`nosniff`、`no-store`、卸载即撤销。绝对路径在 URL 里做
+  percent-encoding，由处理器解码。
+- 代价：插件现在可以把它能读到的任意本地文件交给渲染器。manifest 声明的资源仍可
+  静态审查；运行时登记的随插件消失。
+- 见 ADR 0255、`07-plugins/02-plugin-manifest-schema.md`、
+  `07-plugins/04-plugin-security.md`，以及 ADR 0248 §1（路径解析部分已被取代）。
+
+## 2026-09-15 —— 压缩后保留 DeepSeek 推理（D424）
+
+- OpenCode / 第三方 DeepSeek 中转在上下文压缩丢掉助手思考后，会拒绝空的 `reasoning_*` 回传（#296）。官方 `deepseek.com` 仍接受 `""`（#223 / D389）。
+- 决策 D424 修订 D389 / ADR 0136：历史重建时恢复 `thinkingSignature`；把最近思考暂存在检查点 `details.retainedReasoning` 并在摘要后回放；对非官方 DeepSeek Completions 行设置 `requiresNonEmptyReasoningReplay`，使 pi-ai 补丁填入文档化占位符而非 `""`。见 ADR 0256 与 E2E-005E。
+
+## 2026-09-15 —— 回合队列的优先区块与行内操作（D429）
+
+- “立即发送”从“跳到队首”改为优先区块：被提升的条目写入其会话内的 `MAX(priority) + 1`（架构 v18，新增可空 `priority` 列），因此多次提升按点击顺序投递，等待队列在其后保持自身的 `position` 顺序。对已经带优先级的条目录再次提升返回 `CONFLICT`，而不是再次移动。
+- 排队行在“立即发送”和删除之外新增上移、下移与编辑。上移/下移通过 `session.queueReorder` 与相邻的等待条目互换，绝不跨入优先区块；编辑移除该行并把捕获的草稿（文本加内联文件引用）回填输入框，输入框非空时拒绝执行。
+- 被提升的行在 Host 投递之前保持锁定：上移/下移、编辑与删除均被禁用，“立即发送”显示为已决定。
+- 优先区块以**相邻的用户消息**投递：第一个已优先条目在边界处启动回合，其余条目通过引导通道注入同一回合，因此整块只被回复一次，而不是每行各回一次。被注入条目自己的回合被标记为已取消；运行时拒绝接收的条目仍留在队列中，在下一个边界作为自己的回合启动。
+- 已结算的回合对队列具有权威性：终态事件可能被丢弃（Main 不会转发点名它已不再拥有的回合的终态事件），也可能根本没发出，而留在 Host 中处于活动状态的回合会永久占住该会话的队列——“点立即发送再暂停”导致的卡住正源于此。现在结算会在模块内关闭该回合，且在 drain 进行中到达的请求会被重试而不是丢弃。见 ADR 0265、`03-runtime/01-ipc-protocol.md`（§5.6）、`03-runtime/04-data-storage.md`、`04-ux/08-component-spec.md`（§11）与 E2E-QUEUE-promote-orders-delivery-by-click。
+
+## 2026-09-16 —— 手动展开详情时保持阅读位置（D430）
+
+- **手动展开会把自己的标题交给拥有它的滚动器，发生在展开状态改变之前、且是同步的。** 内容 `ResizeObserver` 仍会在每次内容尺寸变化时重新触底一个已固定的转录（D287），它无法区分「流式增长」和「读者展开一行」，所以先让读者表达意图：转录退出跟随模式，滚动器在同一个观察器回调内恢复该标题的视口偏移，持续覆盖高度仍在变化的每一帧（活动组会动画 `grid-template-rows`）。`.thread-scroll` 上的 `overflow-anchor: none` 意味着这件事必须显式做。
+- **锚点是标题元素相对滚动器顶边的偏移，而不是 `scrollTop`；浏览器自身的边界夹紧会被采纳为新的锚点。** 内容无法到达的修正量、以及标题上方同时发生的高度变化，都在不与浏览器逐帧对抗的前提下被处理。没有延时「把底部抢回来」的补偿：hold 会在真实滚动输入、跳到最新控件、新一轮或导航时结束。
+- **每个滚动所有者各持自己的位置，并把 hold 向外传递。** 转录滚动器与嵌套的委派停靠区（`useFollowScroll`，D302）共用同一个控制器；停靠区变高同时也在增大转录的内容高度，因此仍处于跟随模式的外层滚动器会把同一个标题再次拽走。
+- **输入会归属到真正能消费它的滚动器。** 只有真正能让某个容器移动的输入才可以释放跟随或已持有的位置：按在行、控件或可编辑字段上属于普通点击，文本框里的按键属于该字段，被嵌套滚动器消费的输入不算外层的手势。方向键仍能滚动，Space 仍能激活已获得焦点的标题。
+- **程序化的立即滚动记录的是滚动器实际到达的 `scrollTop`**，并且亚像素容差只作用于非手势产生的滚动事件。在 DPR 1.1 下跟随请求 841 而实际得到 840.909，严格比较时这个小数会被读成读者向上滚动并解除跟随。真实手势仍按精确值比较，所以一个像素的上滚依然会解除固定。
+- 仅渲染层：无协议、存储、宿主、权限或迁移改动。见 `04-ux/09-interaction-patterns.md` §9.1 与 E2E-CHAT-disclosure-toggle-keeps-reading-position。
+
+有读者反馈：点击工具、思考或活动标题展开时，整个转录会被拽上去整整一个展开详情的高度，即使是停在底部、甚至该轮已经结束的会话也一样。
+## 2026-09-16 —— 运行中任务的拒绝归属删除对话框，而不是菜单（#360，D431）
+
+- 修订 D421 的渲染层一半。侧边栏菜单与项目索引菜单一旦发现该项目有任何会话在运行，就用一条转瞬即逝的 `project.deleteRunningBlocked` 警告拒绝「删除项目」，并在 `ProjectDeleteDialog` 挂载之前就返回。这条拒绝随 toast 一起消失，没有留下任何可继续的路径，于是带有一个在跑任务的项目根本无法删除 —— 这正是 #360（「项目管理中无法真正删除项目」）所描述的体感。
+- 现在两个菜单都始终打开该对话框。每个入口都会传入该项目当前在运行的会话 id（`runningSessions[session.id]`，作用于它本来就已匹配的行：侧边栏的 `entry.sessions`、索引的 `sessionMatchesIndexProject`），对话框在每次渲染时从该 prop 推导文案，因此对话框打开期间新开始或已结束的回合都会在用户确认之前被反映出来。
+- 对话框新增一行警告，点名有 `{{count}}` 个会话正在运行，并把确认按钮文案换成 `project.deleteRunningConfirm`（「停止任务并删除」）。确认会精确中止这些会话，然后才调用 `deleteProject`，所以删除一个正在运行的回合仍然是针对已陈述后果的第二次显式确认。取消不删除任何东西。
+- 宿主侧的守卫未改动：只要仍有关联会话存在运行中的回合，`projects.remove` 依旧以 1008 / `CONFLICT` 拒绝，对话框也依旧把该拒绝映射为 `project.deleteRunningBlocked`。中止循环之后才开始的回合，正是这条兜底覆盖的情况。
+- 仅渲染层：无协议、存储、宿主、权限或迁移改动，也没有新增默认值。`project.deleteRunningBlocked` 的含义、文案与全部翻译保持不变。见 ADR 0251、D421 与 E2E-PROJECT-delete-running-sessions-are-named-and-stopped。
+
+## 2026-09-16 —— 插件 `workspace` fs 根跟随发起调用的会话（D432）
+
+- 所有模式根为 `workspace` 的插件 `pi.fs.*` 调用都解析到窗口级唯一的可见工作区，因此从会话 B（项目 B）发起的插件智能体工具，在用户切换标签页后读到的是项目 A 的根；而在没有可见工作区时，所有会话会一起以 `NOT_FOUND` 失败（D093 已为内置工具执行定下同一条规则，却从未传到插件）。
+- `plugin-runtime.ts` 现在用新增的私有辅助函数 `fsRoot(loaded, rule)` 解析该根：由发起这次调用的工具会话所属项目决定，通过新增的宿主服务 `getWorkspacePathForSession` 询问。`plugin-services.ts` 用它本就维护的「会话到项目」映射完成接线，因此没有引入新的真相来源。
+- 未改动：面板桥调用没有工具会话，宿主不跟踪的会话也一样，它们的根仍是可见工作区；`userSelected` 模式依旧保留用户通过 `requestDirectory()` 选定的目录。
+- 现在没有可见工作区时会话根也能解析，所以临时对话按会话各自继续工作，而不是所有会话一起失败；这种状态下的面板调用仍然失败关闭。于是 `workspace` 根的 `NOT_FOUND` 更窄：既没有解析出调用会话的项目，也没有可见工作区。
+- 权限、realpath 包含、拒绝名单、声明范围与运行时同意这四类闸门都没有改动，插件 API 表面也未变化：`pi.workspace.get` 仍然以可见工作区及其项目组作答。
+- 见 ADR 0266、`07-plugins/03-plugin-api.md` §3、`07-plugins/13-plugin-permissions-matrix.md` §6 与 E2E-PLUGIN-fs-root-follows-the-calling-session。
+
+## 2026-09-16 —— 引用、批注与侧边聊天已移除（ADR 0268）
+
+- 引用、文本选区浮层、响应批注（评论编辑器、悬浮批注索引、源标记、composer 批注附件）与渲染器拥有的侧边聊天已从所有界面移除。消息操作行保留 Copy、Edit、Delete、Fork、Retry 与 Regenerate；composer 保留草稿、芯片、智能 Stop 与会话级草稿槽；工作面板保留其余标签类型；`session.fork` 与 Fork 操作不变。
+- 发送路径不再拼装 `# Response annotations:` 块，显示层还原函数 `requestTextWithoutAnnotations` 一并删除，因此移除之前已存入会话的提示词在转录、编辑种子与队列预览中都按存储原文显示。
+- 永久退役且不得复用：`D-LOCAL-message-quotes`、`D-LOCAL-selection-overlay`、`D-LOCAL-response-annotations`、`D-native-sidechat-stream`，以及 E2E-CHAT-quote-prefill、E2E-CHAT-selection-markdown、E2E-CHAT-selection-side-chat、E2E-CHAT-annotation-attachments、E2E-CHAT-annotation-session-state、E2E-CHAT-annotation-source-index、E2E-CHAT-annotation-ack-and-steering、E2E-CHAT-side-chat-fork、E2E-CHAT-side-chat-stream、E2E-CHAT-side-chat-add-to-main、E2E-CHAT-side-chat-promote、E2E-CHAT-side-chat-close、E2E-SESSION-native-side-chat-fork-survives-close。
+- 未改动宿主协议（v11）、存储 schema（v15）、IPC 通道、权限与 Rust 侧。见 ADR 0268。
+
+## 2026-09-16 —— 没有文字的控件声明自己的正方形几何
+
+- `.icon-btn` 与带文字的胶囊按钮共用，宽度来自内容 —— 图形加左右各 8px 内边距。于是每一处只有图标的使用都变成了"高大于宽"：侧边栏收起控件与输入框的添加按钮渲染为 31×28，`.composer-right` 内的增强与撤销控件为 35×28，设置里的服务商操作按钮因 14px 图形而为 30×28。同一个功能在会话顶栏早就是 28×28 的正方形，也就是同一个功能存在两种尺寸。
+- 这些控件现在声明 `.icon-btn-square`：把两个轴都固定到新增的 `--ds-control-size`（28px）标记，保留 `flex: 0 0` 以免拥挤的工具条把控件压回非正方形，并去掉侧向内边距（在全局 `border-box` 下，那会给 15px 的图形只留 12px 内容区）。只有图标的控件现在与顶栏开关、工作面板操作、发送/停止控件一直以来的正方形保持一致。
+- `.composer-right .icon-btn` 不再设置水平内边距。带文字的模型/思考胶囊自己用 `!important` 设置内边距，所以那条声明只会把它旁边的纯图标控件撑宽；增强控件在加载态仍保留自己的带文字几何。
+- 仅渲染层：无协议、存储、宿主、权限或迁移改动。见 `04-ux/07-ui-design-system.md` §11.1 与 `04-ux/08-component-spec.md` §3.7。
+
+## 2026-09-16 —— 每个 chrome 图标控件共用一套几何
+
+- 预览态与路由带上的动作按钮（`.title-nav-btn`）此前渲染为 22px 的方块，使用 `--radius-2xs` 与 `--ds-tile` 底色，而它们的同级控件是 28px：会话顶栏里同一个侧边栏开关、视口固定的工作面板开关，以及工作面板自身的操作。同一个控件、同一个 46px 带内，却有两种尺寸和两种形状。
+- 这些动作按钮现在采用共享的 chrome 控件几何（`.ct-icon-btn` 组）：由 `--ds-work-panel-toggle-size` 得到的 28px 正方形、`flex: 0 0` 以免拥挤的带把它们挤扁、`--radius-md`、透明底座加语义化 hover 底色，以及其它 chrome 控件统一使用的 15px 图形。`.title-nav-btn` 只保留按压反馈与 active 色调。
+- 预览态动作组的车道宽度改为由它所预留的控件推导：`--ds-preview-action-lane-width: calc(2 * var(--ds-work-panel-toggle-size) + 4px + 8px)`，这样面板头部的预留与按钮本身不会再各自漂移。
+- 仅渲染层：无协议、存储、宿主、权限或迁移改动。见 `04-ux/08-component-spec.md` §2。
+
+## 2026-09-16 —— macOS 交通灯预留量只有一个来源（D433）
+
+- 渲染层为 macOS 交通灯留出的窗口模式引导内缩，原本是一个手抄的 `76px`：散在 `apps/desktop/src/styles/chrome.css` 与 `apps/desktop/src/styles/work-panel.css` 里的五处声明 —— `.main-titlebar-left`（`64px`，即该值减去行自身的 12px 内边距）、`.conversation-topbar.ct-collapsed`（`--ct-lead-inset`）、`.sidebar-header`、`.window-chrome-row:not(.sidebar-expanded)`，以及预览态的 `.work-panel-header`（`calc(76px + var(--ds-preview-action-lane-width))`）—— 每一处还各有一个 `[data-fullscreen="true"]` 分身。它们谁都没有和主进程交给 Electron 的 `trafficLightPosition` 建立关联，因此任一侧单独改动都会与另一侧漂移。
+- 原生几何现在只有一个归属地 `packages/shared/src/window-chrome.ts`：`MAC_TRAFFIC_LIGHT_POSITION`（`{x:16,y:16}`）与 `MAC_TRAFFIC_LIGHT_CLUSTER_WIDTH_DIP`（`60`），并由 `MAC_TRAFFIC_LIGHT_EDGE_DIP`（`16 + 60 = 76`）给出灯簇右缘。主进程用这些常量放置按钮，渲染层在启动时把右缘注入 `--ds-traffic-light-edge`。所有消费点都读 `--ds-window-lead-inset`，它由 `chrome.css` 针对 `:root[data-platform="darwin"]` 组合一次：`--ds-traffic-light-edge` + `--ds-traffic-light-gap`（`12px`）= `88px`。
+- 按钮此前紧贴绿灯右缘，间隙为 0。现在灯簇右缘与第一个 shell 控件之间保留了 `12px` 呼吸空间，这也是窗口模式从 `76px` 变为 `88px` 的原因。
+- 逐个选择器的 `[data-fullscreen="true"]` 覆盖规则已删除。全屏会隐藏按钮，同一个 token 的 `[data-fullscreen="true"]` 规则一次性把所有消费点的预留量降为普通的 `8px` 留白。
+- Windows 与 Linux 行为不变：`--ds-window-lead-inset` 保持 `0px` 默认值，这两个平台仍使用右侧 120px 带内由渲染层绘制的控件。插件面板窗口创建的是普通无框架 `BrowserWindow`，没有原生交通灯，因此不受影响。
+- 仅渲染层 + 共享常量：无协议、存储、宿主、权限或迁移改动，也没有新增默认值。
+- 见 `04-ux/08-component-spec.md`、`04-ux/09-interaction-patterns.md` 与 E2E-LAYOUT-three-column-width-priority。
+
+## 2026-09-16 —— 工作面板头部的按钮现在是一组
+
+- 工作面板头部此前读起来是两簇：头部内部的动作组（`+` 与最大化，相距 4px），以及头部之外视口固定的折叠开关。它们之间的分隔由 `.work-panel-actions` 上的四条声明叠加而成 —— `margin-right: 8px`、`padding-right: 8px`、1px 的 `--ds-border-subtle` 分隔线，以及另一个车道 token `--ds-work-panel-toggle-gap: 20px` —— 实际间距 37px 外加一条细线，于是同一个 46px 行内同样的三个 28px 方块看起来像两簇毫不相干的控件。
+- 现在整行由同一个 token 控制间距。`--ds-work-panel-control-gap: 4px` 取代了 `--ds-work-panel-toggle-gap`，同时是头部的 flex 间距（标签条到动作组）、`.work-panel-actions` 的间距（`+` 到最大化），以及头部右侧内边距以 `calc(size + inset + control-gap)`（44px）形式花费的、动作组到固定折叠开关的间距。`.work-panel-actions` 只声明间距：分隔线、内缩与外边距都已移除。
+- 车道仍然为整个开关预留空间，`+` 触发按钮在车道内与开关之间仍有 36px（4px + 28px 的最大化控件 + 4px），因此 `WORK_PANEL_HEADER_PROBE` 的 24px 断言与 E2E-152 的命中区域契约依然成立。
+- 仅渲染层：无协议、存储、宿主、权限或迁移改动，也没有新增默认值。见 `04-ux/08-component-spec.md` §5.2、`04-ux/07-ui-design-system.md` §4.3 与 E2E-LAYOUT-three-column-width-priority。
+
+## 2026-09-16 —— 工作面板的控件是安静的图标，而不是填充的底座
+
+- 工作面板头部的 `+` 与最大化控件此前各有一个 `--ds-tile` 底座，视口固定的折叠开关在 `aria-pressed="true"` 时又叠加 `--ds-tile-deep` 与 `--ds-raised-shadow`。在浅色主题下，这一行三个 28px 控件读起来就是三个填充方块，开关更像一颗悬浮在面板头部之上的抬升圆形胶囊 —— 与旁边左上角的侧边栏开关、新任务控件完全不是同一种语言。
+- `+` 与最大化现在加入 `chrome.css` 中的共享 chrome 控件组 —— 也就是为顶栏侧边栏开关、视口固定的面板开关与预览态/路由带动作组提供底座的同一条规则 —— 因此它们共用一套几何（28px 方形、`--radius-md`、`flex: 0 0`）、同一个透明底座、指针悬停时的语义化 `--ds-bg-hover` 淡色，以及 `opacity: 0.4` 的禁用状态。它们在 `work-panel.css` 中重复的规则已删除，该分部只保留动作组的间距。
+- 开关的按下状态去掉填充与抬升阴影，保留被激活的墨色，因此打开状态就是图形切换加 `--ds-text-primary`。`aria-pressed` 仍向辅助技术传达状态，`.app-work-panel-toggle` 继续拥有视口固定定位与 `no-drag` 排除区。
+- 键盘焦点不变：全局 `:focus-visible` 轮廓与其他 chrome 图标控件一致地生效，因此移除已废弃的 `:focus-visible` 背景淡色不会损失任何焦点提示。
+- 仅渲染层：几何、间距、内缩、协议、存储、宿主、权限与迁移均无改动，也没有新增 token。见 `04-ux/08-component-spec.md` §2.3 与 §5.2、`04-ux/07-ui-design-system.md` §4.3 与 E2E-LAYOUT-three-column-width-priority。
+
+## 2026-09-17 —— 内置子智能体可以关闭（D434）
+
+- 设置 > 智能体 > 子智能体把五个随应用发布的默认项列为只读行，而用户自建的文档带启用开关，于是有一个委派对象完全无法关闭：复制一个内置项再停用副本，随应用发布的定义仍留在目录里，因为被停用的用户文档在加载器合并前就被过滤掉，也就没有遮蔽任何东西。
+- 每个内置行现在都带同一个开关。句柄存放在 `<data>/agent-capabilities/subagent-builtins.json` —— 一个独立文件，因为用户文档扫描会清理它永远看不到的 id 的状态 —— 并由 host-core 通过 `agents.disabledBuiltins` / `agents.setBuiltinEnabled` 暴露。Electron 主进程把被关闭的句柄交给 `loadSubagentDefinitions`，由它把它们从委派目录中剔除，而 `subagent/catalog` 仍会在其新增的 `builtins` 列表中返回该内置项，并标记 `enabled: false`。
+- 被关闭的内置项保留自己的行并变暗，因此这个开关就是重新打开的入口。同名的用户文档继续生效并继续遮蔽随应用发布的定义，在文件夹中显示与删除仍然没有，因为内置不是文件；宿主不可用时也不会贡献任何排除项。见 ADR 0270、`04-ux/06-settings-ia.md` §2、`03-runtime/01-ipc-protocol.md` §12c 与 E2E-SUBAGENT-settings-lists-builtin-defaults。
+
+## 2026-09-17 —— 按请求实际会走的线路判定公网地址（D436）
+
+- 技能市场的主进程守卫此前用*本地*解析器判定目标主机，而 `net.fetch` 走的是 Chromium 的代理栈（ADR 0177）。在 TUN / fake-IP 解析器下，那个答案是应用永远不会建立的连接的合成地址（`198.18.0.0/15`），于是每个目录源都被判为「被应用的地址校验阻止」（issue #419）。
+- 现在每一跳都向承载 `net.fetch` 的会话询问它自己的判定（`Session.resolveProxy`），共享的 `classifyProxyRoute` 把该答案归为 `proxied` / `direct` / `unknown`。在 `proxied` 线路上，`isAcceptableResolvedAddress` 只容忍解析器自身产物的那一类（`benchmark`）；所有真实内网类别与「解析器没有应答」仍然拒绝。`direct` 线路与改动前逐字一致；列表里任何位置出现 `DIRECT` 都按 `unknown` 处理（Chromium 可能回退到它），而 `unknown` 走严格路径。
+- 拒绝与市场的 `failureDetails` 现在都带 `route`，因此「直连线路上的 fake-IP 拒绝」与「读不出线路的拒绝」在诊断里可以区分。
+- MCP 市场仍使用自己的地址钉定 Node HTTPS 守卫（ADR 0245），本次不变；fake-IP 环境下它的源仍会被拒绝。
+- 见 ADR 0272、`05-security/01-security.md` §4.1、`03-runtime/09-logging-and-observability.md` 与 `06-delivery/04-e2e-test-plan.md` 的 E2E-SKILL-MARKET-NET-BOUNDARY。
+
+## 2026-09-17 —— dock 内的问题卡是 composer 板（#360，D437）
+
+- asktool 问题卡挂在透明的 composer dock 里（`Composer.tsx` 把它渲染为 `.composer-stack` 的直接子节点，成绩单内的挂载已移除），但它仍在绘制流动层的 `--ds-tile` 洗色：3.5% 墨色混合、没有阴影。在浅色页面上这留下一块 `#f7f7f7` 面板加白色选项行，紧邻下方的 composer 板 —— 这正是 #360 第 1 项（“选择交互面板缺少背景色”）读到的样子。该 dock 规则自己的注释早已声称这张卡“使用与 Plan/Goal 批准相同的决策表面”，而同一槽位里的 `.plan-approval-bar` 绘制的是 `--ds-bg-composer` 加 `--ds-shadow-composer`（`04-ux/03-permission-ux.md` §9、`04-ux/08-component-spec.md` §11.5）。
+- `.composer-stack > .asktool-card` 现在绘制那块板：`--ds-bg-composer` 加 `--ds-shadow-composer`（浅色 `#ffffff`，深色 `color-mix(in oklab, #212121 96%, transparent)` 配合 composer 阴影）。
+- 它的控件移到该板的内嵌层 —— 也就是 `.plan-approval-split` 在同一块板上已经使用的层：`.asktool-option` 与 `.asktool-custom-input` 去掉 `--ds-raised` 与 `--ds-raised-shadow`，改用 `--ds-tile-deep`，悬停/选中混合也以 `--ds-tile-deep` 为基底。不做这次翻转，浅色主题下选项行会白上加白，因为该调色板里 `--ds-raised` 与 `--ds-bg-composer` 都是 `#ffffff`。15 px 的选项标记保留 `--ds-tile-deep` —— 与侧边栏复选框同一枚标记 —— 它与内嵌行之间的对比，和它与侧边栏之间的对比完全一致。
+- 仅渲染层：无协议、存储、宿主、权限、迁移或偏好改动，也没有新增默认值。两层在两种调色板里都是既有 token，因此贡献主题可以分别用 `--ds-bg-composer` / `--ds-tile-deep` 移动板与行。见 `04-ux/11-asktool-question-card.md`、`04-ux/07-ui-design-system.md` §6.4 与 E2E-078。
+
+## 2026-09-17 —— 呼出与隐藏窗口合并为一个开关键（#360，D438）
+
+- issue #360 第 3 项要求把「呼出窗口」与「隐藏/关闭窗口」两个全局快捷键合并成一个键。
+  D384 当年给的恰好是相反的安排 —— `summonWindow`（`Mod+Shift+W`）作为
+  `closeWindow`（`Mod+W`）的「对称键」，并由 `04-ux/09-interaction-patterns.md` §1.1
+  记载 —— 因此 D438 取代 D384 的这一半；同一条决策里的插件 Plan 安全动作选项不受影响。
+  编号跳过 D435 与 D437，因为其它在途工作已先占用。
+- 快捷键目录现在只保留 `window` 组里的一个 `toggleWindow`；`closeWindow` 与
+  `summonWindow` 已从 `KEYBOARD_SHORTCUT_IDS` 移除，因此两个退役组合键都不再被任何
+  东西占用：它们既不是随应用发布的默认值，也不会注册到 `globalShortcut`，既不是设置行，
+  也不是菜单加速键，而被释放出来的 `Mod+Shift+W` 可以重新交给插件使用。D439 后来把
+  开关键自己的默认值从 D438 选的 `Mod+W` 挪开；合并后的 id、切换语义与下面的迁移规则
+  都不受这次改键影响。
+- 按下这个键是一次判定，而不是一次关闭。`windowToggleAction` 对可见且在前台的窗口执行
+  `Window.hide()`，其余情况显示并获得焦点（已隐藏、已最小化、被其它应用挡在后面都算
+  「不可见」）。`Window.hide()` 就是隐藏的全部路径，所以 Windows/Linux 的关闭行为询问、
+  其中的「退出」选项、`window-all-closed` 与 `before-quit` 都不会被触达，没有窗口被销毁，
+  应用继续运行；托盘图标、同一个键或 macOS 的应用激活都能把窗口调回来。
+  `windowControl("close")` 仍是窗口自己的关闭按钮，依旧走关闭行为。
+- 已持久化的 `settings.keybindings` 仍可能写着这两个已退役的 id，两个进程遵循同一条规则：
+  `migrateKeybindingOverrides` 在读取时就折叠映射 —— Electron 主进程在注册加速键和构建
+  菜单之前，渲染层 store 在任何消费方看到它之前 —— 因此没有任何表面会按退役 id 行事。
+  规则有序且幂等：已存在的 `toggleWindow` 覆盖原样胜出；否则第一个带*绑定值*的退役项胜出，
+  `closeWindow` 优先，因为隐藏才是开关键的主要职责；只有在没有绑定值竞争时，
+  仅写入 `null` 的退役项才被尊重，所以明确的「未绑定」不会被随应用发布的默认值顶替；
+  与自身退役默认值相同的存储值不携带任何意图（设置界面会删除等于发布默认值的覆盖项），
+  因此 `Mod+W`/`Mod+Shift+W` 这类值会被丢弃而不是被复活。存储本身不做改写：折叠后的映射
+  由下一次快捷键保存写入，旧版本读到新映射时只是忽略不认识的 id。
+- 窗口可见性键在 macOS、Windows 与 Linux 上都是受支持的全局快捷键，因此按一个键来记录：
+  菜单标签与设置行在全部八套语言包里本地化，快捷键卡片显示唯一的一行「窗口」，
+  而不是两行互相矛盾的行。
+- 见 ADR 0211（已修订）、`04-ux/09-interaction-patterns.md` §1.1 与 §1.4、
+  `04-ux/06-settings-ia.md`（快捷键选项卡）、`07-plugins/03-plugin-api.md`、
+  `07-plugins/04-plugin-security.md`、`03-runtime/01-ipc-protocol.md`
+  （`NATIVE_MENU_ACTIONS`）、E2E-072 与
+  `apps/desktop/test/window-toggle-shortcut.test.mjs`。
+
+## 2026-09-17 — Git 检出成为新建项目的来源（D438）
+
+- 新建项目对话框此前只收集项目名称与本地文件夹（ADR 0233），而首页「克隆 Git 项目」入口只在绑定项目的会话 hero 中渲染。全新安装因此必须先打开一个无关的本地文件夹才能克隆仓库。
+- 对话框现在拥有两种对等来源：此电脑与 Git 仓库。Git 来源保留同一个名称字段（在用户输入前用仓库名预填），增加仓库地址输入框和一个克隆保存位置行，并复用切换器的 `parseGitCloneUrl` 规则，因此私网、回环、链路本地、带凭据与非法远程都会让创建按钮保持禁用（ADR 0247）。
+- 主进程新增可加的 `project/cloneCheckout({ url, parentPath })`：它克隆到显式指定的父目录并返回 `{ path, name }`，不更改当前工作空间、也不弹出选择器。`project/clone` 为首页切换器保留原有的原生选择器行为。
+- 项目创建语义不变：两种来源调用同一个项目 slice 助手，`project-group/create` 仍写入唯一的持久记录，检出目录成为同一逻辑项目组的主要根（ADR 0233）。
+- 渲染器加一条窄的主进程能力：协议、schema、host RPC、权限、存储与偏好均无变化。见 ADR 0273、`03-runtime/01-ipc-protocol.md` §9、`04-ux/08-component-spec.md` 与 E2E-258。
+
+## 2026-09-16 —— 可拖拽的对话内容宽度（D439）
+
+- 居中的对话带、空首页和输入框共用一个首选最大宽度，默认 760px，持久化为
+  `AppSettings.chatContentMaxWidth`。左右边缘各一条手柄（静止不可见；悬停显示短胶囊，拖拽时略加长加深）同步改这个宽度，列保持居中。拖拽下限 560px。
+
+- 实际宽度是 `min(可用窗格减去两侧 24px, 首选值)`，侧栏或工作区挤压时自适应压缩，不改写偏好。收起侧栏不再把内容带到 640px。
+- 助手/工具/决策行跟随内容带；用户气泡仍是 `min(82%, 600px)`。仅渲染器。见 ADR 0277、E2E-208、E2E-CHAT-content-width-handles。
+
+## 2026-09-17 —— 窗口开关键避开 macOS 的关闭窗口组合键（#360，D439）
+
+- D438 把两个键合并到了 `Mod+W`，但这个键不能作为*系统级*全局加速键的默认值：
+  macOS 把 `Cmd+W` 用于自己的「关闭窗口」命令，全局占用它等于从所有其它应用程序
+  手里把这个组合键抢走，而不只是关闭本窗口。因此 `Mod+W` 正是开关键唯一不能持有的键。
+- 快捷键目录现在把 `toggleWindow` 发布在 `Alt+Shift+W` 上 —— 不含平台修饰键，因此在
+  macOS、Windows 与 Linux 上是同一个组合键 —— 它与任何发布默认值、保留的编辑组合键
+  以及平台命令都不冲突。合并本身、隐藏/显示语义、以及退役的
+  `closeWindow`/`summonWindow` 覆盖项的折叠规则，完全保持 D438 定义的样子。
+- 在 macOS 上 `Mod+W` 现在也拒绝交给插件（`isReservedKeybinding`），因此即使应用不再
+  使用它，平台仍然独占它自己的这个组合键。
+- 只重复「本版本发布默认值」或「已被取代的默认值」的 `toggleWindow` 存储值不携带用户
+  意图，折叠时会丢弃：曾经持久化过那个短命 `Mod+W` 默认值的配置会迁移到
+  `Alt+Shift+W`，而不是把 macOS 的组合键冻结住；真实改绑（`Ctrl+Alt+T`）与明确的
+  「未绑定」（`null`）原样保留，退役项的自定义值也仍然优先于被丢弃的旧默认值。
+- 编号取 D439，因为 D435 与 D437 已被其它在途工作占用。**注意**：本日志当前有两处
+  `D438` —— 本文件上方的窗口开关键合并决策（#360，重绑前）与紧随其后的 Git 检出决策
+  （ADR 0273）。后者是在开关键 D438 合入之后才追加的，编号需要由其作者改到 D440 或
+  之后的可用号；本条不代为改写他人决策正文。
+- 见 ADR 0211（再次修订）、`04-ux/09-interaction-patterns.md` §1.1 与 §1.4、
+  `04-ux/06-settings-ia.md`（快捷键选项卡）、`07-plugins/03-plugin-api.md`、
+  `07-plugins/04-plugin-security.md`、E2E-072 与
+  `apps/desktop/test/window-toggle-shortcut.test.mjs`。
+
+## 2026-09-17 —— 会话与项目行在第二次点击时才删除（D441）
+
+- 侧边栏的会话菜单项与两个项目菜单（侧边栏与项目索引）此前在第一次点击「删除」时就移除该行。应用内其他所有破坏性行操作 —— 设置里的模型服务行、厂商账户行以及能力表格 —— 都先武装再改写控件标签，于是最不能撤销的两个动作反而是唯一单击即生效的。
+- 这一模式现在由 `hooks/use-armed-delete.ts` 为整个渲染层拥有：同一个 `ARMED_DELETE_MS`（3200ms）失效时间与同一个 `useArmedDelete()`。能力页面继续从 `AgentCapabilityLayout` 导入它，而该布局改为再导出这个共享 hook，不再保留一份带自己超时的副本，因此这一模式不会在设置行与两个菜单之间漂移。
+- 会话菜单项以 `session.id` 作为武装键；两个项目菜单则以 `project:` 前缀的键武装，因此会话与项目永远不会共用一次武装。被武装的菜单项带 `data-armed="true"`、危险色淡底，并在八种语言里都把标签换成 `nav.deleteTaskConfirm` / `project.deleteMenuConfirm`（"Delete?" / "确认删除？"）。两次点击之间菜单保持打开；点击外部、按 Escape 或武装超时都会解除武装且不移除任何内容。
+- 这是对 D431 在空闲场景下的修订：仍有运行中轮次的项目依然打开 `ProjectDeleteDialog`，由它指明这些会话并先停止它们再删除；宿主的 1008 / `CONFLICT` 拒绝在两条路径上仍映射为 `project.deleteRunningBlocked`。没有运行中轮次的项目由对话框原本使用的同一个 store 动作移除，并发出同样的成功 toast，因此它的第二次点击就是用户已经给出的确认。
+- 编号取 D441：D438 已被两处占用 —— 窗口开关键合并（#360，D438 与后续的
+  D439 重绑）与 Git 检出决策（ADR 0273），后者本日志已标明要改到 D440。本条不
+  代为改写他人决策正文。
+- 仅渲染层：无协议、存储、宿主、权限或迁移改动，也没有新增默认值。磁盘上的文件夹仍永远不被触碰。见 `04-ux/09-interaction-patterns.md`、D421、D431、`06-delivery/04-e2e-test-plan.md` 的 E2E-PROJECT-delete-removes-project-and-owned-sessions，以及 `apps/desktop/test/two-step-delete.test.mjs`。
+
+## 2026-09-16 —— 侧边栏列表节奏为 1px / 2px / 8px
+
+- 侧边栏的会话列表原本没有可供阅读的节奏。行与分组标题在一个分组内紧贴（0 间隙），两个项目分组相距 2px，唯一的留白是分区标签上方的那 4px。相邻的 28px 行绘制的圆角悬停填充彼此相接，于是两行读起来像一整块，折叠的分组与相邻分组的距离，和一个展开后带十行的分组一样远，而分区标签距离它上方的行，比距离它所引出的行更近。
+- 这些列表现在陈述同一条阶梯：行与行之间相隔 1px，项目分组标题与分区标签位于其首行上方 2px，侧边栏分区位于其上方分区之下 8px，展开的项目分组带有一段 8px 的尾部。
+- 该尾部属于展开的分组本身，因此间距仅由前一个分组决定：展开的分组之后是 8px，无论下一个分组是展开还是折叠，折叠的分组之后则是 1px，两种情况都一样。滚动容器自身的间隙保持统一的 1px，差异存在于分组主体的内缩量中，它会随行一起消失。因此折叠一个分组既不会让间距取决于相邻分组的状态，也不会让它自己的尾部突然跳变。
+- 项目分组内的日期标签是该节奏中的普通行，而不是第二层分组：它们不保留状态、不保留展开披露，也没有 `aria-expanded`，并且它们自身的内缩量改为对称的 4px，而不再是上方 6px、下方 2px，于是它们不再盖过 1px 的行间隙。
+- `space-0.25`（1px）作为密集列表节奏的发丝级步进加入间距比例；设置栏在其导航项之间本来就已经使用 1px。节间隙规则不再声称适用于侧边栏，侧边栏有自己的节奏。
+- 两个行预算随该节距变化：固定主体仍显示八行（233px，原为 224px），独立的会话主体仍显示五行（146px，原为 140px），因为 28px 的行网格已无法把自身的间隙容纳进旧的数字里。
+- 仅渲染层：无协议、存储、宿主、权限或迁移改动。见 `04-ux/07-ui-design-system.md` §6.1 与 §13，以及 `04-ux/08-component-spec.md` §6.2 与 §6.6。
+
+## 2026-09-16 —— 侧边栏项目分组以单行网格折叠
+
+- 上述节奏上线时，分组折叠使用的是 300ms 慢速时长上的 `max-height: 2000px → 0`，外加一段独立的 200ms opacity 淡出与 padding 过渡。`max-height` 的曲线大部分长度都落在内容高度之上，于是可见的位移只是末尾的一小段跳变；而更短的 opacity 曲线在约三分之二处就把分组清空了：行先消失，空盒子随后才合上。折叠一个项目读起来像是两段彼此分离的动画。
+- 分组主体现在是一个单行网格，其行在 200ms 的正常时长内从 `1fr` 动画到 `0fr`。每一帧都是该分组实测高度的真实比例，因此折叠是一次连续运动，并且整个折叠过程中 `opacity` 始终为 1 —— 行是被裁剪掉的，不是淡出的。
+- 主体由三层组成：网格层、带 `min-height: 0` 与 `overflow: hidden` 的裁剪层，以及持有 1px 行间隙与固定 2px / 7px 内缩量的列表层。内缩量必须位于裁剪层内部，因为动画盒上的垂直内边距会把 `0fr` 行撑开，并在行消失后留下分组的尾部。
+- 折叠的分组仍把行挂载在该 `0fr` 行内，因此它同时是 `inert` 与 `aria-hidden`，并离开 Tab 顺序。在 `prefers-reduced-motion: reduce` 下，折叠保留两端状态并以接近零的时长完成。
+- 滚动预算、缩进、固定与独立列表，以及共享的 `.sidebar-session-group-body` 弹性列都保持不变；只有项目主体以网格折叠。
+- 仅渲染层：无协议、存储、宿主、权限或迁移改动。见 `04-ux/08-component-spec.md` §6.2 与 `06-delivery/04-e2e-test-plan.md` 的 E2E-LAYOUT-sidebar-project-group-fold。
+
+## 2026-09-17 —— 侧边栏选中态与工作区上下文分离
+
+- 项目标题与项目、置顶、独立会话行共享整行悬停背景、圆角和过渡；标题按钮透明，会话选中背景优先于悬停，不再叠加第二层背景。
+- 项目是工作区和折叠控件，不是独立选中的页面。当前工作区保留圆点及业务行为，但不再绘制持久选中背景，没有选中会话时也不例外。上下文由 `data-current-workspace` 标记，不再使用项目的 `active` 类。
+- 会话选中仍以聊天页及正在切换的目标为准；折叠分组不转移选中态。焦点轮廓、操作按钮反馈、窗口失焦释放和拖拽目标优先级保持独立。
+- 仅改变渲染表现，不改变持久化、工作区激活、权限或协议。见 `04-ux/01-ui-ia.md`、`04-ux/08-component-spec.md`、`04-ux/09-interaction-patterns.md` §9.1c 及 `06-delivery/04-e2e-test-plan.md` 的 E2E-LAYOUT-sidebar-row-states。
+
+## 2026-09-17 —— 设置共享侧栏材质，返回直接恢复布局
+
+- 主侧栏与设置导航共享 `sidebar-surface`：Windows/Linux 共享不透明颜色和背景图，macOS 共享现有原生 vibrancy、tint 与 sheen。设置外壳允许材质透出，右侧内容与顶部条保持不透明；仅内容内部播放入场动画。
+- 旧 `--ds-settings-rail-bg` 作为共享颜色的可选回退保留，显式 `--ds-bg-sidebar` 优先；不修改主题或原生窗口 API。
+- 侧栏挂载不再等同于展开。专用过渡 hook 只响应可见主界面的折叠状态变化，设置导航取消未完成阶段，返回恢复既有宽度和状态，不重播 `sidebar-in`。动画事件防护、超时清理、自动恢复及减少动态效果仍保留；首次显示由原有启动揭示处理，不再叠加侧栏宽度动画。
+- 不改变 item 缩进、宽度、工作区状态、数据或权限。见 `04-ux/06-settings-ia.md`、`04-ux/07-ui-design-system.md`、`04-ux/08-component-spec.md` 及 `06-delivery/04-e2e-test-plan.md` 的 E2E-LAYOUT-sidebar-settings。
+
+## 2026-09-17 —— 路由表面在入场动画结束后不再持有堆叠上下文
+
+- 插件安装同意模态框 —— 以及随后的插件详情抽屉 —— 原本绘制在不透明的 46px 标题栏带之下，因此该栏没有被模态遮罩覆盖，栏内控件仍然可点击。路由页面挂载在 `.route-surface` 内，而它的入场动画带有 `animation-fill-mode: both`：填充让已结束的入场动画在页面挂载期间始终「生效」，从而让该表面持续成为堆叠上下文，页面内渲染的浮层因此无法绘制到窗口 chrome 之上。
+- `.route-surface` 与 `.settings-content-enter` 的入场动画不再声明 `forwards` / `both` 填充（`apps/desktop/src/styles/chat-shell.css`）。入场动画的终点就是元素自身的状态，因此该填充本是多余的；去掉之后，入场结束时表面不再持有堆叠上下文，路由页面内的浮层重新绘制在标题栏带之上。关键帧仍然只有 opacity，入场动画照常播放。
+- 插件详情抽屉保留顶部的 `--ds-toolbar-height` 预留（`apps/desktop/src/styles/plugins.css`）：在 Windows/Linux 上该右上角归渲染器绘制的窗口控件所有（`z-index: 200`），它们位于任何浮层的 z-index 之上。
+- 插件浮层从刻度外的 `80` 与 `60` 归回到 `z-dialog`（40）（`plugins.css`，发行说明浮层一并处理）：路由表面不再困住它们之后，它们就在根堆叠上下文中参与比较，而在 80 上会盖住对话框自身弹出的叶子级弹出层（60）与 toast（50）—— 其中包括安装对话框的「已复制」提示。现在有源测试钉住这一关系。
+- 仅渲染层：无 IPC、存储、schema、协议或插件 SDK 改动，也没有新增默认值。见 `04-ux/07-ui-design-system.md` §9、`apps/desktop/test/settings-dialog-overlay.test.mjs`，以及 `06-delivery/04-e2e-test-plan.md` 的 E2E-LAYOUT-three-column-width-priority（其四条浮层断言位于 `scripts/e2e-three-column-layout.mjs`）。
+- 未做、留作后续的事项：真正的模态 —— 不可交互化、焦点收束、快捷键让位 —— 需要这些浮层进入浏览器顶层（`<dialog>.showModal()`）。在它们打开的弹出菜单、工具提示与 toast（portal 到 `document.body`）同样迁入顶层之前，这一步无法进行，因为顶层内容会绘制在它们之上并使其不可用；此前的一次尝试正因此被撤回。
+
+## 2026-09-19 —— MCP 目录由协议护栏约束，而不是被截断 (D452)
+
+- 修订 D176 / ADR 0038：每服务器的 `tools/list` 上限不再是「64 个工具、8 页」的静默截断。客户端现在在 Codex 同级的协议护栏下跟进分页直到最后一页 —— 2048 个工具、100 页、重复或畸形游标、整轮遍历 30 秒 —— 突破任一护栏的服务器会失去它的握手，而不是贡献其目录的一个前缀。
+- 该上限从来不是对提示词的保护：MCP 工具以 `ToolSearch` 之后的延迟按需条目到达模型，宣传它们的提示词区块另有独立上限，因此一个 300 个工具的服务器在被激活之前不产生任何成本。
+- `plugin.mcp.tools.truncated` 已移除。拒绝会以 `plugin.mcp.connect` / `mcp.connect` 记入审计并带上护栏的错误码与消息，对用户自建的服务器则显示为其状态消息。
+- 见 ADR 0038 与 E2E-024K；`apps/desktop/test/plugin-mcp.test.mjs` 覆盖完整目录、各项护栏，以及把旧的截断行为作为失败基线。
+
+## 2026-09-19 —— 移除设置页面的语音卡片（ADR 0291）
+
+- 设置 → AI 不再有语音区块：`VoiceSettingsCard` 与 `features/settings/voice-settings.tsx`、AI 目的地的 `settings.speechTitle` / `settings.speechTranscribe` / `settings.speechSynthesize` 搜索关键词、`.settings-speech-*` 样式、八种出厂语言各十三条 `settings.speech*` 文案，以及为已撤回 Composer 控件所写、无任何引用的七个 `chat.transcribe*` / `chat.speak*` 文案全部删除。
+- 宿主能力保留：`speech/getStatus`、`speech/transcribe`、`speech/synthesize`、`AppSettings.speech` 校验、两个内置协议、`speech.adapter.register` 插件权限与渲染器 API 桥接均未改动。绑定由调用方通过宿主设置接口写入，插件与 IPC 调用是其唯一消费方。
+- 早已撤回、本次一并修正文档：ADR 0281 第 5 条中的 Composer 转写与朗读入口（其麦克风与朗读控件已于 2026-09-18 在 `344ef4ec2`／PR #555 中移除），以及 `04-ux/08-component-spec.md` §2.5 描述的 Composer 语音控件；为它们写下的文案随之退役。
+- 仅渲染层：无 IPC 通道、存储 schema、宿主 RPC、权限或 Rust 改动，也不会丢弃已存绑定。见 ADR 0291、`04-ux/06-settings-ia.md`、`03-runtime/20-speech.md`、E2E-008e。
+
+## 2026-09-19 —— 远端主机的 SSH 引导（D453）
+
+- 桌面用系统 `ssh` 客户端在用户已能通过 SSH 到达的机器上安装并配对 `pi-host`，因此 `~/.ssh/config`、agent 与跳板机照常生效，应用不持有任何 SSH 密钥；`BatchMode=yes` 让需要交互式密码或口令短语的主机立即以带类型的错误失败，而不是把模态框吊在一个不可见的提示后面。
+- 桌面按远端平台、以自己的版本解析 `pi-host` 包，持有发布随附的 SHA-256，并在任何下载之前拒绝未发布的目标（目前只有 `linux-x64`）。上传的脚本在远端 `$HOME` 下下载、校验并安装该包；SSH 通道上不传输任何可执行字节。
+- 脚本以 `umask 077` 运行并回显 `PI_HOST_READY` / `PI_HOST_PAIRING_TOKEN`，因此一次性配对令牌只存在于工作文件和 SSH 通道上，既不落在全局可读路径，也不出现在 URL 中（安全规格 §3.4）。`PI_HOST_READY.version` 必须与桌面版本一致；不一致为 `HOST_VERSION_MISMATCH`（D375），并在建立转发之前就已检查。
+- 已配对主机的记录改存 SSH 描述符（`metadata.transport = "ssh"`）而非 URL，因为本地转发端口在每次启动间并不稳定；隧道管理器在每次启动时重新建立 `ssh -N -L`，并收编（adopt）引导自己打开的存活转发，使配对只建立一条隧道。描述符在每次读取注册表时都会重新校验，格式不合规时降级为「非 SSH 主机」，而不会用垃圾参数去 spawn `ssh`。
+- `pi-desktop/remoteHost/bootstrap` 加入 `list` / `pair` / `remove`，`connection/pair` 交换被抽成单一的 `exchangePairingToken`，粘贴 URL 与 SSH 引导两条路径共用。
+- 本次不做：终端工作面板客户端（Stage 5）、反向工具中继（Stage 6）、resync 看门狗、非 Linux 与 Windows 远端目标，以及经 SSH 通道下发 provider 配置 —— 刚引导好的主机在配置 provider 之前，`turn/start` 仍以 `MODEL_NOT_CONFIGURED` 关闭。见 ADR 0292、`06-delivery/07-remote-control-rollout.md` §7 与 `05-security/02-remote-control-security.md` §3.4。
+
+## 2026-09-20 —— 项目存档改为列表 + 检查器（D455）
+
+- 决策 D455 修订 D267 的展开行：设置 → 项目存档保留安静引导行和工具栏，把单一展开列表改成精简行，检查器在选中行下方铺满宽度（ADR 0294）。
+- 单击行会选中并留在设置页。双击、Enter 或检查器的打开操作激活项目并返回聊天。归档和关闭仍使该目的地保持打开（D133 / D267）。
+- 文件夹、对话（按最新活动、每批 8 条）和原有菜单放在检查器中。归档记录仍分组可见。
+- 仅演示层：无 IPC、存储或宿主协议改动。见 `04-ux/06-settings-ia.md` 与 E2E-038。
+
+## 2026-09-20 —— 提示词增强模型卡移到设置 → AI
+
+- 修订 ADR 0121 与 2026-09-18 D447 的放置：增强提示词卡（默认模型 + 思考强度）离开设置 → 模型，
+  放到设置 → AI，紧挨提示词增强之后，让同一操作的模板与改写模型在同一目的地。该卡仍自带标题，
+  因为模型选择器需要标题 / 当前值 / 控件。设置搜索在 AI 页索引这两行。仅演示层：无 IPC、存储或
+  宿主协议改动。见 `04-ux/06-settings-ia.md` 与 `04-ux/12-prompt-enhancement.md` §5。
+
+## 2026-09-20 —— 提示词增强合成一张设置 → AI 卡
+
+- 修订同日的两卡放置：增强提示词卡并入设置 → AI 的提示词增强。自定义模板开关、默认模型与思考强度共用一个标题。设置搜索仍索引 `promptEnhancementModelTitle`，因此搜「增强提示词」仍会落到 AI。仅演示层：无 IPC、存储或宿主协议改动。
+
+## 2026-09-20 —— 会话思考参数不发送（D456）
+
+- Composer、会话存储和宿主校验在七个规范档位之外接受 `thinkingLevel: omit`。
+  绑定芯片与目录能力列表保持规范档位；`omit` 是客户端选择，不是已发布档位。
+- 运行时钳位在推理模型上保留 `omit`。智能体记账仍为 `off`，父级流与子智能体
+  共用低层 omit 路径，适配器不发送思考字段。显式 `off` 仍关闭思考。
+- Composer 推理菜单在所选模型有已启用规范档位时把 `omit` 放在最前，芯片渲染
+  规范字符串。Schema v19 重建 `sessions` 以使 CHECK 包含 `omit`。见 ADR 0295 与 E2E-203a。
+
+## 2026-09-19 —— 丢弃 outbox 毒消息；接受投递回合内的 steering（D597）
+
+- 决策 D597 修订 ADR 0041、ADR 0239、ADR active-turn-steering 与 D444。
+  宿主追加错误消息带 `PERMISSION_DENIED:` 前缀时是永久的、消息级拒绝。
+  Electron outbox 丢掉该行并继续排空，避免一条毒消息把 1024 上限填满。
+  `PLUGIN_PERMISSION_DENIED` 这类子串以及其他宿主失败仍暂停。
+- 向已认领的协作投递回合做 steering 是该会话里额外的人类输入：不受投递
+  内容/附件契约约束，不继承投递来源，并清掉客户端带来的 `session_message`。
+  指向另一会话的 steering 仍是 `PERMISSION_DENIED`。
+- 见 `03-runtime/04-data-storage.md`、`03-runtime/06-host-rpc-protocol.md`、
+  E2E-SESSION-outbox-poison-does-not-drop-history。
+
+## 2026-09-20 —— 项目档案呈现为内嵌分组卡片列表
+
+- 仅修订 D455 的呈现：该目的地仍为单列，详情在选中行下方，没有并排面板；
+  但索引改为 iOS 意义上的内嵌分组列表。每行自左向右是身份（颜色字形、项目名、
+  一个状态标签、缩短的等宽路径），自右向左是细节（会话计数、相对上次活动时间、
+  展开指示器）。行仍以行间距分隔，从不使用分隔线。
+- 选中的行就是它自己卡片的表头，因此详情面板不重复名称、路径或状态标签：
+  它先是操作栏（新任务、项目不是当前工作区时的「打开」、更多菜单），
+  接着是只读的文件夹与分支信息、会话计数，最后是会话列表。更多菜单的条目、
+  顺序与两步删除保持不变。
+- 方向键选中改为沿渲染顺序（分组顺序 + 当前排序）移动，而不是索引构建顺序，并把真实
+  焦点移到该行；该处理器会让位于展开的卡片，因此详情内的 Enter 仍是该控件自身的操作。
+  行元素 id 经过编码，只靠分隔符区分的两条路径不会再撞车。索引为空时在宿主列表返回前
+  显示等待指示器，而不是「暂无项目」；展开的卡片与展开指示器遵循减少动效设置。
+- 再次单击已展开卡片的那一行会收起卡片，走同一个共享切换函数。选中与卡片展开是
+  两个独立状态：当前行在卡片收起时仍保留选中环，展开指示器只在卡片真正展开时
+  转向下方。用方向键移动选中时总会展开落点所在的那一行。
+  仅演示层：无 IPC、存储、宿主协议或激活语义改动。见 `04-ux/06-settings-ia.md`、
+  仅演示层：无 IPC、存储、宿主协议或激活语义改动。见 `04-ux/06-settings-ia.md`、
+  `04-ux/07-ui-design-system.md` 与 ADR 0294。
+## 2026-09-19 — 按轮次的审阅分组与回滚（D-turn-review）
+
+- Review 页按对话轮次对扁平快照历史分组，在渲染端以用户消息为锚点切分
+  （steering 留在当前轮，子代理行归属父轮）。不把 `turn_id` 透传进
+  `UiMessage` 或快照捕获路径：分组是展示层关注点，并与记录自身的轮次边界
+  保持一致。
+- rewind 是历史轮次的主操作，且不是对工具级快照的链式重放：逐文件在最新
+  活跃 `after_hash` 守卫下，一次性恢复批次中最早活跃快照的 `before` 字节。
+  一轮开始时的状态正是该轮首次触碰每个文件时的 before 字节，因此每文件
+  一次写入即可落到目标状态，没有顺序敏感的中间步骤。单轮的外科式回滚仅
+  在所有文件仍与该批次最新哈希一致时提供。
+- 跨会话冲突只归因、不合并：守卫失败且另一个会话的活跃快照能解释当前字节
+  时，预检指出该会话（`blockedBy`）。本次变更不做三方合并、不做强制覆盖、
+  不做跨会话 rewind。
+- 回滚通过下一条真实用户输入告知 agent，而不是排队一个轮次：渲染端记录一
+  段英文上下文块并在 composer 发送路径前拼接。这使 agent 的上下文与工作区
+  保持一致，不消耗轮次，不在持久化轮次队列中伪装成用户消息，也不需要
+  schema 变更。
+- 明示而不解决的盲区：Bash 驱动的外部副作用不回滚；回滚可能让项目处于需要
+  重新构建/测试的中间态；批次中途失败的消息级 review 状态更新只记录日志，
+  留给下次加载。

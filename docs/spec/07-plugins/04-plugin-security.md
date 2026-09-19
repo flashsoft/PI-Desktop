@@ -1,518 +1,410 @@
-# 04. Plugin Security
-
-## 1. Threat model
-
-Plugins may come from:
-- The user's own development
-- Shared by colleagues
-- Third parties in a future marketplace
-
-Main risks:
-1. Malicious file read/write
-2. Malicious command execution
-3. Stealing API keys / session content
-4. Hijacking agent tools
-5. Phishing via the UI
-6. Spending the user's model quota, or sending the conversation to another model (`agent.complete` / `session.read`)
-7. Triggering work in another durable session or spoofing its sender/provenance
-
-## 2. Default-deny principle
-
-- Undeclared permission = unavailable
-- Disabled plugin = code not loaded
-- Unconfirmed high-risk action = not executed
-- Host API not on the allowlist = does not exist
-- `pi.browser.cdp` methods not on the CDP allowlist = `PERMISSION_DENIED` (no
-  cookies, storage, Target, or Fetch; no DevTools websocket)
-
-## 3. Isolation strategy
-
-### Must
-1. Plugin UI is isolated from the host UI DOM
-2. Plugins cannot directly require host modules
-3. The secret store is not open to plugins. Host-owned completions
-   (`agent.complete`) resolve credentials in Electron main and never pass keys,
-   refresh tokens, or `ModelAuth` to the plugin process
-4. The plugin-private data directory is separate from the host core library
-5. Session transcripts from `session.getLlmContext` are a bounded projection of
-   the in-flight tool session only (D336 / D019)
-6. Session collaboration is available only through the reviewed
-   `desktop.control` catalog. The broker derives the source plugin, Session ID,
-   turn ID, and invocation ID from the active Agent tool call; plugin payloads
-   cannot provide those identities. Host-core owns the target Session ID,
-   delivery ledger, permission ceiling, turn binding, callback, cancellation,
-   and transcript provenance.
-
-### Host-rendered scenic Settings destinations
-
-`contributes.scenicThemes` is data only. The host validates both grants,
-same-plugin theme ownership, declared preview assets, and the exact bounded
-`--nexus-backdrop-blur` variable before it renders cards in Extensions. A plugin
-cannot supply Settings HTML, CSS, JavaScript, selectors, DOM, arbitrary actions,
-or direct renderer IPC. The host owns the transparent canvas, layout, focus,
-native controls, titlebar, Apply action, and lifecycle fallback to General.
-
-Clipboard history is host-owned and remains in the Electron main process only.
-It is never written to the plugin data directory or the host database. The host
-records explicit clipboard writes and user-initiated Composer paste events; it
-does not poll the OS clipboard in the background. A plugin can read history only
-through `clipboard.read`, which is also the permission used by `readText`;
-every `getHistory` call is audited with its returned entry count. The bounded
-in-memory retention limits the privacy exposure to the current app run and is
-cleared on exit.
-
-### 3.2 Session collaboration boundary
-
-The Session Orchestrator may create bounded worker sessions, address existing
-Agent sessions, inspect bounded status/result projections, and cancel work when
-the user grants `desktop.control`. This capability deliberately does not grant
-the plugin direct `session.create`, `agent.prompt`, host RPC, SQLite, transcript
-file, or MCP-token access. A send or spawn call must run inside the plugin's
-currently executing Agent tool invocation; calls from a service, panel, or
-ordinary plugin code without that context fail closed. A plugin panel may
-request cancellation for that plugin's own deliveries as an explicit user
-control, but cancellation cannot create or retarget a delivery.
-
-Host-core snapshots the source permission ceiling and rejects targets above it,
-rechecks the target mode before beginning the turn, and enforces inbox,
-worker, and autonomous-hop limits. Existing target sessions retain their own
-project/model/context configuration. Completion callbacks are host-authored,
-at-most-once session messages and cannot authorize tools or trigger another
-callback. Restart recovery retains a durable queued delivery but never starts
-an interrupted turn unattended. Session-message provenance is immutable across
-transcript replacement and regeneration.
-
-### Goals
-1. Plugin main runs in a separate process
-2. Crash isolation
-3. Resource limits (later: CPU/memory/timeout)
-
-## 3.1 Contributed theme CSS
-
-A theme contribution (`ui.theme`) is the one case where plugin-authored content
-runs inside the host renderer, so it crosses a sanitizer in the main process
-before it is ever sent to the UI:
-
-- Only CSS the browser applies is inspected: comment bodies and string literals
-  are blanked first, with one space per masked character so any offset still
-  points at the source, and each `url(...)` argument is kept verbatim and judged
-  by its target. A sheet that merely *mentions* a banned token in a comment or a
-  string is therefore accepted
-- Rejected: `@import`, any `url()` target that is not a `data:` URI, a `url(`
-  the parser cannot resolve, `javascript:`, `expression(`, and markup sequences
-  (`<style`, `</style`, `<!--`); an empty sheet is refused too
-- Capped at 256KB per file, 8 themes per plugin
-- A theme may declare `assets` (absolute paths, whitelisted image and font
-  extensions, 4MB summed). Each matching `url()` is rewritten to
-  `plugin-asset://<pluginId>/<path>` and served by a host handler that resolves
-  only through the loaded plugin's own registered list: read-only, `nosniff`,
-  and revoked when the plugin unloads. `pi.themes.upsert` registers the same
-  kind of path at runtime. An unregistered reference is still refused, and the
-  raw path never reaches the renderer
-- `contributes.windowAppearance` (`#rrggbb` / `#rrggbbaa`) requires
-  `ui.window.appearance` and applies only while one of that plugin's themes is
-  the selected one; leaving the theme restores the host background, because the
-  colour is derived from the live catalog rather than remembered. macOS keeps
-  `vibrancy` and is never sent one
-- The CSS is read from disk at load time and delivered whole over IPC; the
-  renderer injects it into a single dedicated `<style>` element appended after
-  the app's own stylesheets, so it can override tokens but never inject markup
-- Selecting a theme is a settings value (`plugin:<pluginId>:<themeId>`); if the
-  providing plugin is disabled or uninstalled the setting falls back to `system`
-
-CSS cannot script, but it can mislead: a theme is still third-party code shaping
-what the user sees, which is why it is a declared, revocable permission.
-
-## 4. Permission-grant UX
-
-At install/load time, show:
-
-- Permission list
-- Risk description
-- Developer info
-- Source path
-
-User actions:
-- Accept and enable
-- Cancel
-
-First use of a high-risk API may re-confirm.
-
-## 5. Data isolation
-
-Plugins can access:
-- Their own settings
-- Their own data path
-
-Plugins cannot access:
-- Other plugins' data
-- Host secrets
-- The host's full session database (unless a controlled API exists in the future)
-
-## 5.1 Inter-plugin message bus
-
-The bus is the only channel between two plugins, and it is deliberately narrow:
-
-- Both sides declare their traffic in the manifest — `bus.publish` lists concrete
-  topics, `bus.subscribe` lists patterns — and the broker refuses anything
-  undeclared even when the permission is granted
-- Routing lives entirely in the host; a subscriber never learns who else
-  subscribes, and a publisher is excluded from its own fan-out
-- A message carries only `topic`, `from`, `payload`, and a host-assigned `at`
-- Caps: 64KB per payload, 16 subscriptions per plugin, 100 publishes per rolling
-  10s window; over-cap calls fail with `LIMIT_EXCEEDED` / `RATE_LIMITED` and are
-  audited alongside the topic
-- A payload is data, not capability: receiving a message grants nothing the
-  subscriber did not already have
-
-Treat a topic as public within the app: any plugin that can declare a matching
-pattern and hold `bus.subscribe` will see it. Do not put secrets on the bus.
-
-## 6. Path safety
-
-`fs.read` / `fs.write` / `fs.delete` say whether a plugin may touch files;
-`manifest.fs` says which ones (see
-[02-plugin-manifest-schema.md](02-plugin-manifest-schema.md) §5.2 and ADR 0088).
-Every `pi.fs.*` call passes four gates in a fixed order, and a later gate can
-only refuse:
-
-1. **Permission** — declared *and* granted. The runtime uses the intersection, so
-   a permission the user revoked stops working even though the manifest still
-   asks for it
-2. **Containment** — `realpath` on both the root and the target, so a symlink
-   inside the workspace pointing at `~/.ssh` fails here rather than passing a
-   string comparison. A path being created resolves through its nearest existing
-   ancestor, so a new file is not indistinguishable from an escape. Absolute
-   paths and `..` are refused; a path that merely does not exist is reported
-   `NOT_FOUND`, not as an escape
-3. **Deny-list**, which overrides every root, scope, and grant:
-   - credentials: `.env*`, `.npmrc`, `.netrc`, `.pypirc`, `.git-credentials`,
-     `id_rsa*` and friends, `*.pem`, `*.p12`, `*.pfx`, `*.keystore`
-   - directories, at any depth: `.git`, `.ssh`, `.aws`, `.gnupg`, `.kube`,
-     `.docker`
-   - the host's own data directory, which holds provider keys and the session
-     store
-   - the root itself, for a delete
-4. **Declared scope**, else a native confirmation (§6.2)
-
-`pi.fs.glob` answers to the same rules — a name is a read, so denied paths and
-reserved trees are omitted from the results, matches are filtered by the read
-scope, and `node_modules` / `.git` / `.venv` / `__pycache__` are never walked.
-
-### 6.1 Deletion
-
-Deletion is the only file operation the user cannot recover by re-running the
-plugin, so it is bounded four ways:
-
-- **Two tiers.** With `own: true` the host keeps a write ledger (path plus mtime)
-  in the plugin's data directory and lets the plugin remove what it wrote itself,
-  no scope and no prompt. If the file's mtime has moved past the recorded one,
-  the user has edited it since and it is no longer the plugin's. Deleting
-  anything else needs a declared `scope`.
-- **The OS trash.** Removal goes through `shell.trashItem`, never `rm`, so a gate
-  that got it wrong costs the user a restore rather than the file. The host
-  copies none of the user's data to provide this.
-- **Never recursive.** A non-empty directory is refused rather than emptied.
-- **A rate brake.** 50 removals per rolling 60s per plugin, because
-  `recursive: false` bounds one call and not a `glob` followed by a loop. Past
-  the brake the user is asked once, with the reason given as rate rather than
-  path.
-
-### 6.2 Runtime consent
-
-An access the manifest does not cover reaches a native `dialog.showMessageBox`:
-**Deny** / **Allow once** / **Allow this session**. A session grant covers the
-containing directory, is held in memory, and dies with the process; nothing is
-persisted, and a rate-brake prompt is offered no session option at all. A host
-with no consent service refuses — a host that cannot ask must never assume yes.
-Both the denial and the grant are audited.
-
-### 6.3 The user-selected root
-
-`pi.fs.requestDirectory()` opens the native directory picker; inside the returned
-directory the plugin needs no manifest scope, because the user just pointed at
-it. Containment and the deny-list still apply there. The handle is memory-only
-and dies with the process, so the plugin holds unlimited reach and zero standing
-power — the model the browser's File System Access API uses.
-
-### 6.4 Dropped-file grants
-
-A sandboxed plugin panel may resolve a user-dropped `File` to a local path through
-the host preload's `getDroppedFilePath`. The preload reports that path to the
-panel host before page code runs. `fs.registerDropped(path)` consumes one of
-those short-lived, sender-bound reports and returns a memory-only `grantId`.
-The grant covers exactly that one canonical regular file for `fs.stat` and
-`fs.readRange`; it does not change `manifest.fs`, grant a directory, or permit
-writes, opens, reveals, or deletes. The grant dies with the plugin process and is
-never persisted. Protected paths, credentials, symlink replacement, and the
-deny-list remain enforced on registration and every subsequent read.
-
-## 7. Agent security
-
-- Plugin tool names are namespaced to avoid collisions using the frozen forced prefix `plugin_<pluginIdSafe>_<toolName>` (D015)
-- tool execution timeout
-- tools can be disabled by the user in one click
-- the prompt-injection API is high-risk by default and requires an explicit permission
-
-## 7.1 Skills and MCP tools reaching the agent
-
-Both surfaces let a plugin change what the agent knows or can do, so both are
-bounded before they reach the model:
-
-**Skills** (`agent.prompt.inject`) — the system prompt carries only the catalog
-(id, name, one-line description, capped at 240 chars); a body is read on demand
-through the built-in `Skill` tool. A plugin may teach at most 32 skills, each
-document at most 128KB. Without the permission the skills are simply skipped:
-the manifest still validates, nothing reaches the prompt.
-
-**MCP tools** (`mcp.server.local` / `mcp.server.remote`) — discovered tools are
-registered under the same `plugin_*` namespace as hand-written plugin tools and
-therefore inherit the tool timeout, the audit trail, and the per-plugin disable
-switch. They are always registered at `risk: "medium"`: their schema and
-description come from a third-party server, so the host cannot trust a
-self-declared risk level. A server's catalog is registered whole — the count is
-bounded only by the protocol guards in §8.1 — while at most 8 servers per plugin
-are admitted.
-
-Plan is an additional host policy boundary for agent tools:
-
-- no plugin tool is visible or executable in Plan;
-- the deny precedes manifest risk, declared/granted permissions, session
-  grants, and the `auto` permission mode;
-- a direct forged `tools.execute` call returns `PLUGIN_DISABLED_IN_PLAN` and is
-  audited; it is not forwarded to the plugin runtime;
-- plugin commands and panels may remain usable as explicit user UI actions,
-  but they cannot become model-callable Plan tools or silently mutate Plan
-  state.
-
-## 8. Network and external links
-
-- `net.fetch` is not granted by default
-- `openExternal` should confirm. The host parses the URL and opens only
-  `http:`, `https:`, and `mailto:` (D330 / ADR 0168); other schemes fail with
-  `INVALID_ARGUMENT` and never reach `shell.openExternal`. `fs.openDefault` and
-  `fs.reveal` are separate: each accepts only an existing root-relative file
-  that already passes the plugin's `fs.read` policy. They are intended for
-  explicit file-view actions, not arbitrary URL or absolute-path opening;
-  `fs.reveal` only asks the OS file manager to select the file.
-- Plugins are forbidden from silently downloading and executing binaries (not done at all in MVP)
-
-### 8.0 Egress allowlist
-
-A permission cannot express "read broadly but leak nothing", so the range lives
-in the manifest: `net.domains` is a single per-plugin hostname allowlist and every
-outbound path the host owns answers to it.
-
-- **Panel sessions.** `sandbox: true` removes Node, not the network, so a panel
-  was previously a full browser that never consulted `net.fetch`. The session now
-  runs a `webRequest` filter, refuses every device permission, and denies
-  `window.open`, which would otherwise mint a window outside the filtered session
-- **`pi.net.fetch`.** Checks the allowlist and follows redirects by hand, because
-  an allowed host that 30x-es to an undeclared one would carry the request out.
-  The runtime's hop loop is the only fetch path: Electron main supplies no
-  alternative `fetch` service, so nothing can follow a redirect without the
-  per-hop re-check
-- **Remote MCP endpoints.** Answer to the same list, not to their permission alone.
-  HTTP endpoints may be on a trusted LAN, but plain HTTP is unencrypted and is
-  called out during configuration or plugin permission review. The MCP client
-  follows redirects manually, allows at most five HTTP(S) hops, and re-checks
-  the allowlist before every hop.
-- **`pi.net.websocket`.** A `ws://` or `wss://` target whose host is not in
-  `manifest.net.domains` is refused at the egress chokepoint before the
-  transport is asked to open anything, and the host — which owns the socket,
-  not the plugin — closes every socket the plugin still holds when it unloads,
-  is disabled, or crashes. Sockets are bounded per plugin (4), inbound and
-  outbound frames are capped at 1 MiB, an oversized frame closes the connection
-  instead of being buffered, and a send queue above 4 MiB is refused rather
-  than grown. Frames are addressed to the owning plugin only.
-
-An absent, empty, or malformed list means no egress at all, and a bare `*` is
-refused at install so nobody declares their way out. This is what makes a
-generous `fs.read` scope affordable (§6).
-
-Still open, tracked separately: `agent.prompt.inject` (skill text can ask a
-shell-capable agent to do the carrying), `shell.openExternal`, a `bus.publish`
-relayed to a net-capable plugin, and raw `fetch` inside the plugin process — the
-last one needs the sandboxed plugin runtime from ADR 0008 D009. `pi.net.fetch`
-narrows none of that: the host applies the allowlist, follows redirects by hand,
-and audits the call, but it never retries, throttles, or re-issues a request. An
-upstream `429` reaches the plugin as `429` plus whatever `Retry-After` the server
-sent, and what the plugin does about it is the plugin's own policy.
-
-## 8.1 MCP server egress and credentials
-
-An MCP server is a second egress path next to `net.fetch`, so it is declarative
-and reviewable rather than programmatic — a plugin cannot open a connection the
-manifest did not name:
-
-- `transport: "stdio"` spawns a local executable (`mcp.server.local`). The
-  `command` must be a bare PATH name or a plugin-relative path; absolute paths
-  are refused at validation time. The child gets a minimal environment — only
-  the declared `env` entries plus what the host needs to run a process.
-- `transport: "http"` reaches a remote endpoint (`mcp.server.remote`). The `url`
-  may use `http` or `https`; non-loopback HTTP is unencrypted and should only be
-  used on a trusted network. Plugin endpoints must also be covered by
-  `manifest.net.domains`. Tool arguments leave the machine, which is why the
-  permission copy says so plainly.
-- `env` and `headers` values resolve **only** from the plugin's own settings via
-  `{ "setting": "<key>" }`. The host environment is never passed through, and a
-  literal secret in the manifest is a review smell, not a supported pattern
-  (D018).
-- Connection budget: 10s to complete `initialize`, 100s per `tools/call`, 4MB
-  per stdio line. `tools/list` is followed to its last page under the per-server
-  guards of §8.1 — 2048 tools, 100 pages, a cursor that repeats or is malformed,
-  and 30s for the whole traversal — and a server that breaks one is refused
-  rather than contributing a prefix of its catalog, because MCP tools reach the
-  deferred on-demand entries behind `ToolSearch`, not as an always-present list.
-  Servers are connected lazily and torn down when the plugin unloads or is
-  disabled.
-
-## 8.2 Desktop control and device access
-
-`desktop.control` hands a plugin the reviewed operation catalog the local MCP
-control plane exposes (ADR 0203 / D370): project, session, Agent, and
-workspace operations, each tagged `read`, `write`, or `dangerous`. The
-plugin-only exception covers the six `session/collaboration/*` operations: they
-are callable through the plugin gateway but deliberately absent from the
-MCP-visible catalog, because they need an authenticated plugin invocation
-context and no renderer mutation channel exists for them. The plugin sees ids,
-descriptions, and risk, never Electron channel names or the MCP bearer token,
-and every invocation crosses the same IPC validation, lifecycle checks,
-completion event, and audit entry as an MCP call.
-
-A `dangerous` operation is decided by the user, not by the caller. The
-controller's `confirm: true` is only the plugin's acknowledgement (MCP treats
-it the same way, D372). After it, the host shows a native dialog that names
-the catalog operation id, the catalog description, and a bounded argument
-preview, and it deliberately shows no text the plugin or a model behind it
-authored, so a prompt-injected transcript cannot relabel `session/delete` as
-something benign. Escape and dismissal are refusals. A headless host with no
-dialog service refuses every dangerous operation outright.
-
-`ui.microphone` allows only the `media` permission, for audio, inside the
-plugin's isolated panel session. Camera and every other device permission stay
-denied, and the plugin receives no native handle: capture stays page-owned.
-
-`audio.capture.background` and `audio.playback.background` gate a callable
-surface: the ten `pi.audio.*` methods exist in the plugin host process and keep
-their permission requirement, but this branch has no device backend, so an
-authorized call is refused with a coded `UNSUPPORTED` refusal that is audited
-under `audio.<method>` with `ok: false`, and no device is opened (the two
-synchronous registration helpers `onInputFrame` / `offInputFrame` throw the
-same code instead of registering a handler that could never fire). When the
-host service lands, the host owns the device: a plugin exchanges PCM16 frames
-and never receives a `MediaStream`, a device handle, an OS device path, or a
-Node stream, one input stream per plugin is allowed, and disable, unload,
-crash, or permission revocation stops capture and drops queued playback
-instead of leaving an orphaned device or timer.
-
-`keyboard.globalShortcut` is implemented and stays inside the host's
-registration model. The host owns Electron's `globalShortcut`; a plugin never
-receives a keyboard hook, `before-input-event`, raw input device, or key event
-stream, so there is no keylogger-shaped surface and no way to see the keys the
-user types. A plugin may only map an accelerator to one of its own registered
-commands, and an accelerator the OS reserves, that PI-Desktop itself currently
-spends (the plugin-launcher and window-toggle bindings, `Alt+Space` and
-`Alt+Shift+W` by default; a user rebinding one frees it for plugins), or that
-another plugin holds is refused with
-`LIMIT_EXCEEDED` (at most 8 per plugin) instead of being taken over. A trigger
-runs exactly that one command. Register, unregister, and trigger are audited
-with the plugin id and the result — a registration and a trigger also name the
-accelerator and command — and typed input is never recorded. Every entry is
-released on disable, unload, and crash.
-
-Across all four capabilities, an undeclared or ungranted permission denies the
-call and is audited before any device, accelerator, or socket is reached.
-
-## 9. Auditing and emergency response
-
-Users should be able to:
-- View plugin permissions
-- View plugin error logs
-- Disable in one click
-- Uninstall in one click
-
-The host should be able to:
-- Auto-disable a plugin on anomaly
-- Guarantee the main app can start
-
-## 10. Security acceptance
-
-1. Writing a file fails without the `fs.write` permission, and a write outside
-   `manifest.fs.write.scope` prompts the user
-2. Deleting a file fails without the `fs.delete` permission, never recurses, lands
-   in the OS trash, and is interrupted past 50 removals in a rolling minute
-3. After disabling a plugin, its tools are no longer visible
-4. A plugin cannot read API keys
-5. A plugin panel cannot call arbitrary host IPC
-6. An uncaught exception from a plugin does not cause the app to exit
-7. A theme CSS file with `@import` or a remote `url()` is refused, and disabling
-   the providing plugin drops the app back to the `system` theme
-8. Publishing to an undeclared topic fails, and a publisher never receives its
-   own message
-9. An MCP server declared with an absolute `command` fails manifest validation;
-   a non-loopback plain-HTTP URL is accepted only when its host is declared in
-   `manifest.net.domains` and the UI shows the unencrypted-connection warning
-10. A low-risk or granted plugin tool still fails closed in Plan
-
-
-## 11. Implementation status
-
-Current enforcement:
-
-1. Default-deny permission checks in `PluginRuntime`, over the intersection of
-   declared and granted, so a revoked permission actually stops working
-2. Symlink-safe containment plus an unconditional deny-list for plugin fs APIs,
-   with the reach of each file mode bounded by `manifest.fs` and anything outside
-   it falling to a native confirmation (§6)
-3. Panel windows use sandboxed preload + isolated session partitions. Their
-   custom cross-platform titlebar is preload-owned, keeps its controls in a
-   closed Shadow DOM, and routes only a fixed sender-validated window-action
-   tuple without adding window primitives to `window.pluginBridge`
-4. Secrets / host DB remain inaccessible to plugins
-5. Marketplace/package install requires explicit permission acceptance in UI
-6. Auto-update refuses silent permission expansion
-7. Plugin main runs in a dedicated `utilityProcess` per plugin (ADR 0008) with a
-   minimal environment; all `pi.*` calls cross an allowlist + permission gateway
-   in the host, and a plugin crash only tears down that plugin
-8. Contributed theme CSS is sanitized in the main process before it reaches the
-   renderer (§3.1)
-9. Bus routing is host-owned with declared topics and hard caps (§5.1)
-10. MCP servers are declared, permission-gated, and fed credentials only from
-    plugin settings (§8.1)
-11. Egress is confined to `manifest.net.domains` at every chokepoint the host
-    owns (§8.0)
-12. Plugin deletions go to the OS trash, are non-recursive, and are rate-braked
-    (§6.1)
-13. `manifest.main` and `ui.panel` are validated as relative paths at install
-    and resolved with the same inside-the-plugin containment as skills and
-    theme CSS before the host loads them
-14. A `dangerous` desktop operation from a plugin needs the user's answer to a
-    host-owned native dialog after the plugin's own `confirm: true`; the
-    dialog shows only catalog text (§8.2)
-15. `ui.microphone` grants audio capture only, inside the isolated panel
-    session (§8.2)
-16. `keyboard.globalShortcut` is host-owned: the registry refuses an
-    OS-reserved, host-owned, or other-plugin accelerator, a shortcut can only
-    run the owning plugin's own command, and every entry dies on the same
-    teardown path as the plugin's commands and tools (§8.2)
-
-`audio.capture.background` and `audio.playback.background` are declared and
-present in the plugin API: the methods are gated by those permissions and an
-authorized call is refused with a coded `UNSUPPORTED` refusal that is audited,
-because this host has no device backend yet, so nothing reaches a device.
-`net.websocket` is implemented: connections are host-owned, allowlist-checked,
-bounded, and released with the plugin (§8.1).
-
-Not enforced yet:
-
-- Capability sandboxing inside the plugin process (Node built-ins are reachable
-  there, so `fs.*` permissions gate the plugin API, not the process). This is the
-  remaining gap that matters: everything in §6 and §8.0 bounds a plugin using the
-  API it is supposed to use, not one that bypasses it (ADR 0008 D009)
-- CPU / memory limits
-- Signature verification (packages are only sha256-checked)
-- Declared manifest permissions are auto-granted at load time, subject to the
-  user unchecking them at install
-- A `userSelected` root does not survive a restart, so a plugin has to ask again
-  each session
+# 04. 插件安全
+
+## 1. 威胁模型
+
+插件可能来自：
+- 用户自行开发
+- 同事分享
+- 未来市场中的第三方
+
+主要风险：
+1.恶意文件read/write
+2、恶意命令执行
+3.窃取API密钥/会话内容
+4. 劫持代理工具
+5. 通过用户界面进行网络钓鱼
+6. 消耗用户的模型额度，或把对话发给另一个模型（`agent.complete` / `session.read`）
+
+## 2. 默认拒绝原则
+
+- 未声明的权限=不可用
+- 禁用插件 = 代码未加载
+- 未经确认的高风险行动=未执行
+- 主机 API 不在允许名单上 = 不存在
+- `pi.browser.cdp` 不在 CDP 白名单上的方法 = `PERMISSION_DENIED`（无
+  cookies、storage、Target 或 Fetch；无 DevTools websocket）
+
+## 3. 隔离策略
+
+### 必须
+1.插件UI与宿主UI DOM隔离
+2. 插件不能直接请求主机模块
+3.秘密商店不对插件开放。宿主代发的补全（`agent.complete`）在 Electron main
+   解析凭据，从不把密钥、刷新令牌或 `ModelAuth` 交给插件进程
+4.插件私有数据目录与主机核心库分离
+5. `session.getLlmContext` 的会话转录只是进行中工具会话的有界投影（D336 / D019）
+
+剪贴板历史由 Electron 主进程持有，仅保存在内存中，不会写入插件数据目录或主机
+数据库。主机只记录明确的剪贴板写入和用户主动在 Composer 中粘贴的内容，不会在后台
+轮询系统剪贴板。插件必须通过现有的 `clipboard.read` 权限读取；每次 `getHistory` 调用都会
+记录审计及返回条目数。应用退出时历史会清空，保留上限也限制了隐私暴露范围。
+
+### 目标
+1.插件main在单独的进程中运行
+2. 碰撞隔离
+3.资源限制（后来：CPU/memory/timeout）
+
+## 3. 1 贡献主题CSS
+
+主题贡献 (`ui.theme`) 是插件创作内容的一种情况
+在主机渲染器内部运行，因此它会在主进程中穿过消毒剂
+在发送到 UI 之前：
+
+- 只检查浏览器实际生效的 CSS：先按等长空白遮蔽注释体与字符串字面量
+  （每个被遮蔽字符对应一个空格，偏移仍指向原文），`url(...)` 参数按原样保留
+  并按目标判定。因此仅在注释或字符串里*提到*被禁关键字的样式表会被接受
+- 拒绝：`@import`、任何不是 `data:` 的 `url()` 目标 URI、`url(`
+  解析器无法解析 `javascript:`、`expression(` 和标记序列
+  （`<style`、`</style`、`<!--`）；空纸也会被拒绝
+- 每个文件上限为 256KB，每个插件 8 个主题
+- 主题可声明 `assets`（绝对路径、扩展名白名单、总量上限 4MB）。命中的 `url()`
+  会被改写为 `plugin-asset://<pluginId>/<path>`，由宿主的处理器提供；该处理器
+  只按已加载插件自己登记的清单解析，只读、带 `nosniff`，并在插件卸载时一并撤销。
+  `pi.themes.upsert` 也能在运行时登记同样的路径。未登记的引用仍被拒绝，
+  原始路径不会到达渲染器
+- `contributes.windowAppearance`（`#rrggbb` / `#rrggbbaa`）需要
+  `ui.window.appearance`，且只在该插件的某个主题被选中时生效；离开该主题即恢复
+  宿主背景，因为颜色由实时主题目录推导而非记忆。macOS 保持 `vibrancy`，
+  永不下发颜色
+- CSS 在加载时从磁盘读取并通过 IPC 整体交付；的
+  渲染器将其注入到附加在后面的单个专用 `<style>` 元素中
+  应用程序自己的样式表，因此它可以覆盖令牌但从不注入标记
+- 选择主题是一个设置值（`plugin:<pluginId>:<themeId>`）；如果
+  如果插件被禁用或卸载，设置将回退到 `system`
+
+CSS 无法脚本化，但它可能会产生误导：主题仍然是第三方代码塑造
+用户看到的内容，这就是为什么它是声明的、可撤销的权限。
+
+## 4. 权限授予用户体验
+
+在 install/load 时间，显示：
+
+- 权限列表
+- 风险描述
+- 开发者信息
+- 源路径
+
+用户操作：
+- 接受并启用
+- 取消
+
+首次使用高风险的 API 可能会再次确认。
+
+## 5. 数据隔离
+
+插件可以访问：
+- 他们自己的设置
+- 他们自己的数据路径
+
+插件无法访问：
+- 其他插件的数据
+- 主机秘密
+- 主机的完整会话数据库（除非将来存在受控的 API）
+
+## 5. 1 插件间消息总线
+
+总线是两个插件之间的唯一通道，并且故意狭窄：
+
+- 双方在清单中声明其流量 - `bus.publish` 列出了具体的流量
+  主题，`bus.subscribe` 列出了模式 - 经纪人拒绝任何内容
+  即使获得许可也未声明
+- 路由完全存在于主机中；订户永远不会知道还有谁
+  订阅，发布者被排除在自己的扇出之外
+- 消息仅携带`topic`、`from`、`payload`和主机分配的`at`
+- 上限：每个有效负载 64KB，每个插件 16 个订阅，每个滚动 100 个发布
+  10秒窗口；超上限调用失败并显示 `LIMIT_EXCEEDED` / `RATE_LIMITED`
+  与主题一起审核
+- 有效负载是数据，而不是能力：接收消息并不授予任何功能
+订户还没有
+
+将主题视为应用程序内的公共主题：任何可以声明匹配的插件
+模式并按住 `bus.subscribe` 就会看到它。不要在公交车上泄露秘密。
+
+## 6. 路径安全
+
+`fs.read` / `fs.write` / `fs.delete` 说明插件能不能碰文件；`manifest.fs`
+说明能碰哪些（参见
+[02-plugin-manifest-schema.md](/spec/07-plugins/02-plugin-manifest-schema) §5.2
+与 ADR 0088）。每次 `pi.fs.*` 调用按固定顺序过四道门，
+后面的门只能拒绝：
+
+1. **权限** —— 既声明又授予。运行时取两者的交集，所以用户撤销的权限
+   会真的失效，即使清单里还在要
+2. **containment** —— 对 root 和目标都做 `realpath`，因此工作区里一个指向
+   `~/.ssh` 的软链会在这里失败，而不是通过字符串比较。正在创建的路径
+   按最近的已存在祖先解析，所以新建文件不会和逃逸无法区分。绝对路径
+   和 `..` 一律拒绝；仅仅是不存在的路径报 `NOT_FOUND`，不算逃逸
+3. **deny-list**，它压过一切 root、scope 和授权：
+   - 凭证：`.env*`、`.npmrc`、`.netrc`、`.pypirc`、`.git-credentials`、
+     `id_rsa*` 及同类、`*.pem`、`*.p12`、`*.pfx`、`*.keystore`
+   - 任意深度的目录：`.git`、`.ssh`、`.aws`、`.gnupg`、`.kube`、`.docker`
+   - 主机自己的数据目录，里面存着 provider key 和会话库
+   - root 本身（对删除而言）
+4. **声明的 scope**，否则走原生确认（§6.2）
+
+`pi.fs.glob` 遵守同一套规则 —— 名字也是一种读取，所以被拒的路径和保留目录树
+不会出现在结果里，匹配结果会按读取范围过滤，而 `node_modules` / `.git` /
+`.venv` / `__pycache__` 永不遍历。
+
+### 6.1 删除
+
+删除是唯一一种用户无法靠重跑插件补回来的文件操作，因此有四重约束：
+
+- **两档。** 带 `own: true` 时主机在插件数据目录里维护一份写入台账
+  （路径 + mtime），允许插件删除自己写过的东西，不需要 scope、不需要弹窗。
+  如果文件的 mtime 已经晚于记录值，说明用户之后改过，它就不再属于插件。
+  删别的东西需要声明 `scope`。
+- **系统回收站。** 删除走 `shell.trashItem`，绝不走 `rm`，因此某道门判断错了
+  代价是用户去还原一下，而不是文件没了。主机不为此复制用户的任何数据。
+- **永不递归。** 非空目录直接拒绝，而不是清空。
+- **速率刹车。** 每个插件每滚动 60 秒 50 次删除 —— 因为 `recursive: false`
+  只能约束单次调用，约束不了 `glob` 加一个循环。超过之后问用户一次，
+  理由写的是速率而不是路径。
+
+### 6.2 运行时同意
+
+清单没有覆盖的访问会走到原生 `dialog.showMessageBox`：
+**拒绝** / **允许一次** / **本会话允许**。会话授权覆盖所在目录，
+存在内存里，随进程消失；什么都不持久化，而速率刹车的弹窗根本不提供
+会话选项。没有同意服务的主机一律拒绝 —— 问不了就绝不能假设「是」。
+拒绝和授权都会记入审计。
+
+### 6.3 用户选定的 root
+
+`pi.fs.requestDirectory()` 打开原生目录选择器；在返回的目录里插件不需要
+清单 scope，因为用户刚亲手指了它。containment 和 deny-list 在那里依然生效。
+句柄只存在于内存中，随进程消失，所以插件拥有无限的可达范围和零常驻权力 ——
+和浏览器 File System Access API 的模型一样。
+
+## 7. Agent 安全性
+
+- 插件工具名称采用命名空间，以避免使用冻结强制前缀 `plugin_<pluginIdSafe>_<toolName>` (D015) 发生冲突
+- 工具执行超时
+- 用户可以一键禁用工具
+- 提示注入 API 默认情况下是高风险的，需要显式许可
+
+## 7. 1 到达代理的技能和 MCP 工具
+
+两个表面都可以让插件改变代理知道或可以做的事情，所以两者都是
+在到达模型之前有界：
+
+**技能** (`agent.prompt.inject`) — 系统提示符仅携带目录
+（id、名称、一行描述，上限为 240 个字符）；按需读取正文
+通过内置的 `Skill` 工具。一个插件最多可以教授 32 个技能，每个技能
+文档最多 128KB。未经许可，技能将被简单地跳过：
+清单仍然有效，没有任何提示。
+
+**MCP 工具** (`mcp.server.local` / `mcp.server.remote`) — 已发现的工具是
+与手写插件工具注册在相同的 `plugin_*` 命名空间下
+因此继承工具超时、审计跟踪和每个插件禁用
+转变。它们始终在 `risk: "medium"` 处注册：它们的架构和
+描述来自第三方服务器，因此主机无法信任
+自我声明的风险水平。服务器的目录被完整注册——数量只受 §8.1 中的
+协议护栏约束——而每个插件最多接入 8 个服务器。
+
+Plan 是代理工具的附加主机策略边界：
+
+- Plan 中没有可见或可执行的插件工具；
+- 拒绝先于明显风险、declared/granted 权限、会话
+  grants，以及 `auto` 权限模式；
+- 直接伪造的 `tools.execute` 调用返回 `PLUGIN_DISABLED_IN_PLAN` 并且是
+  已审核；它不会转发到插件运行时；
+- 插件命令和面板仍可用作显式用户 UI 操作，
+  但它们不能成为模型可调用的 Plan 工具或默默地改变 Plan
+  状态。
+
+## 8. 网络和外部链接
+
+- 默认情况下不授予 `net.fetch`
+- `openExternal` 应确认。主机解析 URL，只打开 `http:`、`https:` 和 `mailto:`
+  （D330 / ADR 0168）；其他 scheme 以 `INVALID_ARGUMENT` 失败，不会到达
+  `shell.openExternal`。`fs.openDefault` 和 `fs.reveal` 是独立能力：二者都只接受已经通过插件
+  `fs.read` 策略检查的现有 root-relative 文件，用于明确的文件查看操作，不允许任意 URL 或绝对
+  路径打开；`fs.reveal` 只请求操作系统文件管理器选中该文件。
+- 禁止插件静默下载和执行二进制文件（MVP 中根本没有这样做）
+
+### 8.0 出网白名单
+
+一个权限没法表达「读得宽但什么都漏不出去」，所以范围放在清单里：
+`net.domains` 是每个插件唯一的一份主机名白名单，主机掌握的每一条出网路径
+都听它的。
+
+- **面板 session。** `sandbox: true` 去掉的是 Node，不是网络，所以面板以前
+  是一个完整的浏览器，而且从不经过 `net.fetch`。现在该 session 跑一个
+  `webRequest` 过滤器、拒绝所有设备权限，并禁止 `window.open` ——
+  否则它会造出一个不受过滤的窗口
+- **`pi.net.fetch`。** 检查白名单并手工跟随重定向，因为一个被允许的主机
+  30x 跳到未声明的主机上，就会把请求带出去。运行时的逐跳循环是唯一的
+  fetch 路径：Electron 主进程不提供任何替代的 `fetch` 服务，所以没有东西
+  能绕过逐跳重新检查去跟随重定向
+- **远程 MCP 端点。** 同样听这份列表，而不是只看它自己的权限。HTTP 端点可以
+  位于可信局域网，但明文 HTTP 不加密，配置或插件权限审查时会明确提示。
+  MCP 客户端手动跟随重定向，最多允许五次 HTTP(S) 跳转，并在每一跳之前重新
+  检查白名单。
+- **`pi.net.websocket`。** 目标主机不在 `manifest.net.domains` 里的 `ws://` 或
+  `wss://` 会在出网卡点处被拒绝，传输根本不会被要求去打开任何东西；而且持有
+  套接字的是宿主、不是插件，所以插件卸载、被禁用或崩溃时，宿主会关闭它仍
+  持有的每个套接字。套接字按插件设上限（4 个），入站和出站帧都封顶 1 MiB，
+  超大帧会关闭连接而不是被缓冲，超过 4 MiB 的发送队列会被拒绝而不是继续
+  增长。帧只会送达持有它的那个插件。
+
+列表缺失、为空或非法就完全不放行出网，而裸 `*` 在安装时被拒绝，
+免得有人靠声明绕出去。正是这一点让一个宽松的 `fs.read` 范围变得可以接受（§6）。
+
+仍然敞着、单独跟踪的：`agent.prompt.inject`（技能文本可以让一个有 shell
+能力的 Agent 替它搬运）、`shell.openExternal`、`bus.publish` 转给一个有网络
+能力的插件，以及插件进程里的原生 `fetch` —— 最后一项需要 ADR 0008 D009
+的沙箱化插件运行时。`pi.net.fetch` 并不会缩小这些缺口：宿主只负责套用白名单、
+手工跟随重定向并审计这次调用，它从不重试、不限流、也不重新发起请求 —— 上游的
+`429` 会带着服务器给出的 `Retry-After` 原样到达插件，插件怎么处理是插件自己
+的策略。
+
+## 8. 1 MCP 服务器出口和凭证
+
+MCP 服务器是 `net.fetch` 旁边的第二个出口路径，因此它是声明性的
+并且是可审查的而不是编程的——插件无法打开连接
+清单未命名：
+
+- `transport: "stdio"` 生成本地可执行文件 (`mcp.server.local`)。的
+  `command` 必须是裸路径名称或插件相对路径；绝对路径
+  在验证时被拒绝。孩子得到的环境是最小的——只有
+  声明的 `env` 条目加上主机运行进程所需的内容。
+- `transport: "http"` 到达远程端点 (`mcp.server.remote`)。`url` 可以使用
+  `http` 或 `https`；非回环 HTTP 不加密，只应在可信网络中使用。插件端点还
+  必须被 `manifest.net.domains` 覆盖。工具参数会离开机器，这就是为什么权限
+  文案必须明确说明。
+- `env` 和 `headers` 值**仅**通过插件自己的设置进行解析
+  `{ "setting": "<key>" }`。宿主环境永远不会被穿越，并且
+  清单中的字面秘密是审查气味，而不是受支持的模式
+  （D018）。
+- 连接预算：完成 `initialize` 需要 10 秒，每个 `tools/call` 需要 100 秒，每条
+  stdio 线 4MB。`tools/list` 在 §8.1 的每服务器护栏下跟进到最后一页
+  ——2048 个工具、100 页、重复或畸形游标、整轮遍历 30 秒——突破任一护栏的服务器会被
+  拒绝，而不是贡献其目录的一个前缀，因为 MCP 工具是以延迟加载的按需条目
+  （`ToolSearch` 之后）而非常驻列表的形式到达模型的。服务器按需连接，
+  并在插件卸载或禁用时关闭。
+
+## 8.2 桌面控制与设备访问
+
+`desktop.control` 把本地 MCP 控制平面暴露的那份已审查操作目录（ADR 0203 /
+D370）交给插件：项目、会话、Agent 和工作区操作，每一项都标记为 `read`、
+`write` 或 `dangerous`。plugin-only 例外涵盖六个 `session/collaboration/*`
+操作：它们可以经由插件网关调用，却被刻意排除在 MCP 可见目录之外，因为它们
+需要已认证的插件调用上下文，且渲染器没有任何变更通道。插件看到的是 id、描述和
+风险等级，绝不会看到 Electron 通道名或 MCP bearer token；每一次调用都经过与
+MCP 调用相同的 IPC 校验、生命周期检查、完成事件和审计条目。
+
+`dangerous` 操作由用户拍板，而不是由调用者。控制器的 `confirm: true` 只是
+插件的知会（MCP 也是同样处理，D372）。在此之后，宿主弹出一个原生对话框，
+点名目录中的操作 id、目录描述和一段有界的参数预览，并刻意不显示任何由插件
+或其背后模型撰写的文本，因此一份被提示注入的转录本无法把 `session/delete`
+重新包装成无害的东西。Escape 和关闭对话框都视为拒绝。没有对话框服务的
+无头宿主会直接拒绝所有 dangerous 操作。
+
+`ui.microphone` 只在插件的隔离面板 session 内允许 `media` 权限，且仅限音频。
+摄像头和其他所有设备权限仍被拒绝，插件也拿不到任何原生句柄：采集始终由
+页面持有。
+
+`audio.capture.background` 和 `audio.playback.background` 把关一个可以调用的
+表面：十个 `pi.audio.*` 方法都存在于插件宿主进程中，并保留各自的权限要求，
+但这条分支没有设备后端，所以获得授权的调用会以带错误码的 `UNSUPPORTED`
+拒绝并记入审计（`audio.<method>`、`ok: false`），不会打开任何设备（两个同步
+注册辅助函数 `onInputFrame` / `offInputFrame` 改为抛出同一个错误码，而不是
+注册一个永远不会触发的处理器）。等宿主服务落地后，设备由宿主持有：插件只
+交换 PCM16 帧，永远拿不到 `MediaStream`、设备句柄、操作系统设备路径或 Node
+流，每个插件只允许一条输入流；禁用、卸载、崩溃或撤销权限会停止采集并丢弃
+已排队的播放，而不会留下孤立的设备或计时器。
+
+`keyboard.globalShortcut` 已实现，并且始终留在宿主的注册模型之内。宿主持有
+Electron 的 `globalShortcut`；插件永远拿不到键盘钩子、`before-input-event`、
+原始输入设备或按键事件流，所以不存在键盘记录器形状的表面，也无法看到用户
+按下的键。插件只能把加速键映射到自己已注册的一条命令；被操作系统保留、被
+PI-Desktop 自己当前占用（默认是 `Alt+Space` 与 `Alt+Shift+W`；用户改绑后
+即可释放给插件）或已被另一个插件持有的
+加速键会被拒绝，返回 `SHORTCUT_CONFLICT` / `SHORTCUT_UNAVAILABLE` /
+`INVALID_ACCELERATOR` / `LIMIT_EXCEEDED`（每个插件最多 8 条），而不是被抢走。
+一次触发只运行那一条命令。注册、注销和触发的审计会记录插件 id 与结果 ——
+注册和触发还会记录加速键与命令 —— 绝不记录用户输入。每条条目都在禁用、
+卸载和崩溃时释放。
+
+四种能力一律失败即关闭：未声明或未授予权限时，调用在触达任何设备、加速键
+或套接字之前就会被拒绝并记入审计。
+
+## 9. 审计和应急响应
+
+用户应该能够：
+- 查看插件权限
+- 查看插件错误日志
+- 一键禁用
+- 一键卸载
+
+主机应该能够：
+- 出现异常时自动禁用插件
+- 保证主应用程序可以启动
+
+## 10. 安全验收
+
+1. 没有 `fs.write` 权限写入文件失败，`manifest.fs.write.scope` 之外的写入
+   会问用户
+2. 没有 `fs.delete` 权限删除文件失败；删除永不递归、落进系统回收站，
+   并在滚动一分钟内超过 50 次后被打断
+3.禁用插件后，其工具不再可见
+4. 插件无法读取 API 键
+5.插件面板无法调用任意主机IPC
+6.插件未捕获的异常不会导致应用程序退出
+7. 带有 `@import` 或远程 `url()` 的主题 CSS 文件被拒绝，并禁用
+   提供的插件将应用程序返回到 `system` 主题
+8. 发布到未声明的主题失败，发布者永远不会收到它的消息
+   自己的留言
+9. 声明绝对路径 `command` 的 MCP 服务器会在 manifest 校验时失败；非回环的
+   明文 HTTP URL 只有在主机声明于 `manifest.net.domains` 且 UI 显示未加密连接
+   警告时才可接受
+10. 低风险或授予的插件工具在 Plan 中仍然无法关闭
+
+## 11. 实施情况
+
+目前执行情况：
+
+1. `PluginRuntime` 中的默认拒绝权限检查，取「已声明 ∩ 已授予」的交集，
+   所以被撤销的权限会真的失效
+2. 插件 fs API 有对软链安全的 containment 加一份无条件 deny-list，每种文件
+   模式的可达范围由 `manifest.fs` 限定，范围之外落到原生确认（§6）
+3.面板窗口使用沙盒preload+隔离会话分区
+4. 插件仍然无法访问 Secrets/host DB
+5. Marketplace/package 安装需要在 UI 中明确接受权限
+6.自动更新拒绝静默权限扩展
+7. 插件主程序在每个插件专用的 `utilityProcess` (ADR 0008) 中运行，并带有
+   最小环境；所有 `pi.*` 调用都跨越白名单 + 权限网关
+   在主机中，插件崩溃只会破坏该插件
+8. 贡献的主题 CSS 在到达主进程之前会在主进程中进行清理
+   渲染器（§3.1）
+9. 总线路由由主机拥有，并具有声明的主题和硬上限（§5.1）
+10. MCP 服务器仅从以下位置声明、权限控制和提供凭证：
+插件设置（§8.1）
+11. 出网被限制在 `manifest.net.domains` 之内，覆盖主机掌握的每一个卡点（§8.0）
+12. 插件的删除进系统回收站、不递归，并有速率刹车（§6.1）
+13. `manifest.main` 和 `ui.panel` 在安装时被校验为相对路径，并在宿主加载
+    它们之前，以与技能和主题 CSS 相同的插件目录内 containment 进行解析
+14. 来自插件的 `dangerous` 桌面操作，在插件自己的 `confirm: true` 之后，
+    还需要用户在宿主拥有的原生对话框中作答；对话框只显示目录文本（§8.2）
+15. `ui.microphone` 只授予音频采集，且仅限隔离面板 session 内（§8.2）
+16. `keyboard.globalShortcut` 由宿主持有：注册表拒绝被操作系统保留、宿主
+    自己占用或属于其他插件的加速键，快捷键只能运行持有插件自己的命令，
+    每条条目都与插件的命令和工具走同一条清理路径（§8.2）
+
+`audio.capture.background` 和 `audio.playback.background` 已声明并且存在于
+插件 API 中：这些方法由这两个权限把关，获得授权的调用会以带错误码的
+`UNSUPPORTED` 拒绝并记入审计，因为当前宿主还没有设备后端，所以没有任何东西
+能到达设备。
+`net.websocket` 已实现：连接由宿主持有、经过白名单检查、有界，并随插件一起
+释放（§8.1）。
+
+尚未强制执行：
+
+- 插件进程内的能力沙箱（Node 内置模块在那里仍然可达，所以 `fs.*` 权限
+  把的是插件 API，不是进程）。这是真正还剩下的缺口：§6 和 §8.0 里的一切
+  约束的是一个按规矩用 API 的插件，不是一个绕过 API 的插件（ADR 0008 D009）
+- CPU/内存限制
+- 签名验证（仅对包进行 sha256 检查）
+- 声明的清单权限在加载时自动授予
+- `userSelected` root 不跨重启保留，插件每个会话都得重新问一次

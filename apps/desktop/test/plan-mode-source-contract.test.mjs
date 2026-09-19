@@ -137,11 +137,10 @@ test("the component spec assigns mode ownership to Composer", () => {
     componentSpec.indexOf("## 11. Composer"),
     componentSpec.indexOf("## 12.", componentSpec.indexOf("## 11. Composer")),
   );
-  assert.match(topbarSpec, /Project\s+scope/);
-  assert.doesNotMatch(topbarSpec, /model picker/);
-  assert.doesNotMatch(topbarSpec, /Agent \| Plan|mode toggle|mode indicator/);
-  assert.match(composerSpec, /combined model ×\s+reasoning-level control/);
-  assert.match(composerSpec, /Composer-left Agent\/Plan\/Goal chip is the sole mode/);
+  assert.match(topbarSpec, /项目范围/);
+  assert.match(topbarSpec, /Agent\/Plan\/Goal 控件和模型选择均属于 Composer/);
+  assert.match(composerSpec, /模型 × 推理芯片/);
+  assert.match(composerSpec, /Agent\/Plan\/Goal 模式芯片/);
   assert.match(composerSpec, /--ds-bg-composer/);
 });
 

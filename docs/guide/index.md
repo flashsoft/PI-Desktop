@@ -21,7 +21,7 @@ inspectable while still making everyday coding work feel direct.
 | Understand why a decision exists | [ADR index](/adr/README) |
 | Validate a user-visible change | [E2E test plan](/spec/06-delivery/04-e2e-test-plan) |
 
-The Chinese entry follows this same path: [open the bilingual guide](/zh-CN/guide/)
+The Chinese entry follows this same path: [open the bilingual guide](/guide/)
 to read the localized orientation and jump into the matching topic map.
 
 ## The mental model
@@ -41,7 +41,7 @@ provider-facing model work.
 
 ## Working with the docs
 
-The documentation is English-first at the source-of-truth level. The [中文入口](/zh-CN/)
+The documentation is English-first at the source-of-truth level. The [中文入口](/spec/README)
 provides the same information architecture and a complete translated companion
 for every specification. Each Chinese page links back to its English source;
 technical identifiers remain unchanged so search and cross-reference paths stay

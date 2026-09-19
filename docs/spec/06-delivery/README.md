@@ -1,13 +1,13 @@
-# Delivery & Acceptance
+# 交付及验收
 
-> Directory: `docs/spec/06-delivery`
+> 目录：`docs/spec/06-delivery`
 
-| Doc | Description |
+| 医生 | 描述 |
 |---|---|
-| [01-mvp-milestones.md](01-mvp-milestones.md) | Milestones |
-| [02-acceptance-criteria.md](02-acceptance-criteria.md) | Acceptance criteria |
-| [03-ai-development-workflow.md](03-ai-development-workflow.md) | AI/human development workflow rules |
-| [04-e2e-test-plan.md](04-e2e-test-plan.md) | E2E test documentation & MVP scenario catalog |
-| [05-change-checklist.md](05-change-checklist.md) | Practical checklist before finishing work |
-| [06-release-runbook.md](06-release-runbook.md) | Desktop release lanes, packaging, and mandatory shipped-locale changelog gate (D164/D345) |
-| [07-remote-control-rollout.md](07-remote-control-rollout.md) | Remote Agent Control rollout and acceptance |
+| [01-mvp-milestones.md](/spec/06-delivery/01-mvp-milestones) | 里程碑 |
+| [02-接受-criteria.md](/spec/06-delivery/02-acceptance-criteria) | 验收标准 |
+| [03-ai-development-workflow.md](/spec/06-delivery/03-ai-development-workflow) | AI/human开发工作流程规则 |
+| [04-e2e-test-plan.md](/spec/06-delivery/04-e2e-test-plan) | E2E 测试文档和 MVP 场景目录 |
+| [05-change-checklist.md](/spec/06-delivery/05-change-checklist) | 完成工作前的实用清单 |
+| [06-release-runbook.md](/spec/06-delivery/06-release-runbook) | 桌面发布通道、打包和强制已发货语言变更日志门 (D164/D345) |
+| [07-remote-control-rollout.md](/spec/06-delivery/07-remote-control-rollout) | 远程 Agent 控制交付与验收 |

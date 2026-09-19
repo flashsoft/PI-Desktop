@@ -1,132 +1,115 @@
-# Remote Agent Control Target Architecture
+# 远程 Agent 控制目标架构
 
-- Status: Target specification; post-MVP
-- Decision: D373 / ADR 0205, amended by D374 and D375
-- Scope: Remote observation and control of a PI-Desktop Agent Host
-- Source of truth: `03-runtime/19-remote-agent-control-protocol.md`
+- 状态：目标规范；post-MVP
+- 决策：D373 / ADR 0205，由 D374 和 D375 修订
+- 范围：对 PI-Desktop Agent Host 的远程观察与控制
+- 权威来源：`03-runtime/19-remote-agent-control-protocol.md`
 
-## 1. Scope and status
+## 1. 范围与状态
 
-This document specifies the target architecture for controlling a PI-Desktop
-Agent from another client. It does not enable a network listener in the
-current desktop release and does not change the frozen MVP boundary in
-`00-baseline.md` or ADR 0004.
+本文档规定从另一个客户端控制 PI-Desktop Agent 的目标架构。它不在
+当前桌面版本中启用网络监听器，也不改变 `00-baseline.md` 或
+ADR 0004 中冻结的 MVP 边界。
 
-The target capability lets an authenticated client:
+目标能力让经过认证的客户端可以：
 
-- discover and attach to sessions owned by an Agent Host;
-- start, queue, observe, stop, and interrupt turns;
-- receive ordered assistant, tool, approval, and lifecycle events;
-- answer host-owned permission, contract approval, and input requests with
-  the same decisions the desktop offers locally;
-- reconnect after a transport failure without losing the session state; and
-- use the same workspace, tool, secret, and permission boundaries as a local
-  turn.
+- 发现并附加到 Agent Host 拥有的会话；
+- 启动、排队、观察、停止和中断回合；
+- 接收有序的 assistant、工具、批准和生命周期事件；
+- 以桌面本地提供的同一套决策回答宿主拥有的权限、契约批准和输入
+  请求；
+- 在传输故障后重连而不丢失会话状态；以及
+- 使用与本地回合相同的工作区、工具、秘密和权限边界。
 
-The feature is a control-plane API. It is not remote desktop streaming, an
-arbitrary shell service, a provider proxy, or a replacement for the local
-MCP control plane.
+该特性是一个控制面 API。它不是远程桌面串流、任意 shell 服务、
+provider 代理，也不是本地 MCP 控制面的替代品。
 
-D375 fixes the order in which the topologies ship. The first remote
-deployment is the desktop itself acting as the Remote Client of a headless
-Host on another machine over an SSH tunnel, which is what users asked for in
-issues #176 and #140. The second is an outbound messaging integration that
-runs beside the Host (issue #100). Gateway routing and browser access remain
-fully specified here and in the protocol, but they are unscheduled until a
-demand signal or product decision schedules them.
+D375 确定了各拓扑的交付顺序。第一个远程部署是桌面本身作为远程
+客户端，经 SSH 隧道连接另一台机器上的无头 Host —— 这正是用户在
+issue #176 和 #140 中要求的。第二个是在 Host 旁边运行的出站消息
+集成（issue #100）。Gateway 路由和浏览器访问在本文和协议中保持
+完整规定，但在需求信号或产品决策排期之前保持未排期。
 
-## 2. Design principles
+## 2. 设计原则
 
-1. **The Agent Host is the source of truth.** A client is a viewer and
-   controller that may disconnect. A running turn is not owned by a browser
-   tab or Electron window.
-2. **The semantic contract is transport-neutral.** `RACP-WS` is the normative
-   v1 binding and is first deployed over an SSH tunnel. `RACP-HTTP` is the
-   browser profile of the same contract and is unscheduled. `RACP-GRPC` is
-   reserved. Every shipped binding exposes the same session, turn, event,
-   approval, and attachment semantics.
-3. **Local boundaries remain local.** Rust host-core continues to speak only
-   stdio NDJSON JSON-RPC with its trusted Electron Main or headless host
-   supervisor, wherever that host runs. The Node pi sidecar continues to
-   reach host services through the host-process proxy.
-4. **The public edge is a capability boundary.** Remote clients never receive
-   raw `host.proxy`, Electron IPC, host-core RPC, provider credentials, or an
-   arbitrary operation catalog.
-5. **State synchronization is explicit.** Every durable remote event has an
-   `{ epoch, sequence }` cursor. Reconnect uses a cursor or a complete state
-   snapshot; it never relies on wall-clock timestamps.
-6. **Mutations are idempotent.** A lost response must not cause a second turn,
-   duplicate approval, or repeated attachment mutation.
-7. **A binding is replaceable.** A client may select a binding based on its
-   capabilities without changing the Agent Host's behavior.
-8. **The Host is headless.** Session and turn admission, the turn queue, the
-   approval broker, the event log, and the snapshot builder live in a module
-   with no Electron dependency. Desktop IPC, the local MCP control plane,
-   RACP, and the messaging integration are callers of that one module.
-9. **A remote session lives entirely on its Host.** Its transcript, tools,
-   workspace, permissions, and provider secrets are on the machine that runs
-   the Host. The desktop displays and controls it; it never executes remote
-   tools locally or stores the remote transcript beyond display state.
-10. **User-local by construction.** No project-operated service is in the
-    control path. Every credential is issued by the user's own Host, and the
-    only outbound connections are to the user's SSH hosts, the messaging
-    channels the user configured, the model providers the user configured,
-    and the read-only GitHub Releases download of `pi-host` (D385).
+1. **Agent Host 是权威来源。** 客户端是可断开连接的观察者和控制者。
+   运行中的回合不属于任何浏览器标签或 Electron 窗口。
+2. **语义契约与传输无关。** `RACP-WS` 是规范性 v1 绑定，首次部署
+   在 SSH 隧道之上。`RACP-HTTP` 是同一契约的浏览器配置，未排期。
+   `RACP-GRPC` 保留。每个交付的绑定暴露相同的会话、回合、事件、
+   批准和附件语义。
+3. **本地边界保持本地。** 无论宿主运行在哪里，Rust host-core 继续
+   只与其可信的 Electron Main 或无头宿主监督者讲 stdio NDJSON
+   JSON-RPC。Node pi sidecar 继续经宿主进程代理访问宿主服务。
+4. **公共边缘是能力边界。** 远程客户端永远收不到原始 `host.proxy`、
+   Electron IPC、host-core RPC、provider 凭据或任意操作目录。
+5. **状态同步是显式的。** 每个持久远程事件都有 `{ epoch, sequence }`
+   游标。重连使用游标或完整状态快照；从不依赖墙钟时间戳。
+6. **变更幂等。** 丢失响应不得导致第二个回合、重复批准或重复的
+   附件变更。
+7. **绑定可替换。** 客户端可以按自身能力选择绑定，而不改变 Agent
+   Host 的行为。
+8. **Host 是无头的。** 会话与回合准入、回合队列、批准 broker、
+   事件日志和快照构建器位于一个无 Electron 依赖的模块中。桌面
+   IPC、本地 MCP 控制面、RACP 和消息集成都是这一个模块的调用方。
+9. **远程会话完全存活在其 Host 上。** 它的转录、工具、工作区、
+   权限和 provider 秘密都在运行 Host 的机器上。桌面显示并控制它；
+   从不在本地执行远程工具，也不在显示状态之外存储远程转录。
+10. **构造上用户本地。** 控制路径中没有项目运营的服务。每个凭据
+    都由用户自己的 Host 签发，唯一的出站连接是到用户的 SSH 主机、
+    用户配置的消息渠道、用户配置的模型 provider，以及只读的
+    GitHub Releases 下载 `pi-host`（D385）。
 
-## 3. Reference implementations and design inputs
+## 3. 参考实现与设计输入
 
-The design takes patterns from, but does not adopt wholesale, the following
-public projects:
+本设计借鉴但不整体采纳以下公开项目的模式：
 
 - [OpenAI Codex App Server](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
-  uses JSON-RPC-shaped messages over stdio and WebSocket, separates threads,
-  turns, and items, streams lifecycle notifications, and sends approval
-  requests from the server to the client.
+  在 stdio 和 WebSocket 上使用 JSON-RPC 形态的消息，分离线程、
+  回合和条目，流式发送生命周期通知，并从服务器向客户端发送批准
+  请求。
 - [VS Code Agent Host](https://github.com/microsoft/vscode-docs/blob/main/docs/agents/concepts/agent-host.md)
-  puts the Agent in a dedicated host, keeps the host as the state source,
-  supports remote JSON-RPC over WebSocket, and resynchronizes clients with
-  snapshots and ordered actions.
+  把 Agent 放在专用宿主中，保持宿主为状态来源，支持经 WebSocket
+  的远程 JSON-RPC，并用快照和有序操作重新同步客户端。
 - [MCP transports](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-03-26/basic/transports.mdx)
-  demonstrate JSON-RPC over local stdio and independent-process HTTP with
-  optional server-sent events.
+  展示了本地 stdio 上的 JSON-RPC 和独立进程 HTTP（可选
+  server-sent events）。
 - [Google A2A](https://github.com/a2aproject/A2A/blob/main/docs/specification.md)
-  separates a canonical data model and abstract operations from JSON-RPC,
-  gRPC, and HTTP/JSON bindings.
+  把规范数据模型和抽象操作与 JSON-RPC、gRPC 和 HTTP/JSON 绑定
+  分离。
 
-The SSH-tunnel topology follows the VS Code Remote-SSH and JetBrains Gateway
-model: the server side is bootstrapped over the user's own SSH session and
-the client reaches it through a forwarded loopback port.
+SSH 隧道拓扑遵循 VS Code Remote-SSH 和 JetBrains Gateway 模型：
+服务器侧经用户自己的 SSH 会话引导，客户端经转发的 loopback 端口
+访问它。
 
-PI-Desktop does not revive the withdrawn subagent A2A/Peer channel. ADR 0165
-continues to govern `Task` subagent coordination. The separate official
-Session Orchestrator plugin may use the host-owned, local-only collaboration
-ledger defined by ADR 0239; that reviewed path is not a remote Gateway or A2A
-transport and does not change the remote-control target.
+PI-Desktop 不复活已撤回的 subagent A2A/Peer 通道。ADR 0165 继续
+管辖 `Task` subagent 协调。单独的官方 Session Orchestrator 插件
+可以使用 ADR 0239 定义的宿主拥有、仅本地的协作 ledger；那条经过
+评审的路径不是远程 Gateway 或 A2A 传输，也不改变远程控制目标。
 
-## 4. Logical components
+## 4. 逻辑组件
 
-| Component | Responsibility | Must not own |
+| 组件 | 职责 | 不得拥有 |
 |---|---|---|
-| Remote Client | Render state, send user intent, answer approvals and input requests | Workspace authority, provider credentials, final permission decisions, the prompt queue |
-| Desktop RACP client adapter (Electron Main) | Present a remote Host to the renderer through the existing `lib/api.ts` surface; own SSH bootstrap, pairing, and port forwarding | A second transcript store; local execution of remote tools |
-| Agent Host | Own sessions, turns, the per-session turn queue, event cursors, attachment records, tool execution, and lifecycle | Browser presentation state |
-| Headless Agent Host module (`packages/agent-host`) | Own session/turn admission, the turn queue, the approval broker, the in-memory event log, and the snapshot builder; expose one typed API to desktop IPC, local MCP, RACP, and integrations | Electron, renderer, or transport dependencies; a second permission or persistence implementation |
-| `pi-host` headless bundle | Run the module, the Node pi sidecar, and Rust host-core on a remote machine, bound to loopback, at the same version as the desktop, downloaded from GitHub Releases by the bootstrap script | A desktop UI, plugin panels, another Host's secrets |
-| Messaging integration adapter | Subscribe to host-scope events in the Host process and relay redacted summaries to outbound channels; map a fixed command vocabulary to turn and approval operations | Its own permission policy, an inbound listener, raw transcript content |
-| Self-hosted Gateway (unscheduled) | Admit Host-issued device credentials, authorize routing, maintain Host links, rate-limit, audit, buffer attachment uploads transiently, and (reserved) push redacted summaries | Provider secrets, durable transcript truth, arbitrary host-core access, attachment bytes beyond the upload window |
-| Node pi sidecar | Run the pi Agent loop and provider streams | Remote authentication, workspace policy, secret storage |
-| Rust host-core | Own SQLite, tools, workspace boundaries, permissions and the pending permission table, secrets, and durable local records | Public network listeners |
+| 远程客户端 | 渲染状态、发送用户意图、回答批准与输入请求 | 工作区权威、provider 凭据、最终权限决定、prompt 队列 |
+| 桌面 RACP 客户端适配器（Electron Main） | 经现有 `lib/api.ts` 表面向渲染器呈现远程 Host；拥有 SSH 引导、配对和端口转发 | 第二个转录存储；远程工具的本地执行 |
+| Agent Host | 拥有会话、回合、每会话回合队列、事件游标、附件记录、工具执行和生命周期 | 浏览器呈现状态 |
+| 无头 Agent Host 模块（`packages/agent-host`） | 拥有会话/回合准入、回合队列、批准 broker、内存事件日志和快照构建器；向桌面 IPC、本地 MCP、RACP 和集成暴露一个类型化 API | Electron、渲染器或传输依赖；第二套权限或持久化实现 |
+| `pi-host` 无头包 | 在远程机器上运行该模块、Node pi sidecar 和 Rust host-core，绑定 loopback，与桌面同版本，由引导脚本从 GitHub Releases 下载 | 桌面 UI、插件面板、其他 Host 的秘密 |
+| 消息集成适配器 | 在 Host 进程中订阅宿主作用域事件，把脱敏摘要中继到出站渠道；把固定的命令词汇映射为回合和批准操作 | 自己的权限策略、入站监听器、原始转录内容 |
+| 自托管 Gateway（未排期） | 准入 Host 签发的设备凭据、授权路由、维护 Host 链路、限流、审计、临时缓冲附件上传，以及（保留）推送脱敏摘要 | Provider 秘密、持久转录真相、任意 host-core 访问、上传窗口之外的附件字节 |
+| Node pi sidecar | 运行 pi Agent 循环和 provider 流 | 远程认证、工作区策略、秘密存储 |
+| Rust host-core | 拥有 SQLite、工具、工作区边界、权限与待处理权限表、秘密和持久的本地记录 | 公共网络监听器 |
 
-In the first phase the logical Agent Host is Electron Main hosting the
-headless module beside its supervised sidecars. The `pi-host` bundle runs the
-same module and supervision on a remote machine. The external contract is the
-same in both deployments.
+第一阶段，逻辑 Agent Host 是 Electron Main 在其监督的 sidecar
+旁边托管无头模块。`pi-host` 包在远程机器上运行同一个模块和监督。
+两种部署中的外部契约相同。
 
-## 5. Deployment topologies
+## 5. 部署拓扑
 
-### 5.1 Current local desktop
+### 5.1 当前本地桌面
 
-This topology is unchanged:
+此拓扑不变：
 
 ```text
 PI-Desktop
@@ -137,10 +120,10 @@ PI-Desktop
 └── local MCP control plane (optional, loopback-only)
 ```
 
-The local MCP endpoint remains governed by ADR 0203. It is not a remote
-Gateway and cannot be configured to bind a LAN or public interface.
+本地 MCP 端点仍由 ADR 0203 管辖。它不是远程 Gateway，也不能被
+配置为绑定 LAN 或公共接口。
 
-### 5.2 Remote Host over an SSH tunnel (first remote topology)
+### 5.2 经 SSH 隧道的远程 Host（第一个远程拓扑）
 
 ```text
 PI-Desktop (Remote Client)                    Remote machine
@@ -152,37 +135,31 @@ PI-Desktop (Remote Client)                    Remote machine
 └── Rust host-core (local)  │                 └── sshd (user's own keys and config)
 ```
 
-Bootstrap runs over the user's own SSH session, never over RACP:
+引导经用户自己的 SSH 会话运行，从不经 RACP：
 
-1. The desktop opens SSH with the user's existing configuration and keys. A
-   login password MAY be supplied instead of a key (ADR 0293): it is handed to
-   the `ssh` client through an askpass helper, never as an argument, and is
-   stored encrypted in the desktop's secure storage so the host can reconnect
-   after a restart.
-2. It uploads a small bootstrap script that downloads the `pi-host` bundle
-   for the remote platform at the desktop's version from GitHub Releases,
-   verifies the published SHA-256, and installs it under the user's home. A
-   machine without outbound access to GitHub cannot be bootstrapped in the
-   first version.
-3. It starts `pi-host` bound to loopback and receives a single-use pairing
-   token over the SSH channel.
-4. It forwards a local port to the Host's loopback port and connects
-   `RACP-WS` with the header profile, exchanging the pairing token for a
-   device token that the desktop stores in its secure storage.
-5. The Host records the desktop device as `owner` of that Host.
+1. 桌面用用户现有的配置和密钥打开 SSH。可以改为提供登录密码
+   （ADR 0293）：它通过 askpass 助手交给 `ssh` 客户端，从不作为
+   参数，并加密存储在桌面的安全存储中，以便重启后宿主可以重新
+   连接。
+2. 它上传一个小引导脚本，按桌面版本从 GitHub Releases 下载远程
+   平台的 `pi-host` 包，验证已发布的 SHA-256，并安装到用户主目录
+   下。没有到 GitHub 出站访问的机器在第一个版本中无法被引导。
+3. 它启动绑定 loopback 的 `pi-host`，并经 SSH 通道收到一个一次性
+   配对 token。
+4. 它把一个本地端口转发到 Host 的 loopback 端口，以 header 配置
+   连接 `RACP-WS`，把配对 token 换成桌面存入安全存储的设备 token。
+5. Host 把该桌面设备记录为该 Host 的 `owner`。
 
-Provider configuration for the remote Host is written over the same SSH
-channel by the bootstrap step, as Host-local configuration. It never crosses
-RACP, so the secret boundary in `05-security/02-remote-control-security.md`
-§7 is unchanged.
+远程 Host 的 provider 配置由引导步骤经同一 SSH 通道写入，作为
+Host 本地配置。它从不跨越 RACP，因此
+`05-security/02-remote-control-security.md` §7 的秘密边界不变。
 
-The Host binds loopback only. Plain `ws://` is accepted on that port only
-when both the bind address and the peer address are loopback and a valid
-device token is presented, because the SSH channel provides confidentiality
-and the SSH login already proves shell access to the machine. A non-loopback
-bind requires TLS and a device token exactly as before.
+Host 只绑定 loopback。仅当绑定地址和对端地址都是 loopback 且出示
+有效设备 token 时，该端口才接受纯 `ws://`，因为 SSH 通道提供了
+机密性，且 SSH 登录已经证明了对该机器的 shell 访问。非 loopback
+绑定与之前一样要求 TLS 和设备 token。
 
-### 5.3 Self-hosted Gateway (unscheduled)
+### 5.3 自托管 Gateway（未排期）
 
 ```text
 Browser / Native Client ── HTTPS or WSS ── Remote Gateway
@@ -195,159 +172,136 @@ Browser / Native Client ── HTTPS or WSS ── Remote Gateway
                                       └── Rust host-core
 ```
 
-The Agent Host opens the outbound connection. The Gateway does not require an
-inbound port on the user's desktop and does not turn the host-core process into
-a public service. The Host link is a relay profile
-(`03-runtime/19-remote-agent-control-protocol.md` §11.4): it multiplexes
-logical client connections so that server-initiated approval requests reach
-the right client and attachment bytes reach the Host without an inbound port.
-The Gateway keeps a short-lived route from a host identity to a live
-connection and may queue control-plane metadata, but it does not queue
-non-idempotent turn commands while the Agent Host is offline. PI does not
-operate a Gateway: if this topology is ever scheduled, the user runs it on
-their own infrastructure and it admits clients with Host-issued device
-credentials (D385). It is specified so the contract does not drift; it is not
-scheduled.
+Agent Host 发起出站连接。Gateway 不需要用户桌面上的入站端口，也
+不把 host-core 进程变成公共服务。Host 链路是中继配置
+（`03-runtime/19-remote-agent-control-protocol.md` §11.4）：它复用
+逻辑客户端连接，使服务器发起的批准请求到达正确的客户端，附件字节
+在没有入站端口的情况下到达 Host。Gateway 保持从宿主身份到活跃
+连接的短生命周期路由，可以排队控制面元数据，但不在 Agent Host
+离线时排队非幂等的回合命令。PI 不运营 Gateway：如果该拓扑被排期，
+用户在自己的基础设施上运行它，并以 Host 签发的设备凭据准入客户端
+（D385）。规定它是为了契约不漂移；它未排期。
 
-## 6. Ownership and authority
+## 6. 所有权与权威
 
-### 6.1 Agent Host ownership
+### 6.1 Agent Host 所有权
 
-The Agent Host is authoritative for:
+Agent Host 对以下事项具有权威：
 
-- session and turn state, including the per-session turn queue;
-- the current operating mode and permission mode, and the remote permission
-  ceiling applied to remote-initiated turns;
-- the workspace/project binding;
-- epoch and sequence allocation and replay retention;
-- approval and input request lifecycle, including requests raised before a
-  client attached;
-- attachment ownership and hash verification;
-- tool execution and result classification; and
-- crash, abort, and no-replay behavior.
+- 会话与回合状态，包括每会话回合队列；
+- 当前运行模式与权限模式，以及应用于远程发起回合的远程权限上限；
+- 工作区/项目绑定；
+- epoch 与 sequence 分配和重放保留；
+- 批准与输入请求生命周期，包括客户端附加之前提出的请求；
+- 附件所有权与哈希验证；
+- 工具执行与结果分类；以及
+- 崩溃、中止和不重放行为。
 
-The Gateway and Remote Client must treat host responses as authoritative. A
-client-side optimistic state is display-only.
+Gateway 和远程客户端必须把宿主响应视为权威。客户端的乐观状态仅
+用于显示。
 
-### 6.2 Client roles
+### 6.2 客户端角色
 
-An authenticated principal receives one or more scoped roles per session:
+经过认证的 principal 按会话获得一个或多个有作用域的角色：
 
-- `viewer`: read session metadata, history, and subscribe to events;
-- `controller`: start or queue a turn, stop, interrupt, or cancel a turn,
-  answer input requests, and upload input;
-- `approver`: resolve tool and contract approvals allowed by policy; and
-- `owner`: manage session membership, revoke clients, and archive a session.
+- `viewer`：读取会话元数据、历史，并订阅事件；
+- `controller`：启动或排队回合，停止、中断或取消回合，回答输入
+  请求，并上传输入；
+- `approver`：解决策略允许的工具和契约批准；以及
+- `owner`：管理会话成员、撤销客户端、归档会话。
 
-Roles are additive but never bypass host policy. A `controller` cannot approve
-its own request unless the policy explicitly grants the `approver` role.
+角色是可叠加的，但从不绕过宿主策略。除非策略显式授予 `approver`
+角色，`controller` 不能批准自己的请求。
 
-Only one turn may run in a session. Multiple viewers are allowed. Queued
-turns are Host state shared by every client, including the local desktop.
-Concurrent mutations are serialized by the Agent Host and rejected with a
-conflict when their expected session revision is stale. A turn started by a
-Gateway-routed principal runs under the Host's remote permission ceiling
-(`03-runtime/19-remote-agent-control-protocol.md` §7.3). A desktop device
-paired through the SSH bootstrap holds `owner` and is exempt from the
-ceiling, because SSH access to the machine already exceeds anything the
-ceiling withholds; the Host policy `applyCeilingToPairedDevices` (default
-off) re-applies it.
+一个会话中只能运行一个回合。允许多个 viewer。排队回合是包括本地
+桌面在内的每个客户端共享的 Host 状态。并发变更由 Agent Host 串行
+化，当其期望的会话修订过期时以冲突拒绝。由 Gateway 路由的
+principal 启动的回合在 Host 的远程权限上限下运行
+（`03-runtime/19-remote-agent-control-protocol.md` §7.3）。经 SSH
+引导配对的桌面设备持有 `owner`，豁免该上限，因为对该机器的 SSH
+访问已经超过上限所保留的一切；Host 策略
+`applyCeilingToPairedDevices`（默认关闭）会重新应用它。
 
-### 6.3 Remote session ownership split
+### 6.3 远程会话所有权划分
 
-For a session on a remote Host:
+对于远程 Host 上的会话：
 
-- **On the remote Host**: transcript and SQLite, turns and the queue, the
-  built-in tool catalog and workspace boundaries, permissions and session
-  grants, provider secrets, skills and subagent definitions from that
-  machine's `~/.agents`, MCP servers configured on that Host, and scheduled
-  tasks.
-- **On the desktop**: the window and shell, local sessions, the settings UI
-  for the local application, plugin panels, the browser preview, and the
-  display of notifications.
-- **Relayed from the desktop**: the desktop advertises its user-configured
-  MCP servers and the plugin tools that do not require the session workspace
-  through `tools/advertise`; they appear in the remote session's catalog as
-  relayed tools and execute on the desktop through the `tool/execute` server
-  request under the desktop's own plugin permissions
-  (`03-runtime/19-remote-agent-control-protocol.md` §9.4). Plugin tools that
-  require workspace or filesystem access are excluded, because they would act
-  on the desktop's filesystem while the session root is on the Host.
-- **Work panel**: file listing, file reads, and the working-tree diff use the
-  remote-host profile operations in
-  `03-runtime/19-remote-agent-control-protocol.md` §6.2 against the remote
-  session root; the terminal runs on the remote machine through the
-  `terminal/*` operations with a bounded replay ring; the browser preview
-  stays local.
+- **在远程 Host 上**：转录和 SQLite、回合和队列、内置工具目录和
+  工作区边界、权限和会话授权、provider 秘密、来自该机器
+  `~/.agents` 的 skills 和 subagent 定义、在该 Host 上配置的 MCP
+  服务器，以及定时任务。
+- **在桌面上**：窗口和外壳、本地会话、本地应用的设置 UI、插件
+  面板、浏览器预览，以及通知的显示。
+- **从桌面中继**：桌面通过 `tools/advertise` 通告其用户配置的
+  MCP 服务器和不需要会话工作区的插件工具；它们以中继工具的形式
+  出现在远程会话的目录中，并在桌面自己的插件权限下通过
+  `tool/execute` 服务器请求在桌面上执行
+  （`03-runtime/19-remote-agent-control-protocol.md` §9.4）。需要
+  工作区或文件系统访问的插件工具被排除，因为会话根在 Host 上而
+  它们会作用于桌面的文件系统。
+- **工作面板**：文件列表、文件读取和工作树 diff 使用
+  `03-runtime/19-remote-agent-control-protocol.md` §6.2 中针对远程
+  会话根的 remote-host 配置操作；终端通过 `terminal/*` 操作在远程
+  机器上运行，带有界重放环；浏览器预览保持本地。
 
-### 6.4 Gateway ownership (unscheduled)
+### 6.4 Gateway 所有权（未排期）
 
-The Gateway owns identity-to-host routing, not workspace state. It may store:
+Gateway 拥有身份到宿主的路由，而不是工作区状态。它可以存储：
 
-- host registration and connection health;
-- user/session membership and revocation metadata;
-- rate-limit counters;
-- audit metadata;
-- short-lived transport buffers, including attachment bytes only until the
-  Host confirms the upload or it expires; and
-- (reserved) push-notification registrations for redacted approval and turn
-  summaries.
+- 宿主注册和连接健康；
+- 用户/会话成员与撤销元数据；
+- 限流计数器；
+- 审计元数据；
+- 短生命周期传输缓冲，包括仅在 Host 确认上传或过期之前的附件
+  字节；以及
+- （保留）脱敏批准与回合摘要的推送通知注册。
 
-It must not persist provider API keys, raw tool arguments, raw tool results, or
-full transcripts unless a separate product decision explicitly grants that
-retention.
+除非单独的产品决策显式授予该保留，否则它不得持久 provider API
+key、原始工具参数、原始工具结果或完整转录。
 
-A Gateway is self-hosted and has no identity source of its own: it admits
-clients with device credentials issued by the user's Host (D385); see
-`05-security/02-remote-control-security.md` §3.1. OIDC federation and the
-pi-backend account service are out of scope.
+Gateway 是自托管的，没有自己的身份来源：它以用户 Host 签发的设备
+凭据准入客户端（D385）；见 `05-security/02-remote-control-security.md`
+§3.1。OIDC 联合和 pi-backend 账户服务超出范围。
 
-## 7. Transport profiles
+## 7. 传输配置
 
-The protocol specification defines one abstract operation model and these
-bindings:
+协议规范定义一个抽象操作模型和以下绑定：
 
-| Profile | Intended client | Direction | Status |
+| 配置 | 目标客户端 | 方向 | 状态 |
 |---|---|---|---|
-| Local stdio JSON-RPC | Electron Main and sidecars | Full duplex | Existing; unchanged |
-| `RACP-WS` JSON-RPC over WSS | Desktop as Remote Client over SSH, native clients, Electron | Full duplex | Normative v1 binding; first deployed over the SSH tunnel |
-| `RACP-HTTP` HTTP/JSON + SSE | Browser and simple integrations | Commands plus server stream | Browser profile; unscheduled |
-| `RACP-GRPC` gRPC over TLS | Native service clients | Unary plus server stream | Reserved; not in v1 conformance |
-| Host link `racp-hostlink.v1` | Gateway to Host | Multiplexed full duplex | Relay profile over `RACP-WS` framing; unscheduled with the Gateway |
+| 本地 stdio JSON-RPC | Electron Main 和 sidecar | 全双工 | 现有；不变 |
+| `RACP-WS` WSS 上的 JSON-RPC | 经 SSH 作为远程客户端的桌面、原生客户端、Electron | 全双工 | 规范性 v1 绑定；首次部署在 SSH 隧道上 |
+| `RACP-HTTP` HTTP/JSON + SSE | 浏览器和简单集成 | 命令加服务器流 | 浏览器配置；未排期 |
+| `RACP-GRPC` TLS 上的 gRPC | 原生服务客户端 | 一元加服务器流 | 保留；不在 v1 一致性内 |
+| Host 链路 `racp-hostlink.v1` | Gateway 到 Host | 复用全双工 | `RACP-WS` 分帧上的中继配置；随 Gateway 未排期 |
 
-The binding-neutral contract is specified in
-`03-runtime/19-remote-agent-control-protocol.md`. A binding may be added only
-when it preserves the same state transitions, error meaning, authorization
-scope, event ordering, and cursor behavior, and it joins the conformance
-fixture before it ships.
+绑定中立的契约规定在
+`03-runtime/19-remote-agent-control-protocol.md` 中。只有保持相同
+状态转换、错误含义、授权范围、事件顺序和游标行为的绑定才可添加，
+且它在交付前加入一致性夹具。
 
-## 8. Session and event synchronization
+## 8. 会话与事件同步
 
-Each session has a Host-generated `epoch` and, inside it, a monotonically
-increasing `sequence` for durable events. The pair is never reused for that
-session. Every event carries:
+每个会话有一个 Host 生成的 `epoch`，其内部持久事件的 `sequence`
+单调递增。该对对那个会话从不复用。每个事件携带：
 
-- `scope` (`session` or `host`);
-- `sessionId` and optional `turnId`;
-- `eventId`;
-- `epoch`, plus `sequence` for durable events or `afterSequence` for
-  ephemeral ones;
-- `revision`;
-- semantic `kind`;
-- optional `parentToolCallId` and `agentName` for subagent rows; and
-- a typed payload that carries the shared normalized `AgentEvent` for
-  turn-scoped kinds.
+- `scope`（`session` 或 `host`）；
+- `sessionId` 和可选 `turnId`；
+- `eventId`；
+- `epoch`，持久事件加 `sequence`，临时事件加 `afterSequence`；
+- `revision`；
+- 语义 `kind`；
+- subagent 行的可选 `parentToolCallId` 和 `agentName`；以及
+- 一个类型化负载，为回合作用域的 kind 携带共享的规范化
+  `AgentEvent`。
 
-Durable events are item and lifecycle boundaries, approvals, inputs, and
-session changes. Ephemeral events are streaming deltas, tool progress, and
-activity phases; they are delivered live, never sequenced, never replayed,
-and never counted against the replay window. A snapshot's `activeItems`
-carry what the deltas accumulated, so a reconnecting client loses nothing it
-could not rebuild.
+持久事件是条目和生命周期边界、批准、输入和会话变更。临时事件是
+流式增量、工具进度和活动阶段；它们实时投递，从不编号、从不重放，
+也从不计入重放窗口。快照的 `activeItems` 携带增量累积的内容，
+因此重连的客户端不会丢失任何它无法重建的东西。
 
-The first subscription response includes a snapshot and its `cursor`.
-Subsequent durable events are ordered by `sequence`. A reconnect supplies
-`after`:
+第一个订阅响应包含快照及其 `cursor`。后续持久事件按 `sequence`
+排序。重连提供 `after`：
 
 ```text
 cursor in the current epoch and retained -> replay durable events with sequence > after
@@ -355,16 +309,14 @@ epoch changed or cursor evicted          -> resync.required + current snapshot
 cursor ahead of the Host                 -> invalid cursor; client must refresh the snapshot
 ```
 
-The first implementation keeps the durable log in Agent Host process memory;
-a Host restart starts a new epoch and every client resynchronizes from a
-snapshot. Rust host-core keeps exclusive SQLite ownership (frozen decision
-12); persisting the log there would need its own ADR. The Gateway must not
-renumber events. If the Gateway reconnects a Host link, each logical client
-connection resumes from its last acknowledged cursor. A client may render
-events optimistically, but it must drop duplicates, pause on a durable gap,
-and apply a snapshot before continuing.
+第一个实现把持久日志保存在 Agent Host 进程内存中；Host 重启开始
+新 epoch，每个客户端从快照重新同步。Rust host-core 保持对 SQLite
+的独家所有权（冻结决策 12）；把日志持久化在那里需要单独的 ADR。
+Gateway 不得重新编号事件。如果 Gateway 重连 Host 链路，每个逻辑
+客户端连接从其最后确认的游标恢复。客户端可以乐观渲染事件，但
+必须丢弃重复、在持久缺口处暂停，并在继续之前应用快照。
 
-## 9. Turn and approval path
+## 9. 回合与批准路径
 
 ```text
 Client -> initialize / attach / subscribe
@@ -378,136 +330,111 @@ Host   -> turn.completed | turn.interrupted | turn.failed
 Host   -> next queued turn starts
 ```
 
-`turn/start` is an admission call. It returns quickly with a `turnId`; it must
-not hold an HTTP request open until model execution ends. With
-`admission: "queue"` the Host places the turn in its per-session queue and
-releases it after the active turn's terminal event and durable finalization;
-when terminal-event draining observes a busy runtime, the desktop must wake
-the queue again after releasing turn ownership and its finalization guard.
-Shutdown does not wake queued work. The queue is Host state,
-persisted by host-core, restored after a restart, and held until a controller
-attaches, so the local desktop and every remote client see the same pending
-prompts.
-The turn continues after the client disconnects. `turn/stop` is the graceful
-stop at the next assistant/tool boundary; `turn/interrupt` is the immediate
-abort; both are explicit and idempotent. A transport disconnect alone never
-means stop or interrupt.
+`turn/start` 是准入调用。它快速返回一个 `turnId`；不得把一个
+HTTP 请求一直保持到模型执行结束。使用 `admission: "queue"` 时，
+Host 把回合放进其每会话队列，并在活跃回合的终态事件和持久结算
+之后释放它；当终态事件排空观察到运行时繁忙时，桌面必须在释放
+回合所有权及其结算守护之后再次唤醒队列。关机不唤醒排队的工作。
+队列是 Host 状态，由 host-core 持久化，重启后恢复，并保持到
+controller 附加，因此本地桌面和每个远程客户端看到相同的待处理
+prompt。客户端断开后回合继续。`turn/stop` 是在下一个
+assistant/工具边界的优雅停止；`turn/interrupt` 是立即中止；两者
+都是显式且幂等的。仅有传输断开绝不意味着停止或中断。
 
-Permission, Plan, Goal, and input rules remain host-owned. A remote client
-receives the same decision vocabulary the desktop offers: `allow-once`,
-`allow-session`, and `deny` for tools; `approve` with an explicit permission
-mode, or `reject`, for Plan and Goal contracts; and per-question answers or
-skips for asktool prompts. A Plan or Goal approval is a session-level
-transition that outlives the submitting turn. A remote client cannot select
-an unadvertised permission mode or execute a tool directly; changing a
-durable mode uses `session/configure` from the remote-host profile and is
-idle-only, exactly as locally. A Gateway-routed turn never exceeds the Host's
-remote permission ceiling. Approval lifetime is Host policy: the local
-default stays 120 seconds then deny, and while a remote subscriber is
-attached the default is 30 minutes (D375), bounded and operator-adjustable,
-because a remote approver is rarely at the keyboard.
+权限、Plan、Goal 和输入规则保持宿主拥有。远程客户端收到与桌面
+提供的相同决策词汇：工具的 `allow-once`、`allow-session` 和
+`deny`；Plan 和 Goal 契约的带显式权限模式的 `approve` 或
+`reject`；以及 asktool 提示的逐问题回答或跳过。Plan 或 Goal
+批准是比提交回合更长命的会话级转换。远程客户端不能选择未通告
+的权限模式或直接执行工具；改变持久模式使用 remote-host 配置的
+`session/configure`，且仅限空闲时，与本地完全一致。Gateway 路由
+的回合从不超出 Host 的远程权限上限。批准寿命是 Host 策略：本地
+默认保持 120 秒后拒绝，而当远程订阅者附加时默认为 30 分钟
+（D375），有界且可由运营者调整，因为远程批准者很少在键盘前。
 
-## 10. Failure and recovery model
+## 10. 故障与恢复模型
 
-| Failure | Required behavior |
+| 故障 | 要求的行为 |
 |---|---|
-| Client disconnect | Keep the turn running; retain durable events within the replay window |
-| Client reconnect | Authenticate again, attach, replay from cursor or return snapshot |
-| SSH tunnel drop | The desktop adapter re-establishes the forward and resumes by cursor; the remote turn continues |
-| Gateway disconnect | Agent Host retries the Host link with bounded exponential backoff; local turns continue |
-| Agent Host unavailable | Reject new mutations with `AGENT_UNAVAILABLE`; never replay them automatically |
-| Agent Host restart | New epoch; clients resync from a snapshot; the persisted queue is restored in order and held until a controller attaches; nothing already started is replayed |
-| Agent Host crash | Existing host recovery rules apply; interrupted work is never replayed automatically |
-| Duplicate mutation | Return the original idempotent result for the same principal and key |
-| Durable event gap | Stop applying events and request a snapshot; never guess intermediate state |
-| Slow client | Drop ephemeral events first; disconnect with a resumable cursor before losing a durable event |
-| Expired approval | Return `APPROVAL_EXPIRED`; do not execute the tool |
+| 客户端断开 | 保持回合运行；在重放窗口内保留持久事件 |
+| 客户端重连 | 重新认证、附加，从游标重放或返回快照 |
+| SSH 隧道断开 | 桌面适配器重建转发并按游标恢复；远程回合继续 |
+| Gateway 断开 | Agent Host 以有界指数退避重试 Host 链路；本地回合继续 |
+| Agent Host 不可用 | 以 `AGENT_UNAVAILABLE` 拒绝新变更；从不自动重放 |
+| Agent Host 重启 | 新 epoch；客户端从快照重新同步；持久队列按序恢复并保持到 controller 附加；已开始的工作不重放 |
+| Agent Host 崩溃 | 适用现有宿主恢复规则；被中断的工作从不自动重放 |
+| 重复变更 | 对同一 principal 和 key 返回原始幂等结果 |
+| 持久事件缺口 | 停止应用事件并请求快照；从不猜测中间状态 |
+| 慢客户端 | 先丢弃临时事件；在丢失持久事件之前以可恢复游标断开 |
+| 过期批准 | 返回 `APPROVAL_EXPIRED`；不执行该工具 |
 
-## 11. Migration boundary
+## 11. 迁移边界
 
-The first implementation delivers the headless Agent Host module
-(`packages/agent-host`). It owns session and turn admission, the per-session
-turn queue, the approval broker, the in-memory event log with epochs, and the
-snapshot builder, and it has no Electron dependency. Electron Main hosts the
-module and its IPC handlers become adapters over it; that move may be
-incremental, with the module first wrapping the existing handlers and then
-absorbing them. The RACP server binds to the module, never to renderer IPC,
-`host.proxy`, or Rust host-core RPC from a network listener. The local MCP
-control plane (ADR 0203) is unchanged now and may later move onto the same
-module.
+第一个实现交付无头 Agent Host 模块（`packages/agent-host`）。它
+拥有会话与回合准入、每会话回合队列、批准 broker、带 epoch 的
+内存事件日志和快照构建器，且没有 Electron 依赖。Electron Main
+托管该模块，其 IPC 处理器变成它之上的适配器；该迁移可以是增量
+的，模块先包裹现有处理器，然后吸收它们。RACP 服务器绑定到该
+模块，从不从网络监听器绑定到渲染器 IPC、`host.proxy` 或 Rust
+host-core RPC。本地 MCP 控制面（ADR 0203）现在不变，之后可以迁到
+同一模块上。
 
-Two local changes accompany the module: Rust host-core exposes the pending
-permission table through a `permissions.pending` read so late-attaching
-clients receive open requests, and the renderer's in-memory prompt queue is
-replaced by the Host-owned turn queue, persisted by host-core under its own
-ADR and schema bump (D375), before more than one client can control a
-session.
+两项本地变更伴随该模块：Rust host-core 通过 `permissions.pending`
+读取暴露待处理权限表，使晚附加的客户端收到未决请求；渲染器的
+内存 prompt 队列被 Host 拥有的回合队列取代，由 host-core 按其
+自己的 ADR 和架构升版持久化（D375），然后才允许多于一个客户端
+控制一个会话。
 
-The SSH-tunnel milestone adds two pieces without changing the wire contract:
-the `pi-host` bundle, which packages the module with the Node sidecar and the
-platform's host-core binary, and the desktop RACP client adapter, which sits
-under `lib/api.ts` so the renderer needs no transport knowledge. The same
-milestone carries the `tools/advertise` / `tool/execute` relay and the
-`terminal/*` operations. The
-messaging integration is a further caller of the module inside the Host
-process and needs no transport at all.
+SSH 隧道里程碑在不改变线上契约的情况下增加两个部分：`pi-host`
+包（把模块与 Node sidecar 和该平台的 host-core 二进制打包在一起）
+和桌面 RACP 客户端适配器（位于 `lib/api.ts` 之下，因此渲染器无需
+传输知识）。同一里程碑携带 `tools/advertise` / `tool/execute`
+中继和 `terminal/*` 操作。消息集成是 Host 进程内该模块的又一个
+调用方，完全不需要传输。
 
-The migration is complete when the local desktop, a `pi-host` bundle, and,
-once scheduled, a Gateway route expose the same session/turn/event behavior.
+当本地桌面、`pi-host` 包以及（排期后）Gateway 路由暴露相同的
+会话/回合/事件行为时，迁移即完成。
 
-## 12. Acceptance criteria
+## 12. 验收标准
 
-1. A remote client can attach to a session without taking ownership of its
-   workspace path or secrets.
-2. A turn continues after the initiating client disconnects.
-3. A second client can observe the same turn and receive the same ordered
-   durable events.
-4. Reconnection either replays every durable event after the supplied cursor
-   or returns a complete snapshot with an explicit resync reason; streaming
-   deltas are recovered from the snapshot's active items.
-5. Every mutation is idempotent and scoped to an authenticated principal.
-6. Permission, contract, and input requests can be answered remotely with the
-   full local decision vocabulary without bypassing host policy, and a client
-   that attaches late sees requests raised before it attached.
-7. Rust host-core remains unreachable from the network, on the desktop and on
-   a remote machine.
-8. Every shipped binding produces equivalent domain results for the same
-   command sequence.
-9. The current local stdio JSON-RPC and loopback MCP paths remain unchanged.
-10. A Gateway-routed turn never runs above the Host's remote permission
-    ceiling.
-11. The headless Agent Host module runs its test suite without Electron, and
-    desktop IPC, local MCP, and RACP call the same module.
-12. A remote session's transcript, tools, workspace, and secrets live on the
-    remote Host; the desktop stores nothing from the remote workspace beyond
-    display state.
-13. A remote session's catalog contains the remote Host's tools plus the
-    tools the desktop advertised for relay; a relayed tool executes on the
-    desktop and never against the remote workspace.
-14. A session terminal runs on the remote machine inside the session root and
-    opens only for principals allowed by policy.
+1. 远程客户端可以附加到会话，而不取得其工作区路径或秘密的所有权。
+2. 发起客户端断开后回合继续。
+3. 第二个客户端可以观察同一回合并接收相同的有序持久事件。
+4. 重连要么重放所给游标之后的每个持久事件，要么返回带显式重同步
+   原因的完整快照；流式增量从快照的活跃条目恢复。
+5. 每个变更幂等，并限定在经认证的 principal 上。
+6. 权限、契约和输入请求可以用完整的本地决策词汇远程回答，而不
+   绕过宿主策略；晚附加的客户端能看到它附加之前提出的请求。
+7. Rust host-core 在桌面上和远程机器上都保持网络不可达。
+8. 每个交付的绑定对同一命令序列产生等效的领域结果。
+9. 当前的本地 stdio JSON-RPC 和 loopback MCP 路径保持不变。
+10. Gateway 路由的回合从不在 Host 的远程权限上限之上运行。
+11. 无头 Agent Host 模块在没有 Electron 的情况下运行其测试套件，
+    且桌面 IPC、本地 MCP 和 RACP 调用同一个模块。
+12. 远程会话的转录、工具、工作区和秘密存活在远程 Host 上；桌面
+    在显示状态之外不存储远程工作区的任何内容。
+13. 远程会话的目录包含远程 Host 的工具加上桌面通告用于中继的
+    工具；中继工具在桌面上执行，从不针对远程工作区。
+14. 会话终端在远程机器上、会话根内运行，且只对策略允许的
+    principal 打开。
 
-## 13. Amendment history
+## 13. 修订历史
 
-D374 (2026-09-10) amended the D373 target before implementation: one
-normative v1 binding with a browser profile and a reserved gRPC binding, the
-headless Agent Host module as the first deliverable, the Host-owned turn
-queue, `{ epoch, sequence }` cursors with ephemeral deltas, the full local
-approval vocabulary, the Host link relay profile, the remote permission
-ceiling, and the remote approval lifetime policy.
+D374（2026-09-10）在实现之前修订了 D373 目标：一个带浏览器配置
+和保留 gRPC 绑定的规范性 v1 绑定、作为首个交付物的无头 Agent
+Host 模块、Host 拥有的回合队列、带临时增量的
+`{ epoch, sequence }` 游标、完整的本地批准词汇、Host 链路中继
+配置、远程权限上限，以及远程批准寿命策略。
 
-D375 (2026-09-10) re-sequenced the topologies around recorded demand: the
-SSH-tunnel remote Host with the desktop as Remote Client ships first, the
-outbound messaging integration second, and the Gateway and browser
-topologies stay specified but unscheduled. It added the `pi-host` bundle,
-the desktop RACP client adapter, the SSH bootstrap and loopback rule, the
-remote session ownership split, and the ceiling exemption for SSH-paired
-owner devices. Its design-gate answers, recorded the same day, put the
-reverse tool relay and the terminal in R2, download `pi-host` from GitHub
-Releases, persist the turn queue in host-core, default the remote approval
-lifetime to 30 minutes, make the paired-device exemption a Host policy, and
-fix the Gateway identity source to the PI account service.
+D375（2026-09-10）按记录的需求重排了拓扑顺序：桌面作为远程客户
+端的 SSH 隧道远程 Host 先交付，出站消息集成第二，Gateway 和浏览
+器拓扑保持已规定但未排期。它增加了 `pi-host` 包、桌面 RACP 客户
+端适配器、SSH 引导和 loopback 规则、远程会话所有权划分，以及
+SSH 配对 owner 设备的上限豁免。同日记录的设计门答复把反向工具
+中继和终端放入 R2，从 GitHub Releases 下载 `pi-host`，在
+host-core 中持久化回合队列，远程批准寿命默认 30 分钟，把配对设备
+豁免做成 Host 策略，并把 Gateway 身份来源固定为 PI 账户服务。
 
-D385 (2026-09-10) made remote control user-local by construction: no
-project-operated identity or account service, Host-issued device credentials
-everywhere, and a Gateway only as a self-hosted relay.
+D385（2026-09-10）使远程控制在构造上用户本地：没有项目运营的身
+份或账户服务，处处使用 Host 签发的设备凭据，Gateway 只作为自托
+管中继。

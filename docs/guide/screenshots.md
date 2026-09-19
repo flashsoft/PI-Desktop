@@ -14,7 +14,7 @@ mockup, including the empty states a fresh install starts from.
 
 Session titles and transcripts come from the capture fixture, so the chrome is
 English while the sample conversation is Chinese. The
-[中文版本](/zh-CN/guide/screenshots) shows the same surfaces with Chinese chrome.
+[中文版本](/guide/screenshots) shows the same surfaces with Chinese chrome.
 
 ## Home and conversation
 

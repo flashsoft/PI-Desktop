@@ -1,69 +1,60 @@
-# 06. Host RPC Protocol
+# 06. 主机 RPC 协议
 
 ## 1. Goal
 
-Define the local protocol between:
+定义以下之间的本地协议：
 
-- Electron main (orchestrator)
-- Rust host-core (privileged backend)
-- Node pi agent sidecar (tool requester / event source consumer via host)
+- Electron 主要（协调器）
+- Rust host-core（特权后端）
+- Node pi 代理 sidecar（通过主机的工具请求者/事件源使用者）
 
-MVP transport decision (**D001**):
+MVP 传输决策 (**D001**)：
 
-> **stdio JSON-RPC over NDJSON**
+> **stdio JSON-RPC 优于 NDJSON**
 
-## 2. Transport
+## 2. 交通
 
-- Process: Electron main spawns Rust host-core sidecar
-- Channel: child process stdin/stdout
-- Framing: one JSON object per LF-delimited line (NDJSON); CRLF is accepted.
-  U+2028 and U+2029 inside JSON strings are payload, never frame delimiters.
-  All Node stdio readers preserve UTF-8 characters across input chunks and
-  release buffered fragments/listeners on transport close. A final unterminated
-  frame is accepted at EOF for compatibility.
-- Invalid JSON frames produce a diagnostic containing only the byte length,
-  never payload text, before being discarded. Later complete frames remain
-  readable. Existing session text is not rewritten or migrated.
-- Encoding: UTF-8
-- Request/response: JSON-RPC 2.0 style
+- 流程：Electron 主要生成 Rust host-core sidecar
+- 通道：子进程 stdin/stdout
+- 成帧：每行一个以 LF 分隔的 JSON 对象（NDJSON）；接受 CRLF。
+  JSON 字符串内的 U+2028 与 U+2029 属于载荷，不是帧分隔符。
+  所有 Node stdio 读取器会跨输入块保留 UTF-8 字符，并在传输关闭时释放缓冲片段和监听器。
+  为兼容起见，EOF 时接受最后一帧未以换行结束的情况。
+- 非法 JSON 帧会先产出仅含字节长度、不含载荷文本的诊断，然后丢弃。后续完整帧仍可读。现有会话文本不会被改写或迁移。
+- 编码：UTF-8
+- Request/response：JSON-RPC 2.0 风格
 
-The control pipe is resource-isolated inside host-core. One dedicated OS
-thread reads stdin and one dedicated OS thread serializes stdout; request and
-tool tasks never perform Tokio stdio operations. This keeps temporary OS
-thread exhaustion from turning a pipe read/write into a Tokio blocking-pool
-panic. The threads retry interrupted and transient nonblocking errors while
-preserving one-message-per-line framing; an unrecoverable pipe error ends the
-host and is handled by the normal Electron supervision path.
+控制管道在 host-core 内部是资源隔离的。一个专用操作系统
+线程读取 stdin，并且一个专用操作系统线程序列化 stdout；请求和
+工具任务从不执行 Tokio stdio 操作。这会保留临时操作系统
+将管道 read/write 转换为 Tokio 阻塞池导致线程耗尽
+恐慌。线程重试中断和瞬态非阻塞错误
+保留每行一条消息的框架；不可恢复的管道错误结束
+主机并由正常的 Electron 监控路径处理。
 
-### 2.1 Runtime admission and backpressure
+### 2. 1 运行时准入和背压
 
-Host-core does not create an unbounded task or subprocess for every request.
-The RPC dispatcher caps active requests at 32. `tools.execute` then enters a
-bounded execution budget:
+Host-core 不会为每个请求创建无限的任务或子进程。
+RPC 调度程序将活动请求上限限制为 32。然后，`tools.execute` 输入
+有界执行预算：
 
-- 16 total tool executions
-- 4 concurrent `Bash` processes globally, 2 per session
-- 8 read/search tools globally
-- 2 mutating tools globally, 1 per session
-- 4 plugin tools globally
-- 4 tool executions per session
-- 64 queued tool executions globally
+- 总共 16 次工具执行
+- 全局 4 个并发 `Bash` 进程，每个会话 2 个
+- 全球 8 个 read/search 工具
+- 2 个全局变异工具，每个会话 1 个
+- 全球4个插件工具
+- 每个会话执行 4 次工具
+- 全局 64 个排队工具执行
 
-Permission prompts do not consume an execution slot. A full queue returns
-`HOST_OVERLOADED` with retryable semantics in the tool result instead of
-waiting indefinitely or spawning more work. The limits are host-owned so
-Electron and the sidecar cannot independently over-admit the same resources.
-The per-session mutation permit is acquired before the global mutation slot;
-queued `Write`/`Edit` calls therefore do not hold global capacity while waiting
-for an earlier mutation in the same session.
+权限提示不占用执行槽。满队列返回
+`HOST_OVERLOADED` 在工具结果中具有可重试语义，而不是
+无限期地等待或产生更多工作。限制是主机拥有的，所以
+Electron 和 sidecar 不能独立过度接纳相同的资源。
+每会话突变许可是在全局突变槽之前获取的；
+因此，排队的 `Bash`/read/search 调用在等待时不会保留全局容量
+对于同一会话中的较早突变。
 
-Electron's `HostProcess` treats an explicit `HOST_OVERLOADED` response as
-retryable backpressure for renderer-facing calls. It waits 50, 100, 200, and
-400 ms between at most four retries, then returns the structured error to the
-caller. This retry applies only to an admission rejection; transport failure,
-timeout, and errors from an admitted request are never replayed.
-
-### Request
+### 请求
 
 ```json
 {
@@ -74,7 +65,7 @@ timeout, and errors from an admitted request are never replayed.
 }
 ```
 
-### Response
+### 回应
 
 ```json
 {
@@ -84,7 +75,7 @@ timeout, and errors from an admitted request are never replayed.
 }
 ```
 
-### Error
+### 错误
 
 ```json
 {
@@ -101,7 +92,7 @@ timeout, and errors from an admitted request are never replayed.
 }
 ```
 
-### Notification (server → client, no id)
+### 通知（服务器 → 客户端，无 id）
 
 ```json
 {
@@ -111,13 +102,13 @@ timeout, and errors from an admitted request are never replayed.
 }
 ```
 
-## 3. Handshake
+## 3. 握手
 
-On spawn, Electron must call:
+在生成时，Electron 必须调用：
 
 ### `app.handshake`
 
-Params:
+参数：
 
 ```ts
 type HandshakeParams = {
@@ -128,7 +119,7 @@ type HandshakeParams = {
 }
 ```
 
-Result:
+结果：
 
 ```ts
 type HandshakeResult = {
@@ -136,55 +127,43 @@ type HandshakeResult = {
   host: "rust-host-core"
   hostVersion: string
   features: string[]
-  capabilities: string[] // does not include "a2a"
 }
 ```
 
-Rules:
+规则：
 
-1. If protocol major version mismatches → abort boot
-2. Electron should exit with actionable error if handshake fails
-3. All subsequent calls require successful handshake
-4. Version 4 introduced the durable notification inbox and the
-   notification-bearing `session.endTurn` result.
-5. Version 5 requires the host-owned `session.fork` snapshot operation; a
-   version 4 host must be rejected before chat becomes interactive (ADR 0023).
-6. Version 6 adds durable model-context checkpoints through
-   `session.appendCompaction`; a version 5 host must be rejected before the
-   runtime claims automatic context protection (ADR 0030).
-7. Version 9 is the frozen ADR 0053/0054 contract: it covers the checkpoint
-   Plan artifact/queue, active-turn Plan identity/CAS, explicit approval
-   permission, shell catalog identity and dialect pin, streamed command output,
-   and scheduled-task mode projection from `config_json`. A v7 or incompatible
-   v8 host must be rejected before the UI becomes interactive.
-8. Version 10 added the A2A protocol stack (ADR 0147): the host-core A2A broker,
-   the `a2a.*` method domain, and the `a2a.task.event` / `a2a.push` host→client
-   notifications. The `capabilities` array advertised `"a2a"`; a v9 host that
-   could not advertise `a2a` was rejected before the UI became interactive.
-9. Version 11 withdraws that stack (ADR 0165 / D326). The `a2a.*` methods and
-   `a2a.task.event` / `a2a.push` notifications are gone. Handshake no longer
-   advertises `"a2a"`. A v10 host or client is rejected before the UI becomes
-   interactive, so a mixed pair cannot call a missing domain.
+1. 如果协议主要版本不匹配→中止启动
+2. 如果握手失败，Electron 应退出并出现可操作错误
+3.后续所有调用都需要握手成功
+4. 版本4引入了持久通知收件箱和
+   带有通知的 `session.endTurn` 结果。
+5.版本5需要主机拥有的`session.fork`快照操作；一个
+   在聊天变为交互式之前，必须拒绝版本 4 主机 (ADR 0023)。
+6. 版本 6 添加了持久模型上下文检查点
+   `session.appendCompaction`；版本 5 主机必须先被拒绝
+   运行时声明自动上下文保护 (ADR 0030)。
+7. 版本 9 是冻结的 ADR 0053/0054 合约：它涵盖了检查点
+   Plan artifact/queue，主动转向 Plan identity/CAS，明确批准
+   权限、shell 目录身份和方言 pin、流式命令输出、
+   以及来自 `config_json` 的计划任务模式投影。 v7 或不兼容
+   在 UI 变为交互式之前，必须拒绝 v8 主机。
 
-Protocol v11 is paired with host-core storage schema v16. Schema v12 had added
-the A2A tables (`a2a_tasks`, `a2a_messages`, `a2a_artifacts`,
-`a2a_push_configs`) via `migrate_v11_to_v12`; `migrate_v12_to_v13` drops those
-tables, and v14 adds the plugin-session ownership sidecar and soft-delete
-column. Schema v15 adds the Host-owned turn queue, and schema v16 adds the
-session collaboration ledger and its turn-queue binding. A fresh database
-creates neither A2A tables nor unowned plugin-session rows. The schema version is an
-internal persistence invariant, not an additional JSON-RPC field; the
-checkpoint architecture remains host-owned.
+9. 版本 11 撤回 A2A 协议栈（ADR 0165 / D326）。`a2a.*` 方法和通知
+   已移除，握手不再声明 `a2a`；v10 主机或客户端必须在 UI 交互前拒绝。
 
-## 4. Method catalog (MVP)
+协议 v11 与 host-core 存储架构 v14 配对。v14 增加插件会话来源 sidecar
+和软删除字段；架构版本是内部持久性不变量，而不是额外的 JSON-RPC 字段，
+检查点架构仍然由主机拥有。
 
-### App
+## 4. 方法目录(MVP)
+
+### 应用程序
 - `app.handshake`
 - `app.health`
 - `app.getVersion`
-- `app.getOnboarding` — inline onboarding checklist state (D031)
+- `app.getOnboarding` — 内联引导清单状态（D031）
 
-`app.health` returns a diagnostic `toolBudget` object:
+`app.health` 返回诊断 `toolBudget` 对象：
 
 ```ts
 type ToolBudgetHealth = {
@@ -198,519 +177,316 @@ type ToolBudgetHealth = {
 }
 ```
 
-### Workspace
+### 工作区
 - `workspace.get`
 - `workspace.set`
 - `workspace.clear`
 
-### Review snapshots (ADR 0043)
-- `review.rollback({sessionId, snapshotId})` — verify the current post-tool
-  hash, restore the session-owned previous bytes, and return one of
-  `rolledBack`, `alreadyRolledBack`, `conflict`, or `unavailable`.
-- `review.checkTurn({sessionId, snapshotIds})` — read-only preflight for a
-  turn-scoped rollback. Snapshots are grouped by file in the given
-  (chronological) order; per file the current bytes are compared with the
-  batch's newest active `after_hash`, and the batch's earliest active snapshot
-  must be reversible. Returns `{clean, files}` where each file entry carries
-  `clean`, `reversible`, and, when the bytes were re-written by another
-  session's snapshot, a `blockedBy` attribution. A missing snapshot meta
-  reports `clean: false, reversible: false` for its file instead of failing.
-- `review.rollbackTurn({sessionId, snapshotIds, mode})` — batch rollback over
-  caller-ordered snapshot ids; `mode` is `"turn"` (one turn) or `"rewind"`
-  (that turn and every later turn, newest-first by file). Rejected with
-  `CONFLICT` while the session has a running turn or queued inputs. Per file
-  the earliest active `before` bytes are restored once (no chained replay);
-  one file's `conflict`/`unavailable` does not abort the batch. Every
-  snapshot reports its own outcome (`rolledBack`, `alreadyRolledBack`,
-  `conflict`, `unavailable`), and restored snapshots flip their owning
-  messages' review state. Returns `{mode, outcomes}`.
+### 查看快照 (ADR 0043)
+- `review.rollback({sessionId, snapshotId})` — 验证当前的后期工具
+  hash，恢复会话拥有的先前字节，并返回其中之一
+  `rolledBack`、`alreadyRolledBack`、`conflict` 或 `unavailable`。
+- `review.checkTurn({sessionId, snapshotIds})` — 轮次级回滚的只读预检。
+  快照按给定（时间）顺序按文件分组；逐文件将当前字节与该批次最新的活跃
+  `after_hash` 比较，且该批次最早的活跃快照必须可逆。返回 `{clean, files}`，
+  每个文件条目携带 `clean`、`reversible`，以及当字节被其他会话的快照改写时
+  的 `blockedBy` 归因。快照 meta 缺失时，该文件报告
+  `clean: false, reversible: false` 而不是失败。
+- `review.rollbackTurn({sessionId, snapshotIds, mode})` — 对调用方按序给出的
+  快照 id 做批量回滚；`mode` 为 `"turn"`（单轮）或 `"rewind"`（该轮及之后所有
+  轮次）。会话有运行中轮次或排队输入时以 `CONFLICT` 拒绝。逐文件只恢复一次
+  最早活跃的 `before` 字节（不做链式重放）；单个文件的
+  `conflict`/`unavailable` 不中止批次。每个快照报告自己的结果
+  （`rolledBack`、`alreadyRolledBack`、`conflict`、`unavailable`），被恢复的
+  快照会翻转其所属消息的 review 状态。返回 `{mode, outcomes}`。
 
-### Projects
-- `projects.list` — returns durable project records ordered pinned-first, then
-  by last-opened time; includes records materialized by session imports
-- `projects.create({ path })` — upserts a durable project record without
-  changing the active workspace and returns the host-generated project id
-- `projects.remove({ path })` — deletes one durable project row together with
-  every session attached to it, removing those sessions' transcript, scratch,
-  and review files and the project's durable memory, and never touching the
-  project folder on disk. Idempotent: an unknown path returns
-  `{ removed: false, sessionsRemoved: 0 }`. A path that is a root of a stored
-  multi-folder project group is refused so the group keeps a valid primary root,
-  and the call is refused (1008 / `CONFLICT`) while any attached session has a
-  running turn, so a live turn never loses the transcript it is writing.
-- `project.memory.get({ path })` — returns the durable memory for the canonical
-  project path, or an empty record when no memory has been saved
-- `project.memory.set({ path, entries })` — normalizes and stores visual memory
-  entries, derives readable `content`, and validates the 32 KiB limit. The
-  derived value is injected into that project's next runtime context as
-  user-provided context. `{ path, content }` remains supported for legacy
-  callers and returns a memory record without structured entries.
-- `project.groups.list` — returns one host-owned logical group per named
-  project. Existing path-only records are compatibility `legacy` groups.
-- `project.group.create({ name, folders })` — validates the display name and
-  local directories, stores the ordered roots, and returns the new group
-  without changing the active workspace. A non-legacy root cannot belong to a
-  second group.
-- `project.group.rename({ groupId, name })` — persists the group display name.
-- `project.group.update({ groupId, name, folders })` — edits the group name and
-  ordered roots. The primary root must remain first; duplicate roots are
-  removed, roots owned by another non-legacy group are rejected, and a root
-  with existing chats cannot be detached. Removed roots are retained as
-  suppressed historical paths rather than reappearing as standalone legacy
-  groups.
-- `project.group.memory.get/set({ groupId, entries })` — reads or normalizes
-  shared group memory using the existing 32 KiB entry limit.
-- `project.group.instructions.get/set({ groupId, content })` — reads or stores
-  shared group instructions using a bounded host-owned value.
-- `project.group.context({ path })` — resolves the group containing a primary or
-  member root and returns its shared instructions and memory for runtime launch.
-  Legacy groups return no group context so the path-scoped compatibility APIs
-  remain authoritative. Builtin tools default to the primary root; absolute
-  paths under registered additional roots use the same canonical containment
-  resolver and never become arbitrary external access.
+### 项目
+- `projects.list` — 返回先固定的持久项目记录，然后返回
+  按上次开放时间；包括通过会话导入具体化的记录
+- `projects.create({ path })` — 创建或复用持久项目记录，不切换当前工作区，
+  并返回宿主生成的项目 id
+- `projects.remove({ path })` — 删除一条持久项目行，并连同附加到它的每个会话一起删除，
+  移除这些会话的转录本、scratch 和 review 文件以及该项目的持久记忆，且从不触碰磁盘上的
+  项目文件夹。幂等：未知路径返回 `{ removed: false, sessionsRemoved: 0 }`。作为已存储
+  多文件夹项目组根目录的路径会被拒绝，以便该组保留有效的 Primary 根目录；而只要其中仍有会话
+  在运行，调用就会被拒绝（1008 / `CONFLICT`），因此运行中的轮次绝不会丢失它正在写入的转录本。
 
-### Secrets
+### 秘密
 - `secrets.set`
 - `secrets.delete`
 - `secrets.has`
-- `secrets.getForRuntime` — main/host only, never reachable from the renderer
-- // never `secrets.get` to renderer logs
+- `secrets.getForRuntime` —— 仅 main/host 可用，渲染器永远够不到
+- // 永远不会将 `secrets.get` 写入渲染器日志
 
-A provider row has two independent refs — `secret:provider:<id>:api_key` and
-`secret:provider:<id>:oauth` (D237/D240). The generic methods above serve both, so a
-vendor-account credential needed no new host method. `ProviderPublic` therefore
-reports `hasSecret` (true for **either** credential), `hasOauth`, and the
-non-secret `oauthAccountLabel`; `providers.create` / `providers.update` accept
-`oauthAccountLabel` and optional `headers` (stored in `config_json.headers`,
-cleared with `{}`), and `providers.delete` clears both refs for
-exactly one row. Login orchestration and token refresh stay in Electron main
-and never reach this protocol — see [14-secrets-storage](14-secrets-storage.md)
-§10. An OAuth row's headers are edited after the account exists and apply
-to later refresh and inference; the vendor picker does not collect them.
+一个提供商行有两个相互独立的引用 —— `secret:provider:<id>:api_key` 与
+`secret:provider:<id>:oauth`（D237）。上面的通用方法同时服务于两者，因此
+厂商账户凭据不需要新的主机方法。`ProviderPublic` 因此报告 `hasSecret`
+（**任一种**凭据存在即为真）、`hasOauth` 与非敏感的 `oauthAccountLabel`；
+`providers.create` / `providers.update` 接受 `oauthAccountLabel` 与可选的
+`headers`（写入 `config_json.headers`，`{}` 清除），
+`providers.delete` 清除两个引用。登录编排与令牌刷新留在 Electron 主进程，
+永远不会进入本协议 —— 参见
+[14-secrets-storage](/spec/03-runtime/14-secrets-storage) §10。
 
-### Settings
+### 设置
 - `settings.get`
-- `settings.set` — optional `networkProxy` (`system` / `direct` / `custom`).
-  Custom requires an `http`/`https`/`socks5` URL. host-core uses the stored
-  value for marketplace `curl --proxy` and does not put it on process env.
+- `settings.set`
 
-### Sessions
-- `session.list` — returns summaries with host-authoritative `messageCount`
-  alongside the existing session metadata
-- `session.create` — accepts optional `thinkingLevel` and optional
-  `inheritPermissionFromSessionId`; when present, the host copies the existing
-  session's persisted permission mode atomically, while omission preserves the
-  existing `inherit` default. Missing/null thinking level defaults to `off`.
-- `session.fork` — accepts `sessionId`, an optional caller-provided display
-  `title`, and optional `throughMessageId`; creates
-  one independent session from the source's current active canonical
-  transcript, truncated inclusively at the selected message when supplied.
-  The child inherits project/provider/model/mode/thinking and
-  permission configuration, receives new message/tool-call ids, and starts
-  without turns, revisions, notifications, artifacts, grants, or scratch data.
-  Missing sources return `NOT_FOUND`; Electron rejects active sources with
-  `AGENT_BUSY` before forwarding and normalizes the host's persisted
-  running-turn `CONFLICT` fallback to `AGENT_BUSY`; an unknown source or
-  `throughMessageId` returns `NOT_FOUND`
-- `session.get` — accepts an optional renderer read window:
-  `messageBefore` is the exclusive zero-based end offset, `messageLimit` is
-  the positive page size, and `contentLimit` is the positive character budget
-  for the derived display projection. The response includes
-  `messageStart` and `hasMoreBefore` when a window is requested. Omitting all
-  three options returns the complete lossless UI projection for sidecar and
-  mutation callers. Window offsets are physical transcript message-line
-  positions, clamped against the cached transcript layout rather than the
-  deduplicated session index counter, and a window is served by seeking to its
-  first selected line instead of scanning the history before it.
-  Optional `messageAround` centers that window on a stable message ID resolved
-  against the canonical file, requires `messageLimit`, and excludes
-  `messageBefore`. Missing IDs return no session. The focused user/assistant
-  message retains its complete text; neighboring text and tool fields stay
-  capped. Bounded reads also return exclusive physical `messageEnd` and
-  `hasMoreAfter` to support contiguous forward pages (ADR session-content-search).
-  When the selected message has `parentToolCallId`, optional `navigationParent`
-  contains the latest matching Task tool-call projection from the same canonical
-  transcript. It is capped separately and does not widen the window or alter its
-  cursors. Ordinary and uncapped reads omit this navigation-only field.
+### 会议
+- `session.list`
+- `session.create` — 接受可选的 `thinkingLevel`； missing/null 默认值
+至 `off`
+- `session.fork` — 接受 `sessionId`，呼叫者提供的可选显示
+  `title`，以及可选的 `throughMessageId`；创造
+  来自源当前活动规范的一个独立会话
+  转录本，在提供时在选定的消息处被截断。
+  孩子继承 project/provider/model/mode/thinking 并且
+  权限配置，接收新的 message/tool-call id，并启动
+  无需轮流、修订、通知、工件、资助或临时数据。
+  缺少源返回 `NOT_FOUND`； Electron 拒绝活动源
+  `AGENT_BUSY` 在转发之前并标准化主机的持久化
+  运行转向 `CONFLICT` 回退到 `AGENT_BUSY`；来源不明或
+  `throughMessageId` 返回 `NOT_FOUND`
+- `session.get`
 - `session.delete`
-- `session.getScratchPath` — the session's scratch directory (D114), created
-  on demand
-- `session.rename({ id, title })` trims and validates the title at the host
-  boundary. It accepts 1–80 Unicode code points and returns `{ ok: boolean }`;
-  blank or overlong titles are `INVALID_PARAMS`. A successful rename changes
-  only session metadata and does not update `updated_at`, transcript content,
-  message count, or historical notification title snapshots.
-- `session.configure` — atomically persists `mode`, `providerId`, `modelId`,
-  and optional `thinkingLevel` (`off|minimal|low|medium|high|xhigh|max|omit`)
-  for the next pi turn; omitting/null
-  `thinkingLevel` preserves the current value; invalid modes or levels return
-  `INVALID_PARAMS`; mode is `plan | goal | agent` and changing any session
-  configuration is allowed only while idle and without a pending/queued/running
-  Plan or Goal record
-- `session.moveProject({ sessionId, projectPath })` moves an idle session to a
-  project and returns `{ session }` carrying the canonical project path. It
-  upserts the project row and updates only `sessions.project_id` and
-  `updated_at`; transcript, revisions, artifacts, notifications, and scratch
-  data stay with the session. Blank ids or paths are `INVALID_PARAMS`, an
-  unknown session is `NOT_FOUND`, and a session with a running turn is
-  `CONFLICT` so a live agent never switches instruction roots mid-turn.
-  Additive RPC; no protocol version bump.
+- `session.getScratchPath` — 会话的 scratch 目录（D114），按需创建
+- `session.rename`
+- `session.configure` — 以原子方式持久保存 `mode`、`providerId`、`modelId`，
+  以及可选的 `thinkingLevel` 用于下一个 pi 回合； omitting/null
+  `thinkingLevel` 保留当前值；返回无效模式或级别
+  `INVALID_PARAMS`；模式为 `plan | goal | agent` 并更改任何会话
+  仅在空闲且没有 pending/queued/running 时才允许配置
+  Plan 或 Goal 记录
 - `session.appendMessage`
-- `session.saveInflightMessage` — Electron-main-only checkpoint of the
-  assistant reply currently streaming, including the finished `message_end`
-  snapshot: `{ sessionId, turnId?, message }`
-  atomically replaces `sessions/<id>.inflight.json` (D299, D327, spec 04 §2.1).
-  Returns `{ ok, saved }`; `saved` is false for a message without visible text
-  or for an id that is already indexed (the final row landed first), and in the
-  latter case any leftover checkpoint is removed. Non-assistant roles are
-  `INVALID_PARAMS`-class failures. A `completed`/`error` `session.endTurn`
-  deletes the file only when that id is already indexed.
-- `session.recoverInflightMessages` — Electron-main-only post-drain sweep
-  (D327). Promotes leftover checkpoints whose final row never landed,
-  including `completed` turns as `complete`. Boot recovery skips completed
-  leftovers so the outbox can append first. Returns `{ ok, count }`.
-- `session.appendCompaction` — sidecar-only append of the newest typed
-  model-context checkpoint. It requires non-empty checkpoint/summary/boundary
-  ids and non-negative `tokensBefore`; it does not insert a message/search row
-  or change the visible transcript projection
-- `session.replaceMessages` — atomic transcript rewrite (temp-file rename +
-  one index transaction, D119) used by message delete and unanswered
-  renderer smart-stop undo; it preserves the
-  newest checkpoint only while both its boundary and optional first-kept id
-  remain valid in the rewritten prefix, and it carries each surviving message's
-  owning `turn_id` across the rewrite. It is only safe from a caller that owns
-  the whole transcript for the duration of the call: any rewrite from a snapshot
-  taken outside the RPC lock can delete a message appended in between.
-  Regenerating and retrying use `session.truncateFrom` instead so the kept
-  prefix never crosses the JSON-RPC pipe (ADR 0216)
-- `session.truncateFrom` — host-owned suffix cut for regenerate / retry /
-  edit-resend: `{ sessionId, fromMessageId?, truncateBefore? }`. Identity
-  wins; an unknown `fromMessageId` is `NOT_FOUND`. Under the state lock it
-  aborts a leftover running turn, archives the discarded regenerate tail
-  (refreshing the stamped variant, or minting an inactive one), rewrites the
-  kept prefix, and drops the in-flight checkpoint. Returns
-  `{ ok, keptCount, discardedCount, abortedTurnId, revision }` where `revision`
-  is the pager stamp for the upcoming user prompt, or null when the discarded
-  tail has no user root. No transcript snapshot is in the request or the
-  result. Additive on protocol v11 (ADR 0216)
+- `session.saveInflightMessage` — 仅供 Electron 主进程使用的检查点，保存正在流式
+  输出的助手回复以及 `message_end` 的完成快照：`{ sessionId, turnId?, message }` 原子替换
+  `sessions/<id>.inflight.json`（D299、D327，规格 04 §2.1）。返回 `{ ok, saved }`；
+  消息没有可见文本、或该 id 已被索引（最终行先落盘）时 `saved` 为 false，后一种
+  情况下还会移除残留检查点。非助手角色属于 `INVALID_PARAMS` 类失败。
+  `completed`/`error` 的 `session.endTurn` 仅在该 id 已索引时才删除该文件。
+- `session.recoverInflightMessages` — 仅供 Electron 主进程在 outbox 排空后调用的扫描
+  （D327）。把最终行从未落盘的残留检查点提升写入转录，回合已 `completed` 的提升为
+  `complete`。启动恢复会跳过已完成回合，以便 outbox 先追加。返回 `{ ok, count }`。
+- `session.appendCompaction` — 仅附加最新类型的 sidecar
+  模型上下文检查点。它需要非空 checkpoint/summary/boundary
+ids 和非负 `tokensBefore`；它不会插入 message/search 行
+  或更改可见的转录本投影
+- `session.replaceMessages` — 原子记录重写（临时文件重命名 +
+  一项索引事务，D119），用于删除消息和未得到答复的渲染器智能停止撤销；
+  仅当边界和可选的第一个保留 id 在重写前缀中仍然有效时才保留最新检查点，
+  并且跨重写携带每条幸存消息所属的 `turn_id`。只有在呼叫持续时间内拥有
+  整份记录的调用者才安全。重新生成和重试改走 `session.truncateFrom`，
+  因此保留前缀不再经过 JSON-RPC（ADR 0216）
+- `session.truncateFrom` — 主机拥有的后缀截断，供重新生成 / 重试 / 编辑重发：
+  `{ sessionId, fromMessageId?, truncateBefore? }`。身份优先；未知
+  `fromMessageId` 为 `NOT_FOUND`。在状态锁下中止残留的 running 回合、
+  归档被丢弃的重新生成尾巴、重写保留前缀，并删除进行中检查点。返回
+  `{ ok, keptCount, discardedCount, abortedTurnId, revision }`。请求和结果
+  都不携带转录本快照。协议 v11 增量方法（ADR 0216）
 
-- `session.saveRevision` — archive a regenerate branch under
-  `(sessionId, rootUserId)`. With `revisionIndex`, refresh that existing
-  variant's payload in place (the branch grew since it was archived) instead
-  of minting a new index; the DB row keeps its identity and active flag and
-  only `message_count` changes
-- `session.saveActiveRevision` — archive the branch of the newest
-  revision-bearing user root as its active revision and stamp that root's pager
-  metadata, all under the RPC lock. The stamp rewrites one transcript line
-  instead of the file, so a concurrent `session.appendMessage` survives.
-  Returns `{ saved: null }` when the session owns no regenerate history.
-  An already-archived active variant is refreshed, not skipped.
-  Turn-completion callers use this instead of
+- `session.saveRevision` — 将重新生成分支归档到
+  `(sessionId, rootUserId)`。带 `revisionIndex` 时，就地刷新该已有变体的
+  载荷（分支自归档后又生长了），而不是新建索引；DB 行保留身份和活动
+  标志，只更新 `message_count`
+- `session.saveActiveRevision` — 归档最新的分支
+  将带有修订版的用户 root 作为其活动修订版并标记该 root 的寻呼机
+  元数据，全部位于 RPC 锁下。邮票重写了一行文字记录
+  而不是文件，因此并发的 `session.appendMessage` 仍然存在。
+  当会话不拥有重新生成历史记录时，返回 `{ saved: null }`。
+  已归档的活动变体会被刷新，而不是跳过。
+  回合完成调用者使用它而不是
   `session.get` + `session.replaceMessages`
-- `session.listRevisions` — list linear variants for a root user family
-- `session.activateRevision` — replace live transcript with `prefix + branch`
-  and stamp root pager metadata. Before the switch it re-archives the live
-  branch of that family from the durable transcript (refreshing the variant
-  the live root's `activeRevision` stamp names, or storing a stamped but
-  never-archived branch as its own variant), so nothing appended since the
-  last archive is lost. When the family is present in the durable transcript,
-  the prefix in front of the restored branch is taken from there rather than
-  from the caller. Surviving messages keep their owning `turn_id`
-- `session.beginTurn({ sessionId, providerId?, modelId?, sessionMessageId? })` —
-  starts one durable turn. When `sessionMessageId` is present, host-core
-  atomically verifies that the queued collaboration delivery targets this
-  session, rechecks its permission ceiling, claims the delivery, and binds the
-  new turn to its message id. A collaboration turn cannot be started from
-  caller-supplied replacement text.
+- `session.listRevisions` — 列出根用户系列的线性变体
+- `session.activateRevision` — 用 `prefix + branch` 替换实时转录
+  并标记根寻呼机元数据。切换前它先从持久转录本重新归档该系列的实时
+  分支（刷新实时根消息 `activeRevision` 标记所指的变体，或把已标记但从未
+  归档的分支存为新变体），因此上次归档之后追加的内容不会丢失。当该系列
+  存在于持久转录本中时，恢复分支之前的前缀取自转录本而非调用方。幸存
+  消息保留所属的 `turn_id`
+- `session.beginTurn`
 - `session.queuePush` / `session.queueList` / `session.queueRemove` /
-  `session.queuePrioritize` / `session.queueReorder` — the Host-owned turn queue
-  (D386 / ADR 0213 / ADR 0265, schema v18); push is idempotent per principal and
-  key, bounded at eight entries per session. `queuePrioritize` appends an entry
-  to the end of its session's priority block (`priority = MAX + 1`) and refuses
-  an already promoted entry with `CONFLICT`; `queueReorder` swaps one
-  non-promoted entry with its adjacent non-promoted neighbour and reports
-  `{ moved }`. Listing and delivery order is `priority ASC` for promoted entries
-  followed by `position ASC` for the rest
-- `session.endTurn` — atomically moves a running turn to its terminal state and
-  conditionally returns the newly created notification for `completed`/`error`;
-  returns no notification when `createNotification=false`, for `aborted`, or
-  for an already-terminal turn. It also settles the session's in-flight reply
-  checkpoint (D299): `completed`/`error` remove it; `recoverInflight: true`
-  (sent when the sidecar is gone and no final row can follow) promotes a
-  checkpoint whose final row never landed into the transcript as an `aborted`
-  assistant message and returns it as `recovered`; a plain `aborted` (user
-  Stop) leaves the checkpoint for the arriving final row to supersede
-- `session.import` — atomically imports one converted session; a non-empty
-  project path is normalized and upserted into `projects` before the session
-  references it; returns `{ imported, skipped }`
+  `session.queuePrioritize` / `session.queueReorder` —— Host 拥有的回合队列
+  （D386 / ADR 0213 / ADR 0265，架构 v18）；push 按主体与 key 幂等，每会话最多八条。
+  `queuePrioritize` 把条目的 `priority` 写为其会话优先区块的 `MAX + 1`（追加到区块末尾），
+  对已经带优先级的条目返回 `CONFLICT`；`queueReorder` 让一个未优先条目与其相邻的未优先
+  条目互换并返回 `{ moved }`。列出与投递顺序为：已优先条目按 `priority` 升序，其余按
+  `position` 升序
+- `session.endTurn` — 以原子方式将正在运行的回合移动到其终止状态，并且
+有条件地返回新创建的 `completed`/`error` 通知；它还会落定该会话的进行中回复
+  检查点（D299）：`completed`/`error` 移除它；`recoverInflight: true`（sidecar
+  已丢失、不会再有最终行时发送）把最终行从未落盘的检查点提升为 `aborted` 助手消息
+  写入转录并作为 `recovered` 返回；普通的 `aborted`（用户停止）保留检查点，交给
+  即将到达的最终行取代；
+  当 `createNotification=false`、`aborted` 或
+  对于已经结束的回合
+- `session.import` — 以原子方式导入一个转换后的会话；一个非空的
+  项目路径在会话之前进行规范化并更新插入到 `projects` 中
+  引用它；返回 `{ imported, skipped }`
 
-Plugin-owned session methods are additive to protocol v11 and are called only by
-Electron main after plugin permission and manifest-source checks:
+插件拥有的会话方法是协议 v11 的增量方法，仅由 Electron main 在完成插件
+权限和 manifest 来源校验后调用：
 
-- `plugin.session.import` — import one host-owned session with an idempotency
-  key `(pluginId, source, externalId)`; the host generates ids and binds to a
-  project only when the caller supplies an existing `projectId` created by
-  `projects.create`; the historical `projectPath` remains metadata
-- `plugin.session.importBatch` — bounded `skip` or all-or-nothing `fail` batch
+- `plugin.session.import` — 使用 `(pluginId, source, externalId)` 幂等键导入
+  一个由主机拥有的会话；主机生成 id，只有调用方显式传入由
+  `projects.create` 创建的 `projectId` 时才绑定项目；历史 `projectPath` 仍是元数据
+- `plugin.session.importBatch` — 有界的 `skip` 或全有或全无 `fail` 批量导入
 - `plugin.session.list` / `plugin.session.get` / `plugin.session.listMessages` —
-  read only the calling plugin's active imported sessions
-- `plugin.session.rename` — rename an owned active imported session
-- `plugin.session.delete` — `trash` hides and retains the transcript; `purge`
-  removes it and permits re-import
-- `plugin.usage.listTurns` — keyset page of completed-turn facts (identifiers
-  and token counters, never a message body) for non-deleted sessions. Gated
-  in Electron main by `usage.read`. Additive; no protocol version bump.
-- Successful plugin session mutations cause Electron main to emit one
-  `sessionsChanged` renderer event; the renderer refreshes the session list,
-  and plugins do not emit this UI synchronization event.
+  只读取调用插件自己导入且仍处于活动状态的会话
+- `plugin.session.rename` — 重命名自己拥有的活动导入会话
+- `plugin.session.delete` — `trash` 隐藏并保留转录本；`purge` 删除并允许重新导入
+- `plugin.usage.listTurns` — 未删除会话的已完成 turn 事实页（标识符与 token
+  计数，绝不含消息正文）。由 Electron main 用 `usage.read` 鉴权。增量方法，
+  不升协议版本。
+- 插件会话变更成功后，Electron main 发送一次 `sessionsChanged` 渲染器事件，
+  渲染器刷新会话列表；插件不发送此 UI 同步事件
 
-Host-internal session collaboration methods are additive to protocol v11 and
-are called by Electron main only after the reviewed plugin gateway has checked
-the plugin permission and active Agent tool invocation. They are not renderer
-or general MCP operations:
+主机会拒绝未知角色、非 RFC3339 或非单调时间戳，以及超大或过深的 payload；
+工具值会清理主机保留键。每个插件每 60 秒最多 10 次单条导入、5 次批量导入和
+20 次删除。P2/P3 方法不在协议 v11 中。
 
-- `session.collaboration.spawn` — create a bounded Agent worker session that
-  inherits the source project's, thinking, and permission configuration, create
-  its first `task` delivery, and return the real target `sessionId` plus the
-  message record. Worker creation is limited per parent and plugin; a worker
-  cannot create another worker.
-- `session.collaboration.send` — enqueue a `task` or `message` delivery to an
-  existing Agent session. The host binds `sourceSessionId` and `sourceTurnId`
-  to the current plugin tool invocation, enforces idempotency, a target inbox
-  bound, the source permission ceiling, and a bounded autonomous hop count.
-- `session.collaboration.message` — read one durable delivery by message id for
-  Electron's dispatch and provenance paths.
-- `session.collaboration.status` / `session.collaboration.result` — return a
-  bounded status/result projection without loading a complete worker
-  transcript. `result` may select a delivery by `messageId` or `turnId`.
-- `session.collaboration.pending` — list queued completion callbacks for the
-  Electron drain; `fail` records a dispatch failure and creates the requested
-  failure callback once; `settle` derives the result from the persisted turn
-  and creates at most one completion callback.
-- `session.collaboration.cancel` — cancel queued deliveries or interrupt their
-  exact currently-bound turns while retaining the target session and history.
+### Plan 和 Goal 状态和批准
 
-The ledger is durable across a host restart. A queued entry with its
-`turn_queue.session_message_id` remains held for a new Agent Host controller;
-an unclaimed or running delivery is marked `interrupted` by the startup fence
-and is never replayed automatically. Transcript provenance is host-derived and
-cannot be forged or removed by `session.appendMessage` or transcript
-replacement. Steering (`UiMessage.steering`) into a claimed delivery turn is
-additional human input in that session: it does not receive the delivery
-origin, and a client-supplied `session_message` is stripped (D597).
+两种合约类型共享这些方法；可选的 `kind`
+（`plan | goal`，默认 `plan`，因此 D198 之前的 sidecar 仍然有效）选择哪个
+合同正在洽谈中。
 
-The host rejects unknown roles, non-RFC3339 or non-monotonic timestamps, and
-oversized/deep payloads. Tool values are sanitized for host-reserved keys. The
-per-plugin rolling limits are 10 single imports, 5 batch imports, and 20
-deletes per 60 seconds. P2/P3 methods are not present in protocol v11.
-
-### Stats
-
-- `stats.getTokenUsageHistory` — roll up completed `turns` token columns and
-  `usage_json` cache/reasoning fields into local-calendar `day` / `week` /
-  `month` buckets. Additive RPC; no protocol version bump. Default range is
-  bounded (53 weeks / 52 weeks / 24 months). `week` uses ISO week year.
-  Empty buckets in range are returned as zero rows so a calendar consumer sees a
-  complete window. `session.endTurn.usage` is the durable turn total: parent
-  assistant messages plus settled subagent usage, not a rewrite of
-  `message.usage`. The user-facing dashboard is plugin `pi.token-insights`
-  (D335 / ADR 0173), not a Settings destination.
-
-### Plan and Goal state and approvals
-
-Both contract kinds share these methods; the optional `kind`
-(`plan | goal`, default `plan` so a pre-D198 sidecar still works) selects which
-contract is being negotiated.
-
-- `plans.enter` — accepts only the active Agent turn's `sessionId`, `turnId`,
-  and `toolCallId` plus the `kind`; host-core performs the mode transition to
-  that kind's mode with a compare-and-swap update and emits `plans.changed`
-  carrying the `kind`. An unrecognized `kind` fails with `INVALID_PARAMS`
-- `plans.submit` — writes the host-owned artifact under the kind's directory and
-  creates a pending proposal whose `kind` is persisted on the row
-- `plans.pending` — returns only pending approval rows, the session planning
-  state, and the `kind` of the contract being negotiated (the pending row's kind,
-  falling back to the session's own contract mode); renderer reload does not
-  extend the absolute deadline while the host remains alive and does not restore
-  terminal cards
-- `plans.resolve` — validates one matching approve/reject response and, for
-  approval, commits the selected permission mode and `execution_state = queued`
+- `plans.enter` — 仅接受活动 Agent 回合的 `sessionId`、`turnId`，
+  和 `toolCallId` 加上 `kind`； host-core 执行模式转换至
+  具有比较和交换更新的那种模式并发出 `plans.changed`
+  携带 `kind`。无法识别的 `kind` 失败并显示 `INVALID_PARAMS`
+- `plans.submit` — 将主机拥有的工件写入该种类的目录下，并
+  创建一个待处理的提案，其 `kind` 保留在该行上
+- `plans.pending` — 仅返回待批准行、会话计划
+  状态，以及正在协商的合约的 `kind`（待处理行的类型，
+  回到会话自己的合约模式）；渲染器重新加载不会
+  在主机还活着并且不恢复的情况下延长绝对期限
+  终端卡
+- `plans.resolve` — 验证一个匹配的 approve/reject 响应，并且
+  批准，提交所选权限模式和 `execution_state = queued`
 - `plans.queuedExecutions` / `plans.claimExecution` /
-  `plans.finishExecution` — consume and transition execution fields on the
-  same approval row; the claimed execution reports its `kind` so the sidecar can
-  select the matching execution instruction
-- `plans.abort` — marks pending approval work interrupted; it never replays or
-  changes an already-approved session back to its contract mode
+`plans.finishExecution` — 消耗并转换执行字段
+  同一审批行；声明的执行报告其 `kind`，因此 sidecar 可以
+  选择匹配的执行指令
+- `plans.abort` — 标记待审批工作已中断；它永远不会重播或
+  将已批准的会话更改回其合同模式
 
-### Scheduled tasks
+### 计划任务
 
 - `scheduled.list` / `scheduled.create` / `scheduled.update` /
   `scheduled.delete`
-- `scheduled.import` — imports task records and normalizes their persisted mode
+- `scheduled.import` — 导入任务记录并标准化其持久模式
 - `scheduled.run` / `scheduled.finishRun` / `scheduled.listRuns`
 
-The wire `ScheduledTask.mode` is a normalized projection of the durable
-`config_json.mode`; create, update, and import map legacy `chat` to `plan` and
-default missing values to `agent`. `scheduled.run` reads the selected task's
-persisted mode; a `plan` or `goal` task fails with
-`PLAN_REQUIRES_INTERACTIVE_SESSION` before creating a session or run. It never
-uses `settings.defaultMode` as the task mode.
+线 `ScheduledTask.mode` 是耐用的标准化投影
+`config_json.mode`；创建、更新和导入映射旧版 `chat` 到 `plan` 以及
+默认缺失值为 `agent`。 `scheduled.run` 读取所选任务的
+持久模式； `plan` 或 `goal` 任务失败并显示
+创建会话或运行之前的 `PLAN_REQUIRES_INTERACTIVE_SESSION`。它从来没有
+使用 `settings.defaultMode` 作为任务模式。
 
-Canonical thinking levels at the host boundary are:
+宿主边界的规范思维水平是：
 
 ```text
 off | minimal | low | medium | high | xhigh | max
 ```
 
-Session summaries/details always return `thinkingLevel`. Assistant messages
-may return `thinking`; host storage maps it to a canonical content block rather
-than appending it to answer `content`.
+会话 summaries/details 始终返回 `thinkingLevel`。助理消息
+可能会返回 `thinking`；主机存储将其映射到规范内容块，而不是
+而不是将其附加到答案 `content` 中。
 
-### Tools
+### 工具
 - `tools.list`
 - `tools.execute`
 - `tools.abort`
-- `tools.output` notifications for ordered `stdout`/`stderr` chunks
+- 有序 `stdout`/`stderr` 块的 `tools.output` 通知
 
-### Shells
+### 贝壳
 - `commandShells.list`
-- `settings.set` with a partial settings object; omitted fields are preserved,
-  and a changed effective `defaultCommandShell` is accepted only when every
-  session has no active turn and no pending/queued/running Plan/Goal work
+- `settings.set` 带有部分设置对象；保留省略的字段，
+  并且仅当每个
+  会话没有活动轮次并且没有 pending/queued/running Plan/Goal 工作
 
-Tool execution starts only after admission. Shell spawn retries transient
-resource exhaustion (`EAGAIN` / `WouldBlock`) with bounded backoff, never
-retries a command after it has started, and reaps timed-out children before
-releasing the execution slot.
+工具执行仅在准入后开始。 Shell 生成重试瞬态
+资源耗尽（`EAGAIN` / `WouldBlock`），具有有限的退避，从不
+在命令启动后重试命令，并在之前获取超时的子命令
+释放执行槽。
 
-`session.appendMessage` is idempotent by message id. An id already indexed in
-another session is remapped to `{sessionId}:{id}` before the JSONL write, and
-a later replay of the original id is a no-op (D444). Electron main may keep
-message appends in its application-owned outbox while host-core is restarting;
-the outbox flushes in order after a successful handshake and treats
-`UNIQUE constraint failed: messages.id` as an ack rather than pausing the
-queue. A `PERMISSION_DENIED:` append is dropped the same way so a poison head
-cannot stall the FIFO (D597). A missing sessions row is restored from the live JSONL (or created as a
-stub under the same id when the file is gone) so a queued outbox can drain
-(D318). `session.delete` drops that session's outbox entries. In-flight
-checkpoints never go through the outbox: a checkpoint is only meaningful
-against a live host, and replaying one after the final row would be wrong.
+`session.appendMessage` 通过消息 ID 是幂等的。若该 id 已属于另一会话，则在写 JSONL 之前改写为 `{sessionId}:{id}`，之后重放原始 id 为无操作（D444）。Electron 主进程可以在 host-core 重启时把消息留在应用自有 outbox 里；握手成功后按顺序冲洗，并把 `UNIQUE constraint failed: messages.id` 当作确认而不是停整队。带 `PERMISSION_DENIED:` 前缀的追加同样丢弃以免毒消息卡住 FIFO（D597）。进行中检查点从不经过发件箱：检查点只对存活的主机有意义，在最终行之后重放它是错误的。
 
-### Permissions
+### 权限
 - `permissions.evaluate`
 - `permissions.resolve`
-- `permissions.pending` (D374: open requests as Host state)
+- `permissions.pending`（D374：待处理请求作为 Host 状态）
 - `permissions.listSessionGrants`
 - `permissions.clearSessionGrants`
 
-### Plugins
+### 插件
 - `plugins.list`
 - `plugins.loadDev`
 - `plugins.installFromPath`
-- `plugins.installFromPackage` — install a `.piplug` archive after checksum
-  verification
+- `plugins.installFromPackage` — 在校验和验证后安装 `.piplug` 归档
 - `plugins.enable`
 - `plugins.disable`
 - `plugins.uninstall`
 - `plugins.getPermissions`
-- `plugins.grantPermissions` / `plugins.revokePermissions` — change the
-  granted set; the runtime enforces the intersection of declared and granted
+- `plugins.grantPermissions` / `plugins.revokePermissions` — 更改已授予集合；
+  运行时强制执行「已声明 ∩ 已授予」的交集
 - `plugins.setAutoUpdate`
-- `plugins.setScope` — activation scope (ADR 0056)
-- `plugins.resolveExecution` — resolve which plugin tools/skills/MCP servers
-  are active for a session's project before a turn starts
+- `plugins.setScope` — 激活作用域（ADR 0056）
+- `plugins.resolveExecution` — 在回合开始前解析某会话所属项目激活了哪些
+  插件工具/技能/MCP 服务器
 
-### Marketplace
-- `market.refresh` — fetch and cache the catalog from the configured URL
+### 市场
+- `market.refresh` — 从配置的 URL 拉取并缓存目录
 - `market.search` / `market.getDetail`
-- `market.install` — download, verify (`PLUGIN_INTEGRITY`,
-  `PLUGIN_MARKET_*`), and install one catalog release
+- `market.install` — 下载、验证（`PLUGIN_INTEGRITY`、`PLUGIN_MARKET_*`）并安装
+  目录中的一个发布版本
 - `market.checkUpdates` / `market.applyUpdates`
 
-### Providers and models
+### 提供商与模型
 - `providers.list` / `providers.get` / `providers.create` /
-  `providers.update` / `providers.delete`
-- a plugin-owned row (`ownerPluginId`) is refreshed from its manifest on every
-  load, so `providers.update` / `providers.delete` refuse it with a
-  `PROVIDER_OWNED_BY_PLUGIN` error; only the owning plugin's lifecycle changes
-  or removes it (ADR 0259)
-- `providers.setSecret({ id, secretValue })` — stores or clears one provider's
-  API key (`secret:provider:<id>:api_key` and the row's `secret_ref`). It is the
-  write a plugin-owned row accepts: only the credential the declaration asks for
-  changes, never a field the manifest owns. An empty or omitted `secretValue`
-  deletes the stored key. Returns `{ provider }`, or `null` for an unknown id
-- `providers.getSecret` — main/host only, never reachable from the renderer
-- `providers.listModels` / `providers.cacheModels` — discovered model rows
-  and their host-side cache (ADR 0027 / ADR 0134)
+- `providers.update` / `providers.delete` 拒绝插件自有的行
+  （`ownerPluginId`）：该行每次加载都由 manifest 刷新，因此只由其所属插件的
+  生命周期改动或删除，错误信息以 `PROVIDER_OWNED_BY_PLUGIN` 开头（ADR 0259）
+- `providers.setSecret({ id, secretValue })` — 写入或清除某一行 provider 的
+  API key（`secret:provider:<id>:api_key` 与行的 `secret_ref`）。这是插件自有行
+  接受的写入：只改声明要求的凭据，绝不改 manifest 拥有的字段。`secretValue`
+  为空或省略即删除已存 key。返回 `{ provider }`，未知 id 返回 `null`
+- `providers.getSecret` — 仅限 main/host，渲染器永远无法触达
+- `providers.listModels` / `providers.cacheModels` — 已发现的模型行及其
+  宿主侧缓存（ADR 0027 / ADR 0134）
 - `providers.testConnection`
 
-### Agent capabilities (skills, subagents, MCP servers)
+### Agent 能力（技能、子代理、MCP 服务器）
 - `skills.list` / `skills.active` / `skills.read` / `skills.create` /
   `skills.update` / `skills.remove` / `skills.import` /
-  `skills.setEnabled` / `skills.setScope` / `skills.transfer` — user skill
-  documents (`SKILL_INVALID` on validation failure)
+  `skills.setEnabled` / `skills.setScope` — 用户技能文档（校验失败返回
+  `SKILL_INVALID`）
 - `agents.list` / `agents.active` / `agents.read` / `agents.create` /
   `agents.update` / `agents.remove` / `agents.setEnabled` /
-  `agents.setScope` — user subagent documents (`SUBAGENT_INVALID`)
+  `agents.setScope` — 用户子代理文档（`SUBAGENT_INVALID`）
 - `mcp.list` / `mcp.active` / `mcp.upsert` / `mcp.remove` /
-  `mcp.setEnabled` / `mcp.setScope` / `mcp.transfer` — user MCP server
-  definitions (`MCP_INVALID`)
+  `mcp.setEnabled` / `mcp.setScope` — 用户 MCP 服务器定义（`MCP_INVALID`）
 
-`skills.transfer` and `mcp.transfer` take `{ id, from, to }`, each end a
-`{ level, projectPath? }` target (`projectPath` is required for the project
-level), and return `{ skill }` / `{ server }` for the document where it landed.
-A transfer moves the document between the two levels rather than copying it, so
-the source level stops listing the entry. A destination that already owns the
-same id gives the arriving document a `-2`/`-3` id suffix; one that owns the
-same display name / label, compared case-insensitively, gives it a matching
-` (2)`/` (3)` display suffix. The existing entry stays untouched. Enablement
-travels with the document: the source level drops every state entry for the old
-id, including its project overrides, and the destination stores the value the
-source was showing (a project target keeps that project's state, a global
-target the global default). Naming the source's own directory as the
-destination is a no-op.
+`*.active` 返回经激活作用域过滤后适用于给定项目的条目（未知作用域返回
+`CAPABILITY_INVALID`）。
 
-`*.active` returns the entries that apply to the given project after
-activation-scope filtering (`CAPABILITY_INVALID` for an unknown scope).
+### 搜索、工件、键盘
+- `search.query` — 跨会话、项目和设置目的地的全局搜索（ADR 0034）
+- `artifacts.list` — 某会话的 Plan/Goal 检查点工件
+- `keyboard.setGlobalShortcut` — 在 Electron 无法注册插件启动器快捷键时，
+  由宿主持有的原生回退
 
-### Search, artifacts, keyboard
-- `search.query` — legacy indexed-message hits; existing response and limit remain compatible
-- `search.sessions({ query, offset? }) -> { hits, nextOffset }` — global session
-  discovery with title/project metadata and indexed user/assistant text. Trimmed
-  literal queries have a 500-character limit (`INVALID_ARGUMENT` above it).
-  Each 30-session page includes `session`, `projectName`, `metadataMatch`, the
-  full matching `messageCount`, and at most two `matches` containing
-  `messageId`, `role`, `createdAt`, and a `snippet` containing the matching
-  sentence or line. Long sentences are capped to a match-centered 180-character
-  window, extended when needed to preserve the complete literal query.
-  `nextOffset: null` marks the last page. Sort by updated time descending and
-  session ID ascending; exclude soft-deleted sessions. Empty queries return no
-  hits because the renderer owns its recent-session presentation.
-- `search.context({ sessionId, messageId, query, direction? })` — resolve a
-  stable message ID in the owning, non-deleted session's JSONL layout. Default
-  `direction: "around"` returns up to 21 nearby message text projections;
-  `"before"` / `"after"` returns up to 20 messages excluding the anchor. Return
-  `messages`, `hasMoreBefore`, `hasMoreAfter`, `previousMatchId`, and
-  `nextMatchId`. Adjacent matching IDs follow transcript sequence order and
-  have no 100-message cutoff. Context comes from canonical JSONL and is capped
-  at 64 Ki characters per message; the target is centered on the query. Tool
-  bodies, thinking, and attachments are omitted. Missing/deleted targets return
-  `NOT_FOUND`; invalid directions or identifiers return `INVALID_ARGUMENT`.
-  See [ADR session-content-search](../../adr/session-content-search.md).
-- `artifacts.list` — Plan/Goal checkpoint artifacts for a session
-- `keyboard.setGlobalShortcut` — host-owned native fallback for the plugin
-  launcher chord where Electron cannot register it
-
-### Audit
+### 审计
 - `audit.append`
 
-### Notification (D117)
+### 通知 (D117)
 - `notification.list`
 - `notification.markRead`
 - `notification.markAllRead`
 - `notification.clear`
 
-## 4a. Notification contracts (protocol v4)
+## 4a。通知合约（协议 v4）
 
 ```ts
 type AppNotification = {
@@ -748,25 +524,25 @@ type NotificationListResult = {
 };
 ```
 
-- `notification.markRead({ id }) -> { ok }` is idempotent. `ok=false` means
-  the id does not exist; an already-read row remains successful.
-- `notification.markAllRead({}) -> { ok: true }` updates every unread row in
-  one transaction.
-- `notification.clear({}) -> { ok: true }` deletes inbox rows only.
-- No `notification.created` JSON-RPC server notification is emitted. Electron
-  receives the inserted record directly from `session.endTurn`, avoiding a
-  second ordering channel between terminal turn persistence and UI refresh.
-- `createNotification=false` suppresses only inbox insertion; the running turn
-  still reaches its requested terminal state in the same transaction. Missing
-  or non-boolean values default to true so unknown/stale UI state cannot lose a
-  notification.
-- `sessionTitle` is the stable session-name snapshot stored with the row.
-  Localized event title/body prose is derived by Electron/renderer and never
-  crosses host RPC.
+- `notification.markRead({ id }) -> { ok }` 是幂等的。 `ok=false` 意味着
+  该id不存在；已读取的行仍然成功。
+- `notification.markAllRead({}) -> { ok: true }` 更新中的每个未读行
+  一笔交易。
+- `notification.clear({}) -> { ok: true }` 仅删除收件箱行。
+- 不发出 `notification.created` JSON-RPC 服务器通知。 Electron
+  直接从 `session.endTurn` 接收插入的记录，避免了
+  终端转持久化和UI刷新之间的第二个点餐通道。
+- `createNotification=false` 仅抑制收件箱插入；跑步回合
+  仍然在同一事务中达到其请求的最终状态。失踪
+  或非布尔值默认为 true，因此 unknown/stale UI 状态不会丢失
+  通知。
+- `sessionTitle` 是与行一起存储的稳定会话名称快照。
+本地化事件 title/body 散文是由 Electron/renderer 衍生而来，从未
+  跨越主机 RPC。
 
-## 5. Tool execute contract
+## 5. 工具执行合约
 
-### `tools.execute` params
+### `tools.execute` 参数
 
 ```ts
 type ToolsExecuteParams = {
@@ -785,60 +561,60 @@ type ToolsExecuteParams = {
 }
 ```
 
-Authoritative mode and workspace resolution are session-scoped:
+权威模式和工作区解析是会话范围的：
 
-1. Host loads `sessionId` and resolves its persisted `project_id`/path.
-2. Host reads the persisted `sessions.mode` and validates it as `plan | agent`.
-   A conflicting `requestedMode` is ignored for authorization and recorded only
-   as diagnostic data.
-3. That path becomes the tool sandbox root for permission preview, execution,
-   artifact paths, and audit context. A tool's explicit `path` may name an
-   outside location only after the host applies the outside-path permission
-   rule; successful external results retain an absolute canonical path.
-4. The mutable `workspace.get` selection is not consulted for a valid durable
-   session, so switching a retained project tab cannot redirect a background
-   call.
-5. A durable path-less session resolves no root and receives
-   `WORKSPACE_REQUIRED` where the tool requires one. A selected project is not
-   inherited.
-6. Legacy calls whose session does not exist may temporarily fall back to the
-   selected workspace; new renderer flows must always provide a valid
-   `sessionId`.
-7. A database/session-resolution error returns `INTERNAL` and fails closed;
-   only a confirmed missing session may use the legacy fallback.
+1. 主机加载 `sessionId` 并解析其持久保存的 Electron/renderer/path。
+2. 主机读取持久保存的 `sessions.mode` 并将其验证为 `plan | agent`。
+   冲突的 `requestedMode` 会被忽略以进行授权并仅记录
+   作为诊断数据。
+3、该路径成为工具沙箱根目录，用于权限预览、执行、
+   工件路径和审核上下文。工具的显式 `path` 可能会命名
+   仅在主机应用外部路径权限后才位于外部位置
+   规则；成功的外部结果保留了绝对的规范路径。
+4. 不会参考可变的 `workspace.get` 选择来获取有效的持久性
+   会话，因此切换保留的项目选项卡无法重定向背景
+   打电话。
+5.持久无路径会话解析无根并接收
+   `WORKSPACE_REQUIRED` 工具需要一个。选定的项目不是
+   继承的。
+6. 会话不存在的旧调用可能会暂时回退到会话
+   选定的工作空间；新的渲染器流必须始终提供有效的
+   `sessionId`。
+7、database/session-resolution错误返回`INTERNAL`，关闭失败；
+   只有已确认的丢失会话才可以使用旧后备。
 
-For `Read`/`Glob`/`Grep`/`Write`/`Edit`, the host classifies an explicit path
-outside the workspace and scratch roots before the low-risk auto-allow rule.
-`auto` executes it, while `ask` and `accept-edits` emit
-`permissions.request`; denial, timeout, or cancellation returns `TOOL_DENIED`
-without executing the operation. Relative `..` and symlink escapes use the
-same classification. Bash's working directory and implicit recursive walks do
-not inherit this exception.
+对于`Read`/`Glob`/`Grep`/`Write`/`Edit`，主机分类显式路径
+在工作区之外并在低风险自动允许规则之前从头开始。
+`auto` 执行它，而 `ask` 和 `accept-edits` 发出
+`permissions.request`；拒绝、超时或取消返回 `TOOL_DENIED`
+而不执行该操作。相对 `..` 和符号链接转义使用
+相同的分类。 Bash 的工作目录和隐式递归遍历
+不继承这个异常。
 
-Before generic permission evaluation, host-core applies the mode policy:
+在通用权限评估之前，host-core 应用模式策略：
 
-- Plan and Goal allow `Read`, `Glob`, `Grep`, `BrowserPreview`, `Bash`, and the
-  kind's submit tool (`SubmitPlan` / `SubmitGoal`) as applicable to the live
-  planning state.
-- Plan and Goal deny `Write`, `Edit`, every plugin tool, and unknown tools under
-  all permission modes and grants. The host reads the session's **durable** mode
-  for this check, so a sidecar claiming `agent` in `tools.execute` cannot widen
-  it, and the `*_IN_PLAN` error codes are shared by both kinds.
-- Plan and Goal `Bash` follows the resolved permission mode: `ask` and
+- Plan 和 Goal 允许 `Read`、`Glob`、`Grep`、`BrowserPreview`、`Bash` 和
+  适用于实时的种类提交工具（`SubmitPlan` / `SubmitGoal`）
+  规划状态。
+- Plan 和 Goal 拒绝 `Write`、`Edit`、每个插件工具以及以下未知工具
+  所有权限模式和授予。主机读取会话的**持久**模式
+  对于此检查，因此在 `tools.execute` 中声明 `agent` 的 sidecar 无法扩大
+  它和 `*_IN_PLAN` 错误代码是两种类型共享的。
+- Plan 和 Goal `Bash` 遵循已解析的权限模式：`ask` 和
   `accept-edits`
-  emit `permissions.request`; `auto` executes without confirmation and may
-  mutate. The host re-resolves the effective shell ID/dialect and requires the
-  exact `expectedCommandShellId` and `expectedCommandShellDialect` before
-  permission evaluation and again before spawn; it streams stdout/stderr
-  separately. A configured shell may fall back to the first available platform
-  shell before the turn pin is created, but execution never changes shell
-  after the pin.
-- Agent applies the normal registered-tool and permission policy.
+  发出 `permissions.request`； `auto` 无需确认即可执行，并且可能
+  变异。主机重新解析有效 shell ID/dialect 并要求
+  精确之前的 `expectedCommandShellId` 和 `expectedCommandShellDialect`
+  权限评估并在生成前再次评估；它流式传输 stdout/stderr
+  分别。配置好的 shell 可能会回退到第一个可用平台
+  创建转销之前的 shell，但执行不会改变 shell
+  在引脚之后。
+- Agent 应用正常的注册工具和权限策略。
 
-The visible tool list is not the security boundary; a forged RPC call is
-authorized by this host-side matrix.
+可见的工具列表不是安全边界；伪造的 RPC 调用是
+由该主机端矩阵授权。
 
-### result
+### 结果
 
 ```ts
 type ToolsExecuteResult = {
@@ -858,11 +634,11 @@ type ToolsExecuteResult = {
 }
 ```
 
-### 5.1 Plan and Goal submission and approval contracts
+### 5. 1 Plan 和 Goal 提交和批准合约
 
-`SubmitPlan` and `SubmitGoal` are handled as host transitions before generic
-tool execution. The host preserves the exact Markdown bytes in a new unique
-artifact under the kind's directory before publishing the proposal.
+`SubmitPlan` 和 `SubmitGoal` 在通用之前作为主机转换进行处理
+工具执行。主机将准确的 Markdown 字节保留在新的唯一的
+在发布提案之前，先将工件放在种类的目录下。
 
 ```ts
 // Identical shape for both kinds; the tool name selects the kind.
@@ -966,7 +742,7 @@ type PlanResolutionResult = {
 };
 ```
 
-Host notifications:
+主持人通知：
 
 ```text
 method: "plans.changed"
@@ -993,35 +769,35 @@ method: "tools.output"
 params: ToolsOutputParams
 ```
 
-`plans.changed` is emitted for Plan or Goal entry, submission, resolution,
-execution claim/finish, and abort. Its top-level params are exactly the fields
-shown; fields not applicable to a transition are omitted, and `kind` names the
-contract so the renderer can pick the right mode chip and approval copy without
-inspecting the projected state. For `plans.resolve`, the
-host emits `targetPermissionMode` and `execution` as JSON `null` when no value
-exists. Electron forwards this notification unchanged through
-the shared `IPC.event.plansChanged` renderer channel.
+`plans.changed` 是针对 Plan 或 Goal 条目、提交、解决而发出的，
+执行 claim/finish，然后中止。它的顶级参数正是字段
+显示；不适用于转换的字段被省略，并且 `kind` 命名
+合同，以便渲染器可以选择正确的模式芯片和批准副本，而无需
+检查投影状态。对于 `plans.resolve`，
+当没有值时，主机发出 `targetPermissionMode` 和 `execution` 作为 JSON `null`
+存在。 Electron 通过以下方式转发此通知：
+共享 `IPC.event.plansChanged` 渲染器通道。
 
-`plans.resolve` accepts only an authenticated, still-pending request whose
-proposal, session, turn, tool-call, and version match. `approve` requires an
-explicit permission mode and atomically commits the `plan_approvals` row to
-`status = approved`, assigns `execution_id`, sets `execution_state = queued`,
-sets `sessions.mode = agent`, and stores the selected
-`sessions.permission_mode`; that selection is not written into app settings
-as the next approval default. Ask remains the product default. The same Agent then receives a new provider
-request with Agent tools.
+`plans.resolve` 仅接受经过身份验证、仍待处理的请求，其
+提案、会话、轮次、工具调用和版本匹配。 `approve` 需要
+显式权限模式并原子地将 `plan_approvals` 行提交到
+`status = approved`，分配 `execution_id`，设置 `execution_state = queued`，
+设置 `sessions.mode = agent`，并存储所选的
+`sessions.permission_mode`；该选择未写入应用程序设置中
+作为下一次默认批准。询问仍然是产品默认设置。然后，同一个 Agent 会收到一个新的提供商
+使用 Agent 工具请求。
 
-`reject` records `rejected` and leaves the session in its contract mode (Plan or
-Goal). The absolute
-30-minute deadline records `expired` with `PLAN_APPROVAL_TIMEOUT`. Abort, host
-restart, sidecar restart, or persistence failure records `interrupted`. Before
-serving RPC after startup, the host transactionally interrupts prior pending
-approvals and queued/running execution states. Pending, queued, and running
-work is never replayed; queued/running interruption after approval leaves the
-session in Agent. The process epoch is internal and is not a wire or database
-field.
+`reject` 记录 `rejected` 并使会话处于合同模式（Plan 或
+Goal）。绝对的
+30 分钟截止时间记录 `expired` 和 `PLAN_APPROVAL_TIMEOUT`。中止，主机
+重新启动、sidecar 重新启动或持久性失败记录 `interrupted`。之前
+启动后提供 RPC 服务，主机以事务方式中断之前的挂起
+批准和 queued/running 执行状态。待处理、排队和运行
+工作永远不会重播； queued/running 批准后中断离开
+Agent 中的会话。进程纪元是内部的，不是线路或数据库
+场。
 
-### 5.2 Shell catalog
+### 5. 2 Shell 目录
 
 ```ts
 type CommandShellId =
@@ -1049,18 +825,18 @@ type CommandShellCatalog = {
 type CommandShellOutputStream = "stdout" | "stderr";
 ```
 
-`commandShells.list` returns the host discovery result. Settings writes store
-only a catalog ID and reject unknown, unavailable, or wrong-platform IDs with
-`COMMAND_SHELL_INVALID`. If a persisted ID later becomes unavailable, the
-catalog selects the first available platform shell and sets `fallback: true`.
-A Bash request includes the pinned effective ID and dialect from the same turn;
-host-core rejects a changed ID or dialect with `COMMAND_SHELL_CHANGED` before
-permission evaluation and before spawn. Identity is not an executable path
-hash.
+`commandShells.list` 返回主机发现结果。设置写入存储
+仅使用目录 ID，并拒绝未知、不可用或错误的平台 ID
+`COMMAND_SHELL_INVALID`。如果持久化 ID 稍后变得不可用，则
+Catalog 选择第一个可用的平台 shell 并设置 `fallback: true`。
+Bash 请求包含同一轮中固定的有效 ID 和方言；
+host-core 拒绝之前使用 `COMMAND_SHELL_CHANGED` 更改的 ID 或方言
+权限评估和生成前。身份不是可执行路径
+哈希。
 
-## 6. Permission request notification
+## 6. 权限请求通知
 
-Host may emit:
+主机可能会发出：
 
 ```ts
 method: "permissions.request"
@@ -1076,7 +852,7 @@ params: {
 }
 ```
 
-Electron/UI resolves via:
+Electron/UI 通过以下方式解决：
 
 ```ts
 method: "permissions.resolve"
@@ -1086,126 +862,123 @@ params: {
 }
 ```
 
-Timeout behavior (**D005**): after 120s unresolved → deny.
+超时行为 (**D005**)：120 秒后未解决 → 拒绝。
 
-`permissions.pending` returns the open requests as Host state (D374/D375):
-`{ requests: PendingPermission[] }`, oldest first, optionally scoped by
-`sessionId`. Each entry carries the same fields as the `permissions.request`
-notification plus `createdAt`, `expiresAt`, and `remainingMs`. Requests past
-the timeout are omitted. A client that attaches after the notification was
-emitted reads this list and answers through the unchanged
-`permissions.resolve`; the notification path itself does not change.
+`permissions.pending` 把待处理请求作为 Host 状态返回（D374/D375）：
+`{ requests: PendingPermission[] }`，最早的在前，可按 `sessionId` 过滤。每一项包含与
+`permissions.request` 通知相同的字段，外加 `createdAt`、`expiresAt` 和 `remainingMs`；
+已超时的请求不会出现。在通知发出之后才接入的客户端读取此列表，并通过不变的
+`permissions.resolve` 作答；通知路径本身不变。
 
-## 7. Error codes
+## 7. 错误代码
 
-JSON-RPC errors carry a numeric `code` plus `data.errorCode`, the stable
-string from [08-error-codes](08-error-codes.md). Several string codes share a
-numeric slot; the string is the contract, the number is transport detail.
+JSON-RPC 错误携带一个数字 `code` 以及 `data.errorCode`，后者是来自
+[08-错误代码](/spec/03-runtime/08-error-codes) 的稳定字符串。多个字符串码
+共用同一个数字槽位；字符串才是契约，数字只是传输细节。
 
-| code | errorCode | meaning |
+| 代码 | 错误代码 | 意义 |
 |---|---|---|
-| 1000 | INTERNAL | unexpected host failure |
-| 1001 | UNAUTHORIZED | missing/invalid handshake or capability |
-| 1001 | HOST_SHUTTING_DOWN | the host is draining after EOF and refused the call |
-| 1002 | INVALID_PARAMS | schema validation failed |
-| 1002 | MODEL_ALIAS_TOO_LONG | provider row alias exceeds 60 code points |
-| 1003 | NOT_FOUND | entity missing (legacy slot, kept for old callers) |
-| 1006 | RATE_LIMITED | a per-caller budget window was exhausted |
-| 1007 | NOT_FOUND | entity missing |
-| 1007 | SESSION_NOT_FOUND | the named session does not exist; tool requests never fall back to the global workspace |
-| 1008 | CONFLICT | busy/conflict state |
-| 1008 | AGENT_BUSY | the session has a running turn |
-| 1009 | PLUGIN_INVALID | manifest/validation failure |
-| 1010 | PLUGIN_LOAD_FAILED | enable/load failure |
-| 1011 | PROTOCOL_MISMATCH | `app.handshake` protocol version mismatch |
-| 1012 | PLUGIN_INTEGRITY | package checksum/signature mismatch |
-| 1013 | PLUGIN_PERMISSION_DENIED | plugin lacks the permission the call needs |
-| 1014 | PLUGIN_NETWORK | marketplace download/catalog fetch failed |
-| 1015 | MCP_INVALID | user MCP server definition failed validation |
-| 1015 | PLAN_* | every Plan/Goal checkpoint failure (`PLAN_APPROVAL_TIMEOUT`, `PLAN_APPROVAL_STALE`, `PLAN_APPROVAL_INTERRUPTED`, `PLAN_SESSION_NOT_FOUND`, `PLAN_WORKSPACE_REQUIRED`, …) shares this slot; the string code distinguishes them |
-| 1016 | SKILL_INVALID | user skill document failed validation |
-| 1017 | SUBAGENT_INVALID | user subagent document failed validation |
-| 1018 | CAPABILITY_INVALID | agent capability root/scope setting failed validation |
-| 1019 | PLUGIN_CANCELLED | the user cancelled a marketplace install while it was downloading |
-| 1020 | PLUGIN_MARKET_NOT_PUBLISHED | the platform has the version and is not offering it yet |
-| 1021 | PLUGIN_MARKET_ARCHIVED | the plugin was withdrawn from the platform |
-| 1022 | PLUGIN_MARKET_NOT_FOUND | the platform does not have that plugin or version |
-| 1023 | PLUGIN_MARKET_RATE_LIMITED | the download endpoint asked the client to wait |
-| 1024 | PLUGIN_MARKET_NO_SOURCE | no distribution target can serve the package |
-| -32029 | HOST_OVERLOADED | RPC dispatcher capacity exhausted |
-| -32601 | — | unknown method |
-| -32700 | — | unparseable request line |
-| 1002 | LIMIT_EXCEEDED | an NDJSON request line over 64 MiB; Electron rejects the write before it reaches the pipe; if the host still sees it, the remainder of the line is drained, the reply keeps the request id when it can be peeked from the prefix, and the stdin reader keeps running |
+| 1000 | INTERNAL | 意外主机故障 |
+| 1001 | UNAUTHORIZED | missing/invalid 握手或功能 |
+| 1001 | HOST_SHUTTING_DOWN | 主机在 EOF 后正在排空，拒绝了该调用 |
+| 1002 | INVALID_PARAMS | 架构验证失败 |
+| 1002 | MODEL_ALIAS_TOO_LONG | 提供商行别名超过 60 个码点 |
+| 1003 | NOT_FOUND | 实体缺失（遗留槽位，为旧调用方保留） |
+| 1006 | RATE_LIMITED | 某个按调用方计的预算窗口已耗尽 |
+| 1007 | NOT_FOUND | 实体缺失 |
+| 1007 | SESSION_NOT_FOUND | 点名的会话不存在；工具请求永远不会回退到全局工作区 |
+| 1008 | CONFLICT | busy/conflict 状态 |
+| 1008 | AGENT_BUSY | 该会话有一个正在运行的回合 |
+| 1009 | PLUGIN_INVALID | manifest/validation 失败 |
+| 1010 | PLUGIN_LOAD_FAILED | enable/load 失败 |
+| 1011 | PROTOCOL_MISMATCH | `app.handshake` 协议版本不匹配 |
+| 1012 | PLUGIN_INTEGRITY | 包 checksum/signature 不匹配 |
+| 1013 | PLUGIN_PERMISSION_DENIED | 插件缺少该调用所需的权限 |
+| 1014 | PLUGIN_NETWORK | 市场 download/catalog 拉取失败 |
+| 1015 | MCP_INVALID | 用户 MCP 服务器定义校验失败 |
+| 1015 | PLAN_* | 所有 Plan/Goal 检查点失败（`PLAN_APPROVAL_TIMEOUT`、`PLAN_APPROVAL_STALE`、`PLAN_APPROVAL_INTERRUPTED`、`PLAN_SESSION_NOT_FOUND`、`PLAN_WORKSPACE_REQUIRED`……）共用此槽位；由字符串码区分 |
+| 1016 | SKILL_INVALID | 用户技能文档校验失败 |
+| 1017 | SUBAGENT_INVALID | 用户子代理文档校验失败 |
+| 1018 | CAPABILITY_INVALID | Agent 能力 root/scope 设置校验失败 |
+| 1019 | PLUGIN_CANCELLED | 用户在下载过程中取消了市场安装 |
+| 1020 | PLUGIN_MARKET_NOT_PUBLISHED | 平台有该版本但尚未对外提供 |
+| 1021 | PLUGIN_MARKET_ARCHIVED | 插件已被平台下架 |
+| 1022 | PLUGIN_MARKET_NOT_FOUND | 平台没有该插件或该版本 |
+| 1023 | PLUGIN_MARKET_RATE_LIMITED | 下载接口要求客户端等待后重试 |
+| 1024 | PLUGIN_MARKET_NO_SOURCE | 没有任何分发目标能提供该包 |
+| -32029 | HOST_OVERLOADED | RPC 调度程序容量已耗尽 |
+| -32601 | — | 未知方法 |
+| -32700 | — | 无法解析的请求行 |
+| 1002 | LIMIT_EXCEEDED | 超过 64 MiB 的 NDJSON 请求行；Electron 在写入管道前拒绝；若主机仍读到该行，则读完余下部分、尽量从截断前缀取出请求 id 再应答，stdin 读取器继续运行 |
 
+工具结果（`TOOL_DENIED`、`TOOL_TIMEOUT`、`PATH_OUTSIDE_WORKSPACE`、
+`WORKSPACE_PATH_DENIED`、`WRITE_DISABLED_IN_PLAN`、`SHELL_NOT_FOUND`、
+`COMMAND_SHELL_CHANGED`……）不是 JSON-RPC 错误：`tools.execute` 在结果中返回
+`ok: false` 并附带 `errorCode`（§5）。
 
-Tool outcomes (`TOOL_DENIED`, `TOOL_TIMEOUT`, `PATH_OUTSIDE_WORKSPACE`,
-`WORKSPACE_PATH_DENIED`, `WRITE_DISABLED_IN_PLAN`, `SHELL_NOT_FOUND`,
-`COMMAND_SHELL_CHANGED`, …) are not JSON-RPC errors: `tools.execute` returns
-`ok: false` with `errorCode` in the result (§5).
+## 8. 并发/排序
 
-## 8. Concurrency / ordering
+1. 请求可以在调度程序上限内并发。 Read/search 工具可能
+   并行运行；每个会话的 Read/search/`Write` 都是有界的并且按 FIFO 顺序排列，
+   一次会话中最多有一个突变。
+2. 不同的会话可以在保留的项目选项卡上同时继续；
+   每个都解析自己的项目根并授予
+3. 握手后随时可能收到通知
+4. `tools.output` 保留 stdout/stderr 分离和通知顺序；
+   它的作用域为 session/tool 调用，并且没有回合或排序字段；
+   最终结果仍然有限
+5. Abort是幂等的，关闭整个Bash进程树
+6. Plan 和 Goal 批准请求为 proposal/session/turn/tool-call/version
+   范围；
+   每个项目仅存在一项待批准和一项 queued/running 执行
+   会话，并且分辨率由 host-core 序列化
+7. 启动事务性地中断待批准和 queued/running
+   RPC 服务之前的执行状态。延迟渲染器响应无法关闭；
+   挂起的中断保持会话的合同模式和
+   已批准的 queued/running 中断保留 Agent。
+8. 会话分叉是一种主机拥有的快照操作。源转录本
+   永远不会被重写，并且处理的子 write/index 失败不会留下任何结果
+   可见的会话或孤立的转录文件。 D119 之后发生进程崩溃
+   现有的孤儿成绩单恢复政策。
+9. 消息范围的分叉除了规范快照结束之外是相同的
+包括在 `throughMessageId`。它仍然重新映射 message/tool-call id 和
+   不创建运行时或修订状态，因此稍后的子 reseed/cache 状态为
+   由新的会话 ID 隔离。
 
-1. Requests may be concurrent within the dispatcher cap. Read/search tools may
-   run in parallel; `Write`/`Edit` are bounded and FIFO-ordered per session,
-   with at most one mutation in flight for a session.
-2. Different sessions may continue concurrently across retained project tabs;
-   each resolves its own project root and grants
-3. Notifications may arrive anytime after handshake
-4. `tools.output` preserves stdout/stderr separation and notification order;
-   it is scoped to its session/tool call and has no turn or ordering fields;
-   final results remain bounded
-5. Abort is idempotent and shuts down the complete Bash process tree
-6. Plan and Goal approval requests are proposal/session/turn/tool-call/version
-   scoped;
-   only one pending approval and one queued/running execution exists per
-   session, and resolution is serialized by host-core
-7. Startup transactionally interrupts pending approvals and queued/running
-   execution states before RPC service. Late renderer responses fail closed;
-   pending interruption keeps the session's contract mode and an
-   already-approved queued/running interruption keeps Agent.
-8. A session fork is one host-owned snapshot operation. The source transcript
-   is never rewritten, and a handled child write/index failure leaves no
-   visible session or orphan transcript file. A process crash follows D119's
-   existing orphan-transcript recovery policy.
-9. A message-scoped fork is identical except that the canonical snapshot ends
-   inclusively at `throughMessageId`. It still remaps message/tool-call ids and
-   creates no runtime or revision state, so later child reseed/cache state is
-   isolated by the new session id.
+## 9. 日志记录规则
 
-## 9. Logging rules
+- 从不记录 API keys/secrets
+- 工具参数可能会在审核预览中进行编辑
+- 每个tools.execute都会获得trace id = `toolCallId`
 
-- Never log API keys/secrets
-- Tool args may be redacted in audit previews
-- Every tools.execute gets trace id = `toolCallId`
+## 10. 验收
 
-## 10. Acceptance
-
-1. Electron spawns host and completes handshake
-2. health method returns ok
-3. denied tool path returns `TOOL_DENIED`
-4. timeout path returns deny decision after 120s
-5. switching the selected workspace from A to B does not change the tool root
-   of a call issued by session A
-6. Protocol v4 `session.endTurn` creates/returns exactly one notification for
-   unseen completed/failed turns and none for visible-current, aborted, or
-   repeated terminal updates
-7. Notification list/unread/read-all/clear round-trip through host-core and
-   remain bounded to the newest 200 durable rows
-8. Forking an idle session produces an independently mutable child with the
-   same active transcript and durable execution configuration while leaving
-   the source and its regenerate revisions unchanged
-9. Forking through a message excludes every later source row and rejects an
-   unknown message without creating a child
-10. A forged `requestedMode` cannot authorize a tool against the durable mode;
-    Plan and Goal deny Write/Edit/plugin/unknown tools and apply permission
-    prompts to Bash according to `ask`/`accept-edits`/`auto`
-11. SubmitPlan and SubmitGoal write exact Markdown bytes to a unique
-    `.pi/plan/*.md` or `.pi/goal/*.md` file with
-    hash/size and structured title/question fields; only matching
-    approve/reject responses can resolve the live `plan_approvals` row, and a
-    submit tool run against the other kind fails with `PLAN_KIND_MISMATCH`
-    without writing an artifact
-12. Plan and Goal expiry, abort, crash, scheduled rejection, and stale responses
-    produce the documented durable statuses and events
-13. Bash validates the pinned shell ID/dialect, streams stdout/stderr, enforces
-    the 60s default/bounded override, and shuts down the complete process tree
+1. Electron 生成主机并完成握手
+2.health方法返回ok
+3. 拒绝刀具路径返回 `TOOL_DENIED`
+4.超时路径120s后返回拒绝决策
+5.将选定的工作空间从A切换到B不会改变工具根
+   会话 A 发出的呼叫的
+6. 协议 v4 `session.endTurn` creates/returns 恰好有一个通知
+   未见 completed/failed 轮次，并且没有可见电流、中止或
+   重复终端更新
+7.通知list/unread/read-all/clear通过host-core往返
+   仍受最新 200 个持久行的限制
+8. 分叉一个空闲会话会产生一个独立可变的子进程
+   离开时具有相同的活动转录本和持久执行配置
+   源及其重新生成的修订版保持不变
+9. 分叉消息会排除后面的所有源行并拒绝
+   未创建子项的未知消息
+10. 伪造的 `requestedMode` 无法授权工具进入持久模式；
+    Plan 和 Goal 拒绝 Write/Edit/plugin/unknown 工具并申请权限
+    根据 `requestedMode`/Write/Edit/plugin/unknown/Plan 提示 Bash
+11. SubmitPlan 和 SubmitGoal 将精确的 Markdown 字节写入唯一的
+    `.pi/plan/*.md` 或 `.pi/goal/*.md` 文件
+    hash/size 和结构化 title/question 字段；仅匹配
+    approve/reject 响应可以解析实时 `plan_approvals` 行，并且
+    针对其他类型运行的提交工具失败并显示 `PLAN_KIND_MISMATCH`
+    无需编写工件
+12. Plan 和 Goal 过期、中止、崩溃、计划拒绝和陈旧响应
+    产生记录的持久状态和事件
+13. Bash 验证固定 shell ID/dialect，传输 stdout/stderr，强制执行
+    60s default/bounded 覆盖，并关闭整个进程树

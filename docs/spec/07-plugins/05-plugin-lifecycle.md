@@ -1,15 +1,15 @@
-# 05. Plugin Lifecycle
+# 05. 插件生命周期
 
-## 1. Goals
+## 1. 目标
 
-Define the complete state machine from discovery to uninstall, guaranteeing:
+定义从发现到卸载的完整状态机，保证：
 
-- Predictable behavior
-- Recoverable failures
-- Auditable start/stop
-- Consistency with command palette / AgentTool registration
+- 可预测的行为
+- 可恢复的故障
+- 可审计的 start/stop
+- 与命令面板/AgentTool 注册保持一致
 
-## 2. State machine
+## 2. 状态机
 
 ```text
 discovered
@@ -24,131 +24,128 @@ discovered
  → invalid
 ```
 
-### State descriptions
+### 状态描述
 
-| State | Meaning |
+| 状态 | 含义 |
 |---|---|
-| discovered | Plugin directory or package scanned |
-| validated | manifest / file integrity passed |
-| installed | Written to the installed directory and registered |
-| enabled | Enabled by the user, allowed to load |
-| loaded | Runtime loaded, contribution points registered |
-| running | Has an active panel / background logic |
-| disabled | Installed but turned off by the user |
-| load_error | Load failed after enabling |
-| install_error | Install failed |
-| invalid | Validation failed, unusable |
+| 发现了 | 扫描插件目录或包 |
+| 已验证 | 清单/文件完整性已通过 |
+| 已安装 | 写入安装目录并注册 |
+| 已启用 | 由用户启用，允许加载 |
+| 已加载 | 运行时加载，贡献点注册 |
+| 跑步 | 具有活动面板/后台逻辑 |
+| 残疾人 | 已安装但被用户关闭 |
+| 加载错误 | 启用后加载失败 |
+| 安装错误 | 安装失败 |
+| 无效 | 验证失败，无法使用 |
 
-## 3. Lifecycle hooks
+## 3. 生命周期挂钩
 
-**Implemented today:** the runtime (`apps/desktop/electron/main/plugin-runtime.ts`) invokes `onLoad` (when a plugin is loaded on load/enable) and `onUnload` (dispatched into the plugin process on unload/disable/reload/app quit, 5s budget — 1.5s on quit — then the process is stopped); unloading tears down the plugin's registered commands and tools. The other hooks below are declared in the API but not yet fired.
+**今天实现：**运行时（`apps/desktop/electron/main/plugin-runtime.ts`）调用`onLoad`（当在load/enable上加载插件时）和`onUnload`（在unload/disable/reload/应用退出上调度到插件进程，预算5s——退出时为1.5s，然后进程停止）；卸载会删除插件注册的命令和工具。下面的其他挂钩在 API 中声明但尚未触发。
 
-**Planned:** once the full lifecycle lands, hooks fire in this order:
+**计划：**一旦完整生命周期落地，钩子将按以下顺序触发：
 
-1. `onInstall` (once, only after a successful install)
-2. `onEnable`
-3. `onLoad`
-4. runtime events
-5. `onUnload`
-6. `onDisable`
-7. `onUninstall`
+1. `onInstall`（一次，仅在成功安装后）
+2.`onEnable`
+3.`onLoad`
+4.运行时事件
+5.`onUnload`
+6.`onDisable`
+7.`onUninstall`
 
-### Invocation constraints
-- Hooks must be able to time out (default 5s, configurable)
-- A hook exception must not crash the host
-- If `onLoad` fails, enter `load_error` and automatically roll back the contribution points already registered
+### 调用约束
+- Hooks 必须能够超时（默认 5 秒，可配置）
+- 钩子异常不得使主机崩溃
+- 如果`onLoad`失败，请输入`load_error`并自动回滚已注册的贡献点
 
-## 3.1 Resident services
+## 3. 1 居民服务
 
-A service declared in `contributes.services` is driven by the host, not by the
-plugin's own hooks, so its window is strictly inside the plugin's lifetime:
+`contributes.services` 中声明的服务由主机驱动，而不是由主机驱动
+插件自己的钩子，因此它的窗口严格在插件的生命周期内：
 
-1. `onLoad` completes and contribution points are registered
-2. For each declared service (at most 4 per plugin, gated on
-   `background.service`), the broker calls `service.start` in the plugin process
-   with a 5s budget. A start failure marks that one service `failed` and leaves
-   the rest of the plugin loaded.
-3. On unload / disable / reload, `service.stop` runs **before** `onUnload`, so
-   the service is quiet while the plugin still has its API
+1. `onLoad`完成并注册贡献积分
+2. 对于每个声明的服务（每个插件最多 4 个，门控
+   `background.service`)，broker 在插件进程中调用 `service.start`
+   预算为 5 秒。启动失败标志着一个服务 `failed` 并离开
+   加载插件的其余部分。
+3. 卸载/禁用/重新加载时，`service.stop` **先于** `onUnload` 运行，因此
+   服务很安静，而插件仍然有其 API
 
-Status per service is `starting` | `running` | `stopped` | `failed` plus a
-restart count, readable over the plugin IPC surface and shown on the Plugins
-page.
+每项服务的状态为 `starting` | `running` | `stopped` | `failed` 加一个
+重新启动计数，可通过插件 IPC 表面读取并显示在插件上
+页。
 
-### Restart policy
+### 重启政策
 
-The service lives in the plugin's host process, so a crash takes it with the
-process. The supervisor then restarts the whole plugin:
+该服务存在于插件的主机进程中，因此崩溃会导致它崩溃
+过程。然后主管重新启动整个插件：
 
-- Backoff `1s, 2s, 4s, 8s, 16s`, capped at 30s
-- At most 5 restarts; after that the plugin stays down in `failed` so the user
-  sees the failure instead of a silent crash loop
-- A process that survives 60s is considered healthy and the backoff resets to
-  zero
-- `autoRestart: false` on a service opts its plugin out of restarts entirely
-- Restarts are skipped when the user re-enabled or removed the plugin while the
-  backoff timer was pending
+- 回退 `1s, 2s, 4s, 8s, 16s`，上限为 30 秒
+- 最多重启5次；之后插件会在 `failed` 中保持关闭状态，因此用户
+  看到失败而不是无声的崩溃循环
+- 存活 60 秒的进程被认为是健康的，并且退避重置为
+  零
+- 服务上的 `autoRestart: false` 选择其插件完全不重新启动
+- 当用户重新启用或删除插件时，将跳过重新启动
+  退避计时器待处理
 
-Manual enable / disable always wins over the supervisor: an explicit action
-clears the pending timer and the attempt counter.
+手动启用/禁用始终赢得主管的青睐：明确的操作
+清除挂起的计时器和尝试计数器。
 
-### App quit
+### 应用退出
 
-Quitting stops every plugin host **as a shutdown**, not as a crash. Each plugin
-is marked as disposing and its pending restarts are cancelled before anything
-else, then services stop and `onUnload` runs, in parallel across plugins.
+退出会把每个插件宿主按 **关闭** 而不是崩溃来停止。先把每个插件标记为正在
+释放并取消其待处理的重启，然后停止服务并运行 `onUnload`，各插件之间并行。
 
-This is what separates the two exits: a host process that dies without being
-marked is reported as a crash, which means an error log, a "stopped
-unexpectedly" toast, and a supervisor scheduling restarts into an app that is
-closing. None of that may happen on a clean quit.
+这就是两种退出的区别：一个没有被标记就死掉的宿主进程会被当成崩溃上报，也就
+是一条错误日志、一个"意外停止"提示，以及主管把重启排进一个正在关闭的应用。
+干净退出时这些都不允许发生。
 
-The sequence is bounded — `onUnload` gets 1.5s per plugin and teardown 3s in
-total, after which the children are killed outright. A plugin's cleanup must
-never be the reason the app appears to hang on quit.
+整个过程是有界的——每个插件的 `onUnload` 有 1.5s，整体拆除有 3s，超时后直接
+杀掉子进程。插件的清理绝不能成为应用退出时看起来卡住的原因。
 
-## 4. Enable / disable semantics
+## 4. 启用/禁用语义
 
-### enable
-- Set state to enabled
-- Attempt load
-- Success: register commands / tools / skills / themes / MCP servers, then start
-  resident services
-- Failure: automatically fall back to disabled and surface the error to the user. This is frozen by D017 (enable→load failure auto-disables the plugin).
+### 启用
+- 将状态设置为启用
+- 尝试加载
+- 成功：注册命令/工具/技能/主题/MCP服务器，然后启动
+  居民服务
+- 失败：自动回退到禁用状态并向用户显示错误。这被 D017 冻结（启用→加载失败自动禁用插件）。
 
-### disable
-- Unregister commands / tools
-- Close panel
-- Stop resident services and disconnect MCP servers
-- Cancel any pending restart backoff
-- Call `onUnload` / `onDisable`
-- Persist as disabled
+### 禁用
+- 取消注册命令/工具
+- 关闭面板
+- 停止常驻服务并断开 MCP 服务器的连接
+- 取消任何挂起的重启退避
+- 致电 `onUnload` / `onDisable`
+- 继续作为残疾人
 
-## 5. Startup recovery
+## 5. 启动恢复
 
-On app startup:
+在应用程序启动时：
 
-1. Scan installed plugins
-2. Read the enabled state
-3. Load only enabled plugins
-4. Skip a single failed plugin without affecting other plugins or the main app
+1.扫描已安装的插件
+2. 读取使能状态
+3.仅加载已启用的插件
+4. 跳过单个失败的插件而不影响其他插件或主应用程序
 
-## 6. Developer mode
+## 6. 开发者模式
 
-`dev-loaded` plugins:
+`dev-loaded` 插件：
 
-- Not copied to `installed`
-- Reference the local path directly
-- Can watch and hot reload
-- Reload flow: `unload → validate → load`
+- 未复制到 `installed`
+- 直接引用本地路径
+- 可以观看和热重载
+- 重新加载流程：`unload → validate → load`
 
-On hot reload:
-- Preserve plugin settings as much as possible
-- Panel in-memory state is not guaranteed to be preserved
+热重载时：
+- 尽可能保留插件设置
+- 不保证保留面板内存中状态
 
-## 7. Contribution-point register/unregister transaction
+## 7. 贡献点register/unregister交易
 
-Each plugin's load process should be approximately transactional:
+每个插件的加载过程应该大致是事务性的：
 
 ```text
 begin
@@ -161,45 +158,45 @@ commit
  start resident services
 ```
 
-On mid-way failure:
+关于中途失败：
 ```text
 rollback all registrations from this plugin
 ```
 
-Avoid a half-loaded state where "the command exists but the tool does not".
+避免出现“命令存在但工具不存在”的半加载状态。
 
-## 8. Audit events
+## 8. 审计事件
 
-Record at least:
+至少记录：
 
-- plugin.install
-- plugin.uninstall
-- plugin.enable
-- plugin.disable
-- plugin.load.success
-- plugin.load.error
-- plugin.unload
-- plugin.crash
-- plugin.service.start / plugin.service.stop
-- plugin.service.restart / plugin.service.restart.scheduled
-- plugin.services.skipped (missing permission or over the per-plugin cap)
+- 插件.安装
+- 插件.卸载
+- 插件.启用
+- 插件.禁用
+- 插件.加载.成功
+- 插件加载错误
+- 插件.卸载
+- 插件崩溃
+- 插件.服务.启动/插件.服务.停止
+- 插件.服务.重新启动 / 插件.服务.重新启动.预定
+-plugin.services.skipped（缺少权限或超过每个插件的上限）
 
-Fields:
-- pluginId
-- version
-- source (`installed` | `dev` | `marketplace`)
-- ts
-- errorCode?
-- attempt? / delayMs? (service restarts)
+领域：
+- 插件ID
+- 版本
+- 源（`installed` | `dev` | `marketplace`）
+- TS
+- 错误代码？
+- 尝试？ / 延迟女士？ （服务重新启动）
 
-## 9. Uninstall strategy
+## 9. 卸载策略
 
-Before uninstall:
-1. disable + unload
-2. Call `onUninstall`
-3. Delete installed files
-4. Clean up plugin-private data (may ask the user whether to keep it)
+卸载前：
+1.禁用+卸载
+2. 调用`onUninstall`
+3.删除已安装的文件
+4.清理插件私有数据（可能会询问用户是否保留）
 
-Default recommendation:
-- Clean up settings/data on uninstall (D016: uninstall deletes plugin data by default)
-- Provide a "keep data" advanced option (can be deferred)
+默认推荐：
+- 卸载时清理 settings/data（D016：卸载默认删除插件数据）
+- 提供“保留数据”高级选项（可以推迟）

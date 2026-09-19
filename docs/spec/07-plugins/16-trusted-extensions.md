@@ -1,58 +1,43 @@
-# 16. Trusted Extensions
+# 16. 受信任扩展
 
-> Status: Implemented v1.1 (D387 / D388, ADR 0214 / ADR 0215 / ADR 0244); implementation notes are marked "v1 note"
-> Scope: v1.1. v2 and v3 items are listed in §12 and are not committed.
+> 状态：v1.1 已实现（D387 / D388、ADR 0214 / ADR 0215）；实现说明标注为“v1 说明”
+> 范围：v1.1。v2 与 v3 事项列于 §12，不构成承诺。
 
-## 1. Purpose and terminology
+## 1. 目的与术语
 
-Plugins ([01-plugin-system.md](01-plugin-system.md)) are the one extension
-surface of PI-Desktop. This document specifies one plugin contribution,
-`contributes.agentExtensions`: TypeScript or JavaScript modules that run
-inside the Agent sidecar, receive an `ExtensionAPI` object, and register
-tools, commands, and event handlers directly on the agent loop. The
-`ExtensionAPI` contract is the one defined by `@earendil-works/pi-coding-agent`,
-which PI-Desktop adopts alongside the `pi-ai` and `pi-agent-core` kernel
-(ADR 0002), so an extension written for the pi CLI is the module a plugin
-contributes. D388 folded the earlier standalone "trusted extensions"
-registry into this contribution; the engine below is unchanged.
+插件（[01-plugin-system.md](/spec/07-plugins/01-plugin-system)）是 PI-Desktop
+唯一的扩展面。本文规定其中一种插件贡献点 `contributes.agentExtensions`：在 Agent
+sidecar 内运行的 TypeScript 或 JavaScript 模块，接收一个 `ExtensionAPI` 对象，直接在
+agent 循环上注册工具、命令和事件处理器。`ExtensionAPI` 契约即
+`@earendil-works/pi-coding-agent` 定义的契约，PI-Desktop 与 `pi-ai`、`pi-agent-core`
+内核（ADR 0002）一起采纳，因此为 pi CLI 写的扩展就是插件贡献的模块。D388 把此前
+独立的“受信任扩展”注册表并入了这个贡献点；下文的引擎部分不变。
 
-Provider declarations are a separate manifest surface rather than part of this
-contract: `contributes.providers` materializes Host-owned provider rows
-([02-plugin-manifest-schema.md](02-plugin-manifest-schema.md) §5.4, ADR 0259),
-so it is neither an `ExtensionAPI` member nor a row in the §5 support matrix.
-`registerProvider` (§5) remains the session-scoped extension counterpart.
-
-| Term | Meaning |
+| 术语 | 含义 |
 |---|---|
-| Agent extension | One module a plugin lists in `contributes.agentExtensions`, written against `ExtensionAPI`, running with the trust level of the Agent sidecar |
-| Plugin | A PI-Desktop plugin with a manifest, running in its own process under the permission gateway (ADR 0008); the owner, installer, and enablement record of its agent extensions |
-| Adapter | The layer in `packages/agent-runtime` that implements `ExtensionAPI` on top of the desktop runtime |
-| Runner | One desktop-owned `TrustedExtensionRunner` instance bound to one desktop session (v1 note: the pi-coding-agent `ExtensionRunner` is not reused because it binds the terminal theme; its `ExtensionAPI` types are a types-only dependency) |
+| Agent 扩展 | 插件在 `contributes.agentExtensions` 中列出的一个模块，面向 `ExtensionAPI` 编写，以 Agent sidecar 的信任级别运行 |
+| 插件 | 带 manifest 的 PI-Desktop 插件，在独立进程中、权限网关之下运行（ADR 0008）；是其 agent 扩展的拥有者、安装者和启用记录 |
+| 适配层 | `packages/agent-runtime` 中在桌面运行时之上实现 `ExtensionAPI` 的层 |
+| Runner | 绑定到一个桌面会话的一个桌面自有 `TrustedExtensionRunner` 实例（v1 说明：不复用 pi-coding-agent 的 `ExtensionRunner`，因为它绑定终端主题；其 `ExtensionAPI` 类型仅作类型依赖） |
 
-## 2. Positioning and trust model
+## 2. 定位与信任模型
 
-1. Agent extensions are installed, enabled, scoped, updated, and removed as
-   part of their plugin. There is no second list, store, or settings page.
-2. An agent extension is trusted code. It executes inside the Agent sidecar,
-   which already holds the bash, edit, and write tools, so granting the
-   `agent.extension` permission grants exactly what running the agent already
-   grants. The plugin sandbox in [04-plugin-security.md](04-plugin-security.md)
-   does not cover these modules, which is why the permission is a separate,
-   high-risk grant rather than an implicit part of `agent.tool.register`.
-3. Nothing runs without the grant. A plugin that declares
-   `contributes.agentExtensions` without `agent.extension` fails manifest
-   validation; a plugin whose recorded grants omit the permission loads with
-   its modules skipped and audited (`plugin.agentExtensions.skipped`). D007
-   stays in force: PI-Desktop never auto-imports `~/.pi`.
-4. Project scope is the plugin's activation scope. A plugin limited to some
-   projects contributes its modules only to sessions in those projects. v1
-   note: there is no separate project trust state, so the plugin scope is the
-   trust decision and `project_trust` is not emitted.
-5. Marketplace distribution of plugins holding `agent.extension` is not
-   enabled in v1.1: the permission is accepted from local imports and
-   development plugins. Marketplace listing waits for signing (spec 08).
+1. Agent 扩展随其插件一起安装、启用、限定范围、更新和移除。没有第二个列表、存储或
+   设置页。
+2. Agent 扩展是受信任代码。它在 Agent sidecar 内执行，而 sidecar 已持有 bash、edit
+   和 write 工具，因此授予 `agent.extension` 权限授予的正是运行 agent 已经授予的东西。
+   [04-plugin-security.md](/spec/07-plugins/04-plugin-security) 的插件沙箱不
+   覆盖这些模块，这正是该权限作为独立高风险授权、而非 `agent.tool.register` 隐含
+   部分的原因。
+3. 没有授权就不运行。声明了 `contributes.agentExtensions` 却没有 `agent.extension` 的
+   manifest 校验不通过；记录的授权中缺少该权限的插件照常加载但跳过其模块并记审计
+   （`plugin.agentExtensions.skipped`）。D007 继续有效：PI-Desktop 永不自动导入 `~/.pi`。
+4. 项目范围就是插件的激活范围。限定到某些项目的插件只向这些项目的会话贡献模块。v1
+   说明：没有独立的项目信任状态，插件范围即信任决定，`project_trust` 不触发。
+5. v1.1 不开放持有 `agent.extension` 的插件在市场分发：该权限只接受本地导入和开发
+   插件。市场上架等签名机制（规格 08）到位后再定。
 
-## 3. Contribution and import
+## 3. 贡献与导入
 
 ### 3.1 Manifest
 
@@ -67,330 +52,258 @@ so it is neither an `ExtensionAPI` member nor a row in the §5 support matrix.
 }
 ```
 
-Rules: at most eight entries; each is a relative `.ts`, `.mts`, `.js`, or
-`.mjs` path inside the plugin directory; the file must exist at load; a
-manifest that lists entries without the permission is invalid
-([02-plugin-manifest-schema.md](02-plugin-manifest-schema.md) §4 and §7).
-`main` may be a no-op module when the plugin contributes nothing else.
+规则：最多八个条目；每个条目是插件目录内的相对 `.ts`、`.mts`、`.js` 或 `.mjs` 路径；
+加载时文件必须存在；列出条目却没有权限的 manifest 无效
+（[02-plugin-manifest-schema.md](/spec/07-plugins/02-plugin-manifest-schema) §4 与 §7）。
+当插件不贡献其他内容时，`main` 可以是空操作模块。
 
-### 3.2 Importing a pi CLI extension or skill package
+### 3.2 导入 pi CLI 扩展或技能包
 
-Plugins → "Import pi extension" opens a native picker (main owns the path,
-D344) for an explicit local file or directory. Main copies the selected
-source under `<dataDir>/plugins/imported/<slug>/src/`, writes a generated
-CommonJS no-op `main.cjs` and a manifest with id `imported.<slug>` (a unique suffix is
-added for repeated imports), and registers the directory through the existing
-local-plugin flow. The confirmation before the picker remains the trust
-decision; the generated manifest declares the permissions needed by its actual
-contributions. The manifest's `main` points to `main.cjs` regardless of the
-source package's `type`; both copied package declarations retain their module
-semantics. Loading an imported plugin whose `main` is the generated CommonJS
-`main.js` wrapper rewrites that file in place to `main.cjs` and updates the
-manifest; copied package files, grants, and activation scope stay as they are.
-The rewrite matches only the generated no-op (including the original comment
-text). A customized `main.js` is left untouched. Re-importing without removal
-creates a separate plugin with a unique suffix; it does not copy grants or
-activation scope from the older copy.
+插件页 →“导入 pi 扩展”打开原生选择器（main 拥有路径，D344），由用户明确选择本地
+文件或目录。main 把所选源码复制到 `<dataDir>/plugins/imported/<slug>/src/`，生成空操作
+CommonJS `main.cjs` 和 id 为 `imported.<slug>` 的 manifest（重复导入时追加唯一后缀），再通过
+既有本地插件流程注册。选择器之前的确认仍是信任决定；生成的 manifest 只声明实际贡献
+所需的权限。无论源包的 `type` 为何，manifest 的 `main` 都指向 `main.cjs`；
+两份复制的包声明保留原有模块语义。加载时若导入插件的 `main` 仍是生成的 CommonJS
+`main.js` 空包装器，则就地改写为 `main.cjs` 并更新 manifest；复制的包文件、授权和
+激活范围保持不变。只匹配生成的空操作（含最初的注释文本）。自定义过的 `main.js`
+不会改动。不删除就重新导入仍会创建带唯一后缀的独立插件，不会从旧副本复制授权或
+激活范围。
 
-For extension files and packages without `pi.skills`, entry discovery keeps
-the existing `pi-coding-agent` rules: `package.json` `pi.extensions`, otherwise
-`index.ts` / `index.js`, otherwise loose `*.ts` / `*.js` files one level deep.
-A package that explicitly declares `pi.skills` and has no `pi.extensions` (or
-an empty array) is skill-only: incidental scripts, including `index.js`, are
-copied as resources but never promoted to executable agent extensions.
+扩展文件及未声明 `pi.skills` 的包保持既有 `pi-coding-agent` 入口发现规则：先取
+`package.json` 的 `pi.extensions`，否则取 `index.ts` / `index.js`，再否则取一层深度内
+的松散 `*.ts` / `*.js` 文件。明确声明 `pi.skills` 且没有 `pi.extensions`（或该数组为空）
+的包视为仅技能包：包括 `index.js` 在内的附带脚本作为资源复制，不会被提升为可执行的
+Agent 扩展。
 
-A directory that ships a `package.json` also has it (plus its npm lockfile)
-copied to the plugin root with any `workspaces` field stripped. When it declares
-production or optional dependencies, main performs a bounded two-step install:
-it first resolves `npm install --package-lock-only --omit=dev --legacy-peer-deps
---no-audit --no-fund --ignore-scripts`, validates the complete generated lockfile,
-then runs `npm ci` with the same safety flags. Direct specs in `dependencies`,
-`optionalDependencies`, `devDependencies`, and `peerDependencies` must be
-registry-only because npm may inspect all four; the git resolver is disabled.
-No lifecycle script runs. Failed installs remove partial dependencies/cache and
-are reported to the renderer without blocking the import. The confirm discloses
-the npm step alongside the skills disclosure.
+目录若自带 `package.json`，会（连同其 npm lockfile）一并复制到插件根并剥离 `workspaces` 字段。
+若声明了生产或可选依赖，main 会在首次加载前执行有界的两阶段安装：先运行
+`npm install --package-lock-only --omit=dev --legacy-peer-deps --no-audit --no-fund
+--ignore-scripts` 并校验完整生成的 lockfile，再使用相同安全参数运行 `npm ci`。
+`dependencies`、`optionalDependencies`、`devDependencies` 和 `peerDependencies` 中的
+直接 spec 都必须来自 registry，因为 npm 可能检查全部四者；git resolver 会被禁用。
+不会运行生命周期脚本。安装失败会清理部分依赖/cache、上报渲染层且不阻塞导入。确认对话框
+会与技能披露一并说明 npm 安装步骤。
 
-| Source | Becomes |
+| 来源 | 结果 |
 |---|---|
-| A pi extension directory or file | A local plugin under `plugins/imported`, id `imported.<slug>` |
-| A plugin package declaring `contributes.agentExtensions` | Installed like any plugin; the grant is asked for at install |
-| A `package.json` with `pi.extensions` | Entries under `src/`, exposed through `contributes.agentExtensions` with `agent.extension` |
-| A `package.json` with `pi.skills` | Markdown documents under `src/`, exposed through `contributes.skills` with `agent.prompt.inject` |
-| A skill-only package | A no-op plugin holding `agent.prompt.inject`, without `agent.extension` |
+| 一个 pi 扩展目录或文件 | `plugins/imported` 下的本地插件，id 为 `imported.<slug>` |
+| 声明了 `contributes.agentExtensions` 的插件包 | 像其他插件一样安装；安装时询问该授权 |
+| 带 `pi.extensions` 的 `package.json` | `src/` 下的入口，通过 `contributes.agentExtensions` 贡献，需 `agent.extension` |
+| 带 `pi.skills` 的 `package.json` | `src/` 下的 Markdown 文档，通过 `contributes.skills` 贡献，需 `agent.prompt.inject` |
+| 仅技能包 | 持有 `agent.prompt.inject` 的空操作插件，不授予 `agent.extension` |
 
-`pi.skills` is an array of at most 32 nonempty relative Markdown-file or
-directory paths. An explicit `.md` file contributes that document. For a
-directory, its own `SKILL.md` takes precedence; otherwise directly contained
-`.md` files are included and subdirectories are searched for `SKILL.md`.
-Nested skill directories stop at their own `SKILL.md`, so support documents
-are not turned into extra skills. Scanning skips dot-prefixed entries and
-`node_modules`, deduplicates documents, and has a budget of 256 directories.
-More than 32 discovered skills, a missing declaration, or an unsupported
-path fails the import rather than silently yielding an incomplete catalog.
-Each contribution has an explicit, stable plugin-local ID derived from its
-package-relative path; different directories named `SKILL.md` remain
-independent skills. Normal plugin skill parsing, size limits, grants, and
-unload behavior remain in force.
+`pi.skills` 是最多含 32 条非空路径的数组，每条路径相对于包目录，指向 Markdown 文件
+或目录。明确指定的 `.md` 文件直接作为技能。对于目录，优先使用其自身的 `SKILL.md`；
+若不存在，则纳入该目录直接包含的 `.md` 文件，并在子目录中查找 `SKILL.md`。
+嵌套技能目录找到自身的 `SKILL.md` 后停止向下扫描，避免把支持文档变成额外技能。
+扫描跳过点号开头的条目和 `node_modules`，对文档去重，目录扫描预算为 256。
+发现超过 32 个技能、声明的路径不存在或路径类型不受支持时，导入失败，不会静默生成
+不完整目录。每项贡献都按包内相对路径生成明确、稳定的插件内 ID，不同目录下同名的
+`SKILL.md` 保持独立。既有插件技能正文解析、大小限制、权限与卸载行为保持不变。
 
-Copying uses paths relative to the selected package. A package installed
-under an ancestor `node_modules` directory is copied normally; only its own
-`node_modules` directory segments are excluded. References, assets, helper
-scripts, and other ordinary source files remain under `src/`, preserving
-skill-relative resource paths. Credential files (`.env*`, `.npmrc`, `.netrc`,
-`.pypirc`, private-key and certificate files) and repository metadata directories
-are not copied. The selected root is resolved to its real path. Contribution
-paths must stay inside that root, cannot traverse `..`, and cannot point into
-its dependency directories. Absolute `pi.skills` paths and descendant symbolic
-links are rejected. Copying also rejects symbolic links among retained resources
-and removes a partial copy on failure. The generated destination is created
-atomically and must not be inside the selected source.
+复制时按所选包的相对路径判断排除项。包的祖先路径含 `node_modules` 不影响复制，
+只排除包自身依赖目录中的 `node_modules` 路径段。引用文档、素材、辅助脚本及其他
+普通源码文件保留在 `src/` 下，使技能的相对资源引用仍然成立。凭据文件（`.env*`、
+`.npmrc`、`.netrc`、`.pypirc`、私钥和证书文件）及仓库元数据目录不会被复制。所选
+根目录先解析为真实路径；贡献路径必须位于根目录内，不能包含 `..` 穿越，也不能指向
+包内依赖目录。绝对 `pi.skills` 路径与后代符号链接会被拒绝；复制保留资源时也拒绝
+符号链接，复制失败会清理部分生成的目录。生成目标以原子方式创建，不能位于所选源目录内。
 
-This is an explicit local import, not a pi CLI package manager. It never
-automatically scans or imports `~/.pi`, does not read the CLI's installed
-package registry, and does not run npm lifecycle scripts. When dependencies
-are declared, the bounded installer accepts only registry version specs and
-registry-resolved npm lockfiles, rejects unsafe package locations and nested
-dependency specs, disables git resolution, and isolates npm's config/cache from
-the user's credentials and proxy settings. Importing a package does not promise
-that every third-party extension dependency can execute.
+这是显式本地导入，不是 pi CLI 包管理器：不会自动扫描或导入 `~/.pi`，不会读取 CLI
+已安装包注册表，也不会执行 npm 生命周期脚本。声明依赖时，有界安装器只接受 registry
+版本说明和 registry 来源的 npm lockfile，拒绝不安全的包路径和嵌套依赖 spec，禁用 git
+解析，并隔离 npm 的配置/cache 与用户凭据和代理设置。导入包不代表其所有第三方扩展依赖都能执行。
 
-## 4. Loading and runtime
+## 4. 加载与运行时
 
-## 4. Loading and runtime
+### 4.1 扩展在哪里运行
 
-### 4.1 Where extensions run
-
-Extensions load inside the Agent sidecar process (`packages/agent-runtime`),
-never in Electron main, the renderer, or a plugin host process.
+扩展在 Agent sidecar 进程（`packages/agent-runtime`）内加载，永远不在 Electron
+main、渲染层或插件宿主进程中。
 
 ### 4.2 Loader
 
-- The sidecar pins `@earendil-works/pi-coding-agent` at exactly the version
-  pinned for `pi-ai` and `pi-agent-core`, as a types-only dependency. The
-  three versions must match; CI fails when they drift.
-- The loader mirrors the `pi-coding-agent` discovery rules and uses
-  `jiti/static` with `virtualModules`, so the babel transform is bundled
-  and no path resolution happens at runtime. The bundling step is verified
-  by a contract test that runs the bundle outside the repository (E2E-245).
-- Import aliases: `pi-ai`, `pi-agent-core`, and `typebox` resolve to the
-  sidecar's copies; `@earendil-works/pi-coding-agent` resolves to a runtime
-  shim that exports `defineTool` and the tool-result type guards. `@earendil-works/pi-tui`
-  resolves to a stub module that exports every symbol as an inert
-  value so a top-level import never fails. Using a stubbed symbol raises a
-  diagnostic at call time.
+- sidecar 以与 `pi-ai`、`pi-agent-core` 完全相同的锁定版本依赖
+  `@earendil-works/pi-coding-agent`，仅作类型依赖。三者版本必须一致；漂移时 CI 失败。
+- loader 镜像 `pi-coding-agent` 的发现规则，使用带 `virtualModules` 的
+  `jiti/static`，babel 转换被打进包内，运行时不做路径解析。打包步骤由一个在仓库
+  之外运行打包产物的契约测试验证（E2E-245）。
+- 导入别名：`pi-ai`、`pi-agent-core` 和 `typebox` 解析到 sidecar 自带的副本；
+  `@earendil-works/pi-coding-agent` 解析到一个运行时 shim，导出 `defineTool` 和
+  工具结果类型守卫。`@earendil-works/pi-tui` 解析到一个桩
+  模块，它把每个符号导出为惰性值，使顶层 import 永不失败。调用被桩替代的
+  符号时在调用点产生一条诊断。
 
-### 4.3 Runner per session
+### 4.3 每会话一个 Runner
 
-- Each desktop session gets its own Runner. The Runner is created with the
-  session's runtime and disposed when the session's runtime is discarded.
-- Module instances are shared across Runners because jiti caches modules.
-  Module-level state is therefore shared between sessions, matching what an
-  extension author sees when pi runs several sessions in one process. This
-  is documented, not worked around, in v1.
-- Enabling, disabling, or rescanning invalidates every Runner; affected
-  sessions reload extensions at the next turn boundary. A running turn is
-  never interrupted by a reload.
+- 每个桌面会话拥有自己的 Runner。Runner 随会话运行时创建，随其丢弃而销毁。
+- 由于 jiti 缓存模块，模块实例在 Runner 之间共享。因此模块级状态在会话之间
+  共享，这与扩展作者在 pi 单进程运行多会话时看到的一致。v1 记录这一点而不
+  绕开它。
+- 启用、禁用或重新扫描会使所有 Runner 失效；受影响的会话在下一个回合边界重新
+  加载扩展。进行中的回合永不被重新加载打断。
 
-### 4.4 Load failures
+### 4.4 加载失败
 
-A load error never fails the session. The extension is marked `error` with
-the message and stack in diagnostics, the remaining extensions load, and the
-turn proceeds. The composer shows a one-line notice when an enabled
-extension failed to load for the active session.
+加载错误永不导致会话失败。该扩展在诊断中标记为 `error` 并附消息和堆栈，其余
+扩展继续加载，回合照常进行。当某个已启用扩展在当前会话加载失败时，composer
+显示一行提示。
 
-## 5. API support matrix (v1)
+## 5. API 支持矩阵（v1）
 
-Every `ExtensionAPI` member falls into exactly one class. Unsupported members
-exist on the object, do nothing, return the documented neutral value, and
-emit one diagnostic per extension per member. They never throw, so an
-extension that only uses supported members works even if it also touches
-unsupported ones.
+每个 `ExtensionAPI` 成员恰好落入一个类别。不支持的成员仍存在于对象上，不做
+任何事，返回文档规定的中性值，并按扩展、按成员各产生一条诊断。它们永不抛出，
+因此只使用受��持成员的扩展即使同时触碰了不支持的成员也能工作。
 
-| Class | Members |
+| 类别 | 成员 |
 |---|---|
-| Supported | `registerTool`, `registerCommand`, `registerAgent`, `registerProvider` (plugin-owned compatibility alias; same shape as `registerAgent`), `unregisterAgent`, `unregisterProvider`, `on(...)` for every event in §6, `exec`, `getActiveTools`, `getAllTools`, `setActiveTools`, `getCommands`, `setModel` (configured models and plugin agents; idle-only; persists the current session binding), `getThinkingLevel`, `setThinkingLevel`, `setSessionName`, `getSessionName`, `sendUserMessage` (Host-owned queue, D386), `getFlag` |
-| Supported on context | `ui.notify`, `ui.confirm`, `ui.select`, `ui.input`, `ui.setStatus`, `ui.setWorkingMessage`, `cwd`, `modelRegistry`, `isIdle`, `abort`, `hasPendingMessages`, `getContextUsage`, `compact`, `getSystemPrompt`, `waitForIdle`, `newSession`, `fork` |
-| Deferred to v2 | `sendMessage`, `appendEntry`, `setLabel`, `sessionManager` read API, `switchSession`, `registerShortcut`, `registerMarkdownTransformer`, `ui.setEditorText`, `ui.getEditorText`, `ui.addAutocompleteProvider`, `registerFlag` value editing |
-| Unsupported | `ui.setWidget`, `ui.setFooter`, `ui.setHeader`, `ui.setTitle`, `ui.custom`, `ui.overlay`, `ui.onTerminalInput`, `ui.setWorkingVisible`, `ui.setWorkingIndicator`, `ui.setHiddenThinkingLabel`, `ui.pasteToEditor`, `ui.editor`, `registerMessageRenderer`, `registerEntryRenderer`, `navigateTree`, `shutdown` |
+| 支持 | `registerTool`、`registerCommand`、§6 中每个事件的 `on(...)`、`exec`、`getActiveTools`、`getAllTools`、`setActiveTools`、`getCommands`、`setModel`（v1 说明：返回 `false`，桌面拥有会话的 provider 绑定）、`getThinkingLevel`、`setThinkingLevel`、`setSessionName`、`getSessionName`、`sendUserMessage`（Host 队列，D386）、`getFlag` |
+| 上下文上支持 | `ui.notify`、`ui.confirm`、`ui.select`、`ui.input`、`ui.setStatus`、`ui.setWorkingMessage`、`cwd`、`modelRegistry`、`isIdle`、`abort`、`hasPendingMessages`、`getContextUsage`、`compact`、`getSystemPrompt`、`waitForIdle`、`newSession`、`fork` |
+| 推迟到 v2 | `sendMessage`、`appendEntry`、`setLabel`、`sessionManager` 只读 API、`switchSession`、`registerShortcut`、`registerMarkdownTransformer`、`ui.setEditorText`、`ui.getEditorText`、`ui.addAutocompleteProvider`、`registerFlag` 值编辑 |
+| 不支持 | `ui.setWidget`、`ui.setFooter`、`ui.setHeader`、`ui.setTitle`、`ui.custom`、`ui.overlay`、`ui.onTerminalInput`、`ui.setWorkingVisible`、`ui.setWorkingIndicator`、`ui.setHiddenThinkingLabel`、`ui.pasteToEditor`、`ui.editor`、`registerMessageRenderer`、`registerEntryRenderer`、`navigateTree`、`shutdown` |
 
-`registerAgent({ id, name?, models, stream? | complete? })` registers a
-session-scoped plugin-owned LLM integration. Each model declares bounded public
-metadata (`id`, display name, API label, modalities, reasoning and limits). The
-plugin callback receives the pi-ai model/context/options and owns endpoint,
-authentication, request serialization, and response conversion. It must honor
-`options.signal` for cancellation. `complete` is adapted to a one-result stream.
+中性值：`getFlag` 返回声明的默认值；`registerFlag` 记录声明使 `getFlag` 可用，
+但 v1 不暴露 CLI 或 UI；`sessionManager` 访问器返回空结果；UI setter 返回空操作
+的 `dispose`。
 
-The host assigns `extension-agent:<encoded-agent-key>` as the provider id. A
-successful idle `setModel` persists that provider/model pair through
-`session.configure`; the next turn reloads the trusted extension and restores the
-agent implementation. `modelRegistry` exposes only models and auth availability;
-it never exposes Host API keys, secret refs, OAuth tokens, arbitrary Host headers,
-or Host provider internals. `registerProvider` and its unregister counterpart
-accept the same plugin-owned shape as a compatibility alias — a `stream` or
-`complete` implementation, in the upstream `(id, config)` form and in the object
-form; provider credentials in the upstream config are ignored by Host and are
-not persisted.
+## 6. 事件映射
 
-Neutral values: `getFlag` returns the declared default; `registerFlag` records
-the declaration so `getFlag` works but exposes no CLI or UI in v1;
-`sessionManager` accessors return empty results; UI setters return a no-op
-`dispose`.
+事件从桌面运行时现有的 hook 点触发。凡事件类型定义了返回结果的，处理器结果
+均被采纳。
 
-## 6. Event mapping
-
-Events fire from the desktop runtime's existing hook points. Handler results
-are honored where the event type defines a result.
-
-| Event | Desktop hook point | Result honored |
+| 事件 | 桌面 hook 点 | 是否采纳结果 |
 |---|---|---|
-| `session_start`, `session_shutdown` | Runner creation and disposal | No |
-| `session_info_changed` | Session rename through `setSessionName` | No |
-| `project_trust` | v1 note: not emitted; enablement per project is the trust decision | No |
-| `resources_discover` | v1 note: not emitted; skills and prompt discovery stay in Electron main | n/a |
-| `before_agent_start` | Before the first provider request of a turn | Yes, system prompt and message edits |
-| `context` | `prepareNextTurn` | Yes, replacement message list |
-| `before_provider_request`, `before_provider_headers`, `after_provider_response` | Provider call wrapper | Yes for request and headers |
-| `agent_start`, `agent_end`, `agent_settled` | Agent loop boundaries | No |
-| `turn_start`, `turn_end` | Turn boundaries | No |
-| `message_start`, `message_update`, `message_end` | Agent message events | v1 note: no, pi-agent-core offers no post-hoc replacement |
-| `tool_call` | `beforeToolCall` | Yes, block with reason |
-| `tool_execution_start`, `tool_execution_update`, `tool_execution_end` | Tool execution stream | No |
-| `tool_result` | `afterToolCall` | Yes, replacement result |
-| `model_select`, `thinking_level_select` | v1 note: not emitted; a binding change retires the runtime | No |
-| `session_before_compact`, `session_compact`, `session_compact_failed` | Compaction pipeline | Yes for `session_before_compact` |
-| `session_before_fork` | v1 note: not emitted; fork runs in Electron main | n/a |
-| `input` | v1 note: not emitted; Host queue admission is not wired yet | n/a |
-| `user_bash`, `session_before_switch`, `session_before_tree`, `session_tree`, `ui_prompt_start`, `ui_prompt_end` | Not emitted in v1 | n/a |
+| `session_start`、`session_shutdown` | Runner 创建与销毁 | 否 |
+| `session_info_changed` | 经 `setSessionName` 的会话改名 | 否 |
+| `project_trust` | v1 说明：不触发；按项目启用即信任决定 | 否 |
+| `resources_discover` | v1 说明：不触发；skills 与提示发现留在 Electron main | 不适用 |
+| `before_agent_start` | 回合内首个 provider 请求之前 | 是，系统提示与消息编辑 |
+| `context` | `prepareNextTurn` | 是，替换消息列表 |
+| `before_provider_request`、`before_provider_headers`、`after_provider_response` | provider 调用包装 | 请求与头部为是 |
+| `agent_start`、`agent_end`、`agent_settled` | Agent 循环边界 | 否 |
+| `turn_start`、`turn_end` | 回合边界 | 否 |
+| `message_start`、`message_update`、`message_end` | Agent 消息事件 | v1 说明：否，pi-agent-core 不提供事后替换 |
+| `tool_call` | `beforeToolCall` | 是，可带理由阻止 |
+| `tool_execution_start`、`tool_execution_update`、`tool_execution_end` | 工具执行流 | 否 |
+| `tool_result` | `afterToolCall` | 是，替换结果 |
+| `model_select`、`thinking_level_select` | v1 说明：不触发；绑定变更会重建运行时 | 否 |
+| `session_before_compact`、`session_compact`、`session_compact_failed` | 压缩流水线 | `session_before_compact` 为是 |
+| `session_before_fork` | v1 说明：不触发；fork 在 Electron main 执行 | 不适用 |
+| `input` | v1 说明：不触发；Host 队列准入尚未接入 | 不适用 |
+| `user_bash`、`session_before_switch`、`session_before_tree`、`session_tree`、`ui_prompt_start`、`ui_prompt_end` | v1 不触发 | 不适用 |
 
-A handler that throws is logged as a diagnostic and treated as returning
-`undefined`. A handler that exceeds 30 s for a result-bearing event is
-abandoned with a diagnostic and the turn proceeds with the unmodified value.
+抛出异常的处理器记为诊断并视为返回 `undefined`。带返回结果的事件若处理器超过
+30 秒，则放弃并记诊断，回合以未修改的值继续。
 
-## 7. Tools
+## 7. 工具
 
-1. A registered tool joins the session's tool catalog under its declared
-   name. A name that collides with a core tool, a plugin tool, or a user MCP
-   tool is rejected with a diagnostic; the earlier registration wins.
-2. Extension tools are non-core: they follow the same mode gating and
-   ToolSearch deferral as plugin tools. They are available in Agent mode and
-   follow the existing per-mode allowlist elsewhere.
-3. Execution happens in the sidecar with the `ExtensionAPI` `execute` signature.
-   No host permission prompt is raised; the trust decision was made at
-   enablement. `onUpdate` streams map to tool execution update events.
-4. Every execution writes an audit line with extension id, tool name, and
-   duration. Parameters are not logged.
-5. `exec` runs in the sidecar with the session's working directory and the
-   session's proxy and environment settings.
+1. 注册的工具以其声明名称加入会话工具目录。与核心工具、插件工具或用户 MCP
+   工具同名的注册被拒绝并记诊断；先注册者胜出。
+2. 扩展工具是非核心工具：与插件工具遵循相同的模式门控和 ToolSearch 延迟。它们
+   在 Agent 模式可用，其他模式遵循现有的按模式白名单。
+3. 执行在 sidecar 内按 `ExtensionAPI` 的 `execute` 签名进行。不弹出宿主权限提示；信任决定已
+   在启用时做出。`onUpdate` 流映射到工具执行更新事件。
+4. 每次执行写一条审计记录，含扩展 id、工具名和耗时。不记录参数。
+5. `exec` 在 sidecar 内以会话工作目录、会话代理和环境设置运行。
 
-## 8. Commands
+## 8. 命令
 
-1. `registerCommand` entries appear in the Commands section of global search
-   (see [09-plugin-command-palette.md](09-plugin-command-palette.md)) as
-   `/<name>` with the extension's label as the source, after built-in and
-   plugin commands.
-2. A command runs in the sidecar with the extension command context bound to
-   the active session. It requires an active session whose runtime has
-   loaded extensions in this app run; otherwise the composer reports that a
-   chat must be started first.
-3. Commands typed in the composer as `/<name>` resolve in this order:
-   built-in, prompt template, plugin, extension. Collisions are diagnostics.
-4. A running command blocks composer submission the same way a plugin command
-   does and can be cancelled from the status line.
+1. `registerCommand` 条目出现在全局搜索的 Commands 区（见
+   [09-plugin-command-palette.md](/spec/07-plugins/09-plugin-command-palette)），
+   形式为 `/<name>`，来源显示扩展标签，排在内置和插件命令之后。
+2. 命令在 sidecar 内运行，扩展命令上下文绑定到当前会话。它需要一个在本次应用
+   运行中已加载扩展的活动会话；否则 composer 提示需先开始对话。
+3. composer 中输入的 `/<name>` 按此顺序解析：内置、提示模板、插件、扩展。冲突
+   记为诊断。
+4. 运行中的命令与插件命令一样阻止 composer 提交，可从状态栏取消。
 
-## 9. UI bridge
+## 9. UI 桥接
 
-Interactive context calls travel sidecar → Electron main → renderer and back.
+交互式上下文调用经 sidecar → Electron main → 渲染层往返。
 
-| Call | Renderer surface | Timeout | On abort |
+| 调用 | 渲染层界面 | 超时 | 中止时 |
 |---|---|---|---|
-| `ui.notify` | Toast | none | dropped |
-| `ui.confirm` | Modal with two actions | 5 min | resolves `false` |
-| `ui.select` | Modal list | 5 min | resolves `undefined` |
-| `ui.input` | Modal text field | 5 min | resolves `undefined` |
-| `ui.setStatus`, `ui.setWorkingMessage` | Floating status line for the active session (v1 note: not inside the composer) | none | cleared |
+| `ui.notify` | Toast | 无 | 丢弃 |
+| `ui.confirm` | 双动作模态框 | 5 分钟 | 解析为 `false` |
+| `ui.select` | 模态列表 | 5 分钟 | 解析为 `undefined` |
+| `ui.input` | 模态文本框 | 5 分钟 | 解析为 `undefined` |
+| `ui.setStatus`、`ui.setWorkingMessage` | 当前会话的浮动状态行（v1 说明：不在 composer 内） | 无 | 清空 |
 
-Rules:
+规则：
 
-- One pending interactive prompt per session. A second call queues behind
-  the first.
-- Aborting the turn cancels pending prompts with the abort values above.
-- Under remote control (Post-MVP) the prompt fails immediately with
-  `UNSUPPORTED` until the remote protocol routes it; that routing is v3.
-- Prompts show the extension label and source path so the user knows who is
-  asking.
+- 每会话同一时刻只有一个待处理交互提示。第二个调用排在第一个之后。
+- 中止回合时以上述中止值取消待处理提示。
+- 远程控制（MVP 后）下提示立即以 `UNSUPPORTED` 失败，直到远程协议路由它；该
+  路由属于 v3。
+- 提示显示扩展标签和来源路径，让用户知道是谁在询问。
 
-## 10. Protocol and IPC additions
+## 10. 协议与 IPC 新增
 
-No host-core RPC method, protocol version, or SQLite schema changes in v1.
+v1 不改任何 host-core RPC 方法、协议版本或 SQLite schema。
 
-### 10.1 Sidecar → main (host.proxy allowlist)
+### 10.1 sidecar → main（host.proxy 白名单）
 
-| Method | Purpose |
+| 方法 | 用途 |
 |---|---|
-| `extensions.commands.publish` | Replace the session's registered command list |
-| `extensions.ui.request` | One interactive or status call from §9 |
-| `extensions.diagnostics.publish` | Replace the session's diagnostics list |
-| `extensions.model.configure` | Validate and persist a plugin-owned provider/model binding through `session.configure`, then broadcast `session:modelChanged` |
-| `session.rename`, `session.create`, `session.fork`, `session.queuePush`, `session.queuePrioritize` | Existing methods, now reachable from the adapter |
+| `extensions.commands.publish` | 替换会话已注册的命令列表 |
+| `extensions.ui.request` | §9 中的一次交互或状态调用 |
+| `extensions.diagnostics.publish` | 替换会话的诊断列表 |
+| `extensions.model.configure` | 校验插件自有的 provider/模型绑定，经 `session.configure` 持久化，然后广播 `session:modelChanged` |
+| `session.rename`、`session.create`、`session.fork`、`session.queuePush`、`session.queuePrioritize` | 已有方法，现可从适配层到达 |
 
-### 10.2 Main ↔ renderer (Electron IPC)
+### 10.2 main ↔ 渲染层（Electron IPC）
 
-| Channel | Direction | Purpose |
+| 通道 | 方向 | 用途 |
 |---|---|---|
-| `plugin/importExtension` | request | Native picker, generate the plugin, register it as a development plugin |
-| `extensions/commands/run` | request | Run a registered command in the active session |
-| `extensions/ui/respond` | request | Answer a pending prompt |
-| `extensions/ui/prompt` | event | A prompt is pending |
-| `extensions/event/status` | event | `ui.setStatus` / `ui.setWorkingMessage` text changed |
-| `plugin/list` | request | Plugin rows carry `agentExtension` state, tool, command, custom-agent names, and diagnostics |
-| `event/pluginChanged` | event | Also fires when a session publishes commands, diagnostics, or model binding changes |
+| `plugin/importExtension` | 请求 | 原生选择器、生成插件、注册为开发插件 |
+| `extensions/commands/run` | 请求 | 在当前会话运行已注册命令 |
+| `extensions/ui/respond` | 请求 | 回答一个待处理提示 |
+| `extensions/ui/prompt` | 事件 | 有提示待处理 |
+| `extensions/event/status` | 事件 | `ui.setStatus` / `ui.setWorkingMessage` 文本变化 |
+| `plugin/list` | 请求 | 插件行携带 `agentExtension` 状态、工具与命令名和诊断 |
+| `event/pluginChanged` | 事件 | 会话发布命令或诊断时同样触发 |
 
-All channels are sender-validated like other plugin channels. The MCP
-control plane exposes `extensions/commands/run` (write) and
-`extensions/ui/respond` (dangerous, confirm required); the import is a native
-picker and stays local. Main audits each prompt id in `logs/app/plugin.log`.
+所有通道像其他插件通道一样做 sender 校验。MCP 控制面暴露 `extensions/commands/run`
+（写）和 `extensions/ui/respond`（危险，需 confirm）；导入是原生选择器，保持本地。
+main 在 `logs/app/plugin.log` 审计每个提示 id。
 
-## 11. Plugin row surface
+## 11. 插件行界面
 
-The Plugins page shows agent extensions on the owning plugin's row:
+插件页在所属插件的行上展示 agent 扩展：
 
-- The `agentExtension` capability chip and the `agent.extension` permission
-  chip (high risk) beside the other capabilities and permissions.
-- A details section with a state chip (`enabled` until a session loads the
-  modules in this app run, `loaded`, `error`), the registered tool, slash
-  command and custom-agent names, and the diagnostics: load errors, unsupported
-  API calls with counts, rejected registrations, handler timeouts.
-- "Import pi extension" in the page's overflow actions, guarded by a confirm
-  that states what the grant means.
+- `agentExtension` 能力标记和 `agent.extension` 权限标记（高风险），与其他能力和权限
+  并列。
+- 详情区含状态标记（`enabled` 直到本次应用运行中有会话加载模块、`loaded`、`error`）、
+  已注册的工具与斜杠命令名，以及诊断：加载错误、带计数的不支持 API 调用、被拒绝的
+  注册、处理器超时。
+- 页面溢出菜单中的“导入 pi 扩展”，前置一个说明授权含义的确认。
 
-## 12. Phasing
+## 12. 分阶段
 
-| Phase | Content | Commitment |
+| 阶段 | 内容 | 承诺 |
 |---|---|---|
-| v1 | Loader, Runner per session, support matrix, events, tools, commands, UI bridge | Shipped (D387) |
-| v1.1 | Modules become `contributes.agentExtensions` with the `agent.extension` grant; import of pi CLI extensions as development plugins; the standalone registry and settings tab are removed | Shipped (D388) |
-| v1.1 amendment | Plugin-owned custom agents via `registerAgent`, provider compatibility alias, redacted model registry, idle-only session binding and restore through `extension-agent:` ids | Implemented (D426 / ADR 0258) |
-| v2 | Custom session entries (`sendMessage`, `appendEntry`) with a schema bump and a generic renderer, `sessionManager` read shim, `switchSession`, editor read and write, autocomplete providers, `registerShortcut`, markdown transformers | Planned, needs a decision on entry persistence and compaction |
-| v3 | `pi` package manifests and installation, read-only hints from the pi CLI's `settings.json`, unified skill and prompt discovery, remote-control routing for prompts, marketplace listing | Not scheduled |
+| v1 | loader、每会话 Runner、支持矩阵、事件、工具、命令、UI 桥接 | 已交付（D387） |
+| v1.1 | 模块成为带 `agent.extension` 授权的 `contributes.agentExtensions`；把 pi CLI 扩展导入为开发插件；独立注册表和设置标签移除 | 已交付（D388） |
+| v2 | 自定义会话条目（`sendMessage`、`appendEntry`）含 schema 升版和通用渲染、`sessionManager` 只读 shim、`switchSession`、编辑器读写、补全 provider、`registerShortcut`、markdown 转换器 | 已规划，需先决定条目持久化与压缩 |
+| v2 | 自定义会话条目（`sendMessage`、`appendEntry`）与一次 schema 升级及通用渲染层、`sessionManager` 只读 shim、`switchSession`、编辑器读写、自动补全 provider、`registerShortcut`、markdown 转换器 | 计划中，需要就条目持久化与压缩作出决定 |
+| v3 | `pi` 包 manifest 与安装、pi CLI `settings.json` 的只读提示、统一 skill 与提示发现、提示的远程控制路由、市场列出 | 未排期 |
 
-v1 delivery order: bundling spike (E2E-245), shared protocol types, then the
-runtime, main, and renderer tracks in parallel.
+v1 交付顺序：打包 spike（E2E-245）、shared 协议类型，然后运行时、main、渲染层
+三条线并行。
 
-## 13. Versioning policy
+## 13. 版本策略
 
-- Upgrading any pi package upgrades all three together.
-- A fixture set of sample extensions covering each supported member runs as a
-  contract test on every upgrade.
-- New `ExtensionAPI` members land in the Unsupported class with a
-  diagnostic until a later decision moves them.
-- Public documentation promises only the Supported and Supported-on-context
-  classes in §5.
+- 升级任一 pi 包即同时升级三个包。
+- 一组覆盖每个受支持成员的样例扩展在每次升级时作为契约测试运行。
+- 新增的 `ExtensionAPI` 成员先落入“不支持”类别并产生诊断，直到后续决策
+  移动它们。
+- 对外文档只承诺 §5 中“支持”和“上下文上支持”两个类别。
 
-## 14. Open decisions
+## 14. 待决事项
 
-| Question | Default until decided |
+| 问题 | 决定前的默认 |
 |---|---|
-| Should v2 custom entries persist to host-core and take part in compaction? | Persist; excluded from compaction summaries |
-| Should v3 read the pi CLI's `settings.json` enabled paths as discovery hints? | Read-only hints, never written |
-| Should extension tools be selectable per project like plugin tools? | Scope from §3.2 is the only gate |
+| v2 自定义条目是否持久化到 host-core 并参与压缩？ | 持久化；不进入压缩摘要 |
+| v3 是否把 pi CLI `settings.json` 的启用路径作为发现提示读取？ | 只读提示，永不写入 |
+| 扩展工具是否像插件工具一样按项目可选？ | §3.2 的范围是唯一门控 |
