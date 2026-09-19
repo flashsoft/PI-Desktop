@@ -1,77 +1,64 @@
-# ADR 0072: Add a global plugin launcher
+# ADR 0072: 添加全局插件启动器
 
-- Status: Accepted for implementation
-- Date: 2026-08-11
-- Deciders: PI-Desktop core
-- Related: D211 · [Settings IA](../spec/04-ux/06-settings-ia.md) ·
-  [Interaction patterns](../spec/04-ux/09-interaction-patterns.md) · E2E-120
+- 状态： 已接受实现
+- 日期： 2026-08-11
+- 决策者： PI-Desktop 核心
+- 相关： D211 · [设置 IA](../spec/04-ux/06-settings-ia.md) ·
+  [交互模式](../spec/04-ux/09-interaction-patterns.md) · E2E-120
 
-## Context
+## 背景
 
-Installed plugin panels are reachable from the Plugins destination, but opening
-one interrupts the user's current work and requires pointer navigation. A
-system-wide shortcut needs a dedicated native window: the normal renderer
-cannot receive keys while PI-Desktop is unfocused, and the existing plugin panel
-host should remain the only authority that opens plugin UI.
+已安装的插件面板可以从插件目的地到达，但打开一个会打断用户当前的工作并需
+要指针导航。系统级快捷键需要一个专用的原生窗口：普通渲染进程在 PI-Desktop
+失焦时无法接收按键，且现有的插件面板宿主应保持为打开插件 UI 的唯一权威。
 
-Chinese plugin names also need useful keyboard search without requiring an
-author to add aliases to every manifest.
+中文插件名也需要可用的键盘搜索，而不要求作者在每个 manifest 中添加别名。
 
-## Decision
+## 决策
 
-1. Add the shared, customizable `openPluginLauncher` shortcut, defaulting to
-   `Alt+Space`. Electron renders it as Option+Space on macOS and Alt+Space on
-   Windows/Linux and registers it with `globalShortcut` after application boot.
-   Windows reserves Alt+Space for the active window system menu, so host-core
-   also installs a narrow low-level keyboard hook for that exact default
-   binding. The hook consumes the chord and emits a host notification to
-   Electron, allowing the launcher to work while another application is
-   focused. The focused main window remains a last-resort fallback.
-2. Electron main owns one centered, frameless 620×440 utility window on the
-   display nearest the pointer. ADR 0080 supersedes its original first-use lazy
-   creation with hidden post-boot warm-up. It is non-resizable, absent from the
-   taskbar, always on top while visible, and hides on blur or Escape. macOS uses
-   a panel window visible across workspaces; no platform receives native window
-   controls.
-3. The sandboxed launcher renderer uses the existing preload and the additive
-   Electron-only toggle, dismiss, and shown channels. It lists plugins through
-   the existing plugin API and opens a result through the existing sandboxed
-   panel host; no plugin permission or host-core boundary changes.
-4. Only enabled, ready plugins with a panel are candidates. Search normalizes
-   name, id, and description and derives tone-free full pinyin and pinyin
-   initials from the display name. Up/Down selects, Enter or click opens, Escape
-   dismisses, and IME composition never dispatches. Successful opens are
-   remembered in renderer-local device storage (D219): an empty query lists the
-   plugins in most-recently-used order, while a typed query ranks relevance
-   first and uses recency only as a tiebreaker.
+1. 添加共享的、可自定义的 `openPluginLauncher` 快捷键，默认 `Alt+Space`。
+   Electron 在 macOS 上把它渲染为 Option+Space，在 Windows/Linux 上渲染为
+   Alt+Space，并在应用启动后用 `globalShortcut` 注册。Windows 为活动窗口系
+   统菜单保留 Alt+Space，因此 host-core 还为这个确切的默认绑定安装一个狭窄
+   的低级键盘钩子。钩子消费该组合键并向 Electron 发出宿主通知，使启动器在
+   其他应用聚焦时也能工作。聚焦的主窗口仍是最后手段的回退。
+2. Electron 主进程在距指针最近的显示器上持有一个居中的、无边框的
+   620×440 工具窗口。ADR 0080 用启动后隐藏预热取代了它最初的首次使用惰性
+   创建。它不可调整大小、不出现在任务栏、可见时始终置顶，并在失焦或
+   Escape 时隐藏。macOS 使用跨工作区可见的面板窗口；任何平台都不获得原生
+   窗口控件。
+3. 沙箱化的启动器渲染进程使用现有 preload 与加法式的仅 Electron
+   toggle、dismiss 与 shown 通道。它通过现有插件 API 列出插件，并通过现有
+   沙箱面板宿主打开结果；没有插件权限或 host-core 边界变更。
+4. 只有已启用、就绪且带面板的插件是候选。搜索归一化名称、id 与描述，并
+   从显示名推导无声调的全拼与拼音首字母。上/下选择，Enter 或点击打开，
+   Escape 消除，IME 组合期间绝不分发。成功打开被记录在渲染进程本地设备存
+   储中（D219）：空查询按最近使用顺序列出插件，有输入的查询先按相关性排
+   序，最近使用只作平局决胜。
 
-## Consequences
+## 后果
 
-- A plugin panel can be opened without navigating away from the current task.
-- The shortcut remains visible and resettable in Settings → Shortcuts.
-- `pinyin-pro` is bundled into renderer output rather than shipped as a runtime
-  package tree.
-- A custom shortcut continues to use Electron's global shortcut API. The
-  host-core hook is enabled only for Windows' reserved default chord, and a
-  hook installation failure is logged; the focused-window fallback remains
-  usable in that case.
-- The renderer IPC additions remain Electron-local and additive; the native
-  fallback adds one host method/notification without changing protocol v9 or
-  storage schema v11.
+- 插件面板可以在不离开当前任务的情况下打开。
+- 快捷键在设置 → 快捷键中保持可见且可重置。
+- `pinyin-pro` 被打包进渲染进程产物，而不是作为运行时包树发布。
+- 自定义快捷键继续使用 Electron 的全局快捷键 API。host-core 钩子只为
+  Windows 保留的默认组合键启用，钩子安装失败会被记录；该情况下聚焦窗口回
+  退仍可用。
+- 渲染进程 IPC 新增保持 Electron 本地且加法式；原生回退增加一个宿主方法/
+  通知，不改变协议 v9 或存储 schema v11。
 
-## Alternatives considered
+## 已考虑的备选方案
 
-### Reuse global search
+### 复用全局搜索
 
-Rejected. Global search is part of the main renderer and cannot appear while
-the application is unfocused without first restoring the entire main window.
+已拒绝。全局搜索是主渲染进程的一部分，应用失焦时无法出现，除非先恢复整个
+主窗口。
 
-### Open plugins directly from a native menu
+### 从原生菜单直接打开插件
 
-Rejected. A static menu cannot provide Chinese/pinyin fuzzy search and would
-need to be rebuilt for every plugin lifecycle change.
+已拒绝。静态菜单无法提供中文/拼音模糊搜索，且每次插件生命周期变化都需要
+重建。
 
-### Put pinyin aliases in plugin manifests
+### 把拼音别名放进插件 manifest
 
-Rejected. It makes search quality depend on every plugin author and duplicates
-data that can be derived consistently at query time.
+已拒绝。它让搜索质量依赖每个插件作者，并复制可以在查询时一致推导的数据。

@@ -1,51 +1,45 @@
-# ADR 0115: Keep plugin clipboard history host-owned and in memory
+# ADR 0115: 保持插件剪贴板历史由宿主拥有且仅存于内存
 
 - Status: Accepted (amended 2026-08-21)
 - Date: 2026-08-21
 - Related: Issue #9, ADR 0008, ADR 0059
 
-## Context
+## 背景
 
-Plugins can read and write the current clipboard, but a plugin process has no
-Electron clipboard access. Clipboard-history plugins therefore used to poll
-`readText()` and maintain a second store, while the host polled the native
-clipboard to capture images. That work repeatedly read and encoded unchanged
-screenshots, consumed resources while idle, and still missed copies between
-samples.
+插件可以读写当前剪贴板，但插件进程没有 Electron 剪贴板访问能
+力。因此剪贴板历史插件此前轮询 `readText()` 并维护第二个存储，
+而宿主轮询原生剪贴板以捕获图片。这套机制反复读取并编码未变化
+的截图，在空闲时消耗资源，并且仍然会漏掉采样间隔之间的复制。
 
-Clipboard history is also more sensitive than the current clipboard: it may
-retain screenshots, credentials, or private documents. Giving each plugin its
-own recorder would duplicate data, make retention inconsistent, and weaken the
-permission boundary.
+剪贴板历史也比当前剪贴板更敏感：它可能保留截图、凭据或私人文
+档。让每个插件拥有自己的记录器会复制数据、使保留策略不一致，
+并削弱权限边界。
 
-## Decision
+## 决策
 
-The Electron main process maintains one rolling, in-memory history and exposes
-it to plugins as `pi.clipboard.getHistory()`. The API reuses `clipboard.read`,
-returns newest-first text and image entries, and audits every call with the
-entry count. Plugin processes receive only the typed result over the existing
-broker; they do not receive Electron objects or a new capability.
+Electron 主进程维护一份滚动的内存历史，并以
+`pi.clipboard.getHistory()` 暴露给插件。该 API 复用
+`clipboard.read`，按最新在前返回文本和图片条目，并对每次调用按
+条目数审计。插件进程只通过现有的 broker 收到类型化的结果；它们
+不会收到 Electron 对象或新的能力。
 
-The host does not poll the system clipboard. It records text written through
-`writeText` and records content from the Composer's user-initiated `paste`
-event. The renderer passes the bytes it already received from that event to the
-host; the host never reads the OS clipboard again for the same paste. Images
-are normalized to PNG during that paste request only.
+宿主不轮询系统剪贴板。它记录通过 `writeText` 写入的文本，并记
+录来自 Composer 用户发起的 `paste` 事件的内容。渲染进程把它已
+经从该事件收到的字节传给宿主；宿主绝不会为同一次粘贴再次读取
+操作系统剪贴板。图片只在该粘贴请求期间归一化为 PNG。
 
-Consecutive identical content is collapsed with a refreshed timestamp. The
-history is cleared on application exit and is bounded to:
+连续的相同内容被折叠并刷新时间戳。历史在应用退出时清除，并以
+下为界：
 
-- 30 days retention;
-- 500 entries and 256 MiB total payload;
-- 100 KiB of UTF-8 text or 50 MiB of PNG image bytes per entry.
+- 30 天保留期；
+- 500 条条目和 256 MiB 总负载；
+- 每条 100 KiB UTF-8 文本或 50 MiB PNG 图片字节。
 
-## Consequences
+## 后果
 
-- Idle applications do not read or encode clipboard contents, and Composer
-  paste handling does not perform a second native clipboard read.
-- `getHistory()` contains host writes and content pasted into Composer; a copy
-  that is never pasted is intentionally not captured. Content copied before the
-  app starts is not recoverable.
-- The history remains host-owned, in-memory only, and protected by the existing
-  `clipboard.read` permission. This limits privacy exposure without changing
-  the plugin API.
+- 空闲应用不读取或编码剪贴板内容，且 Composer 粘贴处理不执行第
+  二次原生剪贴板读取。
+- `getHistory()` 包含宿主写入和粘贴进 Composer 的内容；从未粘贴
+  的复制被刻意不捕获。应用启动之前复制的内容不可恢复。
+- 历史保持宿主拥有、仅存于内存，并受现有的 `clipboard.read` 权
+  限保护。这在不改变插件 API 的情况下限制了隐私暴露。

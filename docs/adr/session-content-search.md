@@ -1,125 +1,102 @@
-# ADR session-content-search: Discover sessions by indexed message text
+# ADR session-content-search: 通过索引的消息文本发现会话
 
-- Status: Accepted
-- Date: 2026-09-13
-- Issue: https://github.com/vastsa/PI-Desktop/issues/270
+- 状态：已接受
+- 日期：2026-09-13
+- Issue：https://github.com/vastsa/PI-Desktop/issues/270
 
-## Context
+## 背景
 
-Global search originally filtered the renderer's session titles and project
-labels, even though host-core already indexed message text. A remembered error
-or sentence could not recover its conversation. A separate historical reader
-then duplicated the transcript and required an extra Back to conversation
-action. Search results should identify and open the original conversation.
+全局搜索最初只过滤渲染进程中的会话标题和项目标签，尽管 host-core 已经
+索引了消息文本。一个记忆中的报错或句子无法找回它的对话。随后一个独立
+的历史阅读器又复制了转录，并要求一次额外的"返回对话"操作。搜索结果
+应当能识别并打开原始对话。
 
-## Decision
+## 决策
 
-Add `search.sessions` and `search.context` host RPCs with allowlisted desktop
-`session/search` and `session/searchContext` IPC channels. Keep the legacy
-`search.query`, `session.get`, protocol version, and storage schema compatible.
-Rust remains the sole SQLite owner; Electron forwards search requests and the
-renderer owns presentation and transient query state.
+新增 `search.sessions` 和 `search.context` host RPC，并配套加入白名单
+的桌面 `session/search` 与 `session/searchContext` IPC 通道。保持既有
+的 `search.query`、`session.get`、协议版本和存储 schema 兼容。Rust 仍
+是 SQLite 的唯一所有者；Electron 转发搜索请求，渲染进程负责呈现和临时
+查询状态。
 
-`search.sessions` searches all non-deleted sessions, combining title/project
-metadata with indexed user/assistant text. Trigram FTS supplies candidates for
-queries of at least three Unicode characters. A host-owned Unicode literal
-predicate verifies those candidates and handles shorter queries. Queries with
-non-ASCII case mappings use that predicate directly to avoid tokenizer
-Unicode-version gaps. Retrieval and highlighting both use Unicode lowercase
-and map expanding case conversions back to original text. Quotes, `%`, `_`,
-and backslashes never become operators. Queries are trimmed and bounded to
-500 characters. The complete query is a literal substring, including internal
-spaces; it is not split into independent words or interpreted as FTS syntax.
-Each page contains 30 sessions ordered by updated time and ID,
-full matching-message counts, and at most two recent message excerpts. Offsets
-continue the current query; reopening refreshes results against current data.
+`search.sessions` 搜索所有未删除的会话，把标题/项目元数据与已索引的
+user/assistant 文本组合。对至少三个 Unicode 字符的查询，trigram FTS 提供
+候选。一个 host 所有的 Unicode 字面谓词校验这些候选并处理更短的查询。
+带有非 ASCII 大小写映射的查询直接使用该谓词，以避开分词器的 Unicode
+版本差异。检索和高亮都使用 Unicode 小写，并把展开型大小写转换映射回
+原始文本。引号、`%`、`_` 和反斜杠绝不成为操作符。查询会被去除首尾空白
+并限制在 500 字符内。完整查询是一个字面量子串，包括内部空格；它不会被
+拆分成独立的词，也不会被解释为 FTS 语法。每一页包含 30 个会话，按更新
+时间和 ID 排序，附完整的匹配消息计数和最多两条最近消息摘录。偏移延续
+当前查询；重新打开会针对当前数据刷新结果。
 
-Body previews use the sentence or line containing the first match. Chinese and
-English sentence punctuation and line breaks bound the preview; periods inside
-paths or identifiers do not end a sentence. Sentences longer than 180 characters
-use a bounded match-centered excerpt that preserves the complete query. The
-renderer wraps the full returned preview without a line clamp and uses a
-visible background highlight, so preceding newlines or a narrow window cannot
-hide the matching text.
+正文预览使用包含首个匹配的句子或行。中英文句读和换行界定预览；路径或
+标识符中的句点不会结束一个句子。超过 180 字符的句子使用一个有界的、
+以匹配为中心且保留完整查询的摘录。渲染进程完整包裹返回的预览，不做行
+数截断，并使用可见的背景高亮，因此前置换行或狭窄窗口无法隐藏匹配文本。
 
-Archive preferences stay renderer-owned: empty-query recents hide archived
-sessions, while explicit searches retain the existing archived-session discovery
-behavior. Tools, thinking, attachments, and discarded revisions do not expand
-the searchable body scope.
+归档偏好保持渲染进程所有：空查询的最近列表隐藏已归档会话，而显式搜索
+保留现有的已归档会话发现行为。工具、思考、附件和已丢弃的修订不扩大
+可搜索正文范围。
 
-Selecting a message preview closes search, selects its original conversation,
-and scrolls the existing transcript to the clicked message's matching rendered
-text. A heading with body matches selects its first preview; metadata-only
-headings retain normal sidebar navigation. Mouse and keyboard carry the same
-stable message ID. Each assistant fragment exposes its own anchor even when
-several fragments share a single assistant-turn row. Literal text ranges are
-highlighted without rewriting the React-owned Markdown tree. Parser-owned source
-offsets map hidden Markdown destinations or syntax to the corresponding visible
-link, image, code block, or file chip. A source-only match highlights that element
-instead of silently scrolling to the message's beginning. Navigation releases
-bottom following and briefly anchors while asynchronous layout settles; a real
-reading gesture ends that correction. Composer focus uses `preventScroll`.
+选中一条消息预览会关闭搜索、选中它的原始对话，并把现有转录滚动到被
+点击消息的匹配渲染文本。带正文匹配的标题选中它的第一条预览；仅有元
+数据匹配的标题保留正常的侧栏导航。鼠标和键盘携带同一个稳定消息 ID。
+每个 assistant 片段暴露自己的锚点，即使多个片段共享同一个 assistant
+轮次行。字面文本范围在不重写 React 所有的 Markdown 树的情况下高亮。
+解析器所有的源码偏移把隐藏的 Markdown 目标或语法映射到相应的可见链接、
+图片、代码块或文件 chip。仅源码命中的匹配高亮该元素，而不是静默滚动到
+消息开头。导航释放底部跟随，并在异步布局稳定期间短暂锚定；一次真实的
+阅读手势会结束该校正。输入框聚焦使用 `preventScroll`。
 
-The additive `session.get({ messageAround, messageLimit, contentLimit })` form
-resolves a stable ID against physical JSONL positions and returns the original
-`UiMessage` projection centered on that ID. It requires a positive limit and is
-mutually exclusive with `messageBefore`. A missing target returns no session,
-never an unrelated tail. The renderer requests 60 lines. Neighbors and tool
-payloads retain their display caps; only the explicitly selected user/assistant
-message's text is complete, including a match beyond the usual 64 KiB cap.
-Bounded responses add exclusive `messageEnd` and `hasMoreAfter`, so forward
-paging uses physical positions rather than deduplicated array lengths. For a
-nested assistant answer, optional `navigationParent` carries the latest owning
-Task projection, even outside the selected page. This capped display context
-does not change the page's messages or physical cursors. The main transcript
-reveals the Task activity group and the existing subagent dock locates the
-selected answer. A missing parent reports failure rather than an invisible hit.
+增量添加的 `session.get({ messageAround, messageLimit, contentLimit })`
+形式针对物理 JSONL 位置解析稳定 ID，并返回以该 ID 为中心的原始
+`UiMessage` 投影。它要求正数 limit，并与 `messageBefore` 互斥。缺失的
+目标不返回会话，绝不返回无关的尾部。渲染进程请求 60 行。邻居和工具
+负载保留其展示上限；只有显式选中的 user/assistant 消息文本是完整的，
+包括超出通常 64 KiB 上限的匹配。有界响应新增互斥的 `messageEnd` 和
+`hasMoreAfter`，因此前向分页使用物理位置而不是去重后的数组长度。对
+嵌套的 assistant 回答，可选的 `navigationParent` 携带最近的所属 Task
+投影，即使它在所选页面之外。这个有上限的展示上下文不改变页面的消息
+或物理游标。主转录揭示 Task 活动组，现有的 subagent 详情停靠区定位
+所选回答。缺失的父级会报告失败，而不是不可见的命中。
 
-The renderer store owns one reading view per retained session for both ordinary
-history paging and search navigation. This ownership is defined in
-[ADR transcript-reading-ownership](/adr/transcript-reading-ownership). MainChat and subagent details consume the
-same projection; no global target handoff, effect-driven navigation controller,
-or second historical reader is needed. Ordinary history merges authoritative
-live output. An explicit search keeps its selected snapshot until returning to
-latest or starting a new turn. Neither mode writes to live/model caches.
+渲染进程 store 为每个保留会话拥有一个阅读视图，同时服务普通历史分页
+和搜索导航。该所有权定义于
+[ADR transcript-reading-ownership](/adr/transcript-reading-ownership)。
+MainChat 和 subagent 详情消费同一个投影；不需要全局目标交接、效应驱动
+的导航控制器或第二个历史阅读器。普通历史合并权威的实时输出。显式搜索
+保留其选中的快照，直到返回最新或开始新一轮。两种模式都不写入实时/
+模型缓存。
 
-Upward paging and Load later messages extend the view contiguously. The pending
-view's identity owns each read; newer navigation, pane eviction, edits, or
-returning to latest invalidate stale completions. Starting a turn cancels both
-focused views and in-flight target reads. Idle canonical changes invalidate a
-view when message IDs disappear or the same IDs change content or revision.
-Message actions prepare canonical input if history is incomplete or text was
-display-limited, even when the target is already visible. This full read runs
-only for explicit actions, rechecks ownership before publishing, and never uses
-reading-view content as model input. Search itself stays bounded.
+向上分页和"加载更晚消息"连续地扩展视图。待定视图的身份拥有每一次
+读取；更新的导航、窗格驱逐、编辑或返回最新都会使过期的完成失效。开始
+一轮会取消聚焦视图和在途的目标读取。空闲的规范变更在消息 ID 消失或
+相同 ID 的内容/修订变化时使视图失效。当历史不完整或文本被展示截断时，
+消息操作会准备规范输入，即使目标已经可见。这个完整读取只为显式操作
+运行，在发布前重新检查所有权，并且绝不把阅读视图内容用作模型输入。
+搜索本身保持有界。
 
-The additive `search.context` RPC and `session/searchContext` IPC remain
-compatible for existing callers, but global search no longer uses them. They
-still resolve stable IDs against the physical JSONL layout and return bounded
-text context; removing the renderer reader does not change the protocol or
-storage schema.
+增量添加的 `search.context` RPC 和 `session/searchContext` IPC 对现有
+调用方保持兼容，但全局搜索不再使用它们。它们仍然针对物理 JSONL 布局
+解析稳定 ID 并返回有界文本上下文；移除渲染进程阅读器不改变协议或存储
+schema。
 
-Query text survives closing the palette in memory. Query changes and palette
-closure invalidate asynchronous result ownership. Existing session navigation
-owns conversation loading, live transcript preservation, and workspace changes.
+查询文本在关闭面板后存于内存。查询变化和面板关闭会使异步结果所有权
+失效。现有的会话导航负责对话加载、实时转录保留和工作区变更。
 
-## Consequences and validation
+## 后果与验证
 
-There is no migration or new index to maintain. Short queries and non-ASCII
-case mappings still require a literal scan. Search previews stay bounded, and
-opening a result uses a bounded original transcript window in its retained pane.
-Search reads cannot rewrite conversation data or interfere with active turns.
+没有需要维护的迁移或新索引。短查询和非 ASCII 大小写映射仍需字面扫描。
+搜索预览保持有界，打开结果使用其保留窗格中一个有界的原始转录窗口。
+搜索读取无法改写对话数据或干扰活跃轮次。
 
-Rust regression tests cover pagination beyond 50 sessions and 100 messages,
-literal CJK/symbol queries, complete counts, soft deletion, physical positions,
-and target text beyond the display cap. Renderer unit tests cover literal
-highlight offsets, stale result/error rejection, cancellation, and pagination.
-Regressions also cover stable-ID navigation past the tail/display cap, physical
-cursors, stale jump/page rejection, ordinary paging during streaming, nested
-answers whose parent is outside the page, source-only Markdown/file-chip hits,
-and explicit action preparation from incomplete or capped history. Browser-effect
-unit tests cover layout correction, gesture interruption, and replay cleanup;
-server rendering tests verify the actual Markdown and subagent markup.
-Historical context regression tests remain as protocol compatibility coverage.
-The documented full interaction scenario is
-`E2E-SESSION-content-search-and-message-navigation`.
+Rust 回归测试覆盖超过 50 个会话和 100 条消息的分页、字面 CJK/符号查询、
+完整计数、软删除、物理位置，以及超出展示上限的目标文本。渲染进程单元
+测试覆盖字面高亮偏移、过期结果/错误拒绝、取消和分页。回归还覆盖越过
+尾部/展示上限的稳定 ID 导航、物理游标、过期跳转/分页拒绝、流式期间的
+普通分页、父级在页面之外的嵌套回答、仅源码的 Markdown/文件 chip 命中，
+以及从不完整或截断历史出发的显式操作准备。浏览器效应单元测试覆盖布局
+校正、手势打断和重放清理；服务器渲染测试验证实际的 Markdown 和 subagent
+标记。历史上下文回归测试保留为协议兼容性覆盖。文档化的完整交互场景是
+`E2E-SESSION-content-search-and-message-navigation`。

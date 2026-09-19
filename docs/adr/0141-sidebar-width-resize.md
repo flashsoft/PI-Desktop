@@ -1,42 +1,37 @@
-# ADR 0141: Make Expanded Sidebar Width User-Resizable
+# ADR 0141: 展开的侧边栏宽度可由用户调整
 
 - Status: Accepted (amended by [ADR 0290](0290-resizable-sidebar-collapse-threshold.md))
 - Date: 2026-09-01
 
-## Context
+## 背景
 
-The sidebar's fixed expanded width makes long project names and session titles
-hard to inspect, while a permanently wider sidebar wastes space for compact
-workspaces. The shell already owns sidebar layout and collapse state, so width
-preference state belongs at the same renderer boundary.
+侧边栏固定的展开宽度让长项目名和长会话标题难以查看，而永久更宽的
+侧边栏对紧凑工作区来说浪费空间。外壳已经持有侧边栏布局和折叠状态，
+因此宽度偏好状态属于同一个渲染进程边界。
 
-## Decision
+## 决策
 
-The expanded sidebar exposes a resize handle on its right edge. Pointer motion
-previews a width anchored to the pointer-down position and the main pane reflows
-continuously. The width is rounded and clamped to `240px..520px`, with a
-`275px` default; only pointer release persists the preferred width under the
-sidebar renderer preference storage.
+展开的侧边栏在其右边缘暴露一个调整大小手柄。指针移动时预览一个锚
+定在按下位置的宽度，主窗格连续重排。宽度取整并钳制到
+`240px..520px`，默认 `275px`；只有指针释放才会把偏好宽度持久化到
+侧边栏的渲染进程偏好存储下。
 
-The handle is an ARIA vertical separator. It supports ArrowLeft/ArrowRight
-with 16px steps, Home, and End. Keyboard changes commit immediately. Escape,
-pointer cancellation, lost ownership, and component unmount restore the width
-captured at pointer-down. Collapsing the sidebar preserves the preferred
-expanded width.
+手柄是一个 ARIA 垂直分隔符。它支持 ArrowLeft/ArrowRight（16px 步
+进）、Home 和 End。键盘修改立即提交。Escape、指针取消、失去所有权
+和组件卸载会恢复按下时捕获的宽度。折叠侧边栏保留偏好的展开宽度。
 
-## Consequences
+## 后果
 
-- Users can choose a comfortable sidebar width without changing native window
-  bounds or work-panel reservation behavior.
-- The renderer remains the sole owner of sidebar width, avoiding a new IPC
-  contract and keeping native window edge resize independent.
-- A small edge hit area and visible focus/hover rule add a discoverable control
-  without changing the dense sidebar row layout.
+- 用户可以选择舒适的侧边栏宽度，而不改变原生窗口边界或工作面板
+  保留行为。
+- 渲染进程仍是侧边栏宽度的唯一持有者，避免新的 IPC 契约，并让原生
+  窗口边缘调整大小保持独立。
+- 小巧的边缘热区和可见的 focus/hover 规则增加了一个可发现的控件，
+  而不改变紧凑的侧边栏行布局。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- Fixed width: rejected because it prevents users from accommodating long
-  project/session labels or reclaiming unused sidebar space.
-- Native window reservation or a second resize channel: rejected because the
-  sidebar is an in-flow renderer column and its width should only reflow the
-  main pane.
+- 固定宽度：否决，因为它阻止用户容纳长的项目/会话标签或回收未使用
+  的侧边栏空间。
+- 原生窗口保留或第二条调整通道：否决，因为侧边栏是流内的渲染进程
+  列，其宽度应该只引起主窗格重排。

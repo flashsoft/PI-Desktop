@@ -1,66 +1,56 @@
-# ADR floating-annotation-index: Floating Annotation Index and Source Locations
-> Superseded by ADR 0268.
+# ADR floating-annotation-index: 浮动批注索引与来源位置
+> 已被 ADR 0268 取代。
 
-- Status: Superseded by ADR 0268
-- Date: 2026-09-12
-- Amends: ADR response-annotations / D-LOCAL-response-annotations (annotation presentation and duplicate identity)
-- Preserves: D209, D301, D261, D-LOCAL-selection-overlay; protocol v11 and schema v15
+- 状态：已被 ADR 0268 取代
+- 日期：2026-09-12
+- 修订：ADR response-annotations / D-LOCAL-response-annotations（批注呈现与重复身份）
+- 保留：D209、D301、D261、D-LOCAL-selection-overlay；协议 v11 与 schema v15
 
-## Context
+## 背景
 
-The comment editor solved missing comment entry, but a composer-only attachment
-list did not show where selections were made. The user explicitly requested a
-Codex-like collapsible floating panel with annotation numbers and source locations.
-The reference bundle uses out-of-flow numbered source buttons; inserting marker
-text into Markdown previously broke words, selections, and formulas.
+评论编辑器解决了缺少评论入口的问题，但仅在输入框内展示附件列表看不出
+选区是在哪里产生的。用户明确要求一个类似 Codex 的可折叠浮动面板，带有
+批注编号和来源位置。参考实现使用脱离文档流的编号来源按钮；此前把标记
+文本插入 Markdown 会破坏单词、选区和公式。
 
-## Decision
+## 决策
 
-1. Replace the composer attachment popover with one floating annotation index in
-   the visible, writable transcript pane, above the composer. It starts expanded,
-   collapses to its count header, and stays open during reading. It lists numbered
-   excerpts, comments, locate, edit, remove, and clear-all controls. Collapsing does
-   not remove annotations or source badges. The existing modal comment editor stays.
-2. Source badges use the same one-based array order as the list and prompt payload.
-   Every saved, resolvable selection stays highlighted by a non-interactive
-   overlay while visible, without a click and even when the index is collapsed.
-   Clicking a list item or badge navigates within the pane; it does not switch
-   off other highlights. Removal/clear/send removes the corresponding highlights;
-   an unresolved row fallback never highlights the whole answer. The transcript releases
-   follow-to-bottom first; an older source expands the mounted history window by
-   at most D261's 40 rows per frame or loads older pages, stopping on exhaustion,
-   error, or no progress.
-3. A renderer-only optional anchor stores start/end offsets and exact text from
-   answer text nodes, captured before selection collapse. Code chrome, KaTeX's
-   duplicate MathML, and citation markers are excluded; formula endpoints expand
-   to the whole formula. Resolve at the original offset first; a shifted selection
-   relocates only when its exact text is unique. An unresolved selection falls back
-   to its source row, with a row-location tooltip rather than a false exact match.
-4. Deduplication uses source row, excerpt, and selected offsets. Repeating the same
-   selection edits it; identical words at distinct locations or in different turns
-   remain separate annotations with separate numbers. When either entry point
-   lacks offsets, the location is unknown, not a distinct occurrence: the same
-   row/excerpt reopens the existing annotation. Editing preserves anchors.
-5. Source badges/highlights are portaled outside the answer DOM and cannot change
-   answer layout, serialized Markdown, clipboard content, or prompt text. They
-   follow scroll, resize, and content mutations, clipped above the composer.
-   Coincident badges stack; badges that cannot fit the visible band are omitted
-   from that band only, while every annotation remains reachable in the index.
-6. Hidden retained panes and read-only side-chat projections render no annotation
-   overlays. State and numbering remain session-owned. Send/clear/remove use the
-   existing attachment lifecycle; nothing is persisted or retained after send.
-   Anchor metadata is explicitly omitted from the existing prompt payload.
+1. 用一个位于可见、可写的转录窗格中、输入框上方的浮动批注索引替换
+   输入框附件气泡。它初始展开，可折叠为只显示计数的标题，并在阅读过程中
+   保持打开。它列出带编号的摘录、评论，以及定位、编辑、移除和清空全部
+   控件。折叠不会移除批注或来源徽标。现有的模态评论编辑器保留。
+2. 来源徽标使用与列表和提示负载相同的一基（one-based）数组顺序。每一个
+   已保存、可解析的选区在可见时都由一个非交互的遮罩保持高亮，无需点击，
+   即使索引已折叠。点击列表项或徽标在窗格内导航；它不会关闭其他高亮。
+   移除/清空/发送会移除相应的高亮；无法解析行的回退绝不会高亮整个回答。
+   转录首先释放跟随到底部；较旧的来源按每帧最多 D261 的 40 行扩展已挂载
+   历史窗口，或加载更早的页面，在耗尽、出错或无进展时停止。
+3. 一个仅渲染进程的可选锚点存储来自回答文本节点的起止偏移和精确文本，
+   在选区坍缩之前捕获。排除代码区外壳、KaTeX 的重复 MathML 和引用标记；
+   公式端点扩展到整个公式。先按原始偏移解析；移动过的选区只有在其精确
+   文本唯一时才重新定位。无法解析的选区回退到它的来源行，并显示行位置
+   的提示，而不是虚假的精确匹配。
+4. 去重使用来源行、摘录和选区偏移。重复同一个选区会编辑它；位于不同
+   位置或不同轮次的相同单词仍是独立的批注，编号各自独立。当任一入口
+   缺少偏移时，该位置是未知，而不是一个不同的出现位置：相同行/摘录会
+   重新打开已有的批注。编辑保留锚点。
+5. 来源徽标/高亮通过 portal 渲染在回答 DOM 之外，不能改变回答布局、
+   序列化的 Markdown、剪贴板内容或提示文本。它们跟随滚动、缩放和内容
+   变化，并在输入框上方被裁剪。重合的徽标堆叠；无法容纳进可见区域的
+   徽标只在该区域中被省略，而每个批注仍可在索引中到达。
+6. 隐藏的保留窗格和只读的侧边聊天投影不渲染批注遮罩。状态和编号保持
+   会话所有。发送/清空/移除使用现有的附件生命周期；发送之后不持久化、
+   不保留任何内容。锚点元数据被明确排除在现有提示负载之外。
 
-## Scope
+## 范围
 
-No new dependency, IPC, host command, schema, storage, or permission. The user has
-not requested persistent review history or movable/native windows; the panel is
-an in-app floating surface. Model-authored citation rendering is unchanged and is
-separate from these user-owned source badges.
+没有新的依赖、IPC、host 命令、schema、存储或权限。用户没有要求持久的
+审查历史或可移动/原生窗口；该面板是一个应用内浮动界面。模型生成的引用
+渲染保持不变，并与这些用户所有的来源徽标相互独立。
 
-## Validation
+## 验证
 
-Executable tests cover duplicate occurrences, ambiguous/stale anchors, split text
-nodes, comment/anchor payload separation, collision placement, and floating-panel
-toggle/locate/edit/remove handlers. Source contracts cover pane visibility and
-history navigation. E2E-CHAT-annotation-source-index documents real-app checks; no E2E or GUI run is claimed.
+可执行测试覆盖重复出现、歧义/过期锚点、拆分文本节点、评论/锚点负载
+分离、碰撞放置，以及浮动面板的切换/定位/编辑/移除处理器。来源契约覆盖
+窗格可见性和历史导航。E2E-CHAT-annotation-source-index 记录了真实应用
+检查；不声称已运行 E2E 或 GUI。

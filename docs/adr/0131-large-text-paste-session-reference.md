@@ -1,74 +1,64 @@
-# ADR 0131: Spill Large Composer Text Pastes into Session Scratch
+# ADR 0131: 将大段 Composer 文本粘贴转存到会话 scratch
 
 - Status: Accepted
 - Date: 2026-08-28
 - Deciders: PI-Desktop core
 - Related: Issue #20, D262, ADR 0059, ADR 0070, ADR 0124
 
-## Context
+## 背景
 
-Native textarea paste is useful for short prompts, but very large pasted
-blocks make the composer difficult to edit and inflate the visible prompt. The
-application already has a bounded Electron-to-main paste bridge and a
-session-owned scratch directory for clipboard files. The solution must preserve
-the exact pasted bytes, work when the caret is in the middle of a draft, avoid
-mutating the project, and keep the model-facing prompt addressable by the
-existing `@path` file semantics.
+原生 textarea 粘贴对短提示词很好用，但非常大的粘贴块会让 Composer
+难以编辑，并使可见提示词膨胀。应用已经具备一个有界的 Electron 到
+主进程的粘贴桥接，以及一个会话持有的、用于剪贴板文件的 scratch
+目录。解决方案必须保留粘贴的精确字节、在光标位于草稿中间时也能
+工作、避免修改项目，并让面向模型的提示词可被既有的 `@path` 文件
+语义寻址。
 
-## Decision
+## 决策
 
-1. Add the persisted `largePasteThreshold` app setting. It defaults to 600
-   characters and accepts integer values from 1 through 1,000,000. Text-only
-   pastes at or below the threshold retain native textarea behavior.
-2. A text-only paste above the threshold is intercepted by the Composer and
-   sent through the existing `composer/pasteFiles` bridge as one UTF-8
-   `text/plain` file. Electron main validates the durable session and stores
-   it under `<data_dir>/scratch/<sessionId>/pasted/` using the existing bounded,
-   sanitized, unique-file policy.
-3. The Composer inserts `@<temporary-name> ` at the original selection and
-   stores a renderer-only token-to-canonical-path mapping with the draft. The
-   token remains visible inline, so the prefix and suffix of an existing draft
-   remain editable. It is resolved in place exactly once immediately before
-   dispatch; it is not appended as a second reference and is not included as a
-   duplicate structured attachment.
-4. The mapping remains session-scoped, survives project/workspace switches for
-   its owning session, participates in draft caching and unanswered smart-Stop
-   restoration, and is removed when the token is removed from the text. Session
-   scratch lifecycle and cleanup remain the existing host-owned behavior.
-5. Clipboard files and images keep their existing compact chip and structured
-   attachment flow. This decision changes only text-only pastes above the
-   configured threshold.
+1. 新增持久化的 `largePasteThreshold` 应用设置。默认 600 字符，接受
+   1 到 1,000,000 的整数值。阈值及以下、仅含文本的粘贴保留原生
+   textarea 行为。
+2. 超过阈值的纯文本粘贴会被 Composer 拦截，并作为一个 UTF-8
+   `text/plain` 文件通过既有的 `composer/pasteFiles` 桥接发送。
+   Electron 主进程校验持久会话，并按既有有界、经清洗、唯一文件的
+   策略将其存储到 `<data_dir>/scratch/<sessionId>/pasted/` 下。
+3. Composer 在原选择位置插入 `@<temporary-name> `，并随草稿存储一个
+   仅限渲染进程的 token 到规范路径的映射。token 保持内联可见，因此
+   既有草稿的前缀和后缀仍然可编辑。它在派发前恰好就地解析一次；
+   不作为第二个引用追加，也不作为重复的结构化附件包含。
+4. 该映射保持会话作用域，为其所属会话在项目/工作区切换后仍然存活，
+   参与草稿缓存和未回复的 smart-Stop 恢复，并在 token 从文本中移除
+   时被移除。会话 scratch 的生命周期和清理保持既有的宿主持有行为。
+5. 剪贴板文件和图片保持其既有的紧凑 chip 和结构化附件流程。本决策
+   只改变超过配置阈值的纯文本粘贴。
 
-## Consequences
+## 后果
 
-- Large pasted blocks no longer occupy the editable prompt body; the user sees
-  a compact, addressable reference at the exact paste position.
-- The agent can read the exact saved bytes through the canonical scratch path,
-  while the project tree, artifact store, and host protocol schema remain
-  unchanged.
-- The setting is backward-compatible because older app settings gain the
-  default through host normalization rather than a database migration.
-- The renderer must retain a small amount of draft metadata to distinguish a
-  generated inline token from user-authored `@` text and to avoid duplicate
-  serialization.
+- 大段粘贴块不再占据可编辑的提示词正文；用户在精确的粘贴位置看到
+  一个紧凑、可寻址的引用。
+- agent 可以通过规范 scratch 路径读取保存的精确字节，而项目树、
+  artifact 存储和宿主协议 schema 保持不变。
+- 该设置向后兼容，因为旧的应用设置通过宿主归一化获得默认值，而不
+  需要数据库迁移。
+- 渲染进程必须保留少量草稿元数据，以区分生成的内联 token 和用户
+  自己输入的 `@` 文本，并避免重复序列化。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- **Keep all text inline:** rejected because large blocks remain difficult to
-  edit and unnecessarily enlarge prompt content.
-- **Write directly into the workspace:** rejected because a paste is transient
-  input and must not dirty the user's project.
-- **Use a chip only:** rejected because the requested affordance is an inline
-  reference at the paste location, and the surrounding draft must remain
-  readable.
-- **Send the token as a basename or append a second path:** rejected because
-  scratch files require their canonical path and either option can be
-  ambiguous or duplicate the same input.
+- **全部文本保持内联：** 否决，因为大块文本仍然难以编辑，并无谓地
+  放大提示词内容。
+- **直接写入工作区：** 否决，因为粘贴是临时输入，绝不能弄脏用户的
+  项目。
+- **只使用 chip：** 否决，因为所要求的交互形式是粘贴位置处的内联
+  引用，且周围的草稿必须保持可读。
+- **把 token 作为 basename 发送或追加第二个路径：** 否决，因为
+  scratch 文件需要其规范路径，而这两种做法都可能产生歧义或重复
+  同一输入。
 
-## Amendment (2026-09-14): text representation selected beside generated image copies
+## 修订 (2026-09-14)：在生成的图片拷贝旁选择文本表示
 
-ADR 0059's #138 amendment can select a text representation for a paste that also
-carries `image/*` copies, which is what Word supplies for a copied selection.
-That selected text uses this decision's `largePasteThreshold`, so short text
-stays editable inline and larger text spills into session scratch as before. The
-clipboard-file and image flows of decision 5 are unchanged.
+ADR 0059 的 #138 修订可以为同时携带 `image/*` 拷贝的粘贴选择文本
+表示——这正是 Word 为复制的选区所提供的内容。被选中的文本使用本
+决策的 `largePasteThreshold`，因此短文本保持内联可编辑，较大的文本
+像以前一样转存到会话 scratch。决策 5 的剪贴板文件和图片流程不变。

@@ -1,54 +1,51 @@
-# ADR 0107: Make current-session task notification suppression atomic
+# ADR 0107: 使当前会话任务通知抑制的原子化
 
 - Status: Accepted
 - Date: 2026-08-20
 - Deciders: PI-Desktop core
 - Related: D117, D135, E2E-064, E2E-065, `03-runtime/01-ipc-protocol.md`
 
-## Context
+## 背景
 
-Task completion has two renderer-visible effects: the transcript receives an
-agent lifecycle event, and Electron may receive a durable notification from
-`session.endTurn`. The renderer previously treated every `agent_end` or terminal
-`error` event as an unread sidebar outcome, even when the focused current chat
-was already showing that result. Separately, the active-session viewing hint
-was delivered by an asynchronous React effect, so a fast turn could finish
-before Electron received the hint.
+任务完成有两个渲染进程可见的效果：transcript 收到一个 agent 生命
+周期事件，Electron 可能从 `session.endTurn` 收到一条持久化通知。
+渲染进程此前把每个 `agent_end` 或终态 `error` 事件都当作未读的
+侧边栏结果，即使聚焦的当前聊天已经在显示该结果。另外，活动会话
+的观看提示此前由一个异步 React effect 投递，因此一个快速的轮次
+可能在 Electron 收到提示之前就结束了。
 
-## Decision
+## 决策
 
-1. Treat unread `task.completed` and `task.failed` notification records as the
-   sole source of terminal sidebar marks. Agent lifecycle events continue to
-   drive running state, transcript updates, and the in-chat turn result card,
-   but never create an unread sidebar outcome by themselves.
-2. Carry an optional `viewingSessionId` snapshot on renderer-originated
-   `agent/prompt` requests. Electron validates that it exactly matches the
-   requested session and installs it before asynchronous turn setup. Missing,
-   null, or mismatched snapshots clear the hint and fail safe to notification.
-3. Keep the existing viewing-context IPC and Main-owned visibility/focus gate.
-   Suppression is allowed only for the exact finishing session in a visible,
-   focused window; background, hidden, unfocused, or unknown state creates the
-   durable notification and preserves native delivery behavior.
+1. 把未读的 `task.completed` 和 `task.failed` 通知记录作为终态侧
+   边栏标记的唯一来源。agent 生命周期事件继续驱动运行状态、
+   transcript 更新和聊天内轮次结果卡片，但其本身绝不创建未读侧
+   边栏结果。
+2. 在渲染进程发起的 `agent/prompt` 请求上携带可选的
+   `viewingSessionId` 快照。Electron 校验它与请求的会话精确匹
+   配，并在异步轮次建立之前安装它。缺失、null 或不匹配的快照会
+   清除提示并安全地失败到通知。
+3. 保留现有的观看上下文 IPC 和 Main 拥有的可见性/焦点门。只有
+   在可见、聚焦窗口中精确结束的会话才允许抑制；后台、隐藏、未
+   聚焦或未知状态会创建持久化通知并保留原生投递行为。
 
-## Consequences
+## 后果
 
-- A focused user who remains in a conversation sees the transcript completion
-  without a duplicate sidebar mark, inbox row, or native notification.
-- Background and unfocused sessions retain durable and native recovery notices.
-- The prompt request gains one additive optional field; older callers that omit
-  it fail safe rather than suppressing a result using stale renderer state.
-- Sidebar outcome state becomes consistent with the notification inbox and its
-  read/acknowledgement lifecycle.
+- 停留在会话中的聚焦用户看到 transcript 完成，而不会出现重复的
+  侧边栏标记、收件箱行或原生通知。
+- 后台和未聚焦会话保留持久化和原生恢复通知。
+- prompt 请求增加一个可选的新增字段；省略它的旧调用方安全失
+  败，而不是用陈旧的渲染进程状态抑制结果。
+- 侧边栏结果状态与通知收件箱及其已读/确认生命周期保持一致。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-### Hide the completed icon only for the selected row
+### 只对选中的行隐藏完成图标
 
-Rejected: this would leave stale unread state in the store and would not prevent
-durable or native notifications.
+被拒绝：这会在 store 中留下陈旧的未读状态，且无法阻止持久化或
+原生通知。
 
-### Rely only on the React viewing-context effect
+### 只依赖 React 观看上下文 effect
 
-Rejected: the effect is asynchronous and can lose a race with a fast completion
-or renderer navigation. The prompt-time snapshot closes the dispatch boundary
-without trusting renderer focus or bypassing Main's fail-safe checks.
+被拒绝：effect 是异步的，可能在与快速完成或渲染进程导航的竞态
+中落败。prompt 时的快照关闭了调度边界，同时不信任渲染进程焦点，
+也不绕过 Main 的安全失败检查。

@@ -1,4 +1,4 @@
-# ADR 0262: Chat File References Complete in Main and Open in the File View
+# ADR 0262：聊天文件引用在 Main 中完成解析并在文件视图中打开
 
 - **Status**: Accepted
 - **Date**: 2026-09-14
@@ -8,132 +8,114 @@
   [ADR 0241](0241-vendored-updatable-file-view-plugin.md) ·
   [04-ux/09-interaction-patterns](../spec/04-ux/09-interaction-patterns.md)
 
-## Context
+## 背景
 
-ADR 0163 made a file reference in the transcript clickable, but the click
-trusted the token as written. An agent that works on
-`/root/dir/openimage.js` routinely names only `openimage.js` in its reply, so
-the reference resolved against the workspace root, pointed at a path that does
-not exist, and the work panel painted an empty state — or, for a `.html` token,
-opened a blank page in the side browser. Nothing told the user which of the two
-had happened: a stale reference and a slow load looked the same.
+ADR 0163 使 transcript 中的文件引用可点击，但点击按字面信任 token。一个
+在 `/root/dir/openimage.js` 上工作的 agent 在回复中通常只写
+`openimage.js`，因此引用针对 workspace 根解析，指向不存在的路径，工作
+面板绘制空状态——或者，对于 `.html` token，在侧浏览器中打开空白页。
+没有任何东西告诉用户发生了两种情况中的哪一种：陈旧的引用和缓慢的加载
+看起来一样。
 
-The same click also chose the wrong surface. Every file went to the host
-`file:` tab, a read-only viewer, while the work panel's capable file surface is
-the vendored `pi.file-manager` view (ADR 0241) — which can edit, preview
-images, media, CSV, JSON and SQLite, and which a user can already open from the
-launcher. It had no way to be told *which* file to show: ADR 0104 gives a
-contributed view a manifest entry and nothing else, and the `location` field a
-work-panel tab already carries was honoured by main for `pi.browser` only.
+同一次点击也选择了错误的界面。每个文件都进入宿主 `file:` 标签页——一
+个只读查看器，而工作面板有能力的文件界面是 vendored 的
+`pi.file-manager` 视图（ADR 0241）——它可以编辑、预览图片、媒体、
+CSV、JSON 和 SQLite，用户已经可以从启动器打开它。但它没有办法被告知
+*要显示哪个*文件：ADR 0104 只给贡献视图一个 manifest 条目，别无其他；
+工作面板标签页已经携带的 `location` 字段此前只被 main 为 `pi.browser`
+遵循。
 
-## Decision
+## 决策
 
-1. **Completion runs in Electron main**, as `fs.resolveRef`, because only main
-   sees both the open project and the session's own scratch store
-   (`<data_dir>/scratch/<sessionId>/`, ADR 0124). The order is a product
-   contract, not an implementation detail:
-   - an absolute reference that already names a real file inside a known root
-     wins outright — that is path equality, not a guess;
-   - an `attachments/<sha256>` blob names a stored file by hash, so it resolves
-     against the attachment store directly;
-   - otherwise the roots are searched in priority order — **the open project
-     first, the session scratch store second, the attachment store last** — and
-     the first root that answers wins, so the project is searched to exhaustion
-     before the scratch store is considered;
-   - inside one root, an exact path beats a shorthand; among shorthands the
-     longest matching tail wins, then the shallowest path, so `src/dir/a.ts`
-     beats a second `dir/a.ts` buried deeper;
-   - the files panel's ignore set applies, so a dependency tree is never
-     searched;
-   - a reference that matches nothing opens **nothing** and reports itself. No
-     empty panel, no blank browser page.
-2. **The destination follows where the reference resolved.** A project file
-   opens in the `pi.file-manager` view. A file in the session scratch or
-   attachment store opens in the host `file:` tab, because it lives outside that
-   view's project root — see point 4. A workspace `.html` / `.htm` file still
-   opens in the side browser (ADR 0163), for an agent reply and a user chip
-   alike: it is a page to run, not a file to read. When the file view is not
-   loaded, a project file falls back to the host `file:` tab, so the click never
-   regresses to nothing.
-3. **A contributed view's `location` stops being browser-only.** It travels as
-   the view entry URL's `piViewOpen` query parameter on creation — the only
-   channel that cannot race a document that has not run yet — and as the
-   `view:open` preload event once the document has loaded, through the same
-   channel every other panel event uses. A location that arrives before the
-   first `did-finish-load` restarts the load instead. A loaded view is never
-   navigated: a plugin may hold unsaved edits, and a chat click must not discard
-   them. Re-opening the same location does nothing. The payload is opaque to the
-   host; each plugin decides what it means. No new permission, no new SDK
-   method, no host-only capability.
-4. **The view decides its own presentation.** `pi.file-manager` v0.4.0 opens the
-   requested file, expands its ancestors, and collapses its own left file list
-   for a host request — a new persisted state with a keyboard-reachable header
-   toggle, so the stored split width comes back when it is expanded again. An
-   absolute path outside the project root is treated as an explicitly
-   host-chosen file: raw Node `fs`, with the credential deny list still applied
-   to the raw, the normalized and the `realpath` form, and no root containment.
-   This is deliberate and is why the plugin's `safetyNotes` states the exception
-   instead of claiming the project-root containment still covers everything it
-   reads.
-5. **The bundled copy moves to v0.4.0** through ADR 0241's re-sync procedure, and
-   the same release is published to the plugin center: the marketplace and the
-   bundled copy ship the same bytes.
+1. **补全在 Electron main 中运行**，作为 `fs.resolveRef`，因为只有 main
+   同时看到打开的项目和 session 自己的 scratch 存储
+   （`<data_dir>/scratch/<sessionId>/`，ADR 0124）。顺序是产品契约，不
+   是实现细节：
+   - 已经命名已知根内真实文件的绝对引用直接胜出——这是路径相等，不
+     是猜测；
+   - `attachments/<sha256>` blob 按哈希命名存储的文件，因此直接针对
+     附件存储解析；
+   - 否则按优先级顺序搜索各根——**打开的项目第一，session scratch
+     存储第二，附件存储最后**——第一个应答的根胜出，因此项目被搜索
+     到穷尽之后才考虑 scratch 存储；
+   - 在一个根内，精确路径胜过简写；在简写之间，最长匹配尾部胜出，然
+     后是最浅的路径，因此 `src/dir/a.ts` 胜过埋在更深处的第二个
+     `dir/a.ts`；
+   - 应用文件面板的忽略集合，因此依赖树绝不会被搜索；
+   - 什么都不匹配的引用打开**空无一物**并报告自身。没有空面板，没有
+     空白浏览器页。
+2. **目的地跟随引用解析到的位置。** 项目文件在 `pi.file-manager` 视图
+   中打开。session scratch 或附件存储中的文件在宿主 `file:` 标签页中
+   打开，因为它住在该视图的项目根之外——见第 4 点。workspace 的
+   `.html` / `.htm` 文件仍在侧浏览器中打开（ADR 0163），对 agent 回复
+   和用户 chip 都一样：它是要运行的页面，不是要阅读的文件。当文件视
+   图未加载时，项目文件回退到宿主 `file:` 标签页，因此点击绝不会退化
+   为空。
+3. **贡献视图的 `location` 不再是仅浏览器的。** 它在创建时作为视图入
+   口 URL 的 `piViewOpen` 查询参数传递——这是唯一不会与尚未运行的文
+   档竞态的通道——并在文档加载后作为 `view:open` preload 事件传递，
+   通过其他所有面板事件使用的同一通道。在第一次 `did-finish-load` 之
+   前到达的 location 改为重新启动加载。已加载的视图绝不会被导航：插
+   件可能持有未保存的编辑，聊天点击绝不能丢弃它们。重新打开相同的
+   location 什么都不做。载荷对宿主不透明；每个插件自行决定其含义。没
+   有新权限，没有新 SDK 方法，没有仅宿主能力。
+4. **视图决定自己的呈现。** `pi.file-manager` v0.4.0 打开请求的文件，
+   展开其祖先，并为宿主请求折叠自己的左侧文件列表——一个新的持久化
+   状态，带键盘可达的头部开关，因此再次展开时存储的分栏宽度会回来。
+   项目根之外的绝对路径被视为显式的宿主选定文件：原始 Node `fs`，凭
+   据拒绝列表仍应用于原始、规范化和 `realpath` 形式，且不做根包含。
+   这是刻意的，也是插件的 `safetyNotes` 声明该例外、而不是声称项目根
+   包含仍覆盖它所读取的一切的原因。
+5. **捆绑副本通过 ADR 0241 的重新同步程序移至 v0.4.0**，同一发布版发
+   布到插件中心：marketplace 和捆绑副本发布相同的字节。
 
-## Consequences
+## 后果
 
-- A click on a shorthand lands on the file the agent meant, or says that nothing
-  matched. The two failure modes ADR 0163 left indistinguishable are now
-  distinguishable.
-- The transcript's file surface is the same editable view the launcher offers,
-  so "show me that file" and "let me change it" are one surface.
-- The host now depends on a plugin version for a chat affordance. The fallback
-  in point 2 bounds that dependency: an absent, disabled or older view degrades
-  to the surface the click used before.
-- The file view is no longer confined to the project root whenever, and only
-  when, the host asks it for a path the host itself picked. A defect in that
-  path handling is not caught by the host gateway; that is the same trust
-  position ADR 0241 already took, extended by one explicitly-named case.
-- A chat click no longer hands a file to the OS default application. That action
-  is still reachable from the file view's own context menu.
-- `fs.resolveRef` is a new renderer-facing channel. `fs/open` (ADR 0163) remains
-  part of the IPC surface; the transcript is simply no longer one of its
-  callers.
+- 点击简写会落在 agent 所指的那个文件上，或者说没有任何匹配。ADR 0163
+  留下的两种无法区分的失败模式现在可以区分。
+- Transcript 的文件界面与启动器提供的是同一个可编辑视图，因此「给我看
+  那个文件」和「让我修改它」是同一个界面。
+- 宿主现在为一个聊天功能依赖插件版本。第 2 点的回退约束了这种依赖：
+  缺席、禁用或较旧的视图会降级到点击以前使用的界面。
+- 文件视图不再局限于项目根——当且仅当宿主向它请求宿主自己挑选的路径
+  时。该路径处理中的缺陷不会被宿主网关捕获；这与 ADR 0241 已经采取的
+  信任位置相同，只是扩展了一个显式命名的情况。
+- 聊天点击不再把文件交给 OS 默认应用。该动作仍可从文件视图自己的上下
+  文菜单到达。
+- `fs.resolveRef` 是新的面向渲染进程的通道。`fs/open`（ADR 0163）仍是
+  IPC 界面的一部分；transcript 只是不再是它的调用方之一。
 
-## Alternatives considered
+## 已考虑的替代方案
 
-### Resolve the shorthand in the renderer
+### 在渲染进程中解析简写
 
-Rejected: the renderer cannot see the session scratch store, and the two roots
-have to be ranked against each other in one place for the priority order in
-point 1 to hold.
+被拒绝：渲染进程看不到 session scratch 存储，而且两个根必须在一个地方
+相互排序，第 1 点的优先级顺序才能成立。
 
-### Add an `ui.openView(pluginId, viewId, payload)` SDK method
+### 新增 `ui.openView(pluginId, viewId, payload)` SDK 方法
 
-Rejected for now: the work-panel tab already carries `location`, and
-`PluginViewHost.broadcast` already reaches docked views, so the feature needs no
-new public API surface. A method that opened *another* plugin's view for a
-plugin author would be a different decision, with its own consent question.
+暂时被拒绝：工作面板标签页已经携带 `location`，而
+`PluginViewHost.broadcast` 已经能到达 docked 视图，因此该功能不需要新
+的公共 API 界面。为插件作者打开*另一个*插件视图的方法是另一个决策，
+有它自己的同意问题。
 
-### Reload the view with the new location
+### 用新 location 重载视图
 
-Rejected: it discards whatever a plugin is holding, including unsaved edits.
-The one reload in point 3 happens only before the first document has run, where
-there is nothing to lose.
+被拒绝：它会丢弃插件持有的任何内容，包括未保存的编辑。第 3 点中唯一
+的重载只发生在第一个文档运行之前，那里没有可失去的东西。
 
-### Widen the plugin's declared `fs` root to the scratch store
+### 把插件声明的 `fs` 根放宽到 scratch 存储
 
-Rejected: the manifest's root model is `workspace` or a user-selected directory.
-Widening it would grant every project's view the right to read every session's
-scratch data, which is a much larger grant than "the host asked for this one
-file".
+被拒绝：manifest 的根模型是 `workspace` 或用户选定的目录。放宽它会让
+每个项目的视图有权读取每个 session 的 scratch 数据，这比「宿主请求了
+这一个文件」大得多。
 
-### Route workspace HTML through the file view for agent replies
+### 让 agent 回复的 workspace HTML 走文件视图
 
-Rejected: the file view renders a page as source. ADR 0163 chose the browser for
-the same reason, and one contract is easier to reason about than two.
+被拒绝：文件视图把页面渲染为源码。ADR 0163 出于同样的原因选择了浏览
+器，而一份契约比两份更容易推理。
 
-### Keep the OS default application as the destination
+### 保留 OS 默认应用作为目的地
 
-Rejected: it is not the right panel, and it is what the request replaces. The
-action survives in the file view's context menu, which is where the file is
-already on screen.
+被拒绝：它不是正确的面板，而且正是该请求要替换的东西。该动作在文件
+视图的上下文菜单中保留，那里文件已经在屏幕上。

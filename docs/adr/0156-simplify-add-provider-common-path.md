@@ -1,31 +1,31 @@
-# ADR 0156: Simplify the Add-Provider Common Path
+# ADR 0156: 简化添加 Provider 的通用路径
 
 - Status: Accepted
 - Date: 2026-09-05
 - Deciders: PI-Desktop core
 - Updates ADR 0116 and ADR 0155
 
-## Context
+## 背景
 
-The add-provider dialog stacked Service, Name, Base URL, API key, and API
-format before the model panes. Named Zhipu / Z.AI endpoints already know their
-name, URL, and wire format, so those extra fields made the first-run path
-look like a generic gateway form.
+添加 provider 对话框在模型窗格之前堆叠了 Service、Name、Base URL、
+API key 和 API format。命名的智谱 / Z.AI 端点已经知道自己的名称、
+URL 和线上格式，因此这些额外字段让首次使用路径看起来像一个通用
+网关表单。
 
-## Decision
+## 决策
 
-A new dialog starts with only **Service**. After a named endpoint is chosen
-(Zhipu / Z.AI API or Coding Plan, OpenCode Go), the common path is Service +
-API key, plus a one-line host summary. Custom endpoint then shows Name, Base
-URL, and API key. Name (named rows) and API format (custom rows) stay behind
-Advanced. OpenCode Go is a Service option, not an API-format option.
+新对话框一开始只有 **Service**。选择命名端点后（智谱 / Z.AI API
+或 Coding Plan、OpenCode Go），通用路径是 Service + API key，外加
+一行主机摘要。Custom 端点则显示 Name、Base URL 和 API key。Name
+（命名行）和 API format（自定义行）保留在 Advanced 之下。
+OpenCode Go 是一个 Service 选项，而不是 API format 选项。
 
-No stepper, vendor-card grid, or extra `apiStyle` values. Persistence, catalog
-matching, and Completions flags from ADR 0155 are unchanged.
+没有步骤条、厂商卡片网格或额外的 `apiStyle` 值。ADR 0155 的持久化、
+目录匹配和 Completions 标志不变。
 
-## Consequences
+## 后果
 
-- Adding a known service is pick + paste + choose models.
-- Custom OpenAI-compatible gateways keep the previous Name / URL / key
-  contract, with API format still available in Advanced.
-- OpenCode Go is discoverable next to other named services.
+- 添加已知服务是选择 + 粘贴 + 选模型。
+- 自定义 OpenAI 兼容网关保留之前的 Name / URL / key 契约，API
+  format 仍在 Advanced 中可用。
+- OpenCode Go 可以与其他命名服务一起被发现。

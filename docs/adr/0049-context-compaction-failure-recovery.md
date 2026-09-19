@@ -1,89 +1,73 @@
-# ADR 0049: Recover automatic context compaction failures with a retained tail
+# ADR 0049: 用保留尾部恢复自动上下文压缩失败
 
-- Status: Accepted
-- Date: 2026-08-04
-- Amends: ADR 0030 / D158
-- Amended by: ADR 0061 (the fallback stays reserved for the blocking hard
-  boundary; a failed background build is discarded silently) / ADR 0064 (there
-  is no background build left to discard, and the `fresh_window` family issues
-  no summary request, so this path cannot trigger there) / ADR 0282 (the
-  summary request retries transient failures and the preflight guard sizes
-  the serialized prompt, with one reduced pass, before this fallback runs)
+- 状态： 已接受
+- 日期： 2026-08-04
+- 修订： ADR 0030 / D158
+- 被修订： ADR 0061（回退仅为阻塞性硬边界保留；失败的后台构建被静默丢弃）/
+  ADR 0064（不再有可丢弃的后台构建，且 `fresh_window` 族不发出摘要请求，因此
+  该路径在那里无法触发）/ ADR 0282（摘要请求会重试瞬时失败，且预检守护在此
+  回退运行之前对序列化的 prompt 定尺寸，并有一次缩减尝试）
 
-## Context
+## 背景
 
-The turn-boundary context guard correctly prevents an oversized provider
-request, but an LLM summary request can fail after the session has already
-reached the hard boundary. Treating every automatic summary failure as a
-terminal turn leaves the complete transcript durable but forces the next user
-message to recover the session manually. It also makes a transient or
-provider-specific summarizer failure indistinguishable from an inability to
-persist a checkpoint.
+轮次边界的上下文守护正确阻止了过大的 provider 请求，但 LLM 摘要请求可能在
+会话已到达硬边界之后失败。把每次自动摘要失败都当作终结轮次，会让完整
+transcript 保持持久，却迫使下一条用户消息手动恢复会话。它也使瞬时或
+provider 特有的摘要器失败与无法持久化检查点无法区分。
 
-The visible transcript and the model-facing context are already separate. A
-checkpoint can therefore preserve the recent provider-valid message tail even
-when no new natural-language summary is available. The checkpoint must still
-be durable and must pass the same hard-budget recheck; otherwise the provider
-request remains blocked.
+可见 transcript 与面向模型的上下文已经是分离的。因此即使没有新的自然语言
+摘要，检查点也可以保留最近的、provider 可接受的消息尾部。检查点仍必须持
+久，且必须通过相同的硬预算复检；否则 provider 请求仍被阻塞。
 
-This also covers the boundary case where the newest checkpoint is the current
-transcript leaf. pi reports no new history to summarize in that shape, but a
-new prompt can still make the retained tail too large. The full transcript is
-the source for rebuilding a smaller tail while the existing summary is carried
-forward.
+这也覆盖了最新检查点就是当前 transcript 叶子这一边界情形。在这种形态下
+pi 报告没有新历史可摘要，但新 prompt 仍可能使保留的尾部过大。完整
+transcript 是重建更小尾部的来源，同时现有摘要被结转。
 
-## Decision
+## 决策
 
-For automatic `threshold` and `overflow` compaction only, PI-Desktop uses a
-three-outcome controller:
+仅针对自动的 `threshold` 与 `overflow` 压缩，PI-Desktop 使用三结果控制器：
 
-1. Preflight the summary input against the provider model window. If the
-   serialized history plus the summary output allowance cannot fit, skip the
-   doomed summary request; otherwise run the normal pi-agent-core summary
-   compaction.
-2. If summary generation fails, or a generated checkpoint remains above the
-   safe budget, prepare a deterministic fallback checkpoint. It reuses the
-   previous checkpoint summary when available, adds a short recovery marker,
-   keeps an aggressively bounded recent tail, and records
-   `details.fallback = "retained_tail"`.
-3. Append the fallback through host-core and re-estimate the model context. A
-   successful fallback emits `compaction_end` with
-   `fallback: "retained_tail"`; the active run continues, and the renderer
-   shows a warning rather than a normal success toast.
+1. 用 provider 模型窗口对摘要输入做预检。如果序列化历史加上摘要输出余量
+   无法容纳，跳过注定失败的摘要请求；否则运行正常的 pi-agent-core 摘要压
+   缩。
+2. 如果摘要生成失败，或生成的检查点仍高于安全预算，准备一个确定性的回退
+   检查点。它在可用时复用之前的检查点摘要，添加一个简短的恢复标记，保留
+   一个激进设界的最近尾部，并记录
+   `details.fallback = "retained_tail"`。
+3. 通过 host-core 追加回退检查点并重新估算模型上下文。成功的回退发出
+   `compaction_end` 并携带 `fallback: "retained_tail"`；活跃运行继续，渲染
+   进程显示警告而非正常的成功提示。
 
-Manual `/compact` never silently falls back. Durable append failures, missing
-transcript boundaries, and fallback checkpoints that remain oversized emit
-`CONTEXT_COMPACTION_FAILED` and block the guarded provider request.
+手动 `/compact` 绝不静默回退。持久化追加失败、缺失的 transcript 边界以及
+仍然过大的回退检查点会发出 `CONTEXT_COMPACTION_FAILED` 并阻塞受守护的
+provider 请求。
 
-The complete transcript is never deleted, rewritten, or replaced by the
-fallback. The fallback is only the model-context view rebuilt after restart.
+完整 transcript 从不会被回退删除、重写或替换。回退只是重启后重建的模型
+上下文视图。
 
-## Consequences
+## 后果
 
-- Automatic compaction failures no longer terminate a run when a safe durable
-  retained tail can be installed.
-- The model may lose older task details when summary generation fails; the
-  warning and checkpoint metadata make that degradation explicit.
-- Host persistence and hard-budget validation remain mandatory, so recovery
-  cannot trade a better UX for an unsafe provider request.
-- Manual compaction remains an explicit user action with fail-fast semantics.
-- The event and checkpoint metadata provide a stable diagnostic signal without
-  persisting provider error text that may contain sensitive endpoint details.
+- 当可以安装安全持久的保留尾部时，自动压缩失败不再终结一次运行。
+- 摘要生成失败时模型可能丢失较早的任务细节；警告与检查点元数据使这种降级
+  显式可见。
+- 宿主持久化与硬预算校验仍是强制的，因此恢复无法用过好的 UX 换取不安全的
+  provider 请求。
+- 手动压缩仍是显式的用户操作，具有快速失败语义。
+- 事件与检查点元数据提供稳定的诊断信号，而不持久化可能包含敏感端点细节
+  的 provider 错误文本。
 
-## Alternatives
+## 备选方案
 
-### Continue without a checkpoint
+### 不带检查点继续
 
-Rejected because the next provider request would bypass the hard guard and
-could reproduce the provider context-limit failure.
+已拒绝，因为下一个 provider 请求会绕过硬守护，可能重现 provider 上下文上
+限失败。
 
-### Delete visible transcript history
+### 删除可见 transcript 历史
 
-Rejected because it destroys searchability, diagnostics, fork inputs, and the
-user's complete conversation.
+已拒绝，因为它会摧毁可搜索性、诊断、fork 输入以及用户的完整对话。
 
-### Retry the summary indefinitely
+### 无限重试摘要
 
-Rejected because a long or incompatible provider failure can hold the session
-busy indefinitely. The bounded deterministic fallback is predictable and
-keeps the provider request gate intact.
+已拒绝，因为长时间或不兼容的 provider 失败会让会话无限期保持占用。有界的
+确定性回退是可预测的，并保持 provider 请求闸门完整。

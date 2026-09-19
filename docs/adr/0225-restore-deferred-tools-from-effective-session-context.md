@@ -1,4 +1,4 @@
-# ADR 0225: Restore Deferred Tools from Effective Session Context
+# ADR 0225: 从生效会话上下文恢复延迟工具
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -7,47 +7,41 @@
 
 ## Context
 
-Lazy tool activation keeps optional schemas out of the first provider request,
-but a new prompt previously cleared the active deferred set while retaining the
-successful `ToolSearch` rows and tool results in the model context. The model
-could therefore see evidence that a capability was available while the next
-request omitted its schema. The same mismatch occurred after a mode switch.
+惰性工具激活让可选 schema 不进第一个 provider 请求，但新 prompt 此前
+会清空活动的延迟集合，同时在模型上下文中保留成功的 `ToolSearch` 行
+和工具结果。因此模型可能看到某个能力可用的证据，而下一个请求却省略
+了它的 schema。模式切换之后也会出现同样的不匹配。
 
 ## Decision
 
-Before each new prompt and after a mode switch, the sidecar clears its in-memory
-deferred activation set and restores it from the effective `buildSessionContext`
-projection. A successful `ToolSearch` result contributes its `addedToolNames`;
-a successful result from a deferred tool contributes that tool's name. A name
-is restored only when it remains in the current mode's deferred catalog. Failed,
-interrupted, or missing-result placeholder rows are ignored, and assistant/user
-prose is never parsed as activation evidence.
+在每次新 prompt 之前和模式切换之后，sidecar 清空其内存中的延迟激活
+集合，并从生效的 `buildSessionContext` 投影中恢复它。成功的
+`ToolSearch` 结果贡献其 `addedToolNames`；延迟工具的成功结果贡献该工
+具的名称。只有当名称仍在当前模式的延迟目录中时才会被恢复。失败的、
+被中断的或缺失结果的占位符行会被忽略，assistant/user 的散文文本绝不
+会被解析为激活证据。
 
-The existing tool registry, host permission checks, workspace and scratch
-containment, timeouts, and audit behavior remain unchanged. Compaction and mode
-catalog rebuilding continue to define which historical markers are effective.
+现有的工具注册表、宿主权限检查、工作区和 scratch 收容、超时和审计行
+为保持不变。压缩和模式目录重建继续定义哪些历史标记是生效的。
 
 ## Consequences
 
-- Provider requests remain coherent with the successful tool evidence retained
-  in the effective transcript.
-- A runtime restart can reuse a deferred capability when its successful marker
-  remains in effective context, without moving optional schemas into the core
-  set or granting a new permission.
-- Failed, interrupted, stale, and mode-disallowed activations do not revive a
-  deferred tool.
+- provider 请求与生效 transcript 中保留的成功工具证据保持一致。
+- 运行时重启后，当某个延迟能力的成功标记仍在生效上下文中时，可以复
+  用它，而无需把可选 schema 移入核心集合或授予新权限。
+- 失败的、被中断的、过期的和模式不允许的激活不会复活延迟工具。
 
 ## Alternatives
 
-### Keep clearing the set and require a new search
+### 保持清空集合并要求新的搜索
 
-Rejected because the model still receives the successful activation marker and
-may call a tool whose schema is absent from the request.
+被拒绝，因为模型仍然收到成功的激活标记，可能调用其 schema 不在请求
+中的工具。
 
-### Parse assistant or user prose for tool names
+### 解析 assistant 或 user 散文文本中的工具名
 
-Rejected because prose is not authoritative activation evidence and could
-activate a capability that never succeeded or is no longer allowed.
+被拒绝，因为散文文本不是权威的激活证据，可能激活一个从未成功过或已
+不再被允许的能力。
 
 ## References
 

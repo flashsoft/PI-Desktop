@@ -1,77 +1,67 @@
-# ADR 0255: Theme assets are absolute paths
+# ADR 0255：主题资源使用绝对路径
 
 - Status: Accepted
 - Date: 2026-09-15
 - Decision: D422
-- Supersedes: ADR 0248 §1 for asset path resolution; the scheme, the `url()`
-  rewrite, the extension whitelist, the size budget, and the unload revocation
-  carry over unchanged.
+- Supersedes: 就资源路径解析而言取代 ADR 0248 §1；方案、`url()` 重写、
+  扩展名白名单、大小预算和卸载撤销均原样沿用。
 
-## Context
+## 背景
 
-ADR 0248 let a theme reference plugin package bytes: `contributes.themes[].assets`
-listed package-relative paths, the host resolved them inside the plugin package,
-and each matching `url()` was rewritten to `plugin-asset://`.
+ADR 0248 让主题引用插件包字节：`contributes.themes[].assets` 列出包内
+相对路径，宿主在插件包内解析它们，每个匹配的 `url()` 被重写为
+`plugin-asset://`。
 
-That boundary has two costs in practice:
+该边界在实践中有两个代价：
 
-- A plugin that wants a user-chosen image has to copy it into its own package.
-  A development plugin is watched recursively (`plugin-watcher.ts`), so every
-  such write reloads the plugin, and a reload closes that plugin's panel window
-  (`plugin-runtime.ts` unload path → `closePanel`).
-- The plugin's own data directory — `pi.plugin.getDataPath()`, the one writable
-  area a plugin owns outside its package — cannot be referenced at all.
+- 想要用户选定图片的插件必须把它复制进自己的包。开发插件被递归监视
+  （`plugin-watcher.ts`），因此每一次这样的写入都会重载插件，而重载会
+  关闭该插件的面板窗口（`plugin-runtime.ts` 卸载路径 → `closePanel`）。
+- 插件自己的数据目录——`pi.plugin.getDataPath()`，插件在包之外拥有的
+  唯一可写区域——完全无法被引用。
 
-Plugins already run as ordinary Node processes with full filesystem access. The
-package scope constrained what theme *CSS text* could reach, not what the plugin
-itself could read.
+插件已经以拥有完整文件系统访问的普通 Node 进程运行。包作用域约束的是
+主题 *CSS 文本*能到达什么，而不是插件自身能读什么。
 
-## Decision
+## 决策
 
-1. A theme asset is an **absolute path**: `C:/art/bg.png`, `/art/bg.png`, or
-   either spelled as a `file:` URL. Package-relative references are no longer
-   assets; `normalizeThemeAssetPath` (SDK) and `normalize_theme_asset_path`
-   (host-core) reject them.
-2. Both authorization routes accept absolute paths:
-   - `contributes.themes[].assets` — load-time, auditable in the manifest;
-   - `pi.themes.upsert({ id, label, base, css })` — the runtime route now
-     resolves asset references in the sheet and registers them in that plugin's
-     asset map for as long as the plugin stays loaded. The upsert is a message,
-     not a file write, so a theme can pick up a new image without a reload.
-3. Everything else about the mechanism is unchanged: the extension whitelist
-   (`png`, `jpg`, `jpeg`, `webp`, `avif`, `svg`, `woff2`), the summed 4 MB budget
-   for declared assets, `.`/`..` rejection, the `url()` → `plugin-asset://`
-   rewrite, `nosniff`, `no-store`, and revocation when the plugin unloads.
-4. Absolute keys are percent-encoded in the `plugin-asset://` URL
-   (`themeAssetUrl`) and decoded by the handler, so spaces, `?`, `#`, and the
-   drive colon cannot be re-read as anything but a path.
-5. The handler serves what the plugin registered: a path from its manifest, or a
-   path its own sanitized sheet referenced through an upsert.
+1. 主题资源是**绝对路径**：`C:/art/bg.png`、`/art/bg.png`，或以 `file:`
+   URL 拼写的两者之一。包内相对引用不再是资源；`normalizeThemeAssetPath`
+   （SDK）和 `normalize_theme_asset_path`（host-core）拒绝它们。
+2. 两条授权路径都接受绝对路径：
+   - `contributes.themes[].assets`——加载时，可在 manifest 中审计；
+   - `pi.themes.upsert({ id, label, base, css })`——运行时路径现在解析
+     样式表中的资源引用，并在插件保持加载期间把它们注册到该插件的资源
+     映射中。upsert 是消息，不是文件写入，因此主题无需重载即可拾取新
+     图片。
+3. 机制的其他一切不变：扩展名白名单（`png`、`jpg`、`jpeg`、`webp`、
+   `avif`、`svg`、`woff2`）、已声明资源的 4 MB 总计预算、`.`/`..` 拒绝、
+   `url()` → `plugin-asset://` 重写、`nosniff`、`no-store`，以及插件
+   卸载时的撤销。
+4. 绝对键在 `plugin-asset://` URL 中百分号编码（`themeAssetUrl`），并由
+   处理器解码，因此空格、`?`、`#` 和驱动器冒号不能被解读为路径以外的
+   任何东西。
+5. 处理器提供插件注册的内容：来自其 manifest 的路径，或其自己的净化
+   样式表通过 upsert 引用的路径。
 
-## Consequences
+## 后果
 
-- A plugin can hand the renderer **any local file it can read**, as an image or
-  a font. The host no longer enforces "theme assets live in the plugin package",
-  so a theme — which is data, and may arrive inside a shared theme pack — can
-  name a file the user never chose. Manifest-declared assets keep an audit trail
-  in a static, reviewable file; runtime-registered ones have none and vanish
-  with the plugin.
-- The extension whitelist still bounds what may be served, the size budget still
-  bounds declared assets, and an unregistered reference is still refused.
-- Because a theme may point at the plugin's data directory, a development plugin
-  no longer reloads when the user picks or replaces an image: the upload writes
-  into `getDataPath()/images/`, and the theme reaches it through an upsert.
-- Themes that declared package-relative assets stop resolving. This is a
-  deliberate breaking change; the affected surface is limited to themes that use
-  `assets` at all.
-- `resolveInsidePlugin` remains for the theme sheet path itself
-  (`contributes.themes[].path`), which is still package-relative.
+- 插件可以把**任何它能读取的本地文件**作为图片或字体交给渲染进程。
+  宿主不再强制「主题资源住在插件包中」，因此主题——它是数据，可能随
+  共享主题包到达——可以命名用户从未选择的文件。Manifest 声明的资源
+  在静态、可审查的文件中保留审计轨迹；运行时注册的没有，并随插件消失。
+- 扩展名白名单仍约束可提供的内容，大小预算仍约束已声明资源，未注册的
+  引用仍被拒绝。
+- 因为主题可以指向插件的数据目录，开发插件在用户挑选或替换图片时不再
+  重载：上传写入 `getDataPath()/images/`，主题通过 upsert 到达它。
+- 声明了包内相对资源的主题停止解析。这是刻意的破坏性变更；受影响面
+  仅限于使用 `assets` 的主题。
+- `resolveInsidePlugin` 保留给主题样式表路径本身
+  （`contributes.themes[].path`），它仍是包内相对的。
 
-## Alternatives considered
+## 已考虑的替代方案
 
-- **Allow both spellings.** Rejected: the owner chose an absolute-only rule, and
-  keeping two resolutions for one concept invites exactly the confusion this
-  change removes.
-- **Add only the plugin data directory as a second root.** Narrower, but it does
-  not cover a file the user picked outside the data directory without a copy
-  step, and the runtime route would still have no way to authorize it.
+- **允许两种拼写。** 被拒绝：所有者选择了仅绝对的规则，为一个概念保留
+  两种解析恰恰会招致本变更要消除的混乱。
+- **只把插件数据目录新增为第二个根。** 更窄，但不能覆盖用户在数据目录
+  之外挑选的文件（除非增加复制步骤），而且运行时路径仍没有办法授权它。

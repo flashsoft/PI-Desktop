@@ -1,85 +1,79 @@
-# ADR 0028: Scope work-panel runtime contexts to conversations
+# ADR 0028: 将工作面板运行时上下文限定到会话
 
-- Status: Accepted
-- Date: 2026-07-27
-- Amended in part by: [ADR 0108](0108-remove-built-in-interactive-terminal.md)
+- 状态: 已接受
+- 日期: 2026-07-27
+- 部分修订者: [ADR 0108](0108-remove-built-in-interactive-terminal.md)
 
-## Context
+## 背景
 
-The renderer previously owned one global work-panel tab set. Selecting another
-conversation or workspace closed the panel and destroyed every tab, as required
-by D128. That prevented relative resources from leaking into another workspace,
-but it also discarded useful tools when the operator returned to a conversation.
+渲染进程此前拥有一个全局的工作面板标签集。按 D128 的要求，选择另
+一个会话或 workspace 会关闭面板并销毁所有标签页。这防止了相对资源
+泄漏到另一个 workspace，但当操作者返回一个会话时，也丢弃了有用的
+工具。
 
-Permission-gated tools exposed a race in that model. A tool could finish after
-approval while another conversation was loading. If completion arrived before
-the selection committed, its artifact briefly opened the global panel and was
-then cleared, causing a visible resize flash. If it arrived afterward, the
-background-session guard dropped the artifact entirely. BrowserPreview also
-lost its originating session identity before reaching the renderer and could
-resolve a relative path against the visible workspace.
+权限门控的工具在该模型下暴露了一个竞态。一个工具可能在另一个会话
+正在加载时于批准后完成。如果完成在选择提交之前到达，其 artifact
+会短暂打开全局面板然后被清除，造成可见的尺寸闪烁。如果它在之后
+到达，后台会话防护会完全丢弃该 artifact。BrowserPreview 在到达
+渲染进程之前也丢失了发起会话的身份，可能对着可见的 workspace
+解析相对路径。
 
-## Decision
+## 决策
 
-Each conversation owns a renderer-memory work-panel context containing its open
-state, ordered tabs, active tab, file request, and Browser resource.
+每个会话拥有一个渲染进程内存中的工作面板上下文，包含其打开状态、
+有序标签页、活跃标签页、文件请求和 Browser 资源。
 
-- Selecting a conversation saves the current projection and atomically restores
-  the destination context. Switching away never deletes either context.
-- New and forked conversations begin with an empty context. Deleting a
-  conversation removes its retained context.
-- Review and BrowserPreview artifacts are recorded against their originating
-  `sessionId`, including while that conversation is in the background.
-- Background artifacts update retained state only. They do not open, activate,
-  navigate, resize, or focus the visible panel.
-- BrowserPreview events carry `sessionId`. Electron Main resolves local preview
-  paths from that durable session's `projectPath`, and navigation occurs only
-  when the originating conversation's Browser tab is visible.
-- Selecting a workspace without an active conversation hides the current panel
-  projection while retaining the prior conversation's state.
-- Work-panel contexts remain transient. Relaunch discards them; only panel width
-  remains persisted.
+- 选择一个会话会保存当前投影并原子地恢复目标上下文。切走永远不
+  删除任一上下文。
+- 新建和分叉的会话以空上下文开始。删除会话会移除其保留的上下文。
+- Review 和 BrowserPreview artifacts 记录到其发起的 `sessionId`，
+  包括该会话处于后台时。
+- 后台 artifacts 只更新保留的状态。它们不打开、激活、导航、调整
+  大小或聚焦可见面板。
+- BrowserPreview 事件携带 `sessionId`。Electron 主进程从该持久会话
+  的 `projectPath` 解析本地预览路径，且只有当发起会话的 Browser
+  标签页可见时才发生导航。
+- 选择一个没有活跃会话的 workspace 会隐藏当前面板投影，同时保留
+  先前会话的状态。
+- 工作面板上下文保持瞬态。重新启动会丢弃它们；只有面板宽度保持
+  持久化。
 
-This adopts D142 and supersedes only D128's requirement to close and clear tabs
-on visible session/workspace changes. D128's artifact triggers, deduplication,
-and close/collapse rules remain unchanged; its no-launcher rule is amended by
-ADR 0068. Electron Main, preload IPC, and renderer ownership boundaries remain
-unchanged.
+这采纳了 D142，只取代 D128 关于在可见会话/workspace 变化时关闭并
+清除标签页的要求。D128 的 artifact 触发、去重和关闭/折叠规则保持
+不变；其无启动器规则由 ADR 0068 修订。Electron 主进程、preload IPC
+和渲染进程所有权边界保持不变。
 
-## Consequences
+## 后果
 
-- Returning to a conversation restores its tools without reinterpreting paths
-  against another workspace.
-- Permission completion and asynchronous navigation no longer produce a
-  transient panel open/close cycle or lose the resulting artifact.
-- The renderer retains bounded per-session UI state until deletion or relaunch;
-  it does not add durable storage or schema migration.
-- The embedded browser remains one hardened Main-process WebContentsView. Its
-  visible resource follows the selected conversation rather than allowing a
-  background preview to navigate the foreground view.
-- The former interactive terminal process/cache is no longer part of the
-  work-panel runtime; Browser remains the Main-owned native resource.
+- 返回一个会话会恢复其工具，而不会对着另一个 workspace 重新解释
+  路径。
+- 权限完成和异步导航不再产生瞬态的面板开/关循环，也不会丢失产生
+  的 artifact。
+- 渲染进程保留有界的每会话 UI 状态直到删除或重启；它不增加持久
+  存储或 schema 迁移。
+- 内嵌浏览器仍是一个加固的主进程 WebContentsView。其可见资源跟随
+  所选会话，而不允许后台预览导航前台视图。
+- 原先的交互式终端进程/缓存不再是工作面板运行时的一部分；Browser
+  仍是主进程拥有的原生资源。
 
-## Alternatives
+## 备选方案
 
-### Keep clearing tabs on every context change
+### 在每次上下文变化时继续清除标签页
 
-Rejected because it loses task continuity and cannot avoid both permission
-completion flashes and dropped background artifacts.
+否决，因为它丢失任务连续性，且无法同时避免权限完成闪烁和被丢弃
+的后台 artifacts。
 
-### Persist panel contexts in host storage
+### 在宿主存储中持久化面板上下文
 
-Rejected because tabs and Browser resources are transient presentation state.
-Durability would require schema, cleanup, and stale-resource policies without
-improving the reported in-process workflow.
+否决，因为标签页和 Browser 资源是瞬态展示状态。持久化需要 schema、
+清理和过期资源策略，而不能改进所报告的进程内工作流。
 
-### Key every backend panel subsystem by conversation
+### 把每个后端面板子系统都按会话键控
 
-Rejected for this change. Conversation ownership is required for the visible
-tab context and BrowserPreview routing; it does not make every backend resource
-durable.
+本次否决。可见标签页上下文和 BrowserPreview 路由需要会话所有权；
+这并不使每个后端资源都持久化。
 
-## References
+## 参考
 
 - `docs/spec/04-ux/01-ui-ia.md`
 - `docs/spec/04-ux/03-permission-ux.md`

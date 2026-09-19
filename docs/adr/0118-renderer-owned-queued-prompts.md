@@ -1,47 +1,41 @@
-# ADR 0118: Keep queued prompts renderer-owned and stop runs at turn boundaries
+# ADR 0118: 排队提示词由渲染进程持有，并在轮次边界处停止运行
 
 - Status: Accepted (Implemented 2026-08-24)
 - Date: 2026-08-24
 - Related: Issue #11, ADR 0073
 
-## Context
+## 背景
 
-The desktop host enforces one running turn per session. Disabling the
-composer while that turn runs makes users wait or abort a useful reply before
-they can provide the next instruction. Moving a second prompt into host-core
-or durable storage would introduce replay and lifecycle ownership that is not
-needed for a transient editor queue.
+桌面宿主强制每个会话同时只有一个正在运行的轮次。在该轮次运行期间
+禁用 Composer 会让用户等待，或在能输入下一条指令之前被迫中止一个
+有用的回复。把第二个提示词移入 host-core 或持久化存储会引入重放
+和生命周期归属问题，而对于一个临时的编辑器队列来说并不需要这些。
 
-## Decision
+## 决策
 
-The renderer owns an in-memory FIFO queue keyed by session id. A queued item
-contains its visible prompt and composer draft snapshot, so file references
-remain independently removable and can be sent through the normal prompt
-channel. The queue is not persisted and is discarded on application restart or
-session deletion. Switching sessions only changes which queue is projected
-above the active composer.
+渲染进程持有一个按会话 id 键控的内存 FIFO 队列。队列中的每一项
+包含其可见的提示词和 Composer 草稿快照，因此文件引用仍可独立移除，
+并可通过正常的提示词通道发送。队列不持久化，在应用重启或会话删除
+时被丢弃。切换会话只会改变投影到当前 Composer 上方的是哪个队列。
 
-The Send and Stop controls coexist while a run is active. A normal Send adds a
-queue item. The renderer drains the queue one item at a time after the owning
-session receives `agent_end`; each item uses the existing `agent/prompt` path,
-preserving the host's single-running-turn invariant. Send now moves its item
-to the head and calls the additive `agent/stop` IPC. The sidecar maps that
-request to pi-agent-core's `shouldStopAfterTurn` hook, so the current reply and
-completed tool batch finish normally and the durable turn closes as
-`completed` before the prioritized item starts.
+当一次运行处于活动状态时，Send 与 Stop 控件并存。普通的 Send 会
+追加一个队列项。渲染进程在所属会话收到 `agent_end` 之后每次取出
+一个队列项；每一项都走既有的 `agent/prompt` 路径，从而保持宿主的
+单运行轮次不变量。Send now（立即发送）会把自己的项移到队首，并调用
+新增的 `agent/stop` IPC。sidecar 将该请求映射到 pi-agent-core 的
+`shouldStopAfterTurn` 钩子，因此当前回复和已完成的工具批次会正常
+结束，持久化轮次以 `completed` 关闭之后，被优先处理的项才开始。
 
-Immediate abort remains separate: it cancels the active runtime immediately
-and leaves queued items untouched for explicit later sending.
+立即中止（abort）仍然是独立的：它会立即取消活动的运行时，并保持
+队列项原封不动，等待之后显式发送。
 
-## Consequences
+## 后果
 
-- Users can continue typing and queue multiple next-turn instructions while a
-  long model/tool run is active.
-- Send now has precise next-boundary semantics without a second concurrent
-  durable turn or an `AGENT_BUSY` race.
-- Queue contents are intentionally lost on restart and are not visible to
-  another session; persistence can be considered separately if a future
-  product requirement needs it.
-- Graceful stop is only as precise as the pi-agent-core boundary: an active
-  provider stream is allowed to finish, while a pending permission can still
-  wait for its normal resolution.
+- 在长时间的模型/工具运行期间，用户可以继续输入并排入多条下一轮
+  指令。
+- Send now 具有精确的下一边界语义，不需要第二个并发的持久化轮次，
+  也不会产生 `AGENT_BUSY` 竞态。
+- 队列内容在重启时有意丢失，且对其他会话不可见；如果未来的产品
+  需求需要持久化，可以单独考虑。
+- 优雅停止的精确度受限于 pi-agent-core 的边界：活动中的 provider
+  流被允许完成，而待处理的权限请求仍可能等待其正常解决。

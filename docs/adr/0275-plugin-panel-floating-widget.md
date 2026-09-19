@@ -1,4 +1,4 @@
-# ADR 0275: A floating widget placement for plugin panels
+# ADR 0275：插件面板的浮动 widget 放置
 
 - Status: Accepted for implementation
 - Date: 2026-09-17
@@ -9,68 +9,58 @@
   [ADR 0110](0110-plugin-panel-chrome-spacing-contract.md) ·
   [07-plugins/03-plugin-api](../spec/07-plugins/03-plugin-api.md)
 
-## Context
+## 背景
 
-Every plugin panel is a frameless `BrowserWindow` that reserves a 46px host drag
-band and carries one three-control capsule in its top-right corner (ADR 0092,
-ADR 0093, ADR 0110). That grammar suits a panel that shows content, and does not
-suit a plugin whose whole interface is a small round companion — a voice orb, a
-timer, a status light.
+每个插件面板都是一个无边框 `BrowserWindow`，保留 46px 宿主拖动带，并在
+其右上角携带一个三控件胶囊（ADR 0092、ADR 0093、ADR 0110）。这种语法
+适合显示内容的面板，不适合整个界面是一个小圆形伴侣的插件——语音球、
+计时器、状态灯。
 
-Such a plugin cannot exist today. The host paints an opaque background, forces a
-360×280 minimum, and draws the capsule over the top of the page. What an author
-gets is a rectangle with a toolbar strip, not a floating sphere; the transparent
-strip that makes the panel chrome work reads as a seam around a shape that is not
-a rectangle at all. Electron can already host a transparent window, and the
-plugin surface itself — preload bridge, session partition, permission gate, egress
-policy — needs no change to allow it.
+这样的插件今天无法存在。宿主绘制不透明背景，强制 360×280 最小值，并
+在页面顶部绘制胶囊。作者得到的是一个带工具条的矩形，而不是浮动球体；
+使面板 chrome 工作的透明条带，在一个根本不是矩形的形状周围读作接缝。
+Electron 已经可以托管透明窗口，而插件界面本身——preload bridge、
+session 分区、权限闸门、出口策略——无需改变即可允许它。
 
-## Decision
+## 决策
 
-1. A manifest may declare `"ui": { "shape": "widget" }`. `"panel"` stays the
-   default; an absent or `"panel"` value keeps today's behavior unchanged.
-2. A widget window is `transparent: true` with a fully transparent
-   `backgroundColor`, `hasShadow: false`, `frame: false`, `maximizable: false`,
-   `fullscreenable: false`, and `skipTaskbar: true`. The plugin draws its own
-   silhouette, shadow, and glow.
-3. A widget has no 46px band and no capsule. The preload publishes
-   `--pi-plugin-titlebar-height: 0px`, never applies the legacy additive offset,
-   and instead installs a drag map over the whole window: empty space drags,
-   while standard controls and every element marked `data-pi-plugin-no-drag`
-   stay clickable. The mechanics are the paint-through segment map of ADR 0093,
-   applied to the full rectangle.
-4. The capsule is the panel's only close affordance (ADR 0093 §4), so the host
-   owns an equivalent menu behind the widget surface's own context menu: close,
-   minimize, and an always-on-top toggle. It travels on the existing
-   sender-validated window-control channel as one new `contextMenu` action, so
-   `window.pluginBridge` still gains no window primitive.
-5. `ui.width` / `ui.height` are honoured down to 120×120 for a widget (a panel's
-   minimum stays 360×280). `ui.alwaysOnTop` defaults to `false`; `ui.resizable`
-   defaults to `false` for a widget and `true` for a panel.
-6. The preload publishes the placement as
-   `document.documentElement.dataset.piPluginPanelShape` (`panel` | `widget` |
-   `view`) before page scripts run, so one HTML entry can serve every placement
-   without a bridge round trip.
-7. The plugin surface is otherwise unchanged: same preload, same
-   `pluginBridge` channels, same permission gate, same per-plugin session
-   partition, same egress policy, same localization rules. A widget needs no new
-   permission.
-8. `manifest.ui.shape`, `ui.alwaysOnTop`, and `ui.resizable` are validated at
-   install by the Plugin SDK, carried in the shared manifest type, and parsed by
-   host-core's `PluginUiMeta`, so the Rust catalog and the TypeScript host agree
-   on the contract.
+1. Manifest 可以声明 `"ui": { "shape": "widget" }`。`"panel"` 保持默认；
+   缺席或 `"panel"` 值保持今天的行为不变。
+2. Widget 窗口是 `transparent: true`，具有完全透明的
+   `backgroundColor`、`hasShadow: false`、`frame: false`、
+   `maximizable: false`、`fullscreenable: false` 和 `skipTaskbar: true`。
+   插件绘制自己的轮廓、阴影和光晕。
+3. Widget 没有 46px 带，也没有胶囊。Preload 发布
+   `--pi-plugin-titlebar-height: 0px`，绝不应用旧的增量偏移，而是在整
+   个窗口上安装拖动映射：空白处拖动，而标准控件和每个标记
+   `data-pi-plugin-no-drag` 的元素保持可点击。其机制是 ADR 0093 的绘穿
+   段映射，应用到整个矩形。
+4. 胶囊是面板唯一的关闭手段（ADR 0093 §4），因此宿主在 widget 界面自
+   己的上下文菜单之后拥有等效菜单：关闭、最小化和置顶开关。它作为一
+   个新的 `contextMenu` 动作沿现有的发送方校验窗口控制通道传输，因此
+   `window.pluginBridge` 仍不获得任何窗口原语。
+5. `ui.width` / `ui.height` 对 widget 尊重到 120×120（面板的最小值保
+   持 360×280）。`ui.alwaysOnTop` 默认 `false`；`ui.resizable` 对
+   widget 默认 `false`，对面板默认 `true`。
+6. Preload 在页面脚本运行之前，把放置发布为
+   `document.documentElement.dataset.piPluginPanelShape`（`panel` |
+   `widget` | `view`），因此一个 HTML 入口无需 bridge 往返即可服务每
+   种放置。
+7. 插件界面的其余部分不变：相同的 preload、相同的 `pluginBridge` 通
+   道、相同的权限闸门、相同的按插件 session 分区、相同的出口策略、相
+   同的本地化规则。Widget 不需要新权限。
+8. `manifest.ui.shape`、`ui.alwaysOnTop` 和 `ui.resizable` 由 Plugin SDK
+   在安装时校验，携带在共享 manifest 类型中，并由 host-core 的
+   `PluginUiMeta` 解析，因此 Rust 目录和 TypeScript 宿主对契约达成一
+   致。
 
-## Consequences
+## 后果
 
-- A plugin can be a floating orb: transparent, small, always-on-top when it asks
-  for it, draggable from its empty space, and closable from a host menu even when
-  the plugin never drew a close button.
-- The 46px band, the capsule, and the v2 spacing contract stay exactly as they
-  are for panels and docked views; existing plugins and installed packages are
-  unaffected.
-- Placement is a per-plugin manifest choice, not a per-page one: the same HTML
-  entry may serve a panel, a widget, and a docked view by reading the published
-  placement and the titlebar variable.
-- A widget surface has one more pointer rule to document: an element that must
-  receive clicks is either a standard control or carries
-  `data-pi-plugin-no-drag`; everything else drags the window.
+- 插件可以是浮动球：透明、小巧、在它请求时置顶、可从其空白处拖动，
+  并且即使插件从未绘制关闭按钮，也能从宿主菜单关闭。
+- 46px 带、胶囊和 v2 间距契约对面板和 docked 视图保持原样；现有插件
+  和已安装的包不受影响。
+- 放置是按插件的 manifest 选择，不是按页面的：同一 HTML 入口可以通过
+  读取发布的放置和标题栏变量，服务面板、widget 和 docked 视图。
+- Widget 界面多了一条要记录的指针规则：必须接收点击的元素要么是标准
+  控件，要么携带 `data-pi-plugin-no-drag`；其他一切都拖动窗口。

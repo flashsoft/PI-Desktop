@@ -1,44 +1,40 @@
-# ADR 0149: Calm transcript running-status motion
+# ADR 0149: 让 transcript 运行状态的动效保持平静
 
 - Status: Accepted
 - Date: 2026-09-04
 - Deciders: PI-Desktop core
 - Related: D071, D290, E2E-053, E2E-083
 
-## Context
+## 背景
 
-The transcript used a fast gradient shimmer clipped into the text of the
-pre-stream Working indicator and active thinking/tool labels. Because the
-foreground highlight moved through each glyph, the status copy changed
-contrast continuously and was harder to scan during a long run. The existing
-tool spinner and streaming rail already provide motion for the concrete live
-states.
+transcript 在流式输出前的 Working 指示器和活动的 thinking/工具标签
+文本上使用了一个裁剪进文字的快速渐变微光。由于前景高亮在每个字形
+上移动，状态文案的对比度持续变化，在长时间运行中更难扫读。既有的
+工具 spinner 和流式轨道已经为具体的活跃状态提供了动效。
 
-## Decision
+## 决策
 
-Running transcript copy remains a static, readable semantic text color. The
-pre-stream Working indicator adds a compact three-dot marker with a staggered
-one-second opacity/scale pulse. Active thinking and tool labels use one small
-status marker with a one-second opacity pulse instead of a text shimmer. Tool
-spinners, run-row status dots, and the assistant streaming rail keep their
-existing state feedback.
+运行中的 transcript 文案保持静态、可读的语义文本颜色。流式输出前
+的 Working 指示器增加一个紧凑的三点标记，带交错的一秒不透明度/
+缩放脉冲。活动的 thinking 和工具标签使用一个带一秒不透明度脉冲的
+小型状态标记，而不是文字微光。工具 spinner、运行行状态点和
+assistant 流式轨道保留其既有的状态反馈。
 
-All new marker motion is disabled under `prefers-reduced-motion: reduce`; the
-text and static marker remain visible so state is never conveyed by motion
-alone. No protocol, persistence, runtime, or localization contract changes.
+所有新的标记动效在 `prefers-reduced-motion: reduce` 下禁用；文本和
+静态标记保持可见，因此状态绝不仅仅由动效传达。没有协议、持久化、
+运行时或本地化契约变更。
 
-## Consequences
+## 后果
 
-- Working and active tool labels stay legible at every animation frame.
-- The transcript has one restrained loading language: readable copy plus a
-  small status marker, without a moving highlight over text.
-- Tests and rendered review should verify both light/dark themes and reduced
-  motion, especially while a turn has not produced its first event.
+- Working 和活动的工具标签在每个动画帧上都保持易读。
+- transcript 有了一种克制的加载语言：可读文案加小型状态标记，没有
+  在文字上移动的高亮。
+- 测试和渲染审查应验证浅色/深色两个主题以及减少动效模式，尤其是在
+  轮次尚未产出第一个事件时。
 
-## Alternatives rejected
+## 被否决的替代方案
 
-- Keep the text shimmer and slow it down: slower contrast changes still make
-  the label itself unstable and provide little additional state information.
-- Replace the status with a large card or progress timeline: this would add
-  decorative surface and density to a transient state that needs only a wait
-  signal.
+- 保留文字微光但放慢速度：更慢的对比度变化仍让标签本身不稳定，
+  且几乎不提供额外的状态信息。
+- 用大卡片或进度时间线替换状态：这会为一个只需要等待信号的临时
+  状态增加装饰性表面和密度。

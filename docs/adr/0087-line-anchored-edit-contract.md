@@ -1,4 +1,4 @@
-# ADR 0087: Replace textual Edit matching with a line-anchored, tag-verified contract
+# ADR 0087: 用行锚定、标签校验的契约取代文本匹配的 Edit
 
 - Status: Implemented (phases 1–2; block ops, drift recovery, and boundary repair remain phased)
 - Date: 2026-08-15
@@ -12,162 +12,149 @@
   [08-error-codes](../spec/03-runtime/08-error-codes.md) ·
   E2E-130 … E2E-139
 
-## Context
+## 背景
 
-`Edit` currently takes `old_string` / `new_string` and requires `old_string` to
-match exactly one location in the file
-(`crates/host-core/src/tools/mod.rs:1278`). `Read` deliberately returns
-line-number-free bytes so that text copied out of its `content` still matches
-(`crates/host-core/src/tools/mod.rs:1225`). Three failure modes follow from that
-contract and none of them are fixable inside it:
+`Edit` 目前接受 `old_string` / `new_string`，并要求 `old_string` 在
+文件中恰好匹配一个位置
+（`crates/host-core/src/tools/mod.rs:1278`）。`Read` 刻意返回不带
+行号的字节，使从其 `content` 复制出的文本仍能匹配
+（`crates/host-core/src/tools/mod.rs:1225`）。该契约产生三种失败
+模式，且都无法在该契约内部修复：
 
-1. **The model must retype existing code.** Every edit's correctness depends on
-   reproducing bytes it saw earlier. One wrong space fails the call; the
-   observed consequence is a re-read plus a regenerated edit, which §4d already
-   codifies as the expected recovery path and caps at two attempts.
-2. **Ambiguity is the model's problem to solve.** A duplicated fragment forces
-   the model to widen `old_string` until it is unique, which increases the
-   retyped surface and therefore the chance of retyping it wrong.
-3. **Nothing proves the model read what it is editing.** A unique match on a
-   remembered fragment succeeds even when the model never displayed that region
-   in this session, and even when the file changed after the read that informed
-   the edit. This is the failure class that silently produces plausible, wrong
-   edits, and the current contract cannot detect it at all.
+1. **模型必须重新敲出已有代码。** 每次编辑的正确性都取决于重现它
+   之前见过的字节。一个错误的空格就会使调用失败；可观察到的后果
+   是一次重新读取加一次重新生成的编辑，§4d 已将其固化为预期的
+   恢复路径并封顶为两次尝试。
+2. **歧义是模型要解决的问题。** 重复的片段迫使模型不断扩大
+   `old_string` 直到唯一，这增加了重敲的面积，也因此增加了敲错
+   的概率。
+3. **没有任何东西证明模型读过它正在编辑的内容。** 对记忆中的片
+   段的唯一匹配即使在本会话中从未展示过该区域时也会成功，甚至
+   在为编辑提供依据的那次读取之后文件已经改变时也会成功。这一
+   失败类别会悄无声息地产生看似合理但错误的编辑，而当前契约完
+   全无法检测它。
 
-`Grep` already returns `{path, line, text}`; line numbers exist on the search
-path but the edit path cannot consume them.
+`Grep` 已经返回 `{path, line, text}`；行号在搜索路径上存在，但编
+辑路径无法消费它们。
 
-`oh-my-pi`'s `hashline` package solves exactly this by inverting what the model
-supplies: the model reports **positions** (line numbers and gaps) plus **new
-content only**, and the tool supplies the proof of version and provenance. The
-anchor is a 4-hex fingerprint of the whole normalized file carried in a section
-header (`[path#TAG]`), minted by whichever tool displayed the content.
+`oh-my-pi` 的 `hashline` 包通过反转模型提供的内容恰好解决了这个
+问题：模型报告**位置**（行号和间隙）加**仅新内容**，而工具提供版
+本和来源的证明。锚点是整个归一化文件的 4 位十六进制指纹，由展示
+该内容的工具铸造，携带在区段头（`[path#TAG]`）中。
 
-## Decision
+## 决策
 
-### 1. `Edit` becomes a line-anchored patch tool
+### 1. `Edit` 成为行锚定的补丁工具
 
-`Edit` takes `path`, `tag`, and `ops`. `old_string` / `new_string` are removed;
-no compatibility shim, no per-model variant selection, no second write tool. One
-high-risk write contract keeps the permission matrix, review snapshots,
-artifacts recording, audit surface, and per-session mutation serialization
-single-valued.
+`Edit` 接受 `path`、`tag` 和 `ops`。`old_string` / `new_string` 被
+移除；没有兼容垫片，没有按模型的变体选择，没有第二个写入工具。
+单一的高风险写入契约使权限矩阵、审查快照、产物记录、审计面和按
+会话的变更序列化保持单值。
 
-The operation surface is the full `hashline` surface: range replace
-(`PUT N.=M:`), gap insert (`PUT <N:` / `PUT >N:` / `PUT >$:`), syntactic-block
-replace and sibling insert (`PUT N*:` / `PUT >N*:`), capture-and-delete
-(`CUT N.=M` / `CUT N*`), register paste (`PUT <N @name` / `PUT N.=M @name`), and
-the file-level `REM` / `MV DEST`. Body rows are `+`-prefixed final content;
-`-old` rows and bare context rows do not exist, because the range already
-expresses the deletion.
+操作面是完整的 `hashline` 操作面：区间替换（`PUT N.=M:`）、间隙
+插入（`PUT <N:` / `PUT >N:` / `PUT >$:`）、语法块替换与同级插入
+（`PUT N*:` / `PUT >N*:`）、捕获并删除（`CUT N.=M` / `CUT N*`）、
+寄存器粘贴（`PUT <N @name` / `PUT N.=M @name`），以及文件级的
+`REM` / `MV DEST`。正文行是以 `+` 为前缀的最终内容；`-old` 行和
+裸上下文行不存在，因为区间本身已经表达了删除。
 
-### 2. Read and Grep mint tags; Read emits line numbers
+### 2. Read 和 Grep 铸造标签；Read 输出行号
 
-`Read` prefixes each returned line with `N:` and prepends a `[path#TAG]` header.
-This reverses ADR 0069's byte-faithful `content` decision, whose sole purpose was
-to keep copied text matchable by `old_string`. `Grep` gains the same header per
-matched file. `Write` returns the post-write header so an immediately following
-`Edit` needs no extra `Read`.
+`Read` 为每个返回行加上 `N:` 前缀，并在前面加上 `[path#TAG]` 头。
+这推翻了 ADR 0069 的字节忠实 `content` 决策，后者唯一的目的是让
+复制的文本能被 `old_string` 匹配。`Grep` 为每个匹配文件获得相同
+的头。`Write` 返回写入后的头，使紧随其后的 `Edit` 无需额外的
+`Read`。
 
-### 3. Host-core owns a session-scoped snapshot store
+### 3. host-core 拥有会话级快照存储
 
-A bounded in-memory store maps `(session, canonical path)` to a short history of
-full-file versions, each carrying its tag and the set of line numbers a producer
-actually **displayed**. This makes two guarantees enforceable that the current
-contract cannot express:
+一个有界的内存存储将 `(session, canonical path)` 映射到完整文件版
+本的短历史，每个版本携带其标签以及生产方实际**展示过**的行号集
+合。这使两条当前契约无法表达的保证变得可强制执行：
 
-- **Version.** An `Edit` whose `tag` does not hash the live file is not applied
-  on the model's word.
-- **Provenance.** An `Edit` anchored on a line the session never displayed is
-  rejected, with that line's real content inlined in the error so a straight
-  retry can succeed without another `Read`.
+- **版本。** `tag` 与活文件哈希不一致的 `Edit` 不会仅凭模型的说
+  法就被应用。
+- **来源。** 锚定在本会话从未展示过的行上的 `Edit` 会被拒绝，且
+  错误中内联该行的真实内容，使直接重试无需再一次 `Read` 即可成
+  功。
 
-The store is in-memory, per session, bounded, and dropped with the session. It is
-distinct from ADR 0043's review snapshots, which are on-disk, per tool call, and
-exist for rollback; the two share only the hashing primitive already in
-`crates/host-core/src/review.rs`.
+该存储是内存中的、按会话的、有界的，并随会话销毁。它不同于 ADR
+0043 的审查快照——后者在磁盘上、按工具调用、为回滚而存在；两者
+只共享 `crates/host-core/src/review.rs` 中已有的哈希原语。
 
-`execute_tool_with_path_access` therefore gains a session identity parameter.
-Today only `BashExecutionOptions` carries `session_id`, so Read/Edit/Grep have no
-way to reach per-session state; that is the one signature change the whole
-feature rests on.
+因此 `execute_tool_with_path_access` 获得一个会话身份参数。目前只
+有 `BashExecutionOptions` 携带 `session_id`，所以 Read/Edit/Grep
+无法触达按会话状态；这是整个功能所依赖的唯一签名变化。
 
-### 4. Tree-sitter is added to host-core for block resolution
+### 4. 为块解析向 host-core 添加 tree-sitter
 
-`PUT N*:`, `PUT >N*:`, and `CUT N*` need the line span of the syntactic
-construct opening at line `N`. host-core gains `tree-sitter` plus a bounded
-grammar set. Resolution is a pure function of (text, language, line) and returns
-`None` for an unsupported language, an invalid line, a line with no opener, or a
-file that does not parse; the tool then rejects the block op with an actionable
-message naming the plain-range alternative. Block ops degrade; they never guess.
+`PUT N*:`、`PUT >N*:` 和 `CUT N*` 需要第 `N` 行开始的语法结构的
+行跨度。host-core 获得 `tree-sitter` 加一组有界的语法。解析是
+(text, language, line) 的纯函数，对不支持的语言、无效行、没有开
+始符的行或无法解析的文件返回 `None`；此时工具拒绝该块操作，并给
+出指明普通区间替代方案的可操作消息。块操作会降级；它们绝不猜测。
 
-Every resolved span is echoed back in the tool result so the model can see that
-it anchored the wrong opener.
+每个解析出的跨度都会在工具结果中回显，使模型能看到它锚定了错误
+的开始符。
 
-### 5. Registers are session-scoped and named; anonymous registers are call-local
+### 5. 寄存器是会话级且命名的；匿名寄存器是调用局部的
 
-Cross-file moves use named registers (`CUT 1* @fn` in one call, `PUT <1 @fn` in
-the next), which is `hashline`'s own sanctioned cross-call mechanism. `Edit`
-stays single-path: PI-Desktop's permission gate, review snapshot, artifacts row,
-and mutation permit are all keyed on one `args.path`, and multi-section patches
-would fork all four. The anonymous register lives only within one `Edit` call.
+跨文件移动使用命名寄存器（一次调用中 `CUT 1* @fn`，下一次调用中
+`PUT <1 @fn`），这是 `hashline` 自己认可的跨调用机制。`Edit` 保
+持单路径：PI-Desktop 的权限门、审查快照、产物行和变更许可都键于
+单一的 `args.path`，而多区段补丁会把这四者全部分叉。匿名寄存器
+只存活于一次 `Edit` 调用内。
 
-### 6. Failure is explicit, and recovery must be provable
+### 6. 失败是显式的，且恢复必须可证明
 
-A stale tag attempts snapshot recovery: every anchor is remapped through
-unchanged lines from the tagged snapshot to the live file, surrounding context is
-validated, and all anchors must move by one consistent offset. Anything
-changed, split, or ambiguous fails closed with a mismatch error carrying current
-content. Head/tail-only inserts are position-stable and apply with a warning
-instead of failing. A no-op apply is an error.
+陈旧的标签会尝试快照恢复：每个锚点通过未变更的行从带标签的快照
+重映射到活文件，周围上下文会被校验，且所有锚点必须以一个一致的
+偏移量移动。任何被改变、拆分或产生歧义的情况都会关闭失败，并返
+回携带当前内容的不匹配错误。仅头/尾的插入是位置稳定的，带警告
+应用而不是失败。空操作应用是错误。
 
-## Consequences
+## 后果
 
-- The model stops retyping existing code to edit it. The retyped surface shrinks
-  to the lines it is actually writing, which removes the dominant `Edit` failure
-  cause rather than prescribing a recovery for it.
-- Edits against content the session never displayed become impossible instead of
-- Edits against content the session never displayed become impossible instead of
-  being undetectable. §4d's bounded loop guard stays, now allowing three counted
-  failures per path before termination. It also stops counting the three
-  recoverable codes on their first occurrence: each one hands the retry
-  what it needs, so each gets one grace per path, and the failure that does
-  exhaust the budget ends the turn with a visible `MUTATION_RETRY_BUDGET_EXHAUSTED`
-  row rather than a silently completed turn.
-- `Read` output grows by the width of a line-number prefix, and its `content` is
-  no longer byte-faithful. Any consumer that copies `content` verbatim must strip
-  prefixes; `Write` already needs the same stripping for pasted headers.
-- host-core gains a per-session memory cost bounded by the store's caps, plus
-  tree-sitter and its grammars in the binary. Grammar footprint is the price of
-  block ops and is bounded by an explicit language list, not by "add grammars
-  until every file works".
-- Every model targeting PI-Desktop must learn one new syntax. There is no
-  fallback contract, so a model that cannot produce it cannot edit; this is
-  accepted deliberately over maintaining two prompts, two validators, two
-  renderers, and two audit shapes indefinitely.
-- The renderer's Edit diff rendering
-  (`apps/desktop/src/lib/tool-presentation.ts:501`) can no longer derive a diff
-  from `old_string`/`new_string` and must render from the review record's hunks,
-  which ADR 0043 already produces.
+- 模型不再为了编辑已有代码而重敲它。重敲面积缩减到它实际在写的
+  行，这消除了 `Edit` 的主要失败原因，而不是为其规定一种恢复方
+  式。
+- 针对本会话从未展示过的内容的编辑从无法检测变为不可能。§4d 的
+  有界循环保护保留，现在允许每个路径三次计入的失败后才终止。它
+  还停止对三个可恢复错误码的首次出现计数：每一个都把重试所需的
+  东西交给模型，因此每个错误码在每个路径上获得一次宽限；而真正
+  耗尽预算的失败会以一行可见的 `MUTATION_RETRY_BUDGET_EXHAUSTED`
+  结束本轮，而不是让本轮悄无声息地完成。
+- `Read` 输出增加了一个行号前缀的宽度，其 `content` 不再是字节
+  忠实的。任何逐字复制 `content` 的消费方必须剥离前缀；`Write`
+  对粘贴的头本来就需要同样的剥离。
+- host-core 增加了由存储上限约束的按会话内存开销，以及二进制中
+  的 tree-sitter 及其语法。语法体积是块操作的代价，由显式的语言
+  清单约束，而不是"不断添加语法直到每个文件都能工作"。
+- 每个面向 PI-Desktop 的模型都必须学习一种新语法。没有回退契约，
+  因此无法产出该语法的模型将无法编辑；这是被刻意接受的，胜过无
+  限期维护两套 prompt、两个校验器、两个渲染器和两种审计形态。
+- 渲染进程的 Edit diff 渲染
+  （`apps/desktop/src/lib/tool-presentation.ts:501`）无法再从
+  `old_string`/`new_string` 推导 diff，必须从审查记录的 hunks 渲
+  染，而 ADR 0043 已经产出这些 hunks。
 
-## Alternatives rejected
+## 被拒绝的替代方案
 
-- **Add a tag to the existing `old_string` contract.** Fixes version and
-  provenance but leaves the model retyping code, which is the larger cost. It
-  buys the cheaper half of the benefit for most of the same plumbing.
-- **Keep both contracts behind a mode switch.** Two prompts, two validators, two
-  renderers, two audit shapes, and a per-model exclusion list to maintain
-  forever, in exchange for tolerating models that cannot follow one documented
-  syntax.
-- **Add a second, separate line-anchored write tool.** Cheapest to build and the
-  worst to own: two concurrent high-risk write tools fork the permission matrix,
-  the review snapshot boundary, the artifacts ledger, and the mutation permit.
-- **Unified diff / `apply_patch`.** Requires the model to compute hunk headers
-  and retype context lines — both retyping and arithmetic. `Bash` guidance
-  already steers away from `git apply` and `patch` for this reason.
-- **Multi-section patches in one `Edit` call.** Needed only for same-call
-  cross-file moves, which session-scoped named registers already cover across
-  two calls, and it would fork four subsystems keyed on a single `args.path`.
-- **Block resolution by brace counting or indentation instead of tree-sitter.**
-  Silently wrong on strings, comments, macros, JSX, and Markdown. A block op that
-  is usually right is worse than one that declines.
+- **在现有 `old_string` 契约上添加标签。** 修复了版本和来源问题，
+  但模型仍要重敲代码，而那是更大的成本。它以大部分相同的管线换
+  来了收益中较便宜的那一半。
+- **在模式开关后保留两种契约。** 两套 prompt、两个校验器、两个渲
+  染器、两种审计形态，以及一份需要永久维护的按模型排除清单，换
+  来的只是容忍那些无法遵循一种已文档化语法的模型。
+- **添加第二个独立的行锚定写入工具。** 构建成本最低，拥有成本最
+  高：两个并存的高风险写入工具会分叉权限矩阵、审查快照边界、产
+  物台账和变更许可。
+- **Unified diff / `apply_patch`。** 要求模型计算 hunk 头并重敲上
+  下文行——既是重敲又是算术。`Bash` 指引已经出于同样的原因引导
+  远离 `git apply` 和 `patch`。
+- **在一次 `Edit` 调用中使用多区段补丁。** 只有同调用跨文件移动
+  才需要它，而会话级命名寄存器已经通过两次调用覆盖了该场景，且
+  它会分叉四个键于单一 `args.path` 的子系统。
+- **用花括号计数或缩进而非 tree-sitter 做块解析。** 在字符串、注
+  释、宏、JSX 和 Markdown 上会悄无声息地出错。一个通常正确的块
+  操作比一个会拒绝的块操作更糟糕。

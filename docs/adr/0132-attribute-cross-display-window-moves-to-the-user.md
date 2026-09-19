@@ -1,4 +1,4 @@
-# ADR 0132: Attribute cross-display window moves to the user
+# ADR 0132: 将跨显示器的窗口移动归因于用户
 
 - Status: Accepted
 - Date: 2026-08-28
@@ -7,101 +7,92 @@
   decision D263 · issue #18
 - Amends: ADR 0122 (and the reservation behavior it restored from ADR 0032)
 
-## Context
+## 背景
 
-ADR 0122 keeps a target-state, display-aware native reservation for the docked
-work panel. Main plans the reservation from remembered *base bounds* — the
-window rect without the reservation — and reconciles later native deltas
-against the last rect it actually applied.
+ADR 0122 为停靠的工作面板维护一个目标状态、感知显示器的原生保留。
+Main 根据记住的*基础边界*——不含保留的窗口矩形——来规划保留，并
+用之后它实际应用的矩形来核对后续的原生增量。
 
-That reconciliation collapsed two very different situations into one
-`displayChanged` boolean. When the window ended up on another display, the
-remembered base bounds were reused verbatim, then clamped into the new
-display's work area. That is correct when the OS re-fitted bounds we asked for:
-the user's intent survives on a constrained display and is restored on a roomy
-one. It is wrong when the user dragged the window there, because the previous
-display's coordinates are no longer the intent.
+该核对把两种非常不同的情况压缩成了一个 `displayChanged` 布尔值。
+当窗口最终落在另一台显示器上时，记住的基础边界被原样复用，然后被
+钳制进新显示器的工作区。当操作系统重新适配我们请求的边界时这是
+正确的：用户的意图在受限显示器上保留，并在宽敞的显示器上恢复。但
+当用户把窗口拖到那里时这就是错误的，因为上一台显示器的坐标已不再
+是意图。
 
-Worse, the reconcile was wired to every native `move` event, so it ran while
-the drag was still in progress. Reported in issue #18 and reproducible on every
-release from 0.10.0 onward: dragging the window to a second display made it jump
-on pointer release, because the deferred `setBounds` planned from the origin
-display's base bounds and landed at the target display's clamped edge. The
-window's y coordinate came from the old display too. The same misattribution
-then leaked into `window-state.json`, so relaunch reopened the window on the
-display the user had left.
+更糟的是，核对被接到了每个原生 `move` 事件上，因此它在拖拽仍在
+进行时就会运行。issue #18 报告、且从 0.10.0 起的每个版本都可复现：
+把窗口拖到第二台显示器时，窗口会在指针释放时跳动，因为延迟的
+`setBounds` 根据源显示器的基础边界规划，落到了目标显示器钳制后的
+边缘。窗口的 y 坐标也来自旧显示器。同样的错误归因随后渗入
+`window-state.json`，因此重新启动会在用户已经离开的那台显示器上
+重新打开窗口。
 
-## Decision
+## 决策
 
-1. Replace the `displayChanged` boolean with an explicit `DisplayTransition` of
-   `none`, `os-adjusted`, or `user-moved`.
-2. `os-adjusted` keeps ADR 0122's behavior unchanged: the remembered base
-   bounds survive an OS re-fit or a display topology change.
-3. `user-moved` derives new base bounds from the window's current position, so
-   the drop position becomes the intent. Only the origin is normalized into the
-   target display's work area; the size is preserved even when the target work
-   area is smaller, because base bounds are the restorable intent under ADR 0122
-   and a shrink here would be persisted permanently.
-4. Classify the transition by whether an unaccounted native `move` stream
-   precedes it. A drag is the only cross-display transition that follows one.
-   The marker is a flag, not a deadline, so attribution never depends on how
-   long the main process took to reach the classification, and it survives the
-   deferred geometry of a maximized or fullscreen window.
-5. Never re-plan bounds mid-drag. The `move` handler only marks the user-move
-   window and defers display reconciliation until the move stream goes quiet.
-6. Persist base bounds for both `none` and `user-moved`, and advance the
-   remembered display key on `user-moved`, so relaunch restores the display the
-   user actually left the window on. `os-adjusted` still refuses to persist.
-   The persistence path normalizes a dragged-in base the same way, because a
-   maximized or fullscreen window defers reservation geometry and leaves this as
-   the only consumer of the drag.
-7. Retire an unconsumed marker on a deadline. The deadline bounds how long a
-   marker can linger when no consumer runs; it never decides attribution.
-8. A forced bounds recovery (the Stage Manager path) clears the pending
-   user-move attribution, because it is not user intent.
+1. 用显式的 `DisplayTransition`（`none`、`os-adjusted` 或
+   `user-moved`）替换 `displayChanged` 布尔值。
+2. `os-adjusted` 保持 ADR 0122 的行为不变：记住的基础边界在 OS
+   重新适配或显示器拓扑变化后仍然存活。
+3. `user-moved` 从窗口的当前位置推导新的基础边界，使落下位置成为
+   意图。只有原点被归一化进目标显示器的工作区；尺寸即使目标工作区
+   更小也被保留，因为在 ADR 0122 下基础边界是可恢复的意图，而此时
+   的缩小会被永久持久化。
+4. 根据转换之前是否出现一段无法归因的原生 `move` 事件流来分类。
+   拖拽是唯一跟随这种事件流的跨显示器转换。该标记是一个标志而不是
+   截止时间，因此归因绝不取决于主进程花了多久才到达分类，并且它在
+   最大化或全屏窗口的延迟几何下仍然存活。
+5. 绝不在拖拽中途重新规划边界。`move` 处理器只标记用户移动窗口，
+   并把显示器核对推迟到移动事件流安静下来之后。
+6. 对 `none` 和 `user-moved` 都持久化基础边界，并在 `user-moved`
+   时推进记住的显示器键，使重新启动把窗口恢复到用户实际留下它的
+   那台显示器。`os-adjusted` 仍然拒绝持久化。持久化路径以同样的
+   方式归一化拖入的基础边界，因为最大化或全屏窗口会延迟保留几何，
+   使这里成为拖拽的唯一消费方。
+7. 未被消费的标记按截止时间退役。截止时间约束的是在没有消费方
+   运行时标记可以滞留多久；它绝不参与归因决策。
+8. 强制边界恢复（Stage Manager 路径）清除待处理的用户移动归因，
+   因为它不是用户意图。
 
-## Consequences
+## 后果
 
-- Dragging the window between displays keeps the position where it was
-  dropped, with no jump on pointer release.
-- Relaunch reopens the window on the display it was last used on.
-- ADR 0122's constrained-display reservation behavior is preserved verbatim for
-  OS-owned adjustments, including the restore path back to a roomy display.
-- Display topology events clear the pending marker before reconciling, so a
-  display added, removed, or rescaled right after a drag is still classified as
-  OS-owned.
-- A window dropped onto a display whose work area cannot hold it keeps its size
-  and is pinned to the work area's top-left. `planWorkPanelReservation` still
-  caps the width it adds, so the reservation shrinks instead of the window.
-- No IPC, storage, or host protocol change. `window/setWorkPanelReservation`
-  keeps its request/response shape.
+- 在显示器之间拖拽窗口时，窗口保持在被放下的位置，指针释放时不再
+  跳动。
+- 重新启动会在窗口最后被使用的显示器上重新打开它。
+- ADR 0122 的受限显示器保留行为对 OS 主导的调整原样保留，包括
+  回到宽敞显示器的恢复路径。
+- 显示器拓扑事件在核对前清除待处理标记，因此拖拽之后立即增加、
+  移除或重新缩放的显示器仍被归类为 OS 主导。
+- 落到工作区容纳不下的显示器上的窗口保留其尺寸，并被钉在工作区
+  左上角。`planWorkPanelReservation` 仍会限制它增加的宽度，因此
+  缩小的是保留而不是窗口。
+- 没有 IPC、存储或宿主协议变更。`window/setWorkPanelReservation`
+  保持其请求/响应形态。
 
-## Alternatives
+## 备选方案
 
-### Clamp the remembered base bounds into the new display
+### 把记住的基础边界钳制进新显示器
 
-Rejected. It keeps the window on the target display but discards the drop
-position, which is the reported symptom rather than a fix for it.
+否决。它让窗口留在目标显示器上，但丢弃了落下位置——这正是被报告
+的症状，而不是对它的修复。
 
-### Skip reservation planning entirely on a display change
+### 显示器变化时完全跳过保留规划
 
-Rejected. The reservation would then be sized for the previous display's work
-area, so a narrower target display would leave the window wider than its work
-area.
+否决。那样保留的尺寸会按上一台显示器的工作区计算，因此更窄的目标
+显示器会让窗口比其工作区更宽。
 
-### Detect drags from pointer state instead of the move stream
+### 从指针状态而不是移动事件流检测拖拽
 
-Rejected for now. Electron exposes no drag-begin/drag-end pair for native
-window moves, and polling the pointer during a drag costs more than the
-pending-move marker it would replace.
+暂时否决。Electron 没有为原生窗口移动暴露拖拽开始/结束对，而在
+拖拽期间轮询指针的成本高于它要替代的待处理移动标记。
 
-### Attribute the drag with a time deadline
+### 用时间截止来归因拖拽
 
-Rejected. A deadline makes correctness depend on main-process scheduling: a
-busy main process, or a maximized window that defers its geometry past the
-deadline, would silently fall back to the buggy OS-adjusted path.
+否决。截止时间会让正确性取决于主进程调度：繁忙的主进程，或把几何
+推迟到截止时间之后的最大化窗口，都会静默地回退到有缺陷的
+OS-adjusted 路径。
 
-## References
+## 参考
 
 - `apps/desktop/electron/main/work-panel-window.ts`
 - `apps/desktop/electron/main/index.ts`

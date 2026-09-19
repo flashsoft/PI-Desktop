@@ -1,53 +1,47 @@
-# ADR 0046: Categorized process log files
+# ADR 0046: 分类进程日志文件
 
-- Status: Accepted; timing-specific clauses superseded by ADR 0212
-- Date: 2026-08-02
-- Related: [D082](../spec/08-meta/decisions-log.md) ·
+- 状态： 已接受；计时相关条款已被 ADR 0212 取代
+- 日期： 2026-08-02
+- 相关： [D082](../spec/08-meta/decisions-log.md) ·
   [D182](../spec/08-meta/decisions-log.md) ·
   [D183](../spec/08-meta/decisions-log.md) ·
   [ADR 0212](0212-remove-diagnostic-timing-log-streams.md) ·
-  [Logging and observability](../spec/03-runtime/09-logging-and-observability.md)
+  [日志与可观测性](../spec/03-runtime/09-logging-and-observability.md)
 
-## Context
+## 背景
 
-The M5 logger reduced unbounded growth by keeping app, host, and agent output
-in three rotating files. In practice, normal session activity, tool timing,
-provider diagnostics, and lifecycle noise still accumulated in the same file,
-which made a single failure expensive to trace. Child-process stderr also
-arrived in arbitrary chunks and Rust tracing colors were persisted as escape
-sequences.
+M5 日志器通过把 app、host 和 agent 输出保存在三个轮转文件中来限制无界增长。
+实践中，正常的会话活动、工具计时、provider 诊断和生命周期噪音仍会积累在同一
+个文件里，使单次故障的追踪代价很高。子进程 stderr 也以任意分块到达，且 Rust
+tracing 的颜色被以转义序列形式持久化。
 
-## Decision
+## 决策
 
-1. Keep `app`, `host`, and `agent` as the top-level local log channels, but
-   write each channel to a directory of focused category files:
-   `logs/<channel>/<category>.log`.
-2. Main-process call sites declare an explicit category. Host and agent stderr
-   uses marker-based classification; timing records always use `timing`, and
-   unknown output uses `runtime`.
-3. Add the category to every NDJSON record. The logger buffers child stderr by
-   line, decodes UTF-8 at the stream boundary, and strips ANSI control
-   sequences before writing.
-4. Apply the existing 5 MB / two rotated files policy independently to every
-   category file. Rotation and disk failures remain non-fatal. Existing flat
-   files are not deleted automatically.
+1. 保留 `app`、`host`、`agent` 作为顶层本地日志通道，但每个通道写入一个由聚
+   焦类别文件组成的目录：`logs/<channel>/<category>.log`。
+2. 主进程调用点声明显式类别。host 和 agent 的 stderr 使用基于标记的分类；
+   计时记录始终使用 `timing`，未知输出使用 `runtime`。
+3. 在每条 NDJSON 记录中加入类别。日志器按行缓冲子进程 stderr，在流边界解码
+   UTF-8，并在写入前剥离 ANSI 控制序列。
+4. 现有的 5 MB / 两个轮转文件策略独立应用于每个类别文件。轮转与磁盘故障仍
+   为非致命。现有的扁平文件不会被自动删除。
 
-## Consequences
+## 后果
 
-- A diagnostic investigation can open only the relevant session, tool,
-  timing, provider, or lifecycle stream instead of scanning a mixed file.
-- Timing records remain easy to grep at stable paths:
-  `host/timing.log` and `agent/timing.log`.
-- The logs folder contains more files, but each file has a bounded size and a
-  stable purpose. The app still exposes the same folder-opening action.
-- Older `app.log`, `host.log`, and `agent.log` files remain readable as legacy
-  history, but new records are written only to the categorized layout.
+- 诊断调查可以只打开相关的会话、工具、计时、provider 或生命周期流，而不是
+  扫描混合文件。
+- 计时记录仍可在稳定路径上轻松 grep：`host/timing.log` 与
+  `agent/timing.log`。
+- logs 文件夹包含更多文件，但每个文件大小有界且用途稳定。应用仍暴露同一个
+  打开文件夹操作。
+- 旧的 `app.log`、`host.log`、`agent.log` 文件仍可作为历史遗留读取，但新记
+  录只写入分类布局。
 
-## Alternatives rejected
+## 已拒绝的备选方案
 
-- **Keep one file per channel and rely on the `category` field:** preserves
-  the scan problem that motivated this change.
-- **Create one file per session:** produces unbounded file counts and leaves
-  boot, provider, and process failures without a natural session owner.
-- **Delete or migrate legacy files on startup:** risks losing diagnostic
-  history and makes a logging improvement capable of failing application boot.
+- **每通道保留一个文件并依赖 `category` 字段：** 保留了促使本次变更的扫描
+  问题。
+- **每个会话建一个文件：** 产生无界的文件数量，且让启动、provider 与进程故
+  障没有天然的会话归属。
+- **启动时删除或迁移遗留文件：** 有丢失诊断历史的风险，并让一项日志改进有
+  可能导致应用启动失败。

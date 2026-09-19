@@ -1,108 +1,92 @@
-# ADR 0054: Selectable command shell catalog and execution identity
+# ADR 0054: 可选择的命令 shell 目录与执行身份
 
-- Status: Accepted for implementation (timeout bounds in §4 amended by ADR 0167 / D329; the PowerShell 7 entry is added by ADR 0209 / D381)
-- Date: 2026-07-31
-- Baseline: `0.4.14`
-- Protocol: v9
-- Storage schema: v10
+- 状态： 已接受实现（§4 的超时边界经 ADR 0167 / D329 修订；PowerShell 7 条目由 ADR 0209 / D381 新增）
+- 日期： 2026-07-31
+- 基线： `0.4.14`
+- 协议： v9
+- 存储 schema: v10
 
-## Context
+## 背景
 
-The Bash tool currently resolves one Bash implementation per process. That
-prevents users from choosing the command language that matches their project
-and makes a changed executable hard to detect. The protocol name and Agent
-tool vocabulary must remain stable while shell selection becomes explicit and
-host-authoritative.
+Bash 工具目前每个进程解析一个 Bash 实现。这阻止用户选择与其项目匹配的命令
+语言，并使可执行文件的变更难以检测。协议名称与 Agent 工具词汇必须保持稳定，
+同时 shell 选择变得显式且由宿主权威决定。
 
-## Decision
+## 决策
 
-### 1. Host-owned shell catalog
+### 1. 宿主持有的 shell 目录
 
-Host-core exposes a platform-aware catalog with stable IDs:
+Host-core 暴露一个带稳定 ID 的平台感知目录：
 
-| ID | Shell | Discovery |
+| ID | Shell | 发现方式 |
 |---|---|---|
-| `windows-powershell` | in-box Windows PowerShell 5.1 | `powershell.exe`/native PowerShell on Windows |
-| `windows-pwsh` | PowerShell 7+ (side-by-side install) | `pwsh.exe` under `%ProgramFiles%\PowerShell\7` or on PATH |
-| `cmd` | Windows Command Prompt | `cmd.exe` on Windows |
-| `git-bash` | Git for Windows Bash | Git for Windows installation and PATH |
-| `bash` | Unix Bash | `/bin/bash`, `/usr/bin/bash`, or an approved PATH entry on macOS/Linux |
+| `windows-powershell` | 内置 Windows PowerShell 5.1 | `powershell.exe`/Windows 上的原生 PowerShell |
+| `windows-pwsh` | PowerShell 7+（并列安装） | `%ProgramFiles%\PowerShell\7` 下或 PATH 上的 `pwsh.exe` |
+| `cmd` | Windows 命令提示符 | Windows 上的 `cmd.exe` |
+| `git-bash` | Git for Windows Bash | Git for Windows 安装与 PATH |
+| `bash` | Unix Bash | macOS/Linux 上的 `/bin/bash`、`/usr/bin/bash` 或经批准的 PATH 条目 |
 
-The Windows catalog contains `windows-powershell`, `windows-pwsh`, `cmd`, and
-`git-bash`; the Unix catalog contains `bash`. The catalog does not accept an
-arbitrary renderer- or sidecar-supplied executable path. Windows PowerShell 5.1
-stays the platform default; `windows-pwsh` is selectable but never selected
-implicitly, so choosing it cannot change an existing user's shell by surprise.
+Windows 目录包含 `windows-powershell`、`windows-pwsh`、`cmd` 与 `git-bash`；
+Unix 目录包含 `bash`。目录不接受任意的渲染进程或 sidecar 提供的可执行文件
+路径。Windows PowerShell 5.1 保持平台默认；`windows-pwsh` 可选但绝不会被隐
+式选中，因此选择它不会意外地改变现有用户的 shell。
 
-Settings writes accept only an available ID for the current platform. Unknown,
-unavailable, and wrong-platform IDs are rejected. If a persisted ID later
-becomes unavailable, host-core intentionally selects the first available shell
-in the platform catalog and reports `fallback: true`; if none is available,
-Bash fails with `SHELL_NOT_FOUND`.
+设置写入只接受当前平台可用的 ID。未知、不可用与错误平台的 ID 被拒绝。如果
+持久化的 ID 后来变得不可用，host-core 有意选择平台目录中第一个可用的 shell
+并报告 `fallback: true`；如果都不可用，Bash 以 `SHELL_NOT_FOUND` 失败。
 
-### 2. Persisted default and stable identity
+### 2. 持久默认值与稳定身份
 
-The host persists one `defaultCommandShell` ID in app settings. Selection is
-allowed only from the available catalog and only while the affected session is
-idle. At turn launch, the runtime pins the effective shell ID and dialect. The
-execution request carries the pinned ID; host-core resolves the catalog again
-before spawn and rejects a changed effective ID or dialect with
-`COMMAND_SHELL_CHANGED`. This identity check is about the catalog selection,
-not executable path hashing. A runtime fallback is selected before the turn is
-pinned; execution never silently changes shell after that point.
+宿主在应用设置中持久化一个 `defaultCommandShell` ID。只允许从可用目录中选
+择，且只在受影响会话空闲时选择。轮次启动时，runtime 固定生效的 shell ID 与
+方言。执行请求携带固定的 ID；host-core 在 spawn 之前再次解析目录，并以
+`COMMAND_SHELL_CHANGED` 拒绝已改变的生效 ID 或方言。该身份校验针对的是目录
+选择，而不是可执行文件路径哈希。runtime 回退在轮次固定之前选定；执行在该
+点之后绝不静默更换 shell。
 
-### 3. Stable Bash protocol contract
+### 3. 稳定的 Bash 协议契约
 
-The Agent tool and host method remain `Bash` and `tools.execute`; shell choice
-is data on the request, not a new `PowerShell`, `Cmd`, or `GitBash` tool name.
-The command runs non-interactively in the originating session workspace with
-the selected shell's documented invocation form.
+Agent 工具与宿主方法保持为 `Bash` 与 `tools.execute`；shell 选择是请求上的
+数据，而不是新的 `PowerShell`、`Cmd` 或 `GitBash` 工具名。命令以所选 shell
+的文档化调用形式，在发起会话的 workspace 中非交互运行。
 
-Host-core streams stdout and stderr as separate ordered output events. The
-final tool result remains bounded and records whether either stream was
-truncated. No stream chunk may contain secrets or be attributed to another
-session/turn.
+Host-core 把 stdout 与 stderr 作为分离的有序输出事件流式传输。最终工具结果
+保持有界，并记录任一流是否被截断。任何流分块不得包含密钥，也不得归属于其
+他会话/轮次。
 
-### 4. Timeout and cancellation
+### 4. 超时与取消
 
-Every Bash execution has a mandatory 60-second default timeout. A caller may
-request a host-validated override only from 1 second through 300 seconds;
-missing values use exactly 60 seconds, and out-of-range values are rejected.
-Timeout and user abort terminate the complete process tree, not only the shell
-leader: Unix uses a process group and Windows uses a job/process-tree boundary.
-The host waits for shutdown, closes the stream, records the terminal outcome,
-and returns `TOOL_TIMEOUT` or `TURN_ABORTED` without leaving an orphan.
+每次 Bash 执行有强制的 60 秒默认超时。调用方只能在 1 秒到 300 秒之间请求
+经宿主校验的覆盖；缺失值恰好使用 60 秒，超出范围的值被拒绝。超时与用户中
+止终止完整进程树，而不仅是 shell 领头进程：Unix 使用进程组，Windows 使用
+作业/进程树边界。宿主等待关闭，关闭流，记录终结结果，并返回
+`TOOL_TIMEOUT` 或 `TURN_ABORTED`，不留下孤儿进程。
 
-## Consequences
+## 后果
 
-- Users can choose the command language once and keep that default across
-  sessions and restarts.
-- A changed effective shell selection cannot receive commands under stale
-  assumptions, while a persisted unavailable preference can recover through the
-  intentional catalog fallback.
-- Streaming makes long commands observable without weakening final result
-  limits.
-- The stable Bash protocol avoids multiplying tool schemas and compatibility
-  paths.
+- 用户一次选择命令语言，即可跨会话与重启保留该默认值。
+- 已改变的生效 shell 选择无法在过期假设下接收命令，而持久化的不可用偏好可
+  通过有意的目录回退恢复。
+- 流式传输让长命令可观测，而不削弱最终结果限制。
+- 稳定的 Bash 协议避免了工具 schema 与兼容性路径的倍增。
 
-## Alternatives rejected
+## 已拒绝的备选方案
 
-### Always use Bash
+### 永远使用 Bash
 
-Rejected because it excludes native Windows command workflows and makes the
-user's shell preference invisible.
+已拒绝，因为它排除了原生 Windows 命令工作流，并让用户的 shell 偏好不可
+见。
 
-### Let the caller provide an arbitrary executable path
+### 让调用方提供任意可执行文件路径
 
-Rejected because it bypasses catalog policy and makes identity validation and
-security review unreliable.
+已拒绝，因为它绕过目录策略，并使身份校验与安全评审不可靠。
 
-### Create one protocol tool per shell
+### 为每种 shell 创建一个协议工具
 
-Rejected because it breaks existing Bash skills and expands the permission and
-audit matrix without adding authority.
+已拒绝，因为它破坏现有的 Bash skill，并在不增加权威的情况下扩大权限与审
+计矩阵。
 
-## Related docs
+## 相关文档
 
 - `docs/adr/0053-plan-checkpoint-artifact-and-execution-epoch.md`
 - `docs/spec/03-runtime/01-ipc-protocol.md`

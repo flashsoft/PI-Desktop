@@ -1,4 +1,4 @@
-# ADR 0113: Persist the New Task empty slot immediately and deduplicate it by message count
+# ADR 0113: 立即持久化新建任务的空槽位并按消息数去重
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
@@ -6,67 +6,59 @@
 - **Related:** D088 · D093 · D305 · E2E-011b · E2E-011d · E2E-011e · E2E-011g
 - **Amended by:** ADR 0154 (first-frame empty reveal; reuse without a blocking list refresh)
 
-## Context
+## 背景
 
-ADR 0084 deferred session creation until the first prompt. That removed
-abandoned rows, but it also made the New Task action invisible in the sidebar
-and removed the scoped empty-session reuse behavior. The product now requires a
-real, immediately visible empty session while preserving one empty slot per
-project or temporary sidebar group.
+ADR 0084 将会话创建推迟到第一条 prompt。这消除了被放弃的行，但
+也使新建任务动作在侧边栏中不可见，并移除了按作用域的空会话复用
+行为。产品现在要求一个真实的、立即可见的空会话，同时保持每个项
+目或临时侧边栏分组只有一个空槽位。
 
-Titles cannot define emptiness because users may rename an empty session and
-the first message can produce a title independently. The host already stores
-the current transcript ordinal in `sessions.last_seq`, which is the current
-message count after append and rewrite operations.
+标题不能定义空性，因为用户可能重命名一个空会话，而第一条消息可
+以独立地产生标题。宿主已经在 `sessions.last_seq` 中存储当前
+transcript 序号，即追加和重写操作之后的当前消息数。
 
-## Decision
+## 决策
 
-When New Task is invoked for a project or the path-less Temporary group:
+为某个项目或无路径的临时分组调用新建任务时：
 
-1. Sort that group's non-archived sessions by `updatedAt` descending.
-2. If the most recent session is empty (`messageCount = 0` and the renderer
-   has no live rows, running turn, or submitted draft), select it and reveal
-   its empty transcript on the first frame. Selecting the already active row
-   is a no-op.
-3. Otherwise reveal the empty home on the first frame, create a real empty
-   session through `session.create`, and insert the returned summary into the
-   sidebar. Do not block on `session.list` or `session.get` (ADR 0154).
+1. 将该分组的非归档会话按 `updatedAt` 降序排序。
+2. 如果最近的会话为空（`messageCount = 0` 且渲染进程没有存活行、
+   运行中的轮次或已提交的草稿），选中它并在第一帧显示其空
+   transcript。选中已经活动的行是空操作。
+3. 否则在第一帧显示空主页，通过 `session.create` 创建一个真实的
+   空会话，并把返回的摘要插入侧边栏。不阻塞在 `session.list` 或
+   `session.get` 上（ADR 0154）。
 
-Renderer requests for the same group are serialized. This makes rapid repeated
-clicks observe the first completed empty slot instead of racing multiple
-`session.create` calls. Project paths remain normalized through the existing
-grouping helper, and path-less sessions use the same rule rather than a
-separate session type.
+同一分组的渲染进程请求被串行化。这使快速重复点击观察到第一个已
+完成的空槽位，而不是让多个 `session.create` 调用竞争。项目路径
+继续通过现有的分组助手归一化，无路径会话使用同一规则，而不是单
+独的会话类型。
 
-`SessionSummary.messageCount` is added to the shared IPC/session contract. The
-Rust host derives it from `sessions.last_seq`; no storage migration is needed
-and protocol v9 remains compatible because this is an additive session-summary
-field. Title heuristics remain presentation-only: the sidebar renders empty
-rows and the reuse decision never calls `isDefaultSessionTitle`.
+`SessionSummary.messageCount` 被加入共享的 IPC/会话契约。Rust 宿
+主从 `sessions.last_seq` 派生它；不需要存储迁移，协议 v9 保持兼
+容，因为这是一个新增的会话摘要字段。标题启发式保持为仅呈现：侧
+边栏渲染空行，而复用决策绝不调用 `isDefaultSessionTitle`。
 
-The app's startup home remains an unpersisted renderer draft so simply opening
-the application does not create a slot. Explicit New Task actions create or
-reuse the durable slot. A startup draft still materializes when a first prompt
-or pasted attachment needs a session.
+应用的启动主页保持为未持久化的渲染进程草稿，因此仅仅打开应用不
+会创建槽位。显式的新建任务动作创建或复用持久槽位。启动草稿仍在
+第一条 prompt 或粘贴的附件需要会话时实体化。
 
-## Consequences
+## 后果
 
-- New sessions are visible and selectable immediately, before the first user
-  message.
-- Repeated New Task clicks in one group are idempotent while different project
-  groups remain independent.
-- An older empty session can remain when a newer non-empty session is the
-  group's latest; the rule intentionally considers only that latest session.
-- Empty sessions persist until the user deletes or archives them.
-- Protocol v9 gains one additive summary field; storage schema v11 and host
-  ownership remain unchanged.
+- 新会话在第一条用户消息之前立即可见、可选中。
+- 同一分组中重复点击新建任务是幂等的，而不同项目分组保持独立。
+- 当分组中最新的是一个较新的非空会话时，较旧的空会话可能保留；
+  该规则刻意只考虑那个最新会话。
+- 空会话一直持久化，直到用户删除或归档它们。
+- 协议 v9 增加一个新增的摘要字段；存储 schema v11 和宿主所有权
+  保持不变。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- Keep the unpersisted draft from ADR 0084: rejected because the action has no
-  immediate sidebar presence and cannot provide a durable ready slot.
-- Continue using a default title as the empty predicate: rejected because a
-  manual rename changes presentation, not transcript state.
-- Add a host-side special `session.createOrReuse` RPC: rejected because the
-  existing renderer navigation boundary can enforce the requested grouping
-  rule without expanding the host method catalog.
+- 保留 ADR 0084 的未持久化草稿：被拒绝，因为该动作没有即时的侧
+  边栏存在，且无法提供持久的就绪槽位。
+- 继续用默认标题作为空性谓词：被拒绝，因为手动重命名改变的是呈
+  现，而不是 transcript 状态。
+- 添加宿主侧专用 `session.createOrReuse` RPC：被拒绝，因为现有的
+  渲染进程导航边界可以在不扩大宿主方法目录的情况下执行所请求的
+  分组规则。

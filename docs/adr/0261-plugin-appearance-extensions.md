@@ -1,22 +1,34 @@
-# ADR 0261: Plugin Appearance Extensions
+# ADR 0261：插件外观扩展
 
 ## Status
 
 Accepted for implementation.
 
-## Context
+## 背景
 
-Plugins can contribute static sanitized themes, but cannot safely vary a declared theme at runtime or offer a dedicated configuration surface. Letting plugin code inject CSS, renderer DOM, or arbitrary Settings routes would widen its authority and break host ownership of navigation and native window chrome.
+插件可以贡献静态的净化主题，但无法在运行时安全地改变已声明的主题，也
+无法提供专用的配置界面。让插件代码注入 CSS、渲染进程 DOM 或任意
+Settings 路由会放宽其权限，并破坏宿主对导航和原生窗口 chrome 的所有权。
 
-## Decision
+## 决策
 
-1. `ui.settings` is an independent permission. A loaded plugin holding it and `ui.theme` may contribute one validated data-only scenic destination.
-2. The host renders contributed items only in the **Extensions** group after all core Settings groups. Core ordering, search shell, titlebar and fallback navigation remain host-owned.
-3. The host renders every scenic Settings DOM node in its normal React tree. Plugins cannot contribute an entry document, DOM, styles, scripts, or actions.
-4. `pi.themes.setVariables(themeId, values)` requires `ui.theme`. It accepts values only for the caller's declared theme variables. The manifest declares one of `length` (`px`), finite `number`, strict hex `color`, or a fixed `select` value. The host rejects host-reserved names, undeclared keys, unsafe CSS fragments and cross-plugin ids.
-5. The host persists accepted values in plugin-private settings and serializes a separate host-generated variable rule after static sanitized theme CSS. Static `plugin-asset://` references remain valid; no runtime stylesheet, image, font, layout, filesystem or network authority is granted.
-6. Disable, uninstall, crash and reload remove every owned destination. If an active destination disappears, the renderer returns to General.
+1. `ui.settings` 是独立权限。持有它和 `ui.theme` 的已加载插件可以贡献
+   一个经过校验的纯数据情景目的地。
+2. 宿主只在所有核心 Settings 组之后的 **Extensions** 组中渲染贡献的
+   条目。核心排序、搜索外壳、标题栏和回退导航保持宿主持有。
+3. 宿主在其正常的 React 树中渲染每个情景 Settings DOM 节点。插件不能
+   贡献入口文档、DOM、样式、脚本或动作。
+4. `pi.themes.setVariables(themeId, values)` 需要 `ui.theme`。它只接受
+   调用方已声明主题变量的值。Manifest 声明 `length`（`px`）、有限
+   `number`、严格十六进制 `color` 或固定 `select` 值之一。宿主拒绝宿主
+   保留名、未声明的键、不安全的 CSS 片段和跨插件 id。
+5. 宿主把接受的值持久化在插件私有设置中，并在静态净化主题 CSS 之后
+   序列化一条单独的宿主生成变量规则。静态 `plugin-asset://` 引用保持
+   有效；不授予运行时样式表、图片、字体、布局、文件系统或网络权限。
+6. 禁用、卸载、崩溃和重载会移除每个拥有的目的地。如果活跃目的地消失，
+   渲染进程返回 General。
 
-## Consequences
+## 后果
 
-Theme packs can provide bounded controls such as a backdrop blur number without re-injecting stylesheet text. Settings extensions retain the existing plugin sandbox and lifecycle boundaries.
+主题包可以提供有界控件，例如背景模糊数值，而无需重新注入样式表文本。
+Settings 扩展保留现有的插件沙箱和生命周期边界。

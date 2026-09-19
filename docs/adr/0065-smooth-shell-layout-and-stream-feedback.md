@@ -1,74 +1,65 @@
-# ADR 0065: Smooth shell layout and stream feedback
+# ADR 0065: 平滑外壳布局与流式反馈
 
-- Status: Accepted for implementation
-- Date: 2026-08-07
-- Deciders: PI-Desktop core
-- Related: ADR 0033, ADR 0122, D146, D163, D255
+- 状态： 已接受实现
+- 日期： 2026-08-07
+- 决策者： PI-Desktop 核心
+- 相关： ADR 0033、ADR 0122、D146、D163、D255
 
-## Context
+## 背景
 
-The shell's sidebar and work panel already used enter/exit keyframes, but the
-keyframes changed only opacity and a small transform. Their flex allocations
-changed to the final width as soon as the element mounted, so MainChat moved
-before the first visible frame and moved back after the exit animation. This
-made panel and sidebar actions feel like a jump followed by a cosmetic fade.
+外壳的侧边栏与工作面板已使用进入/退出关键帧，但关键帧只改变不透明度和一个
+小变换。它们的 flex 分配在元素挂载时就变为最终宽度，所以 MainChat 在第一个
+可见帧之前就移动，并在退出动画之后移回。这让面板与侧边栏操作感觉像先跳一
+下，再做一次装饰性淡入淡出。
 
-Agent streams had a similar timing problem. Every `message_update` and
-`tool_update` replaced the renderer message array immediately, while the
-transcript rebuilt its grouped entry projection and follow-scroll work. A fast
-provider could therefore spend several updates in one frame on historical
-transcript work instead of presenting the newest tail smoothly.
+Agent 流有类似的时序问题。每个 `message_update` 与 `tool_update` 都立即替换
+渲染进程的消息数组，同时 transcript 重建其分组条目投影与跟随滚动工作。因此
+快速的 provider 可能在一帧内把多次更新花在历史 transcript 工作上，而不是平
+滑呈现最新的尾部。
 
-The docked composer also painted a full-width gradient veil over the lower
-transcript. The composer already reserves its measured height and owns an
-opaque elevated surface, so the veil added visual noise without carrying state.
+停靠 composer 还在 transcript 下部绘制了一条全宽渐变纱幕。composer 已经预
+留其测量高度并拥有一个不透明的抬升表面，所以纱幕只增加视觉噪音而不承载状
+态。
 
-## Decision
+## 决策
 
-1. Sidebar and work-panel mount/exit animations animate both `width` and
-   `flex-basis` from zero to the committed dock width, in addition to the
-   bounded opacity/transform feedback. The panel remains an in-flow fixed-width
-   column and the OS window reservation contract does not change.
-2. The renderer coalesces high-frequency `message_update` and `tool_update`
-   events by stream target until the next animation frame. Only the newest
-   event for each target is applied. Any non-stream control or terminal event
-   flushes the pending batch first, so lifecycle ordering and final states stay
-   synchronous.
-3. `ChatTranscript` uses React's deferred value for the heavy grouped-entry
-   projection and minimap input. Immediate controls, permission state, running
-   state, and terminal outcomes remain synchronous.
-4. The docked composer uses a transparent outer dock with bottom space reserved
-   by the transcript; the composer shell remains the only elevated surface.
-5. An activity group only receives terminal failure styling after its active
-   run settles. Intermediate error rows remain visible, but a provider/tool
-   retry does not make the whole still-running group look finished.
+1. 侧边栏与工作面板的挂载/退出动画除有界的不透明度/变换反馈外，还把
+   `width` 与 `flex-basis` 从零动画到承诺的停靠宽度。面板仍是文档流中的固
+   定宽度列，OS 窗口预留契约不变。
+2. 渲染进程按流目标合并高频 `message_update` 与 `tool_update` 事件，直到下
+   一个动画帧。每个目标只应用最新事件。任何非流的控制或终结事件先冲刷待决
+   批次，因此生命周期顺序与最终状态保持同步。
+3. `ChatTranscript` 对重型分组条目投影与 minimap 输入使用 React 的延迟值。
+   即时控件、权限状态、运行状态与终结结果保持同步。
+4. 停靠 composer 使用透明的外部停靠，底部空间由 transcript 预留；composer
+   外壳仍是唯一的抬升表面。
+5. 活动组只在其活跃运行完结后才获得终结失败样式。中间错误行保持可见，但
+   provider/工具重试不会让仍在运行的整个组看起来已结束。
 
-## Consequences
+## 后果
 
-- Opening and closing auxiliary columns now reflows MainChat continuously over
-  the bounded motion duration instead of jumping before the animation.
-- A stream may display the newest partial content one paint later when events
-  arrive faster than the display refreshes, but redundant intermediate payloads
-  are discarded and terminal events are never delayed.
-- Long transcripts still need a future true virtualization pass; this decision
-  reduces update pressure without changing message persistence or grouping.
-- Removing the dock veil makes the transcript surface visually quieter and
-  keeps the composer separation dependent on its measured layout and elevation.
+- 打开与关闭辅助列现在让 MainChat 在有界动画时长内连续重排，而不是在动画
+  之前跳动。
+- 当事件到达快于显示刷新时，流可能晚一帧显示最新的部分内容，但冗余的中间
+  负载被丢弃，终结事件从不延迟。
+- 长 transcript 仍需要未来一次真正的虚拟化；本决定在不改变消息持久化或分
+  组的情况下降低更新压力。
+- 移除停靠纱幕让 transcript 表面更安静，并保持 composer 分隔依赖其测量布
+  局与抬升。
 
-## Alternatives considered
+## 已考虑的备选方案
 
-### Transform-only dock animation
+### 仅变换的停靠动画
 
-Rejected because it leaves the flex allocation at its final value before the
-first painted frame, which is the source of the visible layout jump.
+已拒绝，因为它让 flex 分配在第一个绘制帧之前就处于最终值，这正是可见布局
+跳动的来源。
 
-### Overlay the work panel above MainChat
+### 把工作面板覆盖在 MainChat 之上
 
-Rejected for this change because the current frozen shell contract is a docked
-third column with a fixed committed width. Overlaying it would hide transcript
-content and require a broader responsive and accessibility decision.
+本次变更拒绝，因为当前冻结的外壳契约是带固定承诺宽度的停靠第三列。覆盖它
+会隐藏 transcript 内容，并需要更广泛的响应式与无障碍决策。
 
-### Debounce all agent events
+### 防抖所有 agent 事件
 
-Rejected because lifecycle, permission, planning, and terminal events need
-immediate ordering. Only replaceable partial stream updates are coalesced.
+已拒绝，因为生命周期、权限、规划与终结事件需要即时顺序。只有可替换的部分
+流更新被合并。

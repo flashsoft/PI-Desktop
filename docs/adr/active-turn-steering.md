@@ -1,45 +1,40 @@
-# ADR active-turn-steering: Bind Composer steering to the active durable turn
+# ADR active-turn-steering: 将输入框转向绑定到活跃的持久轮次
 
-- Status: Accepted
-- Date: 2026-09-12
-- Issue: https://github.com/vastsa/PI-Desktop/issues/164
+- 状态：已接受
+- 日期：2026-09-12
+- Issue：https://github.com/vastsa/PI-Desktop/issues/164
 
-## Context
+## 背景
 
-The Composer queues follow-ups, but cannot redirect a running turn. A second
-prompt is correctly rejected with `AGENT_BUSY`. pi-agent-core already supplies
-`Agent.steer`; Codex's [turn/steer contract](https://learn.chatgpt.com/docs/app-server#steer-an-active-turn)
-provides the expected-turn admission model.
+输入框（Composer）可以排队后续消息，但无法重定向一个正在运行的轮次。
+第二个提示会被正确地以 `AGENT_BUSY` 拒绝。pi-agent-core 已经提供了
+`Agent.steer`；Codex 的 [turn/steer 契约](https://learn.chatgpt.com/docs/app-server#steer-an-active-turn)
+提供了 expected-turn 准入模型。
 
-## Decision
+## 决策
 
-Keep Send/Enter as follow-up. Alt+Enter (Option+Enter on macOS) uses an additive
-`agent/steer` channel with `expectedTurnId`. The existing queue slice submits
-optimistic input and restores rejected drafts. The agent IPC handler reuses
-attachment validation against the running model and workspace; the sidecar
-rechecks the target after asynchronous preparation and calls `Agent.steer`.
+Send/Enter 保持为后续消息。Alt+Enter（macOS 上为 Option+Enter）使用一条
+增量添加的 `agent/steer` 通道，并携带 `expectedTurnId`。现有的队列切片
+乐观地提交输入，并恢复被拒绝的草稿。agent IPC 处理器复用针对运行中模型
+和工作区的附件校验；sidecar 在异步准备完成后重新检查目标，然后调用
+`Agent.steer`。
 
-Steering keeps the active configuration and durable turn. Started tools finish
-before the next model request consumes input. The runtime handles admission
-at its closing boundary and while awaiting delegates. Stop closes admission
-and retains accepted input as history without independently replaying it.
+转向保留活跃配置和持久轮次。已启动的工具先完成，下一次模型请求才会消费
+输入。运行时在轮次的收尾边界以及等待委派期间处理准入。Stop 关闭准入，
+并把已接受的输入保留为历史，而不独立重放它。
 
-The existing event-persistence module journals input through the outbox.
-`precedingAssistant` reserves an unfinished reply's position before the user
-row. Host append permits a terminal assistant to replace its own streaming
-reservation, retaining sequence and turn ownership; completed rows remain
-immutable on replay. Recovery updates the reservation in place. The persisted
-`UiMessage.steering` marker protects input from Smart Stop, including after
-renderer reload; no separate renderer submission registry is needed. Host
-provenance treats steering into a claimed collaboration delivery turn as extra
-human input: it must target that delivery's session, does not inherit the
-delivery's agent origin, and strips any client-supplied `session_message`
-(D597).
+现有的事件持久化模块通过 outbox 记录输入。`precedingAssistant` 在用户行
+之前为尚未完成的回复预留位置。Host 追加允许一个终止态的 assistant 替换
+自己的流式预留，同时保留顺序和轮次所有权；已完成的行在重放时保持不可变。
+恢复流程就地更新预留。持久化的 `UiMessage.steering` 标记保护输入不被
+Smart Stop 影响，包括渲染进程重载之后；不需要单独的渲染进程提交注册表。
+Host 来源判定把指向某个已被认领的协作交付轮次的转向视为额外的人类输入：
+它必须指向该交付所属的会话，不继承该交付的 agent 来源，并剥离任何客户端
+提供的 `session_message`（D597）。
 
-## Consequences and validation
+## 后果与验证
 
-No new provider transport, host protocol version, or storage migration is
-required. Streaming reservation updates are the sole exception to append-only
-message persistence. Existing regression suites cover surrounding behavior;
-E2E-AGENT-alt-enter-steers-active-turn specifies the full journey and remains
-Draft until rendered E2E validation is performed.
+不需要新的 provider 传输、host 协议版本或存储迁移。流式预留更新是
+仅追加消息持久化的唯一例外。现有回归套件覆盖周边行为；
+E2E-AGENT-alt-enter-steers-active-turn 描述了完整旅程，并在完成渲染态
+E2E 验证之前保持为 Draft。

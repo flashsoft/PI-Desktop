@@ -1,48 +1,42 @@
-# ADR 0058: Extensions Page Density and Theme-Readable Button Surfaces
+# ADR 0058: 扩展页密度与主题可读的按钮表面
 
-- **Status:** Accepted (IA amended by ADR 0112)
-- **Date:** 2026-08-05
-- **Decision:** D196
+- **状态：** 已接受（IA 经 ADR 0112 修订）
+- **日期：** 2026-08-05
+- **决定：** D196
 
-## Context
+## 背景
 
-The Extensions destination is a focused two-tab plugin surface: Installed and
-Marketplace. MCP, Skills, and Subagents are managed independently under
-Settings > Agent. The four-number
-overview band retained derived counts that were already represented by tab,
-group, and update states, consuming vertical space without adding a decision
-point. The shared button primitive also relied on gray-scale aliases and
-transparent text-mix fills, which made secondary actions and theme transitions
-too weak in dark mode.
+扩展目的地是一个聚焦的双标签插件界面：已安装与市场。MCP、Skills 与
+Subagents 在设置 > Agent 下独立管理。四数字概览带保留了已由标签、分组与更
+新状态表达的派生计数，消耗垂直空间却没有增加决策点。共享按钮原语还依赖灰
+阶别名与透明文本混合填充，使次级操作与主题切换在深色模式下过于微弱。
 
-## Decision
+## 决策
 
-1. Remove the numeric overview band and its four derived counters from the
-   Extensions page. Keep the two tabs, Installed and Marketplace, with relevant counts, installed
-   state groups, and pending-update alerts as the actionable hierarchy.
-2. Define shared primary and secondary buttons with semantic theme tokens:
-   primary buttons use `--ds-accent` and `--ds-bg-primary`; secondary buttons
-   use `--ds-bg-secondary`, `--ds-text-primary`, and `--ds-border-default`.
-   Hover states use `--ds-accent-hover` and `--ds-bg-tertiary`.
-3. Treat this as a renderer presentation change only. Plugin, MCP, skill,
-   marketplace, permission, host, protocol, and storage contracts do not
-   change.
+1. 从扩展页移除数字概览带及其四个派生计数器。保留已安装与市场两个标签，
+  以相关计数、已安装状态分组与待更新提醒作为可操作的层级。
+2. 用语义主题 token 定义共享的主按钮与次按钮：主按钮使用 `--ds-accent` 与
+   `--ds-bg-primary`；次按钮使用 `--ds-bg-secondary`、`--ds-text-primary` 与
+   `--ds-border-default`。悬停状态使用 `--ds-accent-hover` 与
+   `--ds-bg-tertiary`。
+3. 把这视为纯渲染进程呈现变更。插件、MCP、skill、市场、权限、宿主、协议与
+   存储契约不变。
 
-## Consequences
+## 后果
 
-- The page header and segmented control reach the useful content sooner and
-  preserve more space for extension rows, cards, and editors.
-- The source of truth for counts remains close to the surface it describes.
-- Primary and secondary actions have an opaque, theme-correct surface and a
-  visible semantic edge in both dark and light themes.
-- Any future overview summary must introduce a distinct action or decision
-  point rather than repeating tab or group state.
+- 页面头部与分段控件更快到达有用内容，并为扩展行、卡片与编辑器保留更多空
+  间。
+- 计数的事实来源保持靠近它所描述的界面。
+- 主次操作在深色与浅色主题下都有不透明的、主题正确的表面与可见的语义边
+  缘。
+- 未来任何概览摘要必须引入独立的操作或决策点，而不是重复标签或分组状
+  态。
 
-## Alternatives considered
+## 已考虑的备选方案
 
-- Keep the overview band and reduce it to two cards: rejected because it still
-  duplicates state and leaves the four-tab hierarchy uneven.
-- Fix only the Extensions page buttons: rejected because the shared `Button`
-  primitive is used across the app and the contrast defect is systemic.
-- Add hard-coded per-theme colors: rejected because it would bypass the
-  semantic token contract and make future theme changes harder.
+- 保留概览带并缩减为两张卡片：已拒绝，因为它仍复制状态，并让四标签层级不
+  均衡。
+- 只修扩展页按钮：已拒绝，因为共享 `Button` 原语在全应用使用，对比度缺陷
+  是系统性的。
+- 添加按主题硬编码的颜色：已拒绝，因为它会绕过语义 token 契约，并使未来
+  的主题变更更困难。

@@ -1,326 +1,325 @@
-# Architecture Decision Records
+# 架构决策记录（ADR）
 
-ADRs record decisions that should not silently change.
+ADR 记录那些不应被静默改变的决策。
 
-The [Chinese ADR entry](/adr/README) follows the same decision map and points to
-these records. Decision IDs, status, and the English record remain the source of
-truth for both locales.
+[中文版 ADR 入口](/adr/README) 遵循相同的决策地图，并指向这些记录。决策
+ID、状态和英文原文对两种语言环境都是事实来源。
 
-## Format
+## 格式
 
-Each ADR includes:
+每份 ADR 包含：
 
-- Status
-- Context
-- Decision
-- Consequences
-- Alternatives (optional)
+- 状态
+- 背景
+- 决策
+- 后果
+- 替代方案（可选）
 
 ## Index
 
-| ID | Title | Status |
+| ID | 标题 | 状态 |
 |---|---|---|
-| subagent-model-fallback | [Ordered subagent model fallback](subagent-model-fallback.md) | Accepted for implementation |
-| subagent-model-opt-in | [Separate Subagent Model Opt-In from Definition Pins](subagent-model-opt-in.md) | Accepted for implementation |
-| 0001 | Use Electron as the desktop shell | Accepted |
-| 0002 | Use the pi Agent Harness as the kernel | Accepted |
-| 0003 | Hybrid runtime — Rust host core + Node pi agent sidecar | Superseded in part |
-| 0004 | No remote Gateway in the MVP | Accepted |
-| 0005 | User-installable plugin system | Accepted |
-| 0006 | Postpone the plugin marketplace; build the local plugin runtime first | Accepted |
-| 0007 | Plugin distribution package format uses .piplug (zip) | Accepted |
-| 0008 | Plugin runtime targets isolation in a separate process | Accepted (Target) |
-| 0009 | English-first globalization | Accepted |
-| 0010 | Use Rust as backend host core | Accepted |
-| 0011 | Freeze host RPC, storage ownership, and mode defaults | Accepted |
-| 0012 | Universal provider/model coverage via pi-ai + OpenAI-compatible extensibility | Accepted |
-| 0013 | Consolidate settings navigation into four destinations | Superseded in part by 0026 |
-| 0014 | Adopt host-owned storage schema v2 | Accepted |
-| 0015 | Make settings content responsive to window width | Accepted |
-| 0016 | Organize the sidebar around retained multi-project tabs | Accepted |
-| 0017 | Remove composer workspace context rail | Accepted |
-| 0018 | Carry thinking mode through the complete session pipeline | Accepted |
-| 0019 | Work panel subsystems (embedded browser, git review, file browsing) | Superseded in part by 0108 |
-| 0020 | Configuration provider studio | Accepted |
-| 0021 | Platform application chrome | Superseded in part by 0025 |
-| 0022 | Application Update Delivery | Accepted |
-| 0023 | Independent Conversation Session Fork | Accepted |
-| 0024 | Composer Slash Commands and @ File References | Accepted |
-| 0025 | Keep Application Menus out of Windows/Linux Windows | Accepted |
-| 0026 | Move the Projects Index into Settings as an Archive | Superseded in part by 0036 |
-| 0027 | Make pi-ai authoritative for model metadata | Accepted |
-| 0028 | Scope work-panel runtime contexts to conversations | Accepted |
-| 0029 | Separate native-window and work-panel resize ownership | Superseded in part by 0032 |
-| 0030 | Turn-boundary context checkpoint compaction | Accepted |
-| 0031 | Keep composer prompt rows free of brand icons | Accepted |
-| 0032 | Reserve native width for the docked work panel | Accepted (amended by 0033 and 0122) |
-| 0033 | Internal-dock work panel (no native window expansion) | Superseded by 0122 |
-| 0034 | Merge the command palette into global search | Accepted |
-| 0035 | Surface the OS locale through the preload bridge | Accepted |
-| 0036 | Split Settings into AI and Shortcuts destinations | Accepted |
-| 0037 | Resolve project instructions in Electron main | Accepted |
-| 0038 | Bridge plugin-declared MCP servers in Electron main | Accepted |
-| 0039 | Activate plugin skills and ship plugin authoring as a first-party devkit | Accepted (skill delivery revised by D174) |
-| 0040 | Resident plugin services and the inter-plugin message bus | Accepted |
-| 0041 | Bound host runtime resources and decouple message persistence | Accepted |
-| 0042 | Message-scoped inline review cards | Superseded by 0043 |
-| 0043 | Message-owned review snapshots and guarded rollback | Accepted |
-| 0044 | Session-bound project instruction preflight | Accepted |
-| 0045 | Bash tool inherits the user's login-shell PATH | Accepted |
-| 0046 | Categorized process log files | Accepted |
-| 0047 | Context usage inspector with exact and estimated token sources | Accepted |
-| 0048 | Lazy per-turn tool activation | Accepted |
-| 0049 | Recover automatic context compaction failures with a retained tail | Accepted (preflight guard amended by ADR 0282) |
-| 0050 | Bounded provider stream recovery and diagnostics | Accepted |
-| 0051 | Isolate host RPC stdio from the Tokio blocking pool | Accepted |
-| 0052 | Plan operating state and approval boundary | Superseded by 0053 |
-| 0053 | Plan checkpoint artifact, approval, and execution epoch | Accepted for implementation |
-| 0054 | Selectable command shell catalog and execution identity | Accepted for implementation |
-| 0055 | Agent-only mode; Chat becomes an internal read-only profile | Superseded by 0052 / 0053 |
-| 0056 | User-owned MCP servers and skills, with a shared activation scope | Accepted |
-| 0057 | Permission-gated external paths and portable native search | Accepted for implementation |
-| 0058 | Extensions Page Density and Theme-Readable Button Surfaces | Accepted |
-| 0059 | Persist Composer Clipboard Files in Session Scratch | Accepted (amended 2026-09-14 for #138: prefer editable clipboard text over generated image copies) |
-| 0060 | Archive the Regenerate Branch Under the RPC Lock | Accepted |
-| 0061 | Imperceptible background context compaction | Accepted (amends 0030 / 0049; clauses 2/4/6/7/8 amended by 0064) |
-| 0062 | Bounded Subagents Behind a Task Tool | Accepted for implementation (`maxTurns` clause withdrawn by 0253) |
-| 0063 | A Managed Surface for Global Subagent Definitions | Accepted for implementation (`maxTurns` field withdrawn by 0253) |
-| 0064 | Codex-parity context compaction | Accepted (amends 0061 / 0030) |
-| 0065 | Smooth shell layout and stream feedback | Accepted for implementation |
-| 0066 | Empty home direct bottom composer | Accepted for implementation (amends D111) |
-| 0067 | ChatGPT-inspired empty-home starter guidance | Superseded by D206 |
-| 0068 | Add a keyboard entry point for the work panel | Accepted for implementation |
-| 0069 | Make native-tool path mistakes recoverable | Accepted for implementation |
-| 0070 | Separate Composer File-Reference Display from Prompt Serialization | Accepted for implementation |
-| 0071 | Adopt an Apple-Inspired Global Corner Hierarchy | Accepted for implementation |
-| 0072 | Add a global plugin launcher | Accepted for implementation |
-| 0073 | Stage next-turn composer configuration and preserve stopped throughput | Accepted for implementation |
-| 0074 | Native notification permission for plugins | Accepted |
-| 0075 | Manual reload for development-plugin permission ceilings | Accepted |
-| 0076 | Capture the Windows-reserved plugin launcher chord in host-core | Accepted |
-| 0077 | Add an interactive multi-question asktool | Accepted for implementation |
-| 0078 | Cross-platform tray-resident minimize | Accepted for implementation (amended by 0117, 0123, and tray-session-shortcuts) |
-| 0079 | Use VitePress for the bilingual documentation site | Accepted |
-| 0080 | Prewarm the global plugin launcher after boot | Accepted |
-| 0081 | Host-owned cross-platform plugin panel chrome | Accepted |
-| 0082 | Localized and page-adaptive plugin panel chrome | Accepted |
-| 0083 | Custom global UI font | Accepted |
-| 0084 | Defer new-task session creation until the first message | Accepted |
-| 0085 | Make the work panel shortcut a toggle | Accepted (amends 0068) |
-| 0086 | Keep macOS on the regular activation policy | Accepted |
-| 0087 | Replace textual Edit matching with a line-anchored, tag-verified contract | Accepted for implementation (amends 0043 / 0069) |
-| 0088 | Plugin file access is declared per mode, and deletion is recoverable | Accepted (continues 0008 D009) |
-| 0089 | Proactive Background Subagent Delegation | Accepted for implementation |
-| 0090 | User-Configurable Close Behavior with Close-to-Tray | Accepted for implementation |
-| 0091 | Route provider rate limits through bounded same-turn retry | Accepted (amends 0050) |
-| 0092 | Use a plugin-owned surface with a host window-control capsule | Accepted |
-| 0093 | Keep a strict 46px plugin drag band with a minimal capsule | Accepted |
-| 0094 | Admit one desktop instance per data directory | Accepted |
-| 0095 | Sign in with a vendor account instead of pasting an API key | Accepted for implementation |
-| 0096 | Flatten the Settings directory and colocate marketplace source configuration | Accepted |
-| 0097 | Place global defaults under the AI settings destination | Accepted |
-| 0098 | Treat every vendor OAuth account as an independent provider row | Accepted for implementation |
-| 0099 | Add titled visual clusters to the Settings directory | Accepted |
-| 0100 | Make builtin subagents inherit the parent permission mode | Accepted |
-| 0101 | Model-aware image attachment transport | Accepted |
-| 0102 | Publisher-owned plugin source with a Git-hosted artifact store | Accepted for implementation (supersedes 0006) |
-| 0103 | Compact context usage summary | Accepted (amends 0047) |
-| 0104 | Plugin-contributed work panel views | Accepted |
-| 0105 | Ship Files as a bundled plugin; keep Review in the host | Superseded by 0241 |
-| 0106 | Keep only five core builtin commands | Accepted |
-| 0107 | Make current-session task notification suppression atomic | Accepted |
-| 0108 | Remove the built-in interactive terminal | Accepted |
-| 0109 | Open Files entries with the OS-associated application | Accepted |
-| 0110 | Version the plugin panel chrome spacing contract | Accepted |
-| 0111 | Reveal Files in the OS File Manager | Accepted |
-| 0112 | Agent Capability Management Roots and Settings IA | Accepted |
-| 0113 | Persist the New Task empty slot immediately and deduplicate it by message count | Accepted |
-| 0114 | Persist Provider Model Bindings and Thinking Configuration | Accepted |
-| 0115 | Keep plugin clipboard history host-owned and in memory | Accepted (amended 2026-08-21) |
-| 0116 | Add OpenCode Go as a Fixed Provider Preset | Accepted (amended: session routing headers) |
-| 0117 | Preserve the Windows taskbar entry for native minimize | Accepted |
-| 0118 | Keep queued prompts renderer-owned and stop runs at turn boundaries | Accepted |
-| 0119 | Event-Driven Subagent Timeouts | Accepted for implementation (killing policy amended by 0166; `maxTurns` clauses withdrawn by 0253) |
-| 0120 | Bounded Session History Windows | Accepted |
-| 0121 | Keep Composer prompt enhancement one-shot and main-owned | Accepted (D447; issue #14 / #562) |
-| 0122 | Reserve native width while the work panel is visible | Superseded by 0151 |
-| 0123 | Use native taskbar minimize for Windows/Linux window controls | Accepted |
-| 0124 | Bind Temporary Sessions to Their Own Scratch Workspace | Accepted |
-| 0125 | Renderer Ships Derived Brand Marks and Minified Output | Accepted |
-| 0126 | Agent Capability Pages Are One Workbench That Can Author | Accepted (`maxTurns` clause withdrawn by 0253) |
-| 0127 | Transcript Layout Index and Identity-Based Truncation | Accepted |
-| 0128 | Share one bounded budget for transient provider failures | Accepted |
-| 0129 | The Subagent Idle Watchdog Bounds Silence, Not Slowness | Amended by 0166 (watchdogs no longer kill) |
-| 0130 | Bounded Mounted Transcript Window | Accepted |
-| 0131 | Spill Large Composer Text Pastes into Session Scratch | Accepted |
-| 0132 | Attribute cross-display window moves to the user | Accepted |
-| 0133 | Use models.dev as the primary model catalog with pi-ai fallback | Superseded by 0134 |
-| 0134 | Use models.dev as the sole model metadata source with a local snapshot | Accepted |
-| 0135 | Retry unchanged edited prompts | Accepted |
-| 0136 | Preserve the active task boundary across context compaction | Accepted |
-| 0137 | Retained Session Panes | Accepted (amends 0130 clauses 4/5) |
-| 0138 | Subagent Peer Messaging | Superseded by 0147 |
-| 0140 | Fold the Three Peer Tools Into One `Peer` Tool | Superseded by 0147 |
-| 0141 | Make Expanded Sidebar Width User-Resizable | Accepted |
-| 0142 | Allow non-loopback HTTP MCP endpoints with explicit risk disclosure | Accepted |
-| 0143 | Make Session Titles User-Renamable | Accepted |
-| 0144 | Allow User-Configured Thinking-Level Overrides | Accepted |
-| 0145 | Publish Native macOS Intel Artifacts | Accepted (amended by D353 / 0191) |
-| 0146 | Assign outer and inner work-panel resize ownership by boundary | Superseded by 0151 |
-| 0147 | A2A Protocol Stack for Subagent Coordination | Superseded by 0165 |
-| 0148 | Explicitly disable application keyboard shortcuts | Accepted |
-| 0149 | Calm transcript running-status motion | Accepted |
-| 0150 | Inline SVG empty-home agent mark | Superseded by 0152 |
-| 0151 | Keep the work panel inside the fixed application window | Accepted |
-| 0152 | Eight-frame empty-home mascot GIF | Accepted |
-| 0153 | Checkpoint the streaming reply beside the transcript | Accepted |
-| 0154 | Reveal the New Task empty destination before host IO | Accepted |
-| 0155 | Add Zhipu / Z.AI Named Endpoint Presets | Accepted |
-| 0156 | Simplify the Add-Provider Common Path | Accepted |
-| 0157 | Main-owned GitHub issue feedback | Accepted |
-| 0158 | Keep approval cards focused and remember the selected mode | Accepted |
-| 0159 | Generated plugin settings and plugin-local shortcuts | Accepted |
-| 0160 | Shipped locale registry and searchable language picker | Accepted (amended by 0182) |
-| 0161 | Searchable theme picker matching language | Accepted |
-| 0162 | Cross-session A2A addressing | Superseded by 0165 |
-| 0163 | Transcript File References Render as Previewable Chips | Accepted |
-| 0164 | Parent agents collaborate across conversations | Superseded by 0165 |
-| 0165 | Withdraw the A2A / Peer coordination stack | Accepted (supersedes 0147 / 0162 / 0164) |
-| 0166 | Parent-judged subagent lifetime | Accepted (amends 0089 / 0119 / 0129; fatal-error path amended by 0189; `maxTurns` backstop withdrawn by 0253) |
-| 0167 | Agent-chosen Bash timeout | Accepted (amends 0054 / D190 / D273) |
-| 0168 | Main-owned http(s)/mailto allowlist for `openExternal` | Accepted (amends 0109) |
-| 0169 | Classified file preview and live workspace events for plugin views | Accepted (amends 0104 / 0105 / 0109 / 0111) |
-| 0170 | Ship the work-panel browser as a bundled plugin over public CDP | Accepted (amends 0019 / 0104 / 0105) |
-| 0171 | Host-owned completed-turn token history | Accepted (amended by 0173) |
-| 0172 | Contained in-chat image display | Accepted (amends fs/read workspace-only clause) |
-| 0173 | Plugin-owned token usage dashboard | Accepted (amends 0171) |
-| 0174 | Host-owned plugin completions and session context | Accepted (amends D019) |
-| 0175 | Explain quiet active turns with live agent activity status | Accepted |
-| 0176 | Per-provider User-Agent override | Accepted (amends 0095 / 0156; header map superseded by 0178) |
-| 0177 | User-configurable outbound proxy | Accepted |
-| 0178 | Per-provider custom HTTP headers | Accepted (amends 0176 / 0095 / 0156) |
-| 0179 | Import model configuration from local agent stores | Accepted |
-| 0180 | Custom global UI type scale | Accepted |
-| 0181 | Main-owned picker capabilities | Accepted |
-| 0182 | Traditional Chinese shell locale | Accepted (amends 0160) |
-| 0183 | P0 international shell locales | Accepted (amends 0160 / 0182) |
-| 0184 | Dock the context usage inspector in the composer toolbar | Accepted (amends 0047 / 0103) |
-| 0185 | Korean shell locale | Accepted (amends 0160 / 0183) |
-| 0186 | Summarize First-Turn Session Titles with a Main-Owned One-Shot | Accepted |
-| 0187 | Focus-Aware Native Task Notifications | Accepted (amends 0107 / D117) |
-| 0188 | Preserve distinct credentials during model configuration import | Accepted (amends 0179 / D342) |
-| 0189 | Parent fatal error aborts leftover delegates | Accepted (amends 0166 / D328) |
-| 0190 | Host-gated large-file and dropped-file access | Accepted |
-| 0191 | Label Both macOS Release Architectures | Accepted (amends 0145 / D353) |
-| 0192 | Alias a configured model and make model ids copyable | Accepted (amends D266) |
-| 0193 | Last-request occupancy in the context inspector | Accepted (amends 0047 / 0103 / 0184) |
-| 0194 | Optional subagent thinking override | Accepted for implementation |
-| 0195 | Viewport-fixed work panel toggle | Accepted (amends 0068 / 0085) |
-| 0196 | Show provider retry causes in the active-turn status | Accepted (amends 0175) |
-| 0197 | Publish a Windows Portable Executable | Accepted (amends 0022 / D126) |
-| 0198 | Name every quiet interval on the live activity row | Accepted (amends 0175 / 0186) |
-| 0200 | Host-owned plugin session import and ownership API | Accepted |
-| 0201 | Explicit plugin project ids and host-owned session refresh | Accepted |
-| 0202 | Expose effective subagent thinking metadata | Accepted |
-| 0203 | Local MCP control plane for desktop operations | Accepted (amended by D372) |
-| 0204 | Explicit unsigned macOS first-launch helper | Accepted |
-| 0205 | Remote Agent Control uses a dedicated Host boundary | Accepted for implementation (post-MVP; amended by D374, D375, and D385) |
-| 0206 | Extend provider retries and show bounded progress | Accepted |
-| 0207 | Allow three same-path mutation recovery failures | Accepted (amends 0087 / D186) |
-| 0208 | Plugin desktop control requires native user consent | Accepted |
-| 0209 | PowerShell 7 as a selectable Windows command shell | Accepted (amends 0054 / D190; issue #151 / PR #191) |
-| 0210 | Subagent output-token cap | Accepted (extends 0062 / 0063; `maxTurns` clauses withdrawn by 0253; issue #171 / PR #193) |
-| 0211 | Plan-safe plugin actions for read-only inspection | Accepted (amends 0052 / 0053 / 0170; D384) |
-| 0212 | Remove diagnostic timing log streams | Accepted (amends 0046 / D183) |
-| 0213 | Persist the Host-owned turn queue in host-core | Accepted |
-| 0214 | Trusted extensions run in the Agent sidecar | Accepted (v1 implemented; amended by D388 / ADR 0215) |
-| 0215 | Agent extensions are a plugin contribution | Accepted (implemented) |
-| 0216 | Truncate regenerates under the RPC lock | Accepted (amends 0060 / 0127; issue #211) |
-| 0217 | Host stdout sender must not outlive serve | Accepted (amends 0216; issue #211) |
-| 0218 | Effective image-input overrides across Composer and transport | Accepted (amends 0101 / D243) |
-| 0219 | User-invoked Skills in the composer slash menu | Accepted (amends D123 / D174 / ADR 0024 / ADR 0039) |
-| 0220 | Keep Windows work-panel chrome single-purpose | Accepted (amends D154 / D357 / ADR 0195) |
-| 0221 | Render canonical thinking-level values without translation | Accepted (amends D369 / ADR 0202) |
-| 0222 | Native file and folder drops in the Composer | Accepted (amends ADR 0101 / D397) |
-| message-quotes-and-side-chats | Message quotes and renderer-owned side chats | Superseded by 0268 |
-| response-annotations | Response annotations as prompt attachments | Superseded by 0268 |
-| floating-annotation-index | Floating annotation index and source locations | Superseded by 0268 |
-| 0223 | Context Usage Display Preference | Accepted (amends 0184) |
-| 0224 | Right panel tab strip and data-driven add menu | Accepted (issue #229) |
-| 0225 | Restore deferred tools from effective session context | Accepted (issue #225) |
-| 0226 | Reserve chat width for composer controls | Accepted |
-| 0227 | Project group manual ordering | Accepted (amended by 0228) |
-| 0228 | Long-press the project title to reorder | Accepted (amended by 0229) |
-| 0229 | Press-and-move project title reorder | Accepted (amends 0228) |
-| 0230 | Skill ships with the Agent core tool set | Accepted (amends D174 / ADR 0048 / ADR 0219; issue #204) |
-| 0231 | Ideographic comma opens the composer slash menu | Accepted (amends D123 / D139 / ADR 0024; issue #65) |
-| 0232 | Keep macOS DMG opening guidance text-only | Accepted (amends D371 / ADR 0204) |
-| 0233 | Renderer-owned multi-folder project creation | Accepted (amends ADR 0011 / ADR 0016) |
-| 0234 | Keep project memory host-owned and path-scoped | Accepted |
-| 0235 | Preserve domain facades and enforce architecture budgets | Accepted |
-| 0236 | Restore archived projects when session import adds a bound session | Accepted |
-| 0237 | Keep Session Orchestration in an Official Plugin | Accepted |
-| 0238 | Prioritize MainChat in the three-column shell | Accepted (amends ADR 0226) |
-| 0239 | Host-owned session collaboration messages | Accepted (amends ADR 0237 / 0165 / 0213; amended by D446) |
-| 0240 | Independent session discovery and navigable collaboration projections | Accepted (amends ADR 0239) |
-| 0241 | Ship the file view as a vendored, updatable plugin | Accepted (supersedes ADR 0105; issue #304) |
-| 0242 | Delta-only coalesced streaming updates | Accepted (amends 0127 / 0130 / 0149 / 0153; issue #299) |
-| 0243 | Skill market public-HTTPS catalog fetch | Accepted (amends 0009; issue #287 / PR #290) |
-| 0244 | Bound dependency installation for imported extensions | Accepted |
-| 0245 | Harden the MCP market public-network boundary | Accepted |
-| 0246 | Opt-in subagent inheritance of the parent tool catalog | Accepted (amends 0062; issue #215 / PR #319) |
-| 0247 | Git clone accepts only syntactically public hosts | Accepted (amends home git clone; D416) |
-| 0248 | [Package theme assets and contributed window backgrounds](0248-plugin-theme-assets-and-window-background.md) | Accepted (issue #335) |
-| 0249 | ChatGPT-style logical project groups | Accepted (amends ADR 0233 / ADR 0234 / ADR 0016) |
-| 0261 | [Plugin Appearance Extensions](0261-plugin-appearance-extensions.md) | Accepted for implementation |
-| 0251 | [Deleting a project removes its owned sessions](0251-project-delete-with-owned-sessions.md) | Accepted |
-| global-sidebar-pins | [Show pinned conversations in a global sidebar section](global-sidebar-pins.md) | Accepted (amends ADR 0016; issue #306) |
-| 0250 | [Structured, bounded, and redacted process logs](0250-structured-bounded-redacted-process-logs.md) | Accepted for implementation |
-| 0262 | [Chat file references complete in main and open in the file view](0262-chat-file-refs-open-in-the-file-view.md) | Accepted (amends ADR 0163 / ADR 0241) |
-| 0263 | [Expose a project's folder roots and complete references across them](0263-project-folder-roots-for-plugin-views.md) | Accepted (amends ADR 0262; ADR 0249 §5) |
-| 0264 | [Host-mediated file actions follow the folder a view is browsing](0264-host-mediated-actions-follow-the-browsed-folder.md) | Accepted (amends ADR 0263; ADR 0249 §5) |
-| active-turn-steering | Bind Composer steering to the active durable turn | Accepted (active-turn-steering; issue #164) |
-| 0252 | Host turn-end event for plugins | Accepted (D422) |
-| 0253 | [Remove the subagent turn limit](0253-remove-subagent-turn-limit.md) | Accepted (supersedes the `maxTurns` clauses of 0062 / 0063 / 0119 / 0126 / 0166 / 0210) |
-| 0254 | [Continue native Pi sessions in their canonical JSONL](0254-native-pi-session-continuation.md) | Accepted (amends baseline D007; D421) |
-| 0257 | [Host-mediated real-time capabilities for plugins](0257-plugin-real-time-capabilities.md) | Accepted for implementation |
-| 0258 | [Trusted extension custom agents](0258-trusted-extension-custom-agents.md) | Accepted for implementation (D426; issue #401) |
-| 0259 | [Plugin-declared providers are Host-owned rows](0259-plugin-declared-providers.md) | Accepted for implementation (D427) |
-| 0255 | [Theme assets are absolute paths](0255-theme-assets-by-absolute-path.md) | Accepted |
-| 0256 | [Preserve DeepSeek reasoning across context compaction](0256-deepseek-reasoning-across-compaction.md) | Accepted |
-| 0260 | [Plugin runtime theme APIs and sidebar image token](0260-plugin-runtime-theme-apis.md) | Accepted for implementation |
-| 0265 | [Priority block and row actions for the Host-owned turn queue](0265-turn-queue-priority-block-and-row-actions.md) | Accepted for implementation (D429; amends ADR 0213 / 0118) |
-| session-content-search | [Discover sessions by indexed message text](session-content-search.md) | Accepted |
-| transcript-reading-ownership | [Share renderer history and search views](transcript-reading-ownership.md) | Accepted |
-| 0266 | [Plugin fs roots follow the calling session](0266-plugin-fs-root-follows-the-calling-session.md) | Accepted (D093) |
-| tray-session-shortcuts | [Bounded session navigation in the native tray](tray-session-shortcuts.md) | Accepted (amends ADR 0078; issue #293) |
-| 0267 | [Plugin labels follow the app language](0267-plugin-labels-follow-the-app-language.md) | Accepted (amends 0160; ADR 0182) |
-| 0270 | [Builtin subagents can be switched off](0270-builtin-subagents-can-be-disabled.md) | Accepted for implementation (amends ADR 0063; ADR 0112) |
-| 0271 | [Rebuild the shared provider transport after repeated unanswered failures](0271-provider-transport-rebuild.md) | Accepted for implementation (issue #234) |
-| 0269 | [Move capability documents between the global and project levels](0269-capability-level-transfer.md) | Accepted for implementation (amends ADR 0112) |
-| 0268 | Remove quotes, annotations, and side chats | Accepted (supersedes message-quotes-and-side-chats / response-annotations / floating-annotation-index) |
-| 0272 | [Judge a public-network address on the route the request will dial](0272-connection-time-public-network-route.md) | Accepted for implementation (amends ADR 0243; issue #419 / PR #473) |
-| 0273 | [Git checkout as a Create project source](0273-git-checkout-create-project-source.md) | Accepted for implementation (amends ADR 0233; ADR 0247) |
-| 0274 | [A development plugin is reviewed before it is loaded](0274-development-plugin-permission-review.md) | Accepted for implementation (amends ADR 0005) |
-| 0275 | [A floating widget placement for plugin panels](0275-plugin-panel-floating-widget.md) | Accepted for implementation (amends ADR 0093 §4; ADR 0092 / ADR 0110) |
-| 0276 | [Official plugin channel and backup channels](0276-official-plugin-channel-and-backup-channels.md) | Accepted for implementation (amends ADR 0102; D442) |
-| 0277 | [Draggable chat content width](0277-draggable-chat-content-width.md) | Accepted (D439) |
-| 0278 | [Canonical application ID `net.aiuo.pi-desktop`](0278-canonical-application-id.md) | Accepted (D443; amends D141 / D371 / ADR 0204; issue #524) |
-| 0279 | [Resumable subagent delegations](0279-resumable-subagent-delegations.md) | Accepted for implementation (amends ADR 0062; ADR 0089; issue #513) |
-| 0280 | [Plugin-owned UI localizes from the host locale](0280-plugin-owned-ui-localizes-from-host-locale.md) | Accepted (amends ADR 0267; ADR 0159) |
-| 0281 | [Host speech capability](0281-host-speech-capability.md) | Accepted for implementation (amends ADR 0257) |
-| 0282 | [Retry and right-size the compaction summary before retained-tail recovery](0282-compaction-summary-retry-and-sizing.md) | Accepted (amends ADR 0049; issue #543) |
-| 0283 | [Remote MCP server OAuth 2.1 authentication](0283-remote-mcp-oauth.md) | Accepted |
-| 0284 | [Headless runtime boundary in `packages/host-runtime`](0284-headless-runtime-boundary.md) | Accepted for implementation (D447; ADR 0205 R2 prerequisite) |
-| 0285 | [`RACP-WS` transport in `packages/racp`](0285-racp-ws-transport.md) | Accepted for implementation (D448; ADR 0205 R2) |
-| 0286 | [Remote-host desktop kernel](0286-remote-host-desktop-kernel.md) | Accepted for implementation (D449; ADR 0205 R2) |
-| 0287 | [Host-rendered plugin scenic Settings surfaces](0287-host-rendered-plugin-scenic-settings-surfaces.md) | Accepted for implementation |
-| 0288 | [Package-local theme assets remain available](0288-package-local-theme-assets.md) | Accepted for implementation (amends ADR 0255) |
-| 0289 | [Signed macOS GitHub Releases and in-app update delivery](0289-signed-macos-github-releases.md) | Accepted (D450; amends ADR 0022 / 0145 / 0191 / 0204 / D078) |
-| 0290 | [Restore resizable sidebar width with collapse-below-threshold](0290-resizable-sidebar-collapse-threshold.md) | Accepted (D451; amends ADR 0141 / ADR 0238) |
-| 0291 | [Remove the speech settings UI](0291-remove-speech-settings-ui.md) | Accepted (amends ADR 0281) |
-| 0292 | [SSH bootstrap for remote hosts](0292-ssh-remote-host-bootstrap.md) | Accepted for implementation (D453; ADR 0205 R2b, extends ADR 0286) |
-| 0293 | [SSH password authentication for the remote-host bootstrap](0293-ssh-password-authentication.md) | Accepted (D454; amends ADR 0292) |
-| 0294 | [Project archive is a list + inspector workbench](0294-project-archive-list-inspector.md) | Accepted (D455; amends D267 / D168) |
-| 0295 | [Session thinking-parameter omission](0295-session-thinking-parameter-omission.md) | Accepted (D456; amends ADR 0194 / ADR 0144 / ADR 0221) |
-| turn-process-and-thinking-display | [Turn process and thinking presentation](turn-process-and-thinking-display.md) | Accepted |
+| subagent-model-fallback | [有序的 subagent 模型回退](subagent-model-fallback.md) | 已接受，待实现 |
+| subagent-model-opt-in | [将 subagent 模型选入与定义 pin 分离](subagent-model-opt-in.md) | 已接受，待实现 |
+| 0001 | 使用 Electron 作为桌面外壳 | 已接受 |
+| 0002 | 使用 pi Agent Harness 作为内核 | 已接受 |
+| 0003 | 混合运行时 —— Rust host 核心 + Node pi agent sidecar | 部分被取代 |
+| 0004 | MVP 中不做远程 Gateway | 已接受 |
+| 0005 | 用户可安装的插件系统 | 已接受 |
+| 0006 | 推迟插件市场；先构建本地插件运行时 | 已接受 |
+| 0007 | 插件分发包格式使用 .piplug（zip） | 已接受 |
+| 0008 | 插件运行时的目标是在独立进程中隔离 | 已接受（目标） |
+| 0009 | 英文优先的全球化 | 已接受 |
+| 0010 | 使用 Rust 作为后端 host 核心 | 已接受 |
+| 0011 | 冻结 host RPC、存储所有权和模式默认值 | 已接受 |
+| 0012 | 通过 pi-ai + OpenAI 兼容扩展实现通用 provider/模型覆盖 | 已接受 |
+| 0013 | 把设置导航整合为四个目的地 | 部分被 0026 取代 |
+| 0014 | 采用 host 所有的存储 schema v2 | 已接受 |
+| 0015 | 让设置内容响应窗口宽度 | 已接受 |
+| 0016 | 围绕保留的多项目标签页组织侧栏 | 已接受 |
+| 0017 | 移除输入框的工作区上下文侧栏 | 已接受 |
+| 0018 | 让思考模式贯穿完整的会话管线 | 已接受 |
+| 0019 | 工作面板子系统（内嵌浏览器、git 审查、文件浏览） | 部分被 0108 取代 |
+| 0020 | 配置 provider 工作室 | 已接受 |
+| 0021 | 平台应用外壳 | 部分被 0025 取代 |
+| 0022 | 应用更新交付 | 已接受 |
+| 0023 | 独立的对话会话分叉 | 已接受 |
+| 0024 | 输入框斜杠命令与 @ 文件引用 | 已接受 |
+| 0025 | 让应用菜单远离 Windows/Linux 窗口 | 已接受 |
+| 0026 | 把项目索引作为归档移入设置 | 部分被 0036 取代 |
+| 0027 | 让 pi-ai 成为模型元数据的权威来源 | 已接受 |
+| 0028 | 把工作面板运行时上下文限定到会话 | 已接受 |
+| 0029 | 分离原生窗口与工作面板的尺寸调整所有权 | 部分被 0032 取代 |
+| 0030 | 轮次边界的上下文检查点压缩 | 已接受 |
+| 0031 | 让输入框提示行不含品牌图标 | 已接受 |
+| 0032 | 为停靠的工作面板预留原生宽度 | 已接受（经 0033 和 0122 修订） |
+| 0033 | 内部停靠的工作面板（不扩展原生窗口） | 已被 0122 取代 |
+| 0034 | 把命令面板并入全局搜索 | 已接受 |
+| 0035 | 通过 preload 桥暴露 OS 语言环境 | 已接受 |
+| 0036 | 把设置拆分为 AI 和快捷键两个目的地 | 已接受 |
+| 0037 | 在 Electron 主进程中解析项目指令 | 已接受 |
+| 0038 | 在 Electron 主进程中桥接插件声明的 MCP 服务器 | 已接受 |
+| 0039 | 激活插件技能，并以第一方 devkit 交付插件创作 | 已接受（技能交付经 D174 修订） |
+| 0040 | 常驻插件服务与插件间消息总线 | 已接受 |
+| 0041 | 约束 host 运行时资源并解耦消息持久化 | 已接受 |
+| 0042 | 消息级内联审查卡片 | 已被 0043 取代 |
+| 0043 | 消息所有的审查快照与受保护的回滚 | 已接受 |
+| 0044 | 会话绑定的项目指令预检 | 已接受 |
+| 0045 | Bash 工具继承用户登录 shell 的 PATH | 已接受 |
+| 0046 | 分类的进程日志文件 | 已接受 |
+| 0047 | 带有精确与估算 token 来源的上下文用量检查器 | 已接受 |
+| 0048 | 按轮次惰性激活工具 | 已接受 |
+| 0049 | 用保留尾部恢复自动上下文压缩失败 | 已接受（预检守卫经 ADR 0282 修订） |
+| 0050 | 有界的 provider 流恢复与诊断 | 已接受 |
+| 0051 | 把 host RPC stdio 与 Tokio 阻塞池隔离 | 已接受 |
+| 0052 | 计划运行状态与审批边界 | 已被 0053 取代 |
+| 0053 | 计划检查点产物、审批与执行纪元 | 已接受，待实现 |
+| 0054 | 可选择的命令 shell 目录与执行身份 | 已接受，待实现 |
+| 0055 | 仅 Agent 模式；Chat 变为内部只读配置 | 已被 0052 / 0053 取代 |
+| 0056 | 用户所有的 MCP 服务器与技能，共享激活范围 | 已接受 |
+| 0057 | 权限门控的外部路径与可移植原生搜索 | 已接受，待实现 |
+| 0058 | 扩展页面密度与主题可读的按钮表面 | 已接受 |
+| 0059 | 在会话 scratch 中持久化输入框剪贴板文件 | 已接受（2026-09-14 针对 #138 修订：优先可编辑的剪贴板文本而非生成的图片副本） |
+| 0060 | 在 RPC 锁下归档重新生成分支 | 已接受 |
+| 0061 | 无感知后台上下文压缩 | 已接受（修订 0030 / 0049；第 2/4/6/7/8 条经 0064 修订） |
+| 0062 | 任务工具之后的有界 subagent | 已接受，待实现（`maxTurns` 条款已被 0253 撤回） |
+| 0063 | 全局 subagent 定义的受管界面 | 已接受，待实现（`maxTurns` 字段已被 0253 撤回） |
+| 0064 | 与 Codex 对齐的上下文压缩 | 已接受（修订 0061 / 0030） |
+| 0065 | 顺滑的外壳布局与流式反馈 | 已接受，待实现 |
+| 0066 | 空主页直达底部输入框 | 已接受，待实现（修订 D111） |
+| 0067 | 受 ChatGPT 启发的空主页起步引导 | 已被 D206 取代 |
+| 0068 | 为工作面板增加键盘入口 | 已接受，待实现 |
+| 0069 | 让原生工具的路径错误可恢复 | 已接受，待实现 |
+| 0070 | 将输入框文件引用展示与提示序列化分离 | 已接受，待实现 |
+| 0071 | 采用 Apple 风格的全局圆角层级 | 已接受，待实现 |
+| 0072 | 增加全局插件启动器 | 已接受，待实现 |
+| 0073 | 预排下一轮输入框配置并保留已停止的吞吐量 | 已接受，待实现 |
+| 0074 | 插件的原生通知权限 | 已接受 |
+| 0075 | 开发插件权限上限的手动重载 | 已接受 |
+| 0076 | 在 host-core 中捕获 Windows 保留的插件启动器组合键 | 已接受 |
+| 0077 | 增加交互式多问题询问工具 | 已接受，待实现 |
+| 0078 | 跨平台托盘常驻最小化 | 已接受，待实现（经 0117、0123 和 tray-session-shortcuts 修订） |
+| 0079 | 使用 VitePress 构建双语文档站 | 已接受 |
+| 0080 | 启动后预热全局插件启动器 | 已接受 |
+| 0081 | host 所有的跨平台插件面板外壳 | 已接受 |
+| 0082 | 本地化且页面自适应的插件面板外壳 | 已接受 |
+| 0083 | 自定义全局 UI 字体 | 已接受 |
+| 0084 | 把新任务会话创建推迟到第一条消息 | 已接受 |
+| 0085 | 让工作面板快捷键成为切换开关 | 已接受（修订 0068） |
+| 0086 | macOS 保持常规激活策略 | 已接受 |
+| 0087 | 用行锚定、带 tag 校验的契约取代文本 Edit 匹配 | 已接受，待实现（修订 0043 / 0069） |
+| 0088 | 插件文件访问按模式声明，删除可恢复 | 已接受（延续 0008 D009） |
+| 0089 | 主动的后台 subagent 委派 | 已接受，待实现 |
+| 0090 | 用户可配置的关闭行为与关闭到托盘 | 已接受，待实现 |
+| 0091 | 把 provider 限流路由进有界的同轮重试 | 已接受（修订 0050） |
+| 0092 | 使用插件所有的表面与 host 窗口控制胶囊 | 已接受 |
+| 0093 | 保持严格的 46px 插件拖放带与最小胶囊 | 已接受 |
+| 0094 | 每个数据目录只允许一个桌面实例 | 已接受 |
+| 0095 | 用厂商账号登录代替粘贴 API key | 已接受，待实现 |
+| 0096 | 扁平化设置目录并把市场来源配置就近放置 | 已接受 |
+| 0097 | 把全局默认值放在 AI 设置目的地之下 | 已接受 |
+| 0098 | 把每个厂商 OAuth 账号视为独立的 provider 行 | 已接受，待实现 |
+| 0099 | 为设置目录增加带标题的视觉分组 | 已接受 |
+| 0100 | 让内置 subagent 继承父级权限模式 | 已接受 |
+| 0101 | 模型感知的图片附件传输 | 已接受 |
+| 0102 | 发布者所有的插件来源与 Git 托管的产物仓库 | 已接受，待实现（取代 0006） |
+| 0103 | 紧凑的上下文用量摘要 | 已接受（修订 0047） |
+| 0104 | 插件贡献的工作面板视图 | 已接受 |
+| 0105 | 把 Files 作为捆绑插件交付；Review 保留在 host 中 | 已被 0241 取代 |
+| 0106 | 只保留五个核心内置命令 | 已接受 |
+| 0107 | 让当前会话的任务通知抑制原子化 | 已接受 |
+| 0108 | 移除内置交互式终端 | 已接受 |
+| 0109 | 用 OS 关联应用打开 Files 条目 | 已接受 |
+| 0110 | 为插件面板外壳间距契约版本化 | 已接受 |
+| 0111 | 在 OS 文件管理器中显示 Files | 已接受 |
+| 0112 | Agent 能力管理根与设置信息架构 | 已接受 |
+| 0113 | 立即持久化"新任务"空槽并按消息数去重 | 已接受 |
+| 0114 | 持久化 provider 模型绑定与思考配置 | 已接受 |
+| 0115 | 让插件剪贴板历史保持 host 所有且仅存于内存 | 已接受（2026-08-21 修订） |
+| 0116 | 增加 OpenCode Go 作为固定 provider 预设 | 已接受（修订：会话路由头部） |
+| 0117 | 为原生最小化保留 Windows 任务栏入口 | 已接受 |
+| 0118 | 排队提示保持渲染进程所有，并在轮次边界停止运行 | 已接受 |
+| 0119 | 事件驱动的 subagent 超时 | 已接受，待实现（杀死策略经 0166 修订；`maxTurns` 条款已被 0253 撤回） |
+| 0120 | 有界的会话历史窗口 | 已接受 |
+| 0121 | 保持输入框提示增强为一次性且 main 所有 | 已接受（D447；issue #14 / #562） |
+| 0122 | 工作面板可见时预留原生宽度 | 已被 0151 取代 |
+| 0123 | Windows/Linux 窗口控制使用原生任务栏最小化 | 已接受 |
+| 0124 | 把临时会话绑定到它们自己的 scratch 工作区 | 已接受 |
+| 0125 | 渲染进程交付派生品牌标识与压缩产物 | 已接受 |
+| 0126 | Agent 能力页面是一个可创作的工作台 | 已接受（`maxTurns` 条款已被 0253 撤回） |
+| 0127 | 转录布局索引与基于身份的截断 | 已接受 |
+| 0128 | 临时 provider 失败共享一个有界预算 | 已接受 |
+| 0129 | subagent 空闲看门狗约束沉默而非缓慢 | 经 0166 修订（看门狗不再杀死） |
+| 0130 | 有界的已挂载转录窗口 | 已接受 |
+| 0131 | 把大段输入框文本粘贴溢写到会话 scratch | 已接受 |
+| 0132 | 把跨显示器的窗口移动归因于用户 | 已接受 |
+| 0133 | 以 models.dev 为主要模型目录并以 pi-ai 兜底 | 已被 0134 取代 |
+| 0134 | 以 models.dev 为唯一模型元数据来源并保留本地快照 | 已接受 |
+| 0135 | 重试未改动的已编辑提示 | 已接受 |
+| 0136 | 跨上下文压缩保留活跃任务边界 | 已接受 |
+| 0137 | 保留的会话窗格 | 已接受（修订 0130 第 4/5 条） |
+| 0138 | subagent 对等消息 | 已被 0147 取代 |
+| 0140 | 把三个对等工具折叠为一个 `Peer` 工具 | 已被 0147 取代 |
+| 0141 | 让展开的侧栏宽度可由用户调整 | 已接受 |
+| 0142 | 允许带显式风险披露的非回环 HTTP MCP 端点 | 已接受 |
+| 0143 | 让会话标题可由用户重命名 | 已接受 |
+| 0144 | 允许用户配置的思考级别覆盖 | 已接受 |
+| 0145 | 发布原生 macOS Intel 产物 | 已接受（经 D353 / 0191 修订） |
+| 0146 | 按边界分配工作面板外侧与内侧的尺寸调整所有权 | 已被 0151 取代 |
+| 0147 | 用于 subagent 协作的 A2A 协议栈 | 已被 0165 取代 |
+| 0148 | 显式禁用应用键盘快捷键 | 已接受 |
+| 0149 | 平静的转录运行状态动效 | 已接受 |
+| 0150 | 内联 SVG 空主页 agent 标识 | 已被 0152 取代 |
+| 0151 | 把工作面板保留在固定应用窗口内 | 已接受 |
+| 0152 | 八帧空主页吉祥物 GIF | 已接受 |
+| 0153 | 在转录旁为流式回复做检查点 | 已接受 |
+| 0154 | 在 host IO 之前揭示"新任务"空目的地 | 已接受 |
+| 0155 | 增加智谱 / Z.AI 命名端点预设 | 已接受 |
+| 0156 | 简化添加 provider 的常用路径 | 已接受 |
+| 0157 | main 所有的 GitHub issue 反馈 | 已接受 |
+| 0158 | 让审批卡片保持聚焦并记住所选模式 | 已接受 |
+| 0159 | 生成式插件设置与插件本地快捷键 | 已接受 |
+| 0160 | 随附语言环境注册表与可搜索的语言选择器 | 已接受（经 0182 修订） |
+| 0161 | 与语言匹配的可搜索主题选择器 | 已接受 |
+| 0162 | 跨会话 A2A 寻址 | 已被 0165 取代 |
+| 0163 | 转录文件引用渲染为可预览的 chip | 已接受 |
+| 0164 | 父 agent 跨会话协作 | 已被 0165 取代 |
+| 0165 | 撤回 A2A / Peer 协作栈 | 已接受（取代 0147 / 0162 / 0164） |
+| 0166 | 由父级判定的 subagent 生命周期 | 已接受（修订 0089 / 0119 / 0129；致命错误路径经 0189 修订；`maxTurns` 兜底已被 0253 撤回） |
+| 0167 | 由 agent 选择的 Bash 超时 | 已接受（修订 0054 / D190 / D273） |
+| 0168 | main 所有的 `openExternal` http(s)/mailto 白名单 | 已接受（修订 0109） |
+| 0169 | 插件视图的分类文件预览与实时工作区事件 | 已接受（修订 0104 / 0105 / 0109 / 0111） |
+| 0170 | 把工作面板浏览器作为捆绑插件通过公共 CDP 交付 | 已接受（修订 0019 / 0104 / 0105） |
+| 0171 | host 所有的已完成轮次 token 历史 | 已接受（经 0173 修订） |
+| 0172 | 受约束的聊天内图片展示 | 已接受（修订 fs/read 仅工作区条款） |
+| 0173 | 插件所有的 token 用量仪表盘 | 已接受（修订 0171） |
+| 0174 | host 所有的插件补全与会话上下文 | 已接受（修订 D019） |
+| 0175 | 用实时 agent 活动状态解释安静的活跃轮次 | 已接受 |
+| 0176 | 按 provider 的 User-Agent 覆盖 | 已接受（修订 0095 / 0156；头部映射已被 0178 取代） |
+| 0177 | 用户可配置的出站代理 | 已接受 |
+| 0178 | 按 provider 的自定义 HTTP 头部 | 已接受（修订 0176 / 0095 / 0156） |
+| 0179 | 从本地 agent 存储导入模型配置 | 已接受 |
+| 0180 | 自定义全局 UI 字号比例 | 已接受 |
+| 0181 | main 所有的选择器能力 | 已接受 |
+| 0182 | 繁体中文外壳语言环境 | 已接受（修订 0160） |
+| 0183 | P0 国际外壳语言环境 | 已接受（修订 0160 / 0182） |
+| 0184 | 把上下文用量检查器停靠进输入框工具栏 | 已接受（修订 0047 / 0103） |
+| 0185 | 韩语外壳语言环境 | 已接受（修订 0160 / 0183） |
+| 0186 | 用 main 所有的一次性摘要生成首轮会话标题 | 已接受 |
+| 0187 | 焦点感知的原生任务通知 | 已接受（修订 0107 / D117） |
+| 0188 | 在模型配置导入期间保留各自独立的凭据 | 已接受（修订 0179 / D342） |
+| 0189 | 父级致命错误中止剩余委派 | 已接受（修订 0166 / D328） |
+| 0190 | host 门控的大文件与拖入文件访问 | 已接受 |
+| 0191 | 标注两种 macOS 发布架构 | 已接受（修订 0145 / D353） |
+| 0192 | 为已配置模型设置别名并让模型 id 可复制 | 已接受（修订 D266） |
+| 0193 | 上下文检查器中展示上一次请求占用 | 已接受（修订 0047 / 0103 / 0184） |
+| 0194 | 可选的 subagent 思考覆盖 | 已接受，待实现 |
+| 0195 | 视口固定的工作面板切换 | 已接受（修订 0068 / 0085） |
+| 0196 | 在活跃轮次状态中显示 provider 重试原因 | 已接受（修订 0175） |
+| 0197 | 发布 Windows 便携可执行文件 | 已接受（修订 0022 / D126） |
+| 0198 | 为实时活动行上的每个安静区间命名 | 已接受（修订 0175 / 0186） |
+| 0200 | host 所有的插件会话导入与所有权 API | 已接受 |
+| 0201 | 显式的插件项目 id 与 host 所有的会话刷新 | 已接受 |
+| 0202 | 暴露生效的 subagent 思考元数据 | 已接受 |
+| 0203 | 桌面操作的本地 MCP 控制面 | 已接受（经 D372 修订） |
+| 0204 | 显式的未签名 macOS 首次启动助手 | 已接受 |
+| 0205 | 远程 Agent 控制使用专用 Host 边界 | 已接受，待实现（MVP 之后；经 D374、D375 和 D385 修订） |
+| 0206 | 扩展 provider 重试并显示有界进度 | 已接受 |
+| 0207 | 允许三次同路径变更恢复失败 | 已接受（修订 0087 / D186） |
+| 0208 | 插件桌面控制需要原生用户同意 | 已接受 |
+| 0209 | PowerShell 7 作为可选择的 Windows 命令 shell | 已接受（修订 0054 / D190；issue #151 / PR #191） |
+| 0210 | subagent 输出 token 上限 | 已接受（扩展 0062 / 0063；`maxTurns` 条款已被 0253 撤回；issue #171 / PR #193） |
+| 0211 | 只读检查的计划安全插件操作 | 已接受（修订 0052 / 0053 / 0170；D384） |
+| 0212 | 移除诊断计时日志流 | 已接受（修订 0046 / D183） |
+| 0213 | 在 host-core 中持久化 Host 所有的轮次队列 | 已接受 |
+| 0214 | 受信任扩展在 Agent sidecar 中运行 | 已接受（v1 已实现；经 D388 / ADR 0215 修订） |
+| 0215 | Agent 扩展是一种插件贡献 | 已接受（已实现） |
+| 0216 | 在 RPC 锁下截断重新生成 | 已接受（修订 0060 / 0127；issue #211） |
+| 0217 | Host stdout 发送者不得比 serve 活得更久 | 已接受（修订 0216；issue #211） |
+| 0218 | 跨输入框与传输的生效图片输入覆盖 | 已接受（修订 0101 / D243） |
+| 0219 | 输入框斜杠菜单中由用户调用的技能 | 已接受（修订 D123 / D174 / ADR 0024 / ADR 0039） |
+| 0220 | 保持 Windows 工作面板外壳用途单一 | 已接受（修订 D154 / D357 / ADR 0195） |
+| 0221 | 规范思考级别值不做翻译直接渲染 | 已接受（修订 D369 / ADR 0202） |
+| 0222 | 输入框中的原生文件与文件夹拖放 | 已接受（修订 ADR 0101 / D397） |
+| message-quotes-and-side-chats | 消息引用与渲染进程所有的侧边聊天 | 已被 0268 取代 |
+| response-annotations | 作为提示附件的响应批注 | 已被 0268 取代 |
+| floating-annotation-index | 浮动批注索引与来源位置 | 已被 0268 取代 |
+| 0223 | 上下文用量展示偏好 | 已接受（修订 0184） |
+| 0224 | 右面板标签页条与数据驱动的添加菜单 | 已接受（issue #229） |
+| 0225 | 从生效的会话上下文恢复被推迟的工具 | 已接受（issue #225） |
+| 0226 | 为输入框控件预留聊天宽度 | 已接受 |
+| 0227 | 项目分组手动排序 | 已接受（经 0228 修订） |
+| 0228 | 长按项目标题以重排序 | 已接受（经 0229 修订） |
+| 0229 | 按住并移动的项目标题重排序 | 已接受（修订 0228） |
+| 0230 | 技能随 Agent 核心工具集交付 | 已接受（修订 D174 / ADR 0048 / ADR 0219；issue #204） |
+| 0231 | 表意逗号打开输入框斜杠菜单 | 已接受（修订 D123 / D139 / ADR 0024；issue #65） |
+| 0232 | macOS DMG 打开指引保持纯文本 | 已接受（修订 D371 / ADR 0204） |
+| 0233 | 渲染进程所有的多文件夹项目创建 | 已接受（修订 ADR 0011 / ADR 0016） |
+| 0234 | 项目记忆保持 host 所有并按路径限定范围 | 已接受 |
+| 0235 | 保留领域门面并执行架构预算 | 已接受 |
+| 0236 | 会话导入新增绑定会话时恢复已归档项目 | 已接受 |
+| 0237 | 会话编排保留在官方插件中 | 已接受 |
+| 0238 | 在三栏外壳中优先 MainChat | 已接受（修订 ADR 0226） |
+| 0239 | host 所有的会话协作消息 | 已接受（修订 ADR 0237 / 0165 / 0213；经 D446 修订） |
+| 0240 | 独立的会话发现与可导航的协作投影 | 已接受（修订 ADR 0239） |
+| 0241 | 把文件视图作为 vendored、可更新的插件交付 | 已接受（取代 ADR 0105；issue #304） |
+| 0242 | 仅 delta 的合并流式更新 | 已接受（修订 0127 / 0130 / 0149 / 0153；issue #299） |
+| 0243 | 技能市场公共 HTTPS 目录拉取 | 已接受（修订 0009；issue #287 / PR #290） |
+| 0244 | 约束已导入扩展的依赖安装 | 已接受 |
+| 0245 | 加固 MCP 市场的公共网络边界 | 已接受 |
+| 0246 | subagent 选入继承父级工具目录 | 已接受（修订 0062；issue #215 / PR #319） |
+| 0247 | git clone 只接受语法上公开的主机 | 已接受（修订 home git clone；D416） |
+| 0248 | [打包主题资产与贡献的窗口背景](0248-plugin-theme-assets-and-window-background.md) | 已接受（issue #335） |
+| 0249 | ChatGPT 风格的逻辑项目分组 | 已接受（修订 ADR 0233 / ADR 0234 / ADR 0016） |
+| 0261 | [插件外观扩展](0261-plugin-appearance-extensions.md) | 已接受，待实现 |
+| 0251 | [删除项目会移除其拥有的会话](0251-project-delete-with-owned-sessions.md) | 已接受 |
+| global-sidebar-pins | [在全局侧栏区块中显示置顶会话](global-sidebar-pins.md) | 已接受（修订 ADR 0016；issue #306） |
+| 0250 | [结构化、有界且脱敏的进程日志](0250-structured-bounded-redacted-process-logs.md) | 已接受，待实现 |
+| 0262 | [聊天文件引用在 main 中补全并在文件视图中打开](0262-chat-file-refs-open-in-the-file-view.md) | 已接受（修订 ADR 0163 / ADR 0241） |
+| 0263 | [暴露项目的文件夹根并跨根补全引用](0263-project-folder-roots-for-plugin-views.md) | 已接受（修订 ADR 0262；ADR 0249 §5） |
+| 0264 | [host 中介的文件操作跟随视图正在浏览的文件夹](0264-host-mediated-actions-follow-the-browsed-folder.md) | 已接受（修订 ADR 0263；ADR 0249 §5） |
+| active-turn-steering | 将输入框转向绑定到活跃的持久轮次 | 已接受（active-turn-steering；issue #164） |
+| 0252 | 插件的 host 轮次结束事件 | 已接受（D422） |
+| 0253 | [移除 subagent 轮次上限](0253-remove-subagent-turn-limit.md) | 已接受（取代 0062 / 0063 / 0119 / 0126 / 0166 / 0210 的 `maxTurns` 条款） |
+| 0254 | [在其规范 JSONL 中继续原生 Pi 会话](0254-native-pi-session-continuation.md) | 已接受（修订基线 D007；D421） |
+| 0257 | [插件的 host 中介实时能力](0257-plugin-real-time-capabilities.md) | 已接受，待实现 |
+| 0258 | [受信任扩展的自定义 agent](0258-trusted-extension-custom-agents.md) | 已接受，待实现（D426；issue #401） |
+| 0259 | [插件声明的 provider 是 Host 所有的行](0259-plugin-declared-providers.md) | 已接受，待实现（D427） |
+| 0255 | [主题资产使用绝对路径](0255-theme-assets-by-absolute-path.md) | 已接受 |
+| 0256 | [跨上下文压缩保留 DeepSeek 推理](0256-deepseek-reasoning-across-compaction.md) | 已接受 |
+| 0260 | [插件运行时主题 API 与侧栏图片 token](0260-plugin-runtime-theme-apis.md) | 已接受，待实现 |
+| 0265 | [Host 所有轮次队列的优先级阻塞与行操作](0265-turn-queue-priority-block-and-row-actions.md) | 已接受，待实现（D429；修订 ADR 0213 / 0118） |
+| session-content-search | [通过索引的消息文本发现会话](session-content-search.md) | 已接受 |
+| transcript-reading-ownership | [共享渲染进程的历史与搜索视图](transcript-reading-ownership.md) | 已接受 |
+| 0266 | [插件 fs 根跟随发起调用的会话](0266-plugin-fs-root-follows-the-calling-session.md) | 已接受（D093） |
+| tray-session-shortcuts | [原生托盘中的有界会话导航](tray-session-shortcuts.md) | 已接受（修订 ADR 0078；issue #293） |
+| 0267 | [插件标签跟随应用语言](0267-plugin-labels-follow-the-app-language.md) | 已接受（修订 0160；ADR 0182） |
+| 0270 | [内置 subagent 可以被关闭](0270-builtin-subagents-can-be-disabled.md) | 已接受，待实现（修订 ADR 0063；ADR 0112） |
+| 0271 | [在多次无响应失败后重建共享 provider 传输](0271-provider-transport-rebuild.md) | 已接受，待实现（issue #234） |
+| 0269 | [在全局与项目层级之间移动能力文档](0269-capability-level-transfer.md) | 已接受，待实现（修订 ADR 0112） |
+| 0268 | 移除引用、批注与侧边聊天 | 已接受（取代 message-quotes-and-side-chats / response-annotations / floating-annotation-index） |
+| 0272 | [按请求实际拨号的路由判定公共网络地址](0272-connection-time-public-network-route.md) | 已接受，待实现（修订 ADR 0243；issue #419 / PR #473） |
+| 0273 | [git checkout 作为创建项目来源](0273-git-checkout-create-project-source.md) | 已接受，待实现（修订 ADR 0233；ADR 0247） |
+| 0274 | [开发插件在加载前经过审查](0274-development-plugin-permission-review.md) | 已接受，待实现（修订 ADR 0005） |
+| 0275 | [插件面板的浮动挂件放置方式](0275-plugin-panel-floating-widget.md) | 已接受，待实现（修订 ADR 0093 §4；ADR 0092 / ADR 0110） |
+| 0276 | [官方插件渠道与备用渠道](0276-official-plugin-channel-and-backup-channels.md) | 已接受，待实现（修订 ADR 0102；D442） |
+| 0277 | [可拖拽的聊天内容宽度](0277-draggable-chat-content-width.md) | 已接受（D439） |
+| 0278 | [规范应用 ID `net.aiuo.pi-desktop`](0278-canonical-application-id.md) | 已接受（D443；修订 D141 / D371 / ADR 0204；issue #524） |
+| 0279 | [可恢复的 subagent 委派](0279-resumable-subagent-delegations.md) | 已接受，待实现（修订 ADR 0062；ADR 0089；issue #513） |
+| 0280 | [插件所有的 UI 跟随宿主语言环境本地化](0280-plugin-owned-ui-localizes-from-host-locale.md) | 已接受（修订 ADR 0267；ADR 0159） |
+| 0281 | [宿主语音能力](0281-host-speech-capability.md) | 已接受，待实现（修订 ADR 0257） |
+| 0282 | [在保留尾部恢复之前重试并正确估算压缩摘要的大小](0282-compaction-summary-retry-and-sizing.md) | 已接受（修订 ADR 0049；issue #543） |
+| 0283 | [远程 MCP 服务器 OAuth 2.1 认证](0283-remote-mcp-oauth.md) | 已接受 |
+| 0284 | [`packages/host-runtime` 中的无头运行时边界](0284-headless-runtime-boundary.md) | 已接受，待实现（D447；ADR 0205 R2 前置条件） |
+| 0285 | [`packages/racp` 中的 `RACP-WS` 传输](0285-racp-ws-transport.md) | 已接受，待实现（D448；ADR 0205 R2） |
+| 0286 | [远程宿主桌面内核](0286-remote-host-desktop-kernel.md) | 已接受，待实现（D449；ADR 0205 R2） |
+| 0287 | [host 渲染的插件 scenic 设置界面](0287-host-rendered-plugin-scenic-settings-surfaces.md) | 已接受，待实现 |
+| 0288 | [包内主题资产保持可用](0288-package-local-theme-assets.md) | 已接受，待实现（修订 ADR 0255） |
+| 0289 | [签名的 macOS GitHub Releases 与应用内更新交付](0289-signed-macos-github-releases.md) | 已接受（D450；修订 ADR 0022 / 0145 / 0191 / 0204 / D078） |
+| 0290 | [恢复可调整侧栏宽度并支持低于阈值折叠](0290-resizable-sidebar-collapse-threshold.md) | 已接受（D451；修订 ADR 0141 / ADR 0238） |
+| 0291 | [移除语音设置 UI](0291-remove-speech-settings-ui.md) | 已接受（修订 ADR 0281） |
+| 0292 | [远程宿主的 SSH 引导](0292-ssh-remote-host-bootstrap.md) | 已接受，待实现（D453；ADR 0205 R2b，扩展 ADR 0286） |
+| 0293 | [远程宿主引导的 SSH 密码认证](0293-ssh-password-authentication.md) | 已接受（D454；修订 ADR 0292） |
+| 0294 | [项目归档是列表 + 检查器工作台](0294-project-archive-list-inspector.md) | 已接受（D455；修订 D267 / D168） |
+| 0295 | [会话思考参数省略](0295-session-thinking-parameter-omission.md) | 已接受（D456；修订 ADR 0194 / ADR 0144 / ADR 0221） |
+| turn-process-and-thinking-display | [轮次过程与思考呈现](turn-process-and-thinking-display.md) | 已接受 |

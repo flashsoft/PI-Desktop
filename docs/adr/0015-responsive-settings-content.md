@@ -1,60 +1,53 @@
-# ADR 0015: Make settings content responsive to window width
+# ADR 0015: 让设置内容随窗口宽度响应
 
-- Status: Accepted
-- Date: 2026-07-26
+- 状态: 已接受
+- 日期: 2026-07-26
 
-## Context
+## 背景
 
-D070 established a 720px settings content band from a 1200px-wide Codex gold
-capture, and D090 retained those visual metrics while simplifying the settings
-directory. That fixed cap leaves increasingly large unused space on wider
-windows even though the full-page settings shell and right pane already resize
-with the native window.
+D070 根据一张 1200px 宽的 Codex 黄金截图确立了 720px 的设置内容
+带宽，D090 在简化设置目录时保留了这些视觉度量。这个固定上限在
+更宽的窗口上留下越来越大的未使用空间，尽管整页设置外壳和右侧面板
+已经随原生窗口一起调整大小。
 
-The setting cards need to use the actual desktop window size while preserving
-the fixed navigation rail, readable pane gutters, and the existing compact
-shell.
+设置卡片需要使用实际的桌面窗口尺寸，同时保留固定的导航侧栏、
+可读的面板边距和现有的紧凑外壳。
 
-## Decision
+## 决策
 
-The settings content inner container fills 100% of the width available in the
-right pane after the 275px rail and pane gutters. CSS flex layout owns resizing;
-the renderer does not add window listeners, viewport calculations, or
-JavaScript layout state.
+设置内容内部容器填充右侧面板中 275px 侧栏和面板边距之后可用宽度
+的 100%。CSS flex 布局负责调整大小；渲染进程不添加窗口监听器、
+视口计算或 JavaScript 布局状态。
 
-This supersedes only D070's 720px content-band cap and the portion of D090 that
-retained that cap. All other D070 and D090 navigation, chrome, spacing, card,
-theme, and interaction decisions remain unchanged.
+这只取代 D070 的 720px 内容带上限，以及 D090 中保留该上限的部分。
+D070 和 D090 的所有其他导航、外观、间距、卡片、主题和交互决策
+保持不变。
 
-## Consequences
+## 后果
 
-- Settings cards expand and contract immediately as the native window resizes.
-- Wide windows no longer reserve an arbitrary empty area to the right of the
-  content.
-- The minimum supported window width continues to preserve the fixed rail and
-  existing pane gutters without horizontal page scrolling.
-- Settings specs and E2E coverage must verify narrow, default, and wide window
-  sizes.
+- 设置卡片随原生窗口调整大小而立即伸缩。
+- 宽窗口不再在内容右侧保留一块任意的空白区域。
+- 支持的最小窗口宽度继续保留固定侧栏和现有面板边距，页面不出现
+  水平滚动。
+- 设置 spec 和 E2E 覆盖必须验证窄、默认和宽的窗口尺寸。
 
-## Alternatives
+## 备选方案
 
-### Keep the 720px maximum
+### 保留 720px 最大值
 
-Rejected because it ignores the available native window width and wastes space
-on larger displays.
+否决，因为它无视可用的原生窗口宽度，在更大的显示器上浪费空间。
 
-### Calculate width in React
+### 在 React 中计算宽度
 
-Rejected because the existing flex layout already exposes the correct
-available pane width, while JavaScript window listeners add unnecessary state
-and synchronization work.
+否决，因为现有的 flex 布局已经暴露了正确的可用面板宽度，而
+JavaScript 窗口监听器会增加不必要的状态和同步工作。
 
-### Use a viewport-width formula
+### 使用视口宽度公式
 
-Rejected because manually subtracting the rail and gutters duplicates CSS
-layout knowledge and can drift into overflow.
+否决，因为手动减去侧栏和边距会复制 CSS 布局知识，并可能漂移成
+溢出。
 
-## References
+## 参考
 
 - `docs/spec/00-baseline.md`
 - `docs/spec/04-ux/06-settings-ia.md`

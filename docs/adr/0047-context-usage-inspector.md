@@ -1,71 +1,62 @@
-# ADR 0047: Context usage inspector with exact and estimated token sources
+# ADR 0047: 带精确与估算 token 来源的上下文用量检查器
 
-- Status: Accepted
-- Date: 2026-08-02
-- Amended by: D225 (click-toggled panel), D244 (compact summary presentation),
-  D347 (composer toolbar placement), and D355 (last-request occupancy)
-- Related: [D103](../spec/08-meta/decisions-log.md) ·
+- 状态： 已接受
+- 日期： 2026-08-02
+- 修订： D225（点击切换面板）、D244（紧凑摘要呈现）、
+  D347（composer 工具栏位置）、D355（最近一次请求占用）
+- 相关： [D103](../spec/08-meta/decisions-log.md) ·
   [D183](../spec/08-meta/decisions-log.md) ·
   [D184](../spec/08-meta/decisions-log.md) ·
-  [IPC protocol](../spec/03-runtime/01-ipc-protocol.md) ·
-  [Component spec](../spec/04-ux/08-component-spec.md)
+  [IPC 协议](../spec/03-runtime/01-ipc-protocol.md) ·
+  [组件规范](../spec/04-ux/08-component-spec.md)
 
-## Context
+## 背景
 
-The first context-usage ring exposed only a percentage and a small aggregate
-breakdown. It did not answer why a turn became large, which tool contributed
-the most context, or how quickly the model generated its output. The runtime
-already has provider usage, tool arguments/results, and a model stream timing
-anchor, but providers do not expose exact per-tool allocation.
+第一个上下文用量圆环只暴露一个百分比和一个小型聚合拆分。它无法回答为什么
+某轮变大、哪个工具贡献了最多上下文，或者模型生成输出的速度有多快。runtime
+已经拥有 provider 用量、工具参数/结果以及模型流计时锚点，但 provider 不暴露
+逐工具的精确分配。
 
-## Decision
+## 决策
 
-1. Replace the standalone ring with a compact Codex-style context inspector
-   trigger. *(Amended by D225: hover and focus no longer open the panel;
-   clicking or keyboard-activating the trigger toggles it.)* Activating the
-   trigger reveals one scrollable, non-modal panel.
-2. Keep provider-reported input/output/cache/reasoning usage authoritative and
-   show aggregate output throughput as `outputTokens / responseDurationMs` on
-   completed turns only; active streams do not render a live estimate.
-3. Estimate each tool's argument and result footprint with the existing
-   pi-agent-core token heuristic. Persist the estimate on the tool message,
-   mark it as estimated in the UI, and never add it to the provider total.
-4. Carry `responseDurationMs` on assistant messages and `toolUsage` on tool
-   messages. Add `toolUsage` to `tool_end` as an optional event field so live,
-   persisted, and restored transcripts use the same values.
-5. Preserve additive compatibility: missing fields use the renderer fallback
-   estimate or omit throughput when no stream duration is available.
-6. Render the inspector panel through `document.body` as a fixed viewport
-   overlay. Measure the trigger and panel rectangles, choose the side with
-   available space, clamp the result to a viewport margin, and update the
-   placement on transcript scroll, window resize, or panel-size changes. Keep
-   the open/close and Escape dismissal behavior independent from the transcript
-   scroll container.
-7. Aggregate repeated tool rows by their exact tool name, preserving the
-   first-seen order. Each row shows the number of calls and sums argument,
-   result, token, and known duration estimates across those calls.
-8. Resolve the context-window total from the same `pi-ai` model record that
-   Electron passes to the agent sidecar, and enrich cached/discovered model
-   rows with that value. Use provider metadata and the 128K default only when
-   the selected model is absent from the `pi-ai` catalog.
+1. 用一个紧凑的 Codex 风格上下文检查器触发器替换独立圆环。*（D225 修订：
+   悬停与聚焦不再打开面板；点击或键盘激活触发器切换它。）* 激活触发器显示
+   一个可滚动、非模态的面板。
+2. provider 报告的 input/output/cache/reasoning 用量保持权威，聚合输出吞吐
+   显示为 `outputTokens / responseDurationMs`，且仅在已完成的轮次上显示；活
+   跃流不渲染实时估算。
+3. 用现有的 pi-agent-core token 启发式估算每个工具的参数与结果足迹。把估算
+   持久化在工具消息上，在 UI 中标记为估算值，并且绝不把它加进 provider 总
+   数。
+4. assistant 消息携带 `responseDurationMs`，工具消息携带 `toolUsage`。把
+   `toolUsage` 作为可选事件字段加入 `tool_end`，使实时、持久化与恢复的
+   transcript 使用相同的值。
+5. 保持加法兼容性：缺失字段使用渲染进程回退估算，或在没有流时长时省略吞
+   吐。
+6. 检查器面板通过 `document.body` 渲染为固定视口覆盖层。测量触发器与面板的
+   矩形，选择有可用空间的一侧，把结果钳制在视口边距内，并在 transcript 滚
+   动、窗口缩放或面板尺寸变化时更新位置。打开/关闭与 Escape 消除行为独立于
+   transcript 滚动容器。
+7. 重复的工具行按精确工具名聚合，保留首次出现顺序。每行显示调用次数，并
+   汇总这些调用的参数、结果、token 与已知时长估算。
+8. 上下文窗口总量从 Electron 传给 agent sidecar 的同一份 `pi-ai` 模型记录
+   解析，并用该值丰富缓存/发现的模型行。仅当所选模型不在 `pi-ai` 目录中时
+   才使用 provider 元数据与 128K 默认值。
 
-## Consequences
+## 后果
 
-- Users can inspect exact model usage and see each tool type's relative context
-  footprint without opening logs, while repeated calls stay compact and
-  auditable through their call counts.
-- Historical tool rows remain useful through a deterministic fallback estimate.
-- Tool estimates are transparent but cannot claim billing precision.
-- The transcript protocol and storage shape gain optional fields, while the
-  existing protocol version remains compatible.
-- The panel is no longer constrained by the transcript's overflow clipping or
-  stacking context; collision-aware placement keeps its complete contents
-  visible at viewport edges.
+- 用户无需打开日志即可检查精确的模型用量，并看到每种工具类型的相对上下文
+  足迹，而重复调用通过调用次数保持紧凑且可审计。
+- 历史工具行通过确定性的回退估算保持可用。
+- 工具估算是透明的，但不能宣称计费精度。
+- transcript 协议与存储形态获得可选字段，同时现有协议版本保持兼容。
+- 面板不再受 transcript 的 overflow 裁剪或层叠上下文约束；碰撞感知的位置摆
+  放使其完整内容在视口边缘保持可见。
 
-## Alternatives
+## 备选方案
 
-- Keep the ring-only UI: rejected because it hides the source of large turns.
-- Claim exact per-tool provider usage: rejected because the provider response
-  does not contain that attribution.
-- Calculate throughput from wall-clock turn time: rejected because tool wait
-  and provider wait would distort model generation speed.
+- 保留纯圆环 UI：已拒绝，因为它隐藏了大轮次的来源。
+- 宣称逐工具的精确 provider 用量：已拒绝，因为 provider 响应不包含该归属
+  信息。
+- 用墙上时钟轮次时间计算吞吐：已拒绝，因为工具等待与 provider 等待会扭曲
+  模型生成速度。

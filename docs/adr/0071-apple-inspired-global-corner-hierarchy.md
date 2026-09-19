@@ -1,87 +1,72 @@
-# ADR 0071: Adopt an Apple-Inspired Global Corner Hierarchy
+# ADR 0071: 采用受 Apple 启发的全局圆角层级
 
-- Status: Accepted for implementation
-- Date: 2026-08-11
-- Deciders: PI-Desktop core
-- Related: D072, D210
+- 状态： 已接受实现
+- 日期： 2026-08-11
+- 决策者： PI-Desktop 核心
+- 相关： D072、D210
 
-## Context
+## 背景
 
-PI-Desktop enforced a shared radius-token scale, but that scale preserved a
-collection of historical 5/6/7/8/10/12/14/16/18/22px values. The one-pixel
-steps at the compact end were difficult to distinguish, and the shared button
-primitive used a capsule even though most of its 28–32px actions belong to a
-dense desktop interface.
+PI-Desktop 强制执行共享的圆角 token 标尺，但该标尺保留了一组历史遗留的
+5/6/7/8/10/12/14/16/18/22px 值。紧凑端的一像素步进难以区分，而共享按钮原
+语使用胶囊形，尽管它的大多数 28–32px 操作属于密集桌面界面。
 
-Apple's current design guidance separates fixed rounded rectangles, capsules,
-and concentric shapes. It continues to use rounded rectangles for Mini, Small,
-and Medium macOS controls, reserves capsules for emphasis and appropriate
-component families, and defines a concentric child radius from its containing
-radius and inset. Applying that geometry is more important than copying one
-radius across every component.
+Apple 当前的设计指南区分固定圆角矩形、胶囊与同心形状。它继续为 Mini、
+Small 与 Medium 的 macOS 控件使用圆角矩形，把胶囊保留给强调与合适的组件
+家族，并从容器圆角与内边距定义同心子圆角。应用这套几何比把一个圆角复制到
+每个组件更重要。
 
-The renderer is pinned to Electron 37 / Chromium 138. CSS `corner-shape` and
-its `squircle` value ship in Chromium 139, so relying on them would silently
-fall back in the packaged application.
+渲染进程锁定在 Electron 37 / Chromium 138。CSS `corner-shape` 及其
+`squircle` 值在 Chromium 139 才发布，因此依赖它们会在打包应用中静默回
+退。
 
-## Decision
+## 决策
 
-1. Replace the fixed-radius ladder with
-   4/6/8/10/12/14/16/18/20/24px values. Keep `--radius-full` for capsules and
-   `--radius-round` for circles.
-2. Standard compact and medium controls use fixed rounded rectangles. The
-   shared button and field primitives use `--radius-sm` (10px).
-3. Pills, badges, segmented selections, switches, tracks, status dots, and
-   equal-width circular icon controls keep their explicit capsule or circle
-   geometry.
-4. Surfaces increase radius with size and elevation. When a child corner sits
-   near and parallel to a rounded container corner, use the concentric relation
-   `outer radius = inner radius + inset`.
-5. Full-width structural shell surfaces remain square at the window edge.
-6. The composer aliases its established 20px radius to `--radius-xl`, keeping
-   the visible composer geometry while bringing it into the global ladder.
-7. D072's token-only lint enforcement remains unchanged; only the frozen pixel
-   values and shared primitive assignments are amended.
+1. 用 4/6/8/10/12/14/16/18/20/24px 值替换固定圆角阶梯。保留
+   `--radius-full` 用于胶囊，`--radius-round` 用于圆形。
+2. 标准紧凑与中等控件使用固定圆角矩形。共享按钮与输入框原语使用
+   `--radius-sm`（10px）。
+3. 药丸、徽章、分段选择、开关、轨道、状态圆点与等宽圆形图标控件保留其显
+   式胶囊或圆形几何。
+4. 表面的圆角随尺寸与抬升增加。当子圆角靠近并与圆角容器角平行时，使用同
+   心关系 `外圆角 = 内圆角 + 内边距`。
+5. 全宽结构外壳表面在窗口边缘保持方形。
+6. composer 把它既定的 20px 圆角别名到 `--radius-xl`，保持可见的 composer
+   几何，同时把它纳入全局阶梯。
+7. D072 的仅 token lint 强制不变；只修订冻结的像素值与共享原语赋值。
 
-## Consequences
+## 后果
 
-- The interface has a more legible small-to-large corner hierarchy, while
-  compact macOS controls no longer look uniformly pill-shaped.
-- Existing token consumers receive the revised values globally without
-  component-local literals.
-- Designers and implementers must choose pill or circle tokens intentionally
-  instead of treating them as a default radius.
-- True continuous-corner rendering remains unavailable until the packaged
-  Chromium runtime supports `corner-shape`; the compatible fallback is the
-  standardized fixed-radius ladder.
+- 界面获得更清晰的小到大圆角层级，紧凑 macOS 控件不再清一色药丸形。
+- 现有 token 消费者全局获得修订后的值，无需组件局部字面值。
+- 设计者与实现者必须有意选择药丸或圆形 token，而不是把它们当作默认圆角。
+- 真正的连续圆角渲染在打包 Chromium 运行时支持 `corner-shape` 之前不可
+  用；兼容回退是标准化的固定圆角阶梯。
 
-## Alternatives considered
+## 已考虑的备选方案
 
-### Make every component a capsule
+### 让每个组件都是胶囊
 
-Rejected because Apple retains rounded rectangles for compact macOS controls
-and uses capsules selectively for emphasis and specific control families.
+已拒绝，因为 Apple 为紧凑 macOS 控件保留圆角矩形，并只为强调与特定控件家
+族选择性地使用胶囊。
 
-### Add `corner-shape: squircle` now
+### 现在添加 `corner-shape: squircle`
 
-Rejected because the packaged Chromium 138 runtime does not support it. A
-declaration that only works in newer development browsers would make visual
-verification and shipped behavior diverge.
+已拒绝，因为打包的 Chromium 138 运行时不支持它。一个只在较新开发浏览器中
+工作的声明会让视觉验证与发布行为分叉。
 
-### Keep the historical values and change individual components
+### 保留历史值并逐个修改组件
 
-Rejected because the request is global, and retaining closely spaced 5/6/7/8px
-steps would continue to make the hierarchy hard to perceive and maintain.
+已拒绝，因为需求是全局的，而保留间距很近的 5/6/7/8px 步进会继续让层级难
+以感知与维护。
 
-## Addendum (2026-08-14): the `corner-shape` blocker is gone
+## 附录（2026-08-14）：`corner-shape` 障碍已消失
 
-The Context and Alternatives above are left as recorded. Their runtime premise
-no longer holds: the shell moved to Electron 43, which bundles Chromium 150, and
-`CSS.supports("corner-shape", "squircle")` returns `true` in the packaged
-renderer. The deferral in Consequences and the "Add `corner-shape: squircle`
-now" rejection were both about availability alone, so nothing stands in the way
-of revisiting them.
+上面的背景与备选方案按记录保留。其运行时前提不再成立：外壳已迁移到
+Electron 43，捆绑 Chromium 150，`CSS.supports("corner-shape", "squircle")`
+在打包渲染进程中返回 `true`。后果中的推迟与"现在添加
+`corner-shape: squircle`"的拒绝都只关乎可用性，因此没有任何东西阻碍重新
+审视它们。
 
-This addendum does not change the decision. The fixed-radius ladder stays as
-specified; adopting continuous corners is a design change that needs its own
-decision, not a side effect of a dependency bump.
+本附录不改变决定。固定圆角阶梯按规定保留；采用连续圆角是需要独立决定的设
+计变更，而不是依赖升级的副产品。

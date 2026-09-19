@@ -1,4 +1,4 @@
-# ADR 0108: Remove the built-in interactive terminal
+# ADR 0108: 移除内置交互式终端
 
 - Status: Accepted
 - Date: 2026-08-19
@@ -12,64 +12,59 @@
 - Supersedes in part: D249 and the interactive-terminal clauses of ADR 0019
   and ADR 0105; records D251
 
-## Context
+## 背景
 
-The work panel previously included an interactive shell backed by a PTY in
-Electron Main and a terminal renderer in the work-panel UI. That surface was
-separate from the agent's non-interactive `Bash` tool, but it added a native
-module, renderer dependencies, terminal-specific IPC, packaging rules, and a
-second shell lifecycle to the desktop application.
+工作面板此前包含一个交互式 shell，由 Electron Main 中的 PTY 和工
+作面板 UI 中的终端渲染器支撑。该表面与 agent 的非交互式 `Bash`
+工具是分开的，但它为桌面应用增加了一个原生模块、渲染进程依赖、
+终端专用 IPC、打包规则，以及第二个 shell 生命周期。
 
-The product does not need to own an interactive shell to keep Agent Bash
-useful. Users who need an interactive shell can use the external terminal
-provided by their operating system or development environment, while command
-invocations and bounded output remain visible in the conversation.
+产品不需要拥有交互式 shell 也能保持 Agent Bash 有用。需要交互式
+shell 的用户可以使用其操作系统或开发环境提供的外部终端，而命令
+调用和有界输出仍在会话中保持可见。
 
-## Decision
+## 决策
 
-1. Remove the work-panel interactive terminal. The panel retains
-   plugin-contributed views including the bundled Files and Browser views
-   (ADR 0170), and Review/file tabs opened by conversation artifacts.
-2. Keep Agent Bash unchanged. It remains a permission-aware, non-interactive
-   agent tool whose command, output, status, copy behavior, and `IconTerminal`
-   presentation stay in the transcript. Generic lifecycle values such as
-   `"terminal"` in plan refresh state are unrelated and remain valid.
-3. Delete the terminal-only Electron Main manager, renderer component and
-   styles, IPC invoke/event channels, shared terminal payload types, and
-   terminal-specific tests. Remove the PTY/xterm dependencies and their
-   build, unpack, and lockfile configuration.
-4. Do not replace the removed surface with a plugin PTY API. Interactive shell
-   access is intentionally delegated to an external terminal, and no new
-   plugin permission or private bundled-plugin channel is introduced.
-5. Do not increment the frozen desktop protocol version. The removed channels
-   were desktop IPC additions; Agent Bash, host RPC, and the shared lifecycle
-   protocol remain unchanged.
+1. 移除工作面板交互式终端。面板保留插件贡献的视图，包括捆绑的
+   Files 和 Browser 视图（ADR 0170），以及由会话产物打开的
+   Review/文件标签页。
+2. Agent Bash 保持不变。它仍是一个权限感知的、非交互的 agent 工
+   具，其命令、输出、状态、复制行为和 `IconTerminal` 呈现保留在
+   transcript 中。计划刷新状态中的 `"terminal"` 等通用生命周期值
+   与此无关且仍然有效。
+3. 删除仅终端使用的 Electron Main 管理器、渲染进程组件和样式、
+   IPC invoke/事件通道、共享终端负载类型以及终端专用测试。移除
+   PTY/xterm 依赖及其构建、解包和 lockfile 配置。
+4. 不用插件 PTY API 替代被移除的表面。交互式 shell 访问被刻意委
+   托给外部终端，不引入新的插件权限或私有捆绑插件通道。
+5. 不递增冻结的桌面协议版本。被移除的通道是桌面 IPC 新增项；
+   Agent Bash、宿主 RPC 和共享生命周期协议保持不变。
 
-## Consequences
+## 后果
 
-- The work panel has no interactive shell tab or terminal launcher, and its
-  empty state lists Browser and in-scope plugin views only.
-- Desktop packaging no longer carries the PTY native module or terminal
-  renderer dependencies, reducing native build and release surface.
-- Interactive shell workflows require an external terminal. Agent Bash remains
-  the in-app path for bounded, model-directed command execution.
-- Historical D099/D249 records remain useful as history, but their terminal
-  implementation and retention clauses are superseded by this decision.
+- 工作面板没有交互式 shell 标签页或终端启动器，其空状态只列出
+  Browser 和作用域内的插件视图。
+- 桌面打包不再携带 PTY 原生模块或终端渲染器依赖，减少了原生构
+  建和发布面。
+- 交互式 shell 工作流需要外部终端。Agent Bash 仍是应用内有界、
+  模型指导的命令执行路径。
+- 历史上的 D099/D249 记录作为历史仍然有用，但其终端实现和保留
+  条款被本决策取代。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-### Keep the PTY in the host
+### 把 PTY 保留在宿主中
 
-Rejected: it preserves a second shell lifecycle and native dependency for a
-surface the product no longer needs to own.
+被拒绝：它为产品不再需要拥有的表面保留了第二个 shell 生命周期
+和原生依赖。
 
-### Move the PTY into a plugin
+### 把 PTY 移进插件
 
-Rejected: a plugin PTY permission would grant arbitrary execution as the user,
-and a bundled-only channel would create a private trust-boundary exception.
+被拒绝：插件 PTY 权限会授予以用户身份的任意执行，而仅限捆绑的
+通道会制造一个私有信任边界例外。
 
-### Turn Agent Bash into an interactive terminal
+### 把 Agent Bash 变成交互式终端
 
-Rejected: Bash is intentionally bounded, permission-aware, and transcript-
-owned. Changing it into a long-lived interactive session would alter the agent
-protocol and security model rather than simply removing the work-panel surface.
+被拒绝：Bash 刻意是有界的、权限感知的、归 transcript 所有的。把
+它变成长生命周期的交互式会话会改变 agent 协议和安全模型，而不
+是简单地移除工作面板表面。

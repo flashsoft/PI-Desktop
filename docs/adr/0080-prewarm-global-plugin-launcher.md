@@ -1,52 +1,46 @@
-# ADR 0080: Prewarm the global plugin launcher after boot
+# ADR 0080: 启动后预热全局插件启动器
 
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Related:** D211 · D217 · ADR 0072 · E2E-120
 
-## Context
+## 背景
 
-The global plugin launcher was created lazily on the first Option/Alt+Space
-invocation. That path had to allocate a second Electron `BrowserWindow`, start
-its sandboxed renderer, load the shared renderer bundle, mount React, and only
-then reveal the launcher. The first invocation therefore felt substantially
-slower than later invocations even though the window was retained after use.
+全局插件启动器此前在首次按下 Option/Alt+Space 时才惰性创建。该路
+径需要分配第二个 Electron `BrowserWindow`、启动其沙箱渲染进程、
+加载共享渲染包、挂载 React，然后才能显示启动器。因此尽管窗口在
+使用后会被保留，首次调用仍明显慢于后续调用。
 
-## Decision
+## 决策
 
-As soon as Electron is ready, before backend/plugin boot completes, Electron
-starts creating and loading the launcher window in the background while keeping
-it hidden. This work runs in parallel with primary startup. Shortcut
-invocations continue to set the current display bounds, show, and focus the
-same retained window.
+Electron 就绪后立即——在后端/插件启动完成之前——在后台开始创建
+并加载启动器窗口，同时保持其隐藏。该工作与主启动流程并行进行。
+快捷键调用仍沿用原路径：设置当前显示器边界、显示并聚焦同一个
+被保留的窗口。
 
-Window creation is represented by one shared in-flight promise. A shortcut
-received while warm-up is still loading joins that promise, preventing a blank
-window, a lost shown event, or duplicate renderer creation. A failed warm-up is
-logged, destroys the incomplete window, clears the promise, and leaves the
-normal shortcut path able to retry creation.
+窗口创建由一个共享的进行中 promise 表示。预热仍在加载时收到的
+快捷键调用会加入该 promise，从而避免空白窗口、丢失显示事件或
+重复创建渲染进程。预热失败会被记录、销毁未完成的窗口、清除
+promise，并保留正常快捷键路径以重试创建。
 
-The launcher still refreshes the plugin catalog whenever it is shown, so
-preloading changes presentation latency without making plugin availability
-stale or changing IPC, host RPC, permissions, protocol v9, or storage schema
-v11.
+启动器仍在每次显示时刷新插件目录，因此预加载只改变呈现延迟，
+不会使插件可用性变陈旧，也不改变 IPC、宿主 RPC、权限、协议 v9
+或存储 schema v11。
 
-## Consequences
+## 后果
 
-- The first post-boot shortcut no longer pays BrowserWindow and renderer load
-  latency on its visible path; warm-up starts early enough to overlap backend
-  startup.
-- One hidden sandboxed renderer remains resident after boot, trading a bounded
-  memory cost for consistent launch latency.
-- Application boot is not blocked on launcher warm-up, and warm-up failure does
-  not prevent a later shortcut from retrying.
+- 启动后首次快捷键不再在可见路径上承担 BrowserWindow 和渲染进程
+  加载延迟；预热开始得足够早，可与后端启动重叠。
+- 启动后有一个隐藏的沙箱渲染进程常驻，以有界的内存开销换取一致
+  的启动延迟。
+- 应用启动不会被启动器预热阻塞，预热失败也不会阻止后续快捷键
+  重试。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- Keep first-use lazy creation: preserves the smallest idle footprint but keeps
-  the reported first-launch delay.
-- Await warm-up as part of application boot: guarantees readiness before the
-  app is marked booted but lengthens the primary window's critical startup
-  path.
-- Reuse the main renderer: avoids a second renderer but cannot provide the
-  independent system-wide utility window while PI-Desktop is unfocused.
+- 保留首次使用时惰性创建：保持最小的空闲占用，但保留已报告的
+  首次启动延迟。
+- 将等待预热作为应用启动的一部分：保证应用标记为已启动前启动器
+  就绪，但会拉长主窗口的关键启动路径。
+- 复用主渲染进程：避免第二个渲染进程，但无法在 PI-Desktop 失焦
+  时提供独立的系统级工具窗口。

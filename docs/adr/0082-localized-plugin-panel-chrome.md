@@ -1,35 +1,32 @@
-# ADR 0082: Localized and page-adaptive plugin panel chrome
+# ADR 0082: 本地化且随页面自适应的插件面板外框
 
 ## Status
 
 Accepted
 
-## Context
+## 背景
 
-Plugin panels are hosted in their own Electron windows. Their titlebar was
-given a single string from the manifest and the preload chrome defaulted to a
-dark surface. That split the panel from the active PI-Desktop language and
-made light plugin pages look like they had an unrelated black header.
+插件面板托管在它们自己的 Electron 窗口中。其标题栏此前只从
+manifest 获取单个字符串，且 preload 外框默认为深色表面。这使面板
+与 PI-Desktop 当前语言脱节，并让浅色插件页面看起来像是顶着一个
+毫不相干的黑色头部。
 
-## Decision
+## 决策
 
-1. `ui.title` accepts either the existing string form or a localized object
-   containing both `en` and `zh-CN` strings. The host resolves the value using
-   the active PI-Desktop UI locale and falls back to the other supplied label,
-   then the manifest name.
-2. The host passes the active light/dark theme to the panel window. The
-   preload samples the loaded document's computed body/document background and
-   foreground colors for the titlebar, using the host theme when the page is
-   transparent.
-3. The titlebar remains in the closed preload-owned Shadow DOM. Plugin CSS can
-   choose the page surface but cannot reach or restyle the host controls.
-4. Existing string manifests and existing panel dimensions remain compatible.
+1. `ui.title` 接受现有的字符串形式，或一个同时包含 `en` 和
+   `zh-CN` 字符串的本地化对象。宿主使用当前 PI-Desktop UI 语言解
+   析该值，并依次回退到提供的另一种语言标签、然后是 manifest 名
+   称。
+2. 宿主将当前浅色/深色主题传递给面板窗口。preload 采样已加载文
+   档的 body/文档计算背景色和前景色用于标题栏；当页面为透明时使
+   用宿主主题。
+3. 标题栏仍位于 preload 拥有的闭合 Shadow DOM 中。插件 CSS 可以选
+   择页面表面，但无法触及或重设宿主控件的样式。
+4. 现有的字符串 manifest 和现有面板尺寸保持兼容。
 
-## Consequences
+## 后果
 
-- Plugin authors can ship one manifest with English and Simplified Chinese
-  panel titles.
-- Panel chrome remains visually coherent with custom plugin pages and the
-  host's explicit theme preference.
-- A panel whose colors change after first paint is not continuously inspected;
-  plugins should set their page surface before `DOMContentLoaded`.
+- 插件作者可以用一份 manifest 同时发布英文和简体中文的面板标题。
+- 面板外框与自定义插件页面以及宿主显式的主题偏好保持视觉一致。
+- 首次绘制之后才改变颜色的面板不会被持续检查；插件应在
+  `DOMContentLoaded` 之前设置其页面表面。

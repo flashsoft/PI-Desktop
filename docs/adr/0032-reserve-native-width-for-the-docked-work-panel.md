@@ -1,105 +1,96 @@
-# ADR 0032: Reserve native width for the docked work panel
+# ADR 0032: 为停靠的工作面板保留原生宽度
 
-- Status: Accepted (amended by ADR 0033 and ADR 0122)
-- Date: 2026-07-29
-- Related: [01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
+- 状态: 已接受（经 ADR 0033 和 ADR 0122 修订）
+- 日期: 2026-07-29
+- 相关: [01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
   [08-component-spec §5](../spec/04-ux/08-component-spec.md) ·
   [09-interaction-patterns §8](../spec/04-ux/09-interaction-patterns.md) ·
-  [01-ipc-protocol](../spec/03-runtime/01-ipc-protocol.md) · decision D163
-- Supersedes in part: ADR 0029 and decision D156
+  [01-ipc-protocol](../spec/03-runtime/01-ipc-protocol.md) · 决策 D163
+- 部分取代: ADR 0029 和决策 D156
 
-## Context
+## 背景
 
-ADR 0029 removed a circular ownership model in which work-panel changes and
-native resize events rewrote each other. It made the panel a responsive column
-inside the existing client area. That removed races and post-release jumps, but
-opening the panel still consumed chat width, collapsing it expanded chat again,
-and a native window-edge resize could temporarily compress the panel.
+ADR 0029 移除了一个循环所有权模型——工作面板变更和原生调整大小
+事件互相改写。它使面板成为现有客户区内的响应式列。这消除了竞态和
+释放后跳动，但打开面板仍会消耗聊天宽度，折叠面板又会扩展聊天，
+而原生窗口边缘调整大小可能暂时压缩面板。
 
-The intended docked behavior is closer to Codex: the panel has a committed
-width of its own, the normal window reserves native width for that panel while
-it is visible, and native window edges resize the conversation surface rather
-than the tool surface. This requires controlled BrowserWindow geometry without
-restoring the old delta-based circular ownership.
+预期的停靠行为更接近 Codex：面板有自己的已提交宽度，normal 窗口在
+面板可见时为其保留原生宽度，原生窗口边缘调整的是会话界面而不是
+工具界面。这需要受控的 BrowserWindow 几何，而不恢复旧的基于差值的
+循环所有权。
 
-## Decision
+## 决策
 
-Renderer panel layout and Electron window geometry remain separate owners, but
-they coordinate through an idempotent target-state reservation:
+渲染进程面板布局和 Electron 窗口几何仍是各自独立的所有者，但它们
+通过一个幂等的目标状态预留来协调：
 
-1. The renderer owns one committed preferred panel width in the inclusive
-   `364..720` range. An open docked panel renders at that fixed width; viewport,
-   sidebar, and native-edge changes never clamp or rewrite it.
-2. The preload exposes only
-   `window/setWorkPanelReservation({ width: 0 | 364..720 })`. Electron Main
-   returns `{ requested, reserved }`, where `requested` is the normalized
-   current target and `reserved` is the native width currently added for it.
-   Repeating a target has no cumulative effect.
-3. In normal window state, Main derives visible bounds from persisted base
-   bounds plus the target reservation. It expands toward the right first and
-   shifts left only as far as required to keep the result inside the current
-   display work area. `reserved` is capped by available work-area width.
-4. Opening the visible panel requests its committed width. Collapsing it or
-   closing its final resource requests zero and symmetrically removes both the
-   added width and any reservation-induced x shift. A committed divider change
-   updates the reservation target to the new committed width.
-5. When the work area can supply the complete target, panel visibility and
-   divider commits do not change chat width. When it cannot, Main reserves the
-   available width, the panel still renders at its fixed committed width, and
-   chat absorbs the unavoidable `requested - reserved` shortfall.
-6. While a reservation is active, native edge resizing changes base window
-   bounds and therefore chat width only. The reserved native width and the
-   renderer's fixed panel width remain unchanged.
-7. Maximized and fullscreen windows record the latest requested target but
-   defer reservation geometry. Returning to normal state reconciles that target
-   once against the restored base bounds and current display work area.
-8. Moving the window to another display or changing display work-area geometry
-   reconciles the same target against the new available width. Ordinary movement
-   within one unchanged work area does not reapply reservation geometry.
-9. Persisted normal bounds are base bounds with the active reservation width
-   and reservation-induced x shift removed. Relaunch therefore never restores
-   a panel-expanded shell as the chat-only window size.
-10. Only the currently visible session context may set the reservation.
-   Background-session artifacts may update their retained tabs but never alter
-   visible reservation geometry.
+1. 渲染进程在闭区间 `364..720` 内拥有一个已提交的首选面板宽度。
+   打开的停靠面板以该固定宽度渲染；视口、侧边栏和原生边缘变化
+   绝不钳制或改写它。
+2. Preload 只暴露
+   `window/setWorkPanelReservation({ width: 0 | 364..720 })`。
+   Electron 主进程返回 `{ requested, reserved }`，其中 `requested`
+   是规范化后的当前目标，`reserved` 是当前为其增加的原生宽度。
+   重复同一目标没有累积效果。
+3. 在 normal 窗口状态下，主进程从持久化的基础边界加上目标预留
+   推导可见边界。它先向右扩展，只在保持结果位于当前显示工作区内
+   所需的范围内向左移动。`reserved` 受可用工作区宽度上限约束。
+4. 打开可见面板请求其已提交宽度。折叠它或关闭其最后一个资源
+   请求零，并对称地移除所增加的宽度和任何预留引起的 x 位移。
+   已提交的分隔条变更把预留目标更新为新的已提交宽度。
+5. 当工作区能提供完整目标时，面板可见性和分隔条提交不改变聊天
+   宽度。当不能时，主进程保留可用宽度，面板仍以其固定的已提交
+   宽度渲染，聊天吸收不可避免的 `requested - reserved` 差额。
+6. 预留生效期间，原生边缘调整大小只改变基础窗口边界，也就是只
+   改变聊天宽度。被保留的原生宽度和渲染进程的固定面板宽度保持
+   不变。
+7. 最大化和全屏窗口记录最近请求的目标，但推迟预留几何。返回
+   normal 状态时，把该目标对恢复的基础边界和当前显示工作区调和
+   一次。
+8. 把窗口移到另一台显示器或显示工作区几何变化时，把同一目标对
+   新的可用宽度调和。在同一个未变化的工作区内的普通移动不重新
+   应用预留几何。
+9. 持久化的 normal 边界是移除生效预留宽度和预留引起的 x 位移后
+   的基础边界。因此重启永远不会把面板扩展后的外壳恢复为纯聊天
+   窗口尺寸。
+10. 只有当前可见的会话上下文可以设置预留。后台会话 artifacts
+    可以更新其保留的标签页，但绝不改变可见的预留几何。
 
-The divider's anchored pointer math, frame-coalesced preview, commit-on-release,
-and cancellation rollback from ADR 0029 remain in force. Live preview remains a
-renderer layout operation; only a successful commit changes the native target.
+ADR 0029 中分隔条的锚定指针数学、按帧合并预览、释放提交和取消
+回滚仍然有效。实时预览仍是渲染进程布局操作；只有成功的提交才会
+改变原生目标。
 
-## Consequences
+## 后果
 
-- Opening and collapsing a panel preserve the conversation width whenever the
-  display work area has enough unused width.
-- Native edge gestures have one predictable effect: they resize the
-  conversation while the panel remains fixed.
-- Small displays can make chat narrower than its 360px readability target, but
-  never silently compress the panel or corrupt its committed preference.
-- Main owns a narrow, allowlisted geometry capability rather than an arbitrary
-  delta resize channel. Target-state calls are safe to repeat during rapid
-  session and resource transitions.
-- Window-state persistence and maximize/fullscreen transitions must distinguish
-  base bounds from temporary reservation geometry.
+- 只要显示工作区有足够的未用宽度，打开和折叠面板都保持会话宽度。
+- 原生边缘手势有一个可预测的效果：调整会话大小，而面板保持固定。
+- 小显示器可能使聊天窄于其 360px 可读性目标，但绝不会悄悄压缩
+  面板或破坏其已提交偏好。
+- 主进程拥有一个狭窄的、白名单化的几何能力，而不是任意的差值
+  调整大小通道。目标状态调用在快速的会话和资源转换期间可以安全
+  重复。
+- 窗口状态持久化和最大化/全屏转换必须区分基础边界和临时预留
+  几何。
 
-## Alternatives
+## 备选方案
 
-### Keep all columns inside the current client area
+### 把所有列保留在当前客户区内
 
-Rejected because panel open/collapse would continue to resize the conversation,
-and native edge gestures could continue to compress the panel.
+否决，因为面板打开/折叠会继续调整会话大小，原生边缘手势也可能
+继续压缩面板。
 
-### Restore renderer-supplied resize deltas
+### 恢复渲染进程提供的调整大小差值
 
-Rejected because deltas are not idempotent and recreate the stale-request,
-double-resize, and persistence ambiguity removed by ADR 0029.
+否决，因为差值不是幂等的，会重新产生 ADR 0029 移除的过期请求、
+双重调整大小和持久化歧义。
 
-### Force the full reservation outside the display work area
+### 在显示工作区之外强制完整预留
 
-Rejected because a fixed panel must not move native chrome off screen. Reserving
-available width and assigning only the unavoidable shortfall to chat preserves
-both panel fidelity and operable window chrome.
+否决，因为固定面板不得把原生外观移出屏幕。保留可用宽度并只把
+不可避免的差额分配给聊天，既保持面板保真度又保持窗口外观可操作。
 
-## References
+## 参考
 
 - `docs/adr/0029-separate-window-and-panel-resize-ownership.md`
 - `docs/spec/03-runtime/01-ipc-protocol.md`

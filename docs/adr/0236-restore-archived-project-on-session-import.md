@@ -1,4 +1,4 @@
-# ADR 0236: Restore Archived Projects When Session Import Adds a Bound Session
+# ADR 0236: 会话导入新增已绑定会话时恢复已归档项目
 
 - Status: Accepted
 - Date: 2026-09-12
@@ -6,40 +6,33 @@
 
 ## Context
 
-Project archive state belongs to renderer-local sidebar presentation metadata,
-while session import is completed by the host. A successful import can create
-or reuse a durable project and bind the new session to it without changing the
-renderer metadata. The session then exists in the host index but its project
-remains hidden from the default sidebar, making the import appear to have
-failed (issue #250).
+项目归档状态属于渲染进程本地的侧边栏呈现元数据，而会话导入由宿主完
+成。一次成功的导入可以创建或复用一个持久项目，并把新会话绑定到它，
+而不改变渲染进程元数据。此时会话存在于宿主索引中，但它的项目在默认
+侧边栏中保持隐藏，使导入看起来像是失败了（issue #250）。
 
 ## Decision
 
-- Core and plugin imports use an explicit import-refresh option when the
-  renderer refreshes its session list.
-- The renderer compares session ids before and after that refresh, collects
-  normalized project paths for newly added project-bound sessions, and restores
-  only matching project metadata that is currently archived.
-- Pathless sessions, skipped imports, historical plugin project paths without
-  an active project binding, and ordinary session refreshes do not change
-  archive state.
-- The host project model, IPC channel names, plugin SDK methods, storage schema,
-  and persisted session/project data formats remain unchanged.
+- 核心导入和插件导入在渲染进程刷新其会话列表时使用显式的导入刷新
+  选项。
+- 渲染进程比较刷新前后的会话 id，为新增的已绑定项目的会话收集规范
+  化项目路径，并只恢复当前已归档的匹配项目元数据。
+- 无路径会话、被跳过的导入、没有活动项目绑定的历史插件项目路径，
+  以及普通的会话刷新，都不改变归档状态。
+- 宿主项目模型、IPC 通道名、插件 SDK 方法、存储 schema，以及持久化
+  的会话/项目数据格式保持不变。
 
 ## Consequences
 
-An imported session is immediately discoverable in the default project view,
-including when a plugin uses an explicit host project id. Users can still keep
-unrelated archived projects hidden, and a restart does not turn every archived
-project with an old session into an active project.
+导入的会话在默认项目视图中立即可发现，包括插件使用显式宿主项目 id
+的情况。用户仍然可以让无关的已归档项目保持隐藏，重启也不会把每个
+带有旧会话的已归档项目变成活动项目。
 
 ## Alternatives considered
 
-- **Add an archived column to host projects:** rejected because archive is a
-  renderer presentation preference and the storage change would widen the
-  persistence and migration surface.
-- **Show archived projects whenever sessions refresh:** rejected because a
-  normal refresh would silently undo deliberate archive choices.
-- **Return an import error for archived projects:** rejected because importing
-  into an existing project is valid and the user has already expressed intent
-  to use that project.
+- **给宿主项目添加 archived 列：** 被拒绝，因为归档是渲染进程呈现偏
+  好，存储变更会扩大持久化和迁移界面。
+- **会话刷新时总是显示已归档项目：** 被拒绝，因为正常刷新会静默撤
+  销用户刻意的归档选择。
+- **对已归档项目返回导入错误：** 被拒绝，因为导入到现有项目是有
+  效的，且用户已经表达了使用该项目的意图。

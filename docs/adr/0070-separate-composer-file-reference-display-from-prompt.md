@@ -1,86 +1,68 @@
-# ADR 0070: Separate Composer File-Reference Display from Prompt Serialization
+# ADR 0070: 把 Composer 文件引用显示与 Prompt 序列化分离
 
-- Status: Accepted for implementation
-- Date: 2026-08-10
-- Deciders: PI-Desktop core
-- Related: D124, D197, D209, ADR 0024, ADR 0059
+- 状态： 已接受实现
+- 日期： 2026-08-10
+- 决策者： PI-Desktop 核心
+- 相关： D124、D197、D209、ADR 0024、ADR 0059
 
-## Context
+## 背景
 
-Workspace autocomplete and clipboard paste both produce canonical file paths
-that the agent must receive as plain-text `@` references. Rendering those paths
-directly in the controlled composer textarea exposes long workspace paths and,
-for pasted files, UUID-backed absolute scratch paths. The paths can wrap across
-multiple lines and crowd out the actual task while still being necessary at
-dispatch time.
+workspace 自动补全与剪贴板粘贴都会产生 agent 必须以纯文本 `@` 引用接收的规
+范文件路径。把这些路径直接渲染在受控 composer textarea 中，会暴露长的
+workspace 路径，对粘贴的文件则是 UUID 支撑的绝对 scratch 路径。这些路径可
+能折行多行并挤占真正的任务，而在发送时它们又是必需的。
 
-A native textarea cannot render one substring differently from its underlying
-value. A shortened textarea value also cannot be expanded by basename lookup:
-duplicate leaf names are valid, and scratch files require their exact absolute
-paths.
+原生 textarea 无法把某个子串渲染得与其底层值不同。缩短的 textarea 值也无法
+通过 basename 查找展开：重复的叶名是合法的，且 scratch 文件需要其确切的绝
+对路径。
 
-## Decision
+## 决策
 
-1. A completed file selection and each materialized clipboard file become a
-   renderer-owned, transient composer reference. The visible textarea keeps
-   only the user's ordinary text. Directory autocomplete remains literal so it
-   can continue into deeper path segments.
-2. Each reference stores its canonical path and a compact leaf label. Workspace
-   references keep the complete relative index path; pasted references keep the
-   UUID-backed absolute scratch path while displaying the sanitized original
-   leaf name returned by `composer/pasteFiles`.
-3. The composer renders references as compact removable chips above the
-   textarea. A chip persistently shows only its leaf label; its canonical path
-   remains available through the tooltip and accessible name. Duplicate labels
-   remain separate references with separate canonical paths.
-4. Immediately before the existing submit dispatcher runs, the renderer
-   appends references in stable addition order and serializes each with the
-   existing `formatFileInsert` quoting rules. The resulting prompt remains
-   plain text and contains the exact `@relative/path` or `@absolute/path` that
-   pi and the agent already consume.
-5. Reference-only drafts are sendable. References are appended after visible
-   text so slash templates and `/agent-mode`, `/plan-mode`, and `/goal-mode`
-   remain recognizable at the start of the draft. Successful local or prompt
-   dispatch clears the active editor, while rejected or failed dispatch retains
-   it. An accepted prompt also retains a renderer-only, session- and turn-scoped
-   snapshot of its pre-serialization text and references until the turn leaves
-   the unanswered smart-stop window.
-6. Stopping before assistant text, thinking, or a tool row begins removes the
-   just-sent user row and restores the structured snapshot. Canonical paths
-   return behind their leaf-name chips, never as textarea text. Once a reply
-   begins, abort keeps the partial transcript and restores no draft. The
-   snapshot is not reconstructed from persisted message content and adds no
-   IPC, host RPC, or storage field.
-7. References are scoped by durable session id and cleared when their workspace
-   changes. Removing a chip removes only the draft reference; scratch bytes keep
-   the existing session lifecycle.
-8. `ComposerPastedFile.name` is the sanitized original leaf display name. The
-   unique UUID storage name is represented by `path`, not duplicated into the
-   display label. This is an additive semantic clarification inside the
-   existing Electron-only shape; no host protocol or storage schema changes.
+1. 完成的文件选择与每个物化的剪贴板文件成为渲染进程持有的瞬态 composer
+   引用。可见 textarea 只保留用户的普通文本。目录自动补全保持字面形式，使
+   其可以继续深入路径段。
+2. 每个引用存储其规范路径与紧凑叶标签。Workspace 引用保留完整的相对索引
+   路径；粘贴的引用保留 UUID 支撑的绝对 scratch 路径，同时显示
+   `composer/pasteFiles` 返回的消毒后原始叶名。
+3. composer 把引用渲染为 textarea 上方的紧凑可移除 chip。chip 持久只显示
+   其叶标签；规范路径通过 tooltip 与无障碍名称保持可用。重复标签仍是分离
+   的引用，各有分离的规范路径。
+4. 在现有提交分发器运行之前，渲染进程按稳定的添加顺序追加引用，并用现有
+   的 `formatFileInsert` 引用规则序列化每个引用。生成的 prompt 仍是纯文
+   本，包含 pi 与 agent 已经消费的确切 `@relative/path` 或
+   `@absolute/path`。
+5. 仅引用的草稿可发送。引用追加在可见文本之后，因此斜杠模板与
+   `/agent-mode`、`/plan-mode`、`/goal-mode` 在草稿开头仍可识别。成功的本
+   地或 prompt 分发清空活跃编辑器，而被拒绝或失败的分发保留它。被接受的
+   prompt 还会保留一个仅渲染进程的、按会话与轮次作用域的序列化前文本与引
+   用快照，直到该轮次离开未应答的智能停止窗口。
+6. 在 assistant 文本、思考或工具行开始之前停止，会移除刚发送的用户行并恢
+   复结构化快照。规范路径回到其叶名 chip 之后，绝不作为 textarea 文本。一
+   旦回复开始，中止保留部分 transcript 且不恢复草稿。快照不从持久化的消息
+   内容重建，也不增加 IPC、宿主 RPC 或存储字段。
+7. 引用按持久会话 id 界定作用域，并在其 workspace 变化时清空。移除 chip
+   只移除草稿引用；scratch 字节保持现有会话生命周期。
+8. `ComposerPastedFile.name` 是消毒后的原始叶显示名。唯一的 UUID 存储名由
+   `path` 表示，不复制到显示标签。这是现有仅 Electron 形态内的加法式语义
+   澄清；没有宿主协议或存储 schema 变更。
 
-## Alternatives considered
+## 已考虑的备选方案
 
-- **Insert only the basename into the prompt:** rejected because duplicate
-  names and external scratch files would no longer resolve reliably.
-- **Overlay shortened text on a transparent textarea:** rejected because the
-  displayed and native text lengths diverge, breaking caret, selection,
-  wrapping, IME, and accessibility behavior.
-- **Replace the textarea with `contenteditable`:** rejected for this focused
-  change because it would reopen the complete IME, selection, undo, paste, and
-  accessibility contract.
-- **Parse serialized `@path` tokens back out of an unanswered user message:**
-  rejected because user-authored references and renderer-appended references
-  are indistinguishable, and the persisted text no longer carries the original
-  display label or duplicate-reference identity.
-- **Send provider-specific binary attachments:** rejected because file tools
-  already consume the materialized path and the prompt contract remains
-  provider-independent plain text.
+- **只在 prompt 中插入 basename：** 已拒绝，因为重复名称与外部 scratch 文
+  件将无法可靠解析。
+- **在透明 textarea 上叠加缩短文本：** 已拒绝，因为显示文本与原生文本长
+  度分叉，破坏光标、选择、折行、IME 与无障碍行为。
+- **用 `contenteditable` 替换 textarea：** 本次聚焦变更拒绝，因为它会重开
+  完整的 IME、选择、撤销、粘贴与无障碍契约。
+- **从未应答的用户消息中把序列化的 `@path` token 解析回来：** 已拒绝，因
+  为用户编写的引用与渲染进程追加的引用无法区分，且持久化文本不再携带原始
+  显示标签或重复引用身份。
+- **发送 provider 特定的二进制附件：** 已拒绝，因为文件工具已经消费物化
+  路径，且 prompt 契约保持与 provider 无关的纯文本。
 
-## Consequences
+## 后果
 
-- Long and UUID-backed paths no longer occupy the visible prompt row.
-- Canonical references remain exact in persisted messages and model context.
-- The renderer owns transient reference state in addition to textarea text.
-- Clipboard storage containment, limits, cleanup, and security boundaries are
-  unchanged from ADR 0059.
+- 长路径与 UUID 支撑的路径不再占据可见 prompt 行。
+- 规范引用在持久化消息与模型上下文中保持精确。
+- 渲染进程除 textarea 文本外还持有瞬态引用状态。
+- 剪贴板存储收容、限制、清理与安全边界与 ADR 0059 相比不变。

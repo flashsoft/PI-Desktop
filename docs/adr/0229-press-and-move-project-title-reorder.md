@@ -1,4 +1,4 @@
-# ADR 0229: Press-and-move project title reorder
+# ADR 0229: 按住并移动项目标题以重排
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -7,29 +7,26 @@
 
 ## Context
 
-ADR 0228 removed the reorder grip and armed a drag after a 400ms still
-press. That delay is a mobile long-press pattern. On a desktop sidebar it
-makes reorder slower than ChatGPT, Claude, and similar product lists, where
-grabbing a row and moving it starts the drag immediately.
+ADR 0228 移除了重排抓手，并在 400ms 静止按压之后预备拖拽。这个延
+迟是移动端的长按模式。在桌面侧边栏上，它让重排比 ChatGPT、Claude
+及类似产品列表更慢——在那些列表中，抓住一行并移动会立即开始拖拽。
 
 ## Decision
 
-The project title remains the reorder control, with no grip. Pointer
-disambiguation is movement, not time:
+项目标题仍然是重排控件，没有抓手。指针消歧依据移动而非时间：
 
-- Mouse and pen: an 8px move while pressed arms the drag. A click with no
-  qualifying movement still selects the project and toggles collapse.
-- Touch presses do not start a reorder, so a one-finger pan can scroll the
-  list. Keyboard ArrowUp/ArrowDown on the focused title remains available.
-- While dragging, an accent insertion line on the target group shows
-  before/after placement from the pointer's vertical midpoint. Escape
-  cancels. Persistence and pin/archive buckets are unchanged.
+- 鼠标和触控笔：按住状态下移动 8px 即预备拖拽。没有合格移动的点击
+  仍然选中项目并切换折叠。
+- 触摸按压不会开始重排，因此单指平移可以滚动列表。聚焦标题上的键
+  盘 ArrowUp/ArrowDown 仍然可用。
+- 拖拽期间，目标分组上的强调色插入线根据指针的垂直中点显示前/后放
+  置位置。Escape 取消。持久化和置顶/归档桶不变。
 
 ## Consequences
 
-- Desktop reorder matches common sidebar lists: press, move, drop.
-- Touch scrolling is not stolen by an accidental 8px pan on a title.
-- The 400ms still-press contract in ADR 0228 is replaced.
+- 桌面重排与常见的侧边栏列表一致：按住、移动、放下。
+- 触摸滚动不会被标题上意外的 8px 平移抢走。
+- ADR 0228 中的 400ms 静止按压契约被替换。
 
 ## References
 

@@ -1,4 +1,4 @@
-# ADR 0138: Subagent Peer Messaging
+# ADR 0138: 子代理对等消息
 
 - Status: Superseded by ADR 0147
 - Date: 2026-08-31
@@ -9,172 +9,148 @@
   background delegation lifecycle are both preserved; this adds an opt-in
   sibling channel beside them.
 
-> Superseded by ADR 0147. The in-process `SubagentMailbox` and the peer tools
-> this ADR introduced are removed and replaced by the A2A protocol stack: a
-> host-core broker with durable tasks, typed message parts, agent-card
-> discovery, and capability-token authorization over the existing JSON-RPC
-> transport. Retained because the coordination failures it documents — stale
-> premises under the path lock, disproved shared assumptions, duplicated
-> searches — are exactly what the A2A stack now addresses, and because the
-> invariants it froze (no forged sender, delegate-only tool, settled delegates
-> leave) carry forward unchanged.
+> 由 ADR 0147 取代。本 ADR 引入的进程内 `SubagentMailbox` 和对等工具
+> 已被移除，由 A2A 协议栈替代：一个 host-core broker，带持久任务、
+> 类型化消息部分、agent-card 发现，以及在既有 JSON-RPC 传输之上的
+> 能力令牌授权。保留本文档是因为它记录的协调失败——路径锁下的过期
+> 前提、被证伪的共享假设、重复的搜索——正是 A2A 栈现在解决的问题，
+> 也因为它冻结的不变量（无伪造发送者、仅 delegate 可用、已落定
+> delegate 退出）原样延续。
 
-## Context
+## 背景
 
-Delegation as built by ADR 0062 and ADR 0089 has exactly one integration point:
-the parent. A delegate receives one `task` brief at spawn time, runs alone, and
-returns one report bounded to 12k characters. Concurrent delegates cannot see
-each other. The only thing they share is mutual exclusion — `PathMutex` in the
-sidecar and host-core's one-in-flight-mutation-per-session rule — and both are
-locks with no payload.
+ADR 0062 和 ADR 0089 构建的委派只有一个集成点：父级。delegate 在
+生成时收到一份 `task` 简报，独自运行，并返回一份限制在 12k 字符的
+报告。并发的 delegate 互相看不见。它们共享的唯一东西是互斥——
+sidecar 中的 `PathMutex` 和 host-core 的每会话一个进行中变更规则——
+而两者都是没有载荷的锁。
 
-For the fan-out pattern the `Task` description recommends (one delegate per
-independent direction, in one assistant message), that isolation is correct: the
-parent asked for independent answers and gets them. It stops being correct as
-soon as the directions turn out not to be independent, which the parent cannot
-always know when it writes the briefs:
+对于 `Task` 描述推荐的扇出模式（一条 assistant 消息中每个独立方向
+一个 delegate），这种隔离是正确的：父级要求独立的答案并得到它们。
+但当这些方向最终被证明并不独立时，隔离就不再正确，而父级在撰写
+简报时并不总能知道这一点：
 
-- Two write-capable delegates discover mid-run that they need the same file. The
-  path lock serializes the writes, so neither corrupts the other, but the second
-  one's edit is built on a version it read before the first one's change. The
-  lock prevents a torn write, not a stale premise.
-- One delegate disproves an assumption every brief was written against. It has
-  no way to say so. It reports the correction, the parent reads it after
-  `TaskWait`, and by then the other delegates have finished spending their turns
-  on the wrong premise.
-- One delegate has already found the fact another is about to spend fifteen tool
-  calls searching for. Both searches are paid in full, in separate contexts, and
-  the duplication is invisible until the reports land.
+- 两个有写权限的 delegate 在运行中途发现它们需要同一个文件。路径锁
+  串行化写入，因此谁也不会破坏对方，但第二个的编辑建立在它在第一个
+  变更之前读到的版本上。锁防止的是撕裂写入，而不是过期前提。
+- 一个 delegate 证伪了每份简报都基于的假设。它无法说出来。它在报告
+  中给出修正，父级在 `TaskWait` 之后读到，而此时其他 delegate 已经
+  在错误前提上花完了它们的轮次。
+- 一个 delegate 已经找到了另一个即将花十五次工具调用去搜索的事实。
+  两次搜索都被全额支付，发生在各自独立的上下文中，而这种重复在
+  报告落地之前不可见。
 
-Routing these through the parent does not work. The parent is blocked in
-`TaskWait` while its delegates run, `task` is write-once so a running brief
-cannot be corrected, and adding a parent-mediated relay would mean every
-coordination note enters the parent's context — which is the exact cost
-delegation exists to avoid.
+把这些经由父级路由是行不通的。父级在 delegate 运行期间阻塞在
+`TaskWait` 中，`task` 是只写一次的，因此运行中的简报无法被修正，
+而增加一个父级中介的中继意味着每条协调便条都进入父级上下文——
+这正是委派存在所要避免的成本。
 
-## Decision
+## 决策
 
-Add a **session-scoped peer mailbox** and three delegate-only tools, opt-in per
-definition.
+新增一个**会话作用域的对等邮箱**和三个仅 delegate 可用的工具，按
+定义选择启用。
 
-1. `SubagentMailbox` is owned by the session runtime, one per session. A
-   delegate never holds a reference to it; it reaches it only through the tools
-   the runtime builds for it.
-2. Three tools, declarable in a definition's `tools:` list alongside the
-   existing seven:
-   - `PeerSend(to?, text)` — deliver a note to one running peer, or to all of
-     them when `to` is omitted.
-   - `PeerInbox()` — drain queued messages and list running peers; never blocks.
-   - `PeerWait(timeoutSeconds?)` — block until a message arrives, the timeout
-     expires, the last peer leaves, or the run aborts.
-3. **Addressing is by peer id, not delegation id.** When a single delegation of
-   a definition runs, its peer id equals its agent name. When multiple
-   delegations of the same definition run concurrently (e.g. three "discussant"
-   roundtable participants), each gets a unique peer id by appending a numeric
-   suffix ("discussant-2", "discussant-3") so every peer is individually
-   addressable. Exposing delegation ids would hand a delegate a handle on the
-   delegation registry, which is the parent's alone.
-4. **The sender is bound at spawn time.** Each peer tool closes over the
-   delegate's own agent name, supplied by the runtime, so `from` is not a model
-   input and a delegate can neither spoof a sender nor read another inbox.
-5. **Opt-in and default-off.** A definition that does not name a peer tool is
-   unchanged, so every existing definition — including all four builtins — keeps
-   ADR 0062 isolation exactly. None of the builtins declare one.
-6. **Peer tools are absent from `toolCatalog`.** They are constructed per
-   delegate at spawn. The parent already owns the delegation lifecycle through
-   the four `Task*` tools and must not gain a second, weaker channel to its
-   delegates.
-7. **A peer tool is not a host tool call.** Messages are in-process, so they
-   bypass `scopeDelegateTools`, carry no `permissionScope`, never reach
-   host-core, and consume no tool budget. There is nothing to gate: no file, no
-   process, no network.
-8. **Peer traffic never enters the parent's model context.** The parent still
-   learns only what a report says. A delegate is told, in its prompt, that
-   anything mattering to the parent must also be in its report.
-9. **Messaging alone is not a delegate.** A definition declaring only peer tools
-   is refused at `Task` time with a tool error: it could talk but not work.
-10. Every dimension is bounded, because a mailbox is shared mutable state
-    between agents that are each trying to fill their own context:
-    2,000 characters per message, 32 messages per inbox (oldest dropped first,
-    with the loss reported to the reader), 40 sends per run, and a `PeerWait`
-    ceiling of 120 seconds against a 300-second delegate idle watchdog.
-11. **Draining is destructive.** Once read, a message is gone from the mailbox;
-    the delegate's own context is the only copy.
-12. **Membership tracks running delegates.** A delegate joins when it starts and
-    leaves when it settles. Leaving wakes every waiter, so a delegate parked in
-    `PeerWait` on an agent that just exited returns immediately instead of
-    waiting out its timeout.
-13. **Peer ids are unique per concurrent delegation.** When a definition
-    declares peer tools, each delegation receives a unique peer id and its own
-    mailbox inbox. The first delegation keeps the bare name ("discussant");
-    subsequent concurrent delegations of the same definition get suffixed ids
-    ("discussant-2", "discussant-3"). This ensures every delegate can address
-    and be addressed individually, which is essential for multi-instance
-    patterns such as structured roundtable debates.
+1. `SubagentMailbox` 由会话运行时持有，每会话一个。delegate 绝不持有
+   它的引用；它只能通过运行时为其构建的工具触达它。
+2. 三个工具，可与既有七个工具一起声明在定义的 `tools:` 列表中：
+   - `PeerSend(to?, text)` — 向一个运行中的对等方投递便条，省略
+     `to` 时投递给所有对等方。
+   - `PeerInbox()` — 取走排队的消息并列出运行中的对等方；绝不阻塞。
+   - `PeerWait(timeoutSeconds?)` — 阻塞直到有消息到达、超时到期、
+     最后一个对等方离开或运行被中止。
+3. **寻址按 peer id，而不是 delegation id。** 当一个定义的单个委派
+   运行时，其 peer id 等于其 agent 名。当同一定义的多个委派并发运行
+   时（例如三个 "discussant" 圆桌参与者），每个通过追加数字后缀获得
+   唯一 peer id（"discussant-2"、"discussant-3"），使每个对等方可被
+   单独寻址。暴露 delegation id 会把委派注册表的句柄交给 delegate，
+   而该注册表只属于父级。
+4. **发送者在生成时绑定。** 每个对等工具闭包持有由运行时提供的
+   delegate 自己的 agent 名，因此 `from` 不是模型输入，delegate 既
+   不能伪造发送者也不能读取他人的收件箱。
+5. **选择启用且默认关闭。** 不声明对等工具的定义保持不变，因此每个
+   既有定义——包括全部四个内置——精确保留 ADR 0062 的隔离。内置
+   定义都不声明对等工具。
+6. **对等工具不在 `toolCatalog` 中。** 它们在生成时按 delegate 构建。
+   父级已经通过四个 `Task*` 工具持有委派生命周期，绝不能获得通往其
+   delegate 的第二条更弱的通道。
+7. **对等工具不是宿主工具调用。** 消息在进程内，因此绕过
+   `scopeDelegateTools`，不携带 `permissionScope`，从不到达
+   host-core，也不消耗工具预算。没有什么可门控的：没有文件、没有
+   进程、没有网络。
+8. **对等流量从不进入父级的模型上下文。** 父级仍然只知道报告所说
+   的内容。delegate 在其提示词中被告知：任何对父级重要的内容也必须
+   写进它的报告。
+9. **只有消息能力不构成 delegate。** 只声明对等工具的定义在 `Task`
+   时会以工具错误被拒绝：它能说话但不能工作。
+10. 每个维度都有界，因为邮箱是共享可变状态，而每个 agent 都在试图
+    填满自己的上下文：每条消息 2,000 字符，每个收件箱 32 条消息
+    （最旧的先丢弃，丢失会报告给读取者），每次运行 40 次发送，
+    `PeerWait` 上限 120 秒，而 delegate 空闲看门狗为 300 秒。
+11. **读取是破坏性的。** 一旦被读取，消息就从邮箱中消失；delegate
+    自己的上下文是唯一副本。
+12. **成员关系跟随运行中的 delegate。** delegate 在启动时加入，在
+    落定时离开。离开会唤醒每个等待者，因此在刚刚退出的 agent 上停
+    在 `PeerWait` 中的 delegate 会立即返回，而不是等完超时。
+13. **peer id 在每个并发委派中唯一。** 当定义声明对等工具时，每个
+    委派获得唯一 peer id 和自己的邮箱收件箱。第一个委派保留裸名
+    （"discussant"）；同定义的后续并发委派获得带后缀的 id
+    （"discussant-2"、"discussant-3"）。这确保每个 delegate 都能被
+    单独寻址和寻址他人，这对结构化圆桌辩论等多实例模式至关重要。
 
-No IPC, storage, host protocol, or renderer change. `AgentEventEnvelope` is
-untouched: peer messages are tool calls of the delegate that sent or read them,
-so they already appear in the transcript attributed by `parentToolCallId` and
-`agentName` with no new wire contract.
+没有 IPC、存储、宿主协议或渲染进程变更。`AgentEventEnvelope` 不受
+影响：对等消息是发送或读取它们的 delegate 的工具调用，因此它们
+已经以 `parentToolCallId` 和 `agentName` 归因出现在 transcript 中，
+不需要新的线上契约。
 
-## Consequences
+## 后果
 
-- Two write-capable delegates can claim files before editing them, turning the
-  path lock from the only coordination primitive into the backstop it should be.
-- A delegate that disproves a shared assumption can say so while its peers can
-  still act on it, instead of after `TaskWait` when their turns are spent.
-- The parent's context cost is unchanged. Coordination that used to be
-  impossible does not become parent context; it stays between the delegates.
-- Peer messages are visible in the transcript as ordinary delegate tool calls,
-  so a user reviewing a fan-out can see what the delegates told each other
-  without a new UI surface.
-- Four invariants callers must keep:
-  - **A peer tool must never be added to `toolCatalog`.** That would give the
-    parent `PeerSend` and, with it, a way to inject messages that bypasses
-    `Task`'s brief and the report boundary.
-  - **`from` must stay runtime-supplied.** The moment a sender name becomes a
-    tool parameter, attribution in the transcript becomes a model claim.
-  - **A settled delegate must leave the mailbox.** A stale participant makes
-    `PeerSend` report success for a message nobody will ever read, and leaves
-    waiters blocked on an agent that is gone.
-  - **`PeerWait`'s ceiling must stay below the idle watchdog.** A wait longer
-    than 300 seconds of silence would let a delegate kill itself waiting, and
-    the failure would read as a hung delegate rather than an unanswered
-    question.
-- A delegate can now spend turns on messages. The caps bound the worst case, and
-  the prompt is explicit that coordination is not conversation, but a definition
-  that opts in accepts that its delegate may spend a few turns coordinating.
-- Not addressed: cross-session messaging, messaging with the parent, nested
-  delegation, and durable peer history. All four stay out.
+- 两个有写权限的 delegate 可以在编辑文件之前先认领它们，使路径锁
+  从唯一的协调原语变成它本应是的兜底。
+- 证伪共享假设的 delegate 可以在其对等方仍能据此行动时说出来，
+  而不是在 `TaskWait` 之后、它们的轮次已经花完时。
+- 父级的上下文成本不变。曾经不可能的协调不会变成父级上下文；它
+  留在 delegate 之间。
+- 对等消息作为普通的 delegate 工具调用在 transcript 中可见，因此
+  审查扇出的用户可以看到 delegate 互相说了什么，而不需要新的 UI
+  界面。
+- 调用方必须保持的四个不变量：
+  - **对等工具绝不得加入 `toolCatalog`。** 那会把 `PeerSend` 交给
+    父级，并随之提供一种绕过 `Task` 简报和报告边界的消息注入方式。
+  - **`from` 必须保持由运行时提供。** 一旦发送者名称变成工具参数，
+    transcript 中的归因就变成模型单方面的声明。
+  - **已落定的 delegate 必须离开邮箱。** 滞留的参与者会让
+    `PeerSend` 对一条永远不会有人读的消息报告成功，并让等待者阻塞
+    在一个已经离开的 agent 上。
+  - **`PeerWait` 的上限必须保持在空闲看门狗之下。** 超过 300 秒静默
+    的等待会让 delegate 在等待中杀死自己，而该失败会被读作挂起的
+    delegate 而不是无人回答的问题。
+- delegate 现在可以把轮次花在消息上。上限约束了最坏情况，且提示词
+  明确说明协调不是对话，但选择启用的定义接受其 delegate 可能花几个
+  轮次进行协调。
+- 未解决：跨会话消息、与父级的消息、嵌套委派和持久的对等历史。
+  这四者都保持不做。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- **Route peer messages through the parent:** rejected. The parent is blocked in
-  `TaskWait` while delegates run, so it cannot relay in time, and every note
-  would land in the context delegation exists to protect. It also makes the
-  parent's model responsible for correctly forwarding messages it has no
-  interest in.
-- **Give delegates `TaskList`/`TaskWait` over their siblings:** rejected. Those
-  are lifecycle tools over the delegation registry. A delegate waiting on a
-  sibling's *completion* rather than a message reintroduces deadlock (two
-  delegates each waiting for the other) and hands a worker control over work it
-  did not start.
-- **Shared scratch files as the channel:** rejected. It works today and is
-  exactly the failure mode worth avoiding: no delivery semantics, no bounds, no
-  attribution in the transcript, and a polling loop in every delegate that wants
-  to listen. It also puts coordination state in the workspace or scratch tree,
-  where it outlives the session.
-- **Always-on peer tools for every definition:** rejected. It would change the
-  behaviour of all four builtins and every existing user definition at once, for
-  a capability most delegations do not need. A `code-reviewer` reviewing one
-  change has nobody to coordinate with, and the tool would only invite it to
-  look.
-- **Interrupt-style delivery that injects a message into a peer's next request:**
-  rejected. A delegate mid-edit cannot act on an interrupt coherently, and an
-  injected message would appear in a context the delegate did not ask to change.
-  Pull delivery keeps the delegate in control of when it reads, at the cost of a
-  note sometimes being read late — which is why the prompt frames every exchange
-  as best effort.
-- **Broadcast only, with no directed messages:** rejected. The common case is
-  one delegate telling one specific peer that it owns a file. Broadcasting that
-  to eight delegates spends eight contexts to inform one.
+- **经由父级路由对等消息：** 否决。父级在 delegate 运行期间阻塞在
+  `TaskWait` 中，因此无法及时中继，而且每条便条都会落入委派存在
+  所要保护的上下文。这还会让父级模型负责正确转发它不关心的消息。
+- **给 delegate 针对其兄弟的 `TaskList`/`TaskWait`：** 否决。这些是
+  针对委派注册表的生命周期工具。让 delegate 等待兄弟的*完成*而不是
+  消息会重新引入死锁（两个 delegate 互相等待），并把对它未启动的
+  工作的控制权交给一个 worker。
+- **用共享 scratch 文件作为通道：** 否决。它今天就能工作，但这正是
+  值得避免的失败模式：没有投递语义、没有边界、transcript 中没有
+  归因，而且每个想监听的 delegate 里都有一个轮询循环。它还会把
+  协调状态放在工作区或 scratch 树中，使其活得比会话更久。
+- **每个定义都默认开启对等工具：** 否决。它会一次性改变全部四个
+  内置和每个既有用户定义的行为，而大多数委派并不需要这个能力。
+  审查一个变更的 `code-reviewer` 没有人可协调，该工具只会诱导它
+  去找。
+- **中断式投递，把消息注入对等方的下一次请求：** 否决。编辑中途的
+  delegate 无法连贯地响应中断，注入的消息会出现在 delegate 并未
+  要求改变的上下文中。拉取式投递让 delegate 控制何时读取，代价是
+  便条有时会被读得晚——这正是提示词把每次交流都表述为尽力的原因。
+- **只做广播，不做定向消息：** 否决。常见情形是一个 delegate 告诉
+  一个特定对等方它拥有某个文件。把它广播给八个 delegate 会花八个
+  上下文去通知一个。

@@ -1,60 +1,49 @@
-# ADR 0184: Dock the context usage inspector in the composer toolbar
+# ADR 0184: 将上下文用量检查器停靠在 composer 工具栏
 
-- Status: Accepted (amended by D355 / ADR 0193)
-- Date: 2026-09-08
-- Deciders: PI-Desktop renderer and UX maintainers
-- Amends: D103, D184, D244, ADR 0047, ADR 0103
-- Related: D347, D355, E2E-060d, US-UI-61
+- 状态：已接受（由 D355 / ADR 0193 修订）
+- 日期：2026-09-08
+- 决策者：PI-Desktop 渲染进程与 UX 维护者
+- 修订：D103、D184、D244、ADR 0047、ADR 0103
+- 相关：D347、D355、E2E-060d、US-UI-61
 
-## Context
+## 背景
 
-The compact context inspector (ADR 0047, ADR 0103) hung under the newest
-assistant turn. After the transcript scrolled, a routine remaining-capacity
-check required hunting for that row. Collaborators agreed to move the single
-entry next to the model picker instead of keeping two copies of the same
-numbers.
+紧凑的上下文检查器（ADR 0047、ADR 0103）挂在最新的 assistant 轮次
+下方。transcript 滚动之后，一次例行的剩余容量检查都需要寻找那一行。
+协作者同意把单一入口移到模型选择器旁边，而不是保留两份相同数字的
+副本。
 
-## Decision
+## 决策
 
-1. Render one context inspector in the composer right toolbar, immediately
-   left of the combined model × reasoning chip. Hide it until the active
-   session has usage.
-2. Keep the data contract, as amended by D355: remaining capacity,
-   used/window counts, turn total, and exact provider
-   input/output/cache/reasoning/hit-rate describe the newest usage-bearing
-   assistant message (the last model request). Completed-turn speed and the
-   aggregate tool summary still describe that visual turn. A later streaming
-   turn without totals does not steal that turn's tools or throughput.
-   Delegate rows' usage does not drive the ring. Compaction marks still
-   split overflow-retry turns so the inspector does not sum the failed
-   attempt with the retry.
-3. Keep the click/keyboard trigger, remaining-capacity ring, viewport-aware
-   body portal, outside-click dismissal, and Escape behavior. The trigger
-   shows the ring and percentage only; the redundant `Context` label is
-   omitted because the accessible name already states remaining capacity.
-4. Keep the compact summary contents. The heading is remaining tokens plus
-   percentage. Rows below use one muted-label / tabular-value rhythm,
-   separated by spacing. The popover keeps its floating-layer edge and does
-   not draw inner section rules (D297).
-5. Assistant meta under a completed turn keeps the optional model badge and
-   the usage-less throughput fallback. It no longer hosts the inspector.
-6. Renderer only: no protocol, storage, runtime accounting, or model
-   metadata changes.
+1. 在 composer 右侧工具栏渲染一个上下文检查器，紧邻合并的模型 × 推理
+   芯片左侧。在活动会话有用量之前隐藏它。
+2. 保持数据契约（按 D355 修订）：剩余容量、已用/窗口计数、轮次总计，
+   以及精确的 provider input/output/cache/reasoning/命中率，描述的是最
+   新的带用量 assistant 消息（最后一次模型请求）。已完成轮次的速度和
+   聚合工具摘要仍描述那个可视轮次。后续没有总计的流式轮次不会窃取该
+   轮次的工具或吞吐。委托行的用量不驱动圆环。压缩标记仍然拆分溢出
+   重试轮次，使检查器不会把失败的尝试与重试求和。
+3. 保留点击/键盘触发器、剩余容量圆环、感知视口的 body portal、外部
+   点击关闭和 Escape 行为。触发器只显示圆环和百分比；冗余的 `Context`
+   标签被省略，因为无障碍名称已经陈述了剩余容量。
+4. 保留紧凑摘要内容。标题是剩余 token 加百分比。下方各行使用统一的
+   弱化标签 / 等宽数字节奏，以间距分隔。弹出层保留其浮动层边缘，不
+   绘制内部区块分隔线（D297）。
+5. 已完成轮次下方的 assistant meta 保留可选的模型徽章和无用量的吞吐
+   回退。它不再承载检查器。
+6. 仅渲染进程：不改变协议、存储、运行时记账或模型元数据。
 
-## Consequences
+## 后果
 
-- Remaining capacity stays reachable while composing, even after the
-  transcript has scrolled.
-- Historical turns no longer expose a per-row inspector; the composer chip
-  is the single authority for the latest usage snapshot.
-- The panel still opens above the dock when space allows, because placement
-  already prefers the side with room and clamps to the viewport.
+- 剩余容量在编写期间始终可达，即使 transcript 已经滚动。
+- 历史轮次不再暴露逐行检查器；composer 芯片是最新用量快照的唯一权威。
+- 空间允许时面板仍在停靠区上方打开，因为定位已经优先选择有空间的
+  一侧并钳制到视口。
 
-## Rejected alternatives
+## 已否决的替代方案
 
-- **Keep the message-row inspector and add a second composer entry:** two
-  surfaces would show the same numbers and leave users unsure which is
-  authoritative.
-- **Inner hairlines between popover sections:** rejected by D297; floating
-  layers keep an outer edge, not internal rules. The doubled heading rule
-  is fixed by dropping the extra heading caption, not by adding borders.
+- **保留消息行检查器并新增第二个 composer 入口：** 两个界面会显示
+  相同数字，让用户不确定哪个是权威。
+- **弹出层区块之间的内部细线：** 被 D297 否决；浮动层保留外边缘，不
+  加内部线条。标题规则重复的问题通过去掉多余的标题说明来解决，而不
+  是通过添加边框。

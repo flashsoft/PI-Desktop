@@ -1,21 +1,20 @@
-# ADR 0276: Official plugin channel and backup channels
+# ADR 0276: 官方插件渠道与备用渠道
 
-- Status: Accepted for implementation
-- Date: 2026-09-17
-- Deciders: PI-Desktop plugin and distribution maintainers
-- Related: ADR 0102, D238, E2E-024P, E2E-PLUGIN-official-channel-resolves-through-the-platform
+- 状态：已接受，待实现
+- 日期：2026-09-17
+- 决策者：PI-Desktop 插件与分发维护者
+- 相关：ADR 0102, D238, E2E-024P, E2E-PLUGIN-official-channel-resolves-through-the-platform
 
-## Context
+## 背景
 
-The client's marketplace source was a three-value union — `official`, `mirror`,
-`custom` — mapped to hardcoded catalog URLs, and `official` was
-indistinguishable from "never set": both landed on the GitHub default. A
-package was fetched by joining the catalog's relative `url` onto
-`artifactBaseUrl` or the catalog directory, and the `verified` trust tier was
-recognized only while the catalog URL equaled one of two constants.
+客户端的市场来源原本是一个三值联合类型——`official`、`mirror`、
+`custom`——映射到硬编码的目录 URL，而 `official` 与"从未设置过"无法
+区分：两者都落到 GitHub 默认值。获取包的方式是把目录中的相对 `url`
+拼接到 `artifactBaseUrl` 或目录路径上，而 `verified` 信任等级只在目录
+URL 等于两个常量之一时才被认可。
 
-Since ADR 0102 the plugin center at `plugins.aiuo.net` is the publishing
-authority, and it defines the client-facing download contract:
+自 ADR 0102 起，位于 `plugins.aiuo.net` 的插件中心是发布权威方，它定义了
+面向客户端的下载契约：
 
 ```text
 GET  /catalog.json                  the catalog the client reads
@@ -26,213 +25,172 @@ GET  /download/{id}/{version}       byte route for the marketplace page and
                                     console; not the client's path
 ```
 
-The platform's own rules, verified against production: it never hosts the bytes
-of a published package, only answers where they are; `downloads` is ordered and
-never empty on `200`; a client calls resolve once per install or update, sends a
-**stable** device identifier, never caches the answer, verifies `sha256` before
-installing, and tries the next mirror when one fails; `counted: false` is normal;
-rate limiting is per device identifier (otherwise per source address), 600
-requests per minute by default, with `429` and `Retry-After`; refusals are
-`400 PLUGIN_REQUIRED`, `403 NOT_PUBLISHED`, `403 PLUGIN_ARCHIVED`,
-`404 NOT_FOUND`, `429`, and `503 NO_DOWNLOAD_SOURCE`; and a platform-unreachable
-install falls back to the catalog's URL and is not counted. Counting identity is
-the device identifier, the platform stores counts rather than identities, and
-the optional `source` field is a statistics hint only.
+平台自身的规则（已对生产环境核实）：它从不托管已发布包的字节内容，只回答
+字节在哪里；`downloads` 有序且在 `200` 响应中永不为空；客户端每次安装或
+更新调用一次 resolve，发送**稳定的**设备标识符，从不缓存应答，安装前校验
+`sha256`，某个镜像失败时尝试下一个镜像；`counted: false` 是正常的；限流
+按设备标识符计数（否则按来源地址），默认每分钟 600 个请求，超限返回 `429`
+和 `Retry-After`；拒绝类型包括 `400 PLUGIN_REQUIRED`、`403 NOT_PUBLISHED`、
+`403 PLUGIN_ARCHIVED`、`404 NOT_FOUND`、`429` 和 `503 NO_DOWNLOAD_SOURCE`；
+平台不可达时的安装会回退到目录中的 URL 且不计数。计数身份是设备标识符，
+平台只存储计数而不存储身份，可选的 `source` 字段仅是统计提示。
 
-Measured on the same day: the catalog declares
-`artifactBaseUrl = raw.githubusercontent.com/AIUO-Net/pi-desktop-plugins/main`;
-all three mirrors answered `200` and every mirror host is already inside the
-client's download allowlist; the CNB mirror still served an older distribution
-(22 plugins, and `pi.todo-0.6.5` at 92487 bytes where the other mirror served
-92951 bytes). A version string may contain `+` (for example `0.3.0+0.2.0`), so
-the platform's byte route cannot be assumed to carry every published version.
+当天实测：目录声明了
+`artifactBaseUrl = raw.githubusercontent.com/AIUO-Net/pi-desktop-plugins/main`；
+三个镜像全部应答 `200`，且每个镜像主机都已在客户端的下载允许名单之内；
+CNB 镜像仍在提供较旧的分发（22 个插件，且 `pi.todo-0.6.5` 为 92487 字节，
+而另一镜像提供的是 92951 字节）。版本字符串可能包含 `+`（例如
+`0.3.0+0.2.0`），因此不能假设平台的字节路由能承载每一个已发布版本。
 
-The client's source model therefore has to become "the center first, the two Git
-hosts as backups", and the install path has to follow the platform's contract.
+因此，客户端的来源模型必须变为"中心优先，两个 Git 托管作为备份"，安装
+路径也必须遵循平台的契约。
 
-## Decision
+## 决策
 
-### 1. Four channels, and `official` keeps its meaning
+### 1. 四个渠道，`official` 保持其含义
 
-| # | Channel | Value | Catalog URL | Install path |
+| # | 渠道 | 取值 | 目录 URL | 安装路径 |
 | --- | --- | --- | --- | --- |
-| 1 | Official channel | `official` (default) | `https://plugins.aiuo.net/catalog.json` | Platform resolve |
-| 2 | GitHub backup | `github` (new) | `https://raw.githubusercontent.com/AIUO-Net/pi-desktop-plugins/main/catalog.json` | Static relative URL |
-| 3 | CNB backup | `mirror` (unchanged) | `https://cnb.cool/aixk/pi-desktop-plugins/-/git/raw/main/catalog.json` | Static relative URL |
-| 4 | Custom | `custom` (unchanged) | user-provided | Static relative URL |
+| 1 | 官方渠道 | `official`（默认） | `https://plugins.aiuo.net/catalog.json` | 平台 resolve |
+| 2 | GitHub 备份 | `github`（新增） | `https://raw.githubusercontent.com/AIUO-Net/pi-desktop-plugins/main/catalog.json` | 静态相对 URL |
+| 3 | CNB 备份 | `mirror`（不变） | `https://cnb.cool/aixk/pi-desktop-plugins/-/git/raw/main/catalog.json` | 静态相对 URL |
+| 4 | 自定义 | `custom`（不变） | 用户提供 | 静态相对 URL |
 
-`official` keeps meaning "the project's own first-party channel" and now points
-at the center, so an unset value and an unrecognized value resolve to it and no
-persisted setting is migrated. `mirror` keeps meaning CNB; `github` is new
-because the GitHub backup no longer is the default. Display names are
-localized — Official channel / GitHub backup / CNB backup / Custom in English.
-A package URL never crosses providers: whichever channel served the catalog also
-serves the package.
+`official` 保持"项目自己的第一方渠道"这一含义，现在指向中心，因此未设置
+的值和无法识别的值都解析到它，不做任何持久化设置的迁移。`mirror` 保持指
+CNB；`github` 是新增的，因为 GitHub 备份不再是默认。显示名称走本地化——
+英文为 Official channel / GitHub backup / CNB backup / Custom。包 URL 绝不
+跨提供方：哪个渠道提供了目录，就由哪个渠道提供包。
 
-### 2. The official channel resolves through the platform
+### 2. 官方渠道通过平台 resolve
 
-1. Refresh the catalog, then `POST {center origin}/api/v1/download/resolve` with
-   `{ deviceId, pluginId, version }` — once per install or update. POST rather
-   than GET, because the platform documents that a device id in a query string
-   ends up in access logs.
-2. Try the returned `downloads` entries in order. Every attempt is downloaded to
-   a temporary file, checked against the returned `sha256` and the announced
-   `sizeBytes`, and extracted only when both agree. A mirror that fails —
-   network error, HTTP error, digest mismatch, size mismatch — is abandoned and
-   the next one is tried. Requests stay on the download allowlist.
-3. Only when the platform could not be reached, or when no mirror in the list
-   could serve the version, the client falls back to the catalog's own package
-   URL (`artifactBaseUrl` plus the relative `url`). That is the fallback the
-   platform defines, and that install is not counted.
-4. The answer is never cached (`Cache-Control: no-store` is the platform's
-   confirmation of this), so two installs of the same version are two calls.
-5. The resolve digest is authoritative on the resolve path; the catalog's
-   `shasum` stays authoritative on the fallback and on the backup channels.
-   `sizeBytes` is a sanity check on both.
-6. Refusals are reported, not papered over: `403 NOT_PUBLISHED` (no retry),
-   `403 PLUGIN_ARCHIVED` (hide the plugin from install and update selection),
-   `404` (the platform has no such version — including a `+`-suffixed version
-   the byte route cannot carry), `429` (wait the `Retry-After` interval, retry
-   once, then report), `503` (report the deployment problem; `NO_DOWNLOAD_SOURCE`
-   means no mirror can serve the version).
-7. Nothing switches the channel automatically. An unreachable platform is
-   reported after the fallback, and the user switches through the existing
-   selector.
+1. 刷新目录，然后向 `POST {center origin}/api/v1/download/resolve` 发送
+   `{ deviceId, pluginId, version }`——每次安装或更新一次。用 POST 而
+   不是 GET，因为平台文档说明查询字符串中的设备 id 会进入访问日志。
+2. 按顺序尝试返回的 `downloads` 条目。每次尝试都下载到临时文件，与返回
+   的 `sha256` 和声明的 `sizeBytes` 核对，两者都一致才解压。失败的镜像——
+   网络错误、HTTP 错误、摘要不匹配、大小不匹配——被放弃并尝试下一个。
+   请求始终不超出下载允许名单。
+3. 只有当平台不可达，或列表中没有镜像能提供该版本时，客户端才回退到
+   目录自带的包 URL（`artifactBaseUrl` 加上相对 `url`）。这就是平台定义
+   的回退，且该次安装不计数。
+4. 应答从不缓存（`Cache-Control: no-store` 是平台对此的确认），因此同一
+   版本的两次安装就是两次调用。
+5. resolve 摘要在 resolve 路径上是权威的；目录的 `shasum` 在回退路径和
+   备份渠道上保持权威。`sizeBytes` 在两条路径上都作为健全性检查。
+6. 拒绝要如实上报，而不是掩盖：`403 NOT_PUBLISHED`（不重试）、
+   `403 PLUGIN_ARCHIVED`（在安装和更新选择中隐藏该插件）、`404`（平台
+   没有该版本——包括字节路由无法承载的带 `+` 后缀版本）、`429`（等待
+   `Retry-After` 间隔，重试一次，然后上报）、`503`（上报部署问题；
+   `NO_DOWNLOAD_SOURCE` 表示没有镜像能提供该版本）。
+7. 没有任何机制自动切换渠道。平台不可达在回退之后上报，用户通过现有的
+   选择器切换。
 
-### 3. A stable device identifier, sent as a digest
+### 3. 稳定的设备标识符，以摘要形式发送
 
-The resolve request carries a `deviceId` that host-core derives from the machine
-identity the operating system exposes — the Windows
-`HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`, the macOS platform UUID, or
-Linux `/etc/machine-id` (falling back to `/var/lib/dbus/machine-id` and
-`/sys/class/dmi/id/product_uuid`). What leaves the machine is
-`sha256("pi-desktop.device.v1:" + <machine id>)` as 64-character lowercase hex,
-never the machine code itself: the platform only needs to compare two requests
-for equality, so it has no use for the code, and a raw hardware identifier in a
-third-party request is a privacy downgrade the counting feature does not
-require. The fixed prefix domain-separates the value from every other hash the
-app computes, so a leaked digest cannot be matched against another digest of the
-same machine.
+resolve 请求携带一个 `deviceId`，由 host-core 从操作系统暴露的机器身份
+派生——Windows 的
+`HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`、macOS 的平台 UUID，
+或 Linux 的 `/etc/machine-id`（依次回退到 `/var/lib/dbus/machine-id` 和
+`/sys/class/dmi/id/product_uuid`）。离开机器的是
+`sha256("pi-desktop.device.v1:" + <machine id>)`，为 64 字符小写十六进制，
+绝不是机器码本身：平台只需要比较两个请求是否相等，因此不需要机器码；在
+第三方请求中携带原始硬件标识符是一种隐私降级，而计数功能并不需要它。固定
+前缀使该值与应用计算的所有其他哈希域分离，因此泄露的摘要无法与同一台
+机器的其他摘要匹配。
 
-When no machine identity is readable, host-core generates one random 64-hex id
-on first use and persists it under the application data directory
-(`plugins/market/device.json`), reusing it from then on. Either way the value is
-read once per process, is stable for an installation across restarts, is never
-shown in the UI, and is not a setting. It is a counting and rate-limit key, not
-an account.
+当无法读取任何机器身份时，host-core 在首次使用时生成一个随机的 64 位
+十六进制 id，并持久化到应用数据目录下
+（`plugins/market/device.json`），此后一直复用。无论哪种方式，该值每个
+进程只读一次，对一次安装而言跨重启保持稳定，从不在 UI 中显示，也不是一
+项设置。它是计数和限流的键，不是账户。
 
-### 4. The backup channels and `custom` are unchanged
+### 4. 备份渠道和 `custom` 保持不变
 
-`github`, `mirror`, and `custom` keep the static relative-URL resolution,
-including `artifactBaseUrl` precedence, the download allowlist, redirect
-re-validation, and shasum verification, byte for byte. The persisted source
-keeps working for existing users, the cache stays keyed by `sourceUrl` so a
-switch ignores rather than deletes another channel's snapshot, and an installed
-record's `providerId` now names the channel it actually came from — already
-installed records are not rewritten.
+`github`、`mirror` 和 `custom` 保持静态相对 URL 解析不变，包括
+`artifactBaseUrl` 优先、下载允许名单、重定向重新校验和 shasum 校验，
+逐字节不变。持久化的来源对现有用户继续有效；缓存仍以 `sourceUrl` 为键，
+因此切换渠道会忽略而不是删除另一个渠道的快照；已安装记录的 `providerId`
+现在记录它实际来自的渠道——已安装的记录不会被改写。
 
-### 5. Trust tiers follow the trusted channels
+### 5. 信任等级跟随受信任渠道
 
-`verified` renders as written only from the three project channels (official,
-GitHub backup, CNB backup). `custom` still degrades to `community`, and a v1
-catalog's boolean `verified` mapping is unchanged. The predicate changes from
-"is this the official source" to "is this a trusted channel".
+`verified` 只有来自三个项目渠道（官方、GitHub 备份、CNB 备份）时才按
+原样渲染。`custom` 仍然降级为 `community`，v1 目录的布尔 `verified` 映射
+不变。判定条件从"这是否是官方来源"变为"这是否是受信任渠道"。
 
-### 6. The download allowlist does not change
+### 6. 下载允许名单不变
 
-The allowlist stays `github.com`, `githubusercontent.com`, `cnb.cool`, and the
-host that served the current catalog. The platform's resolve answers name
-mirrors on exactly those hosts today, so no entry is added. A mirror on any
-other host is refused like any other package URL: the next mirror is tried, and
-if every entry names such a host the install fails instead of widening the list.
-Moving a mirror outside the table is therefore a client-release dependency, not
-a platform-side change.
+允许名单保持为 `github.com`、`githubusercontent.com`、`cnb.cool`，以及提供
+当前目录的主机。平台 resolve 应答给出的镜像今天恰好都在这些主机上，因此
+不新增条目。位于任何其他主机上的镜像会像任何其他包 URL 一样被拒绝：尝试
+下一个镜像，如果每个条目都指向此类主机，则安装失败，而不是放宽名单。把
+镜像迁出名单因此成为客户端发版的依赖项，而不是平台侧的改动。
 
-### 7. An install reports progress, and can be cancelled while it downloads
+### 7. 安装上报进度，且下载过程中可以取消
 
-An install or update is a single request, so a download that takes a minute is
-otherwise indistinguishable from a frozen window. Host-core therefore reports
-where the install is: `plugin.installProgress` carries `pluginId`, `version`,
-`phase` (`resolve`, `download`, `verify`, `install`, `enable`), the mirror in
-use (`source`) with its 1-based `attempt` / `attempts`, `receivedBytes` /
-`totalBytes` (`0` meaning the size is unknown), every mirror tried so far
-(`tried[]`, each `{ source, url, error }`), and `error` on the report that ends
-a failed install. Reports are throttled to at most one per 200 ms, plus one per
-phase change and the terminal report, so byte-level progress cannot flood the
-RPC channel or the interface.
+一次安装或更新是单个请求，所以耗时一分钟的下载在其他方面与窗口冻结无法
+区分。因此 host-core 上报安装所处位置：`plugin.installProgress` 携带
+`pluginId`、`version`、`phase`（`resolve`、`download`、`verify`、`install`、
+`enable`）、正在使用的镜像（`source`）及其从 1 开始的 `attempt` /
+`attempts`、`receivedBytes` / `totalBytes`（`0` 表示大小未知）、迄今尝试
+过的每个镜像（`tried[]`，每项为 `{ source, url, error }`），以及结束一次
+失败安装的那次报告上的 `error`。报告被节流为每 200 ms 最多一条，外加每次
+阶段切换一条和终止报告，因此字节级进度不会淹没 RPC 通道或界面。
 
-The report goes to the interface rather than only to the log. A log line helps
-an operator afterwards; the person waiting needs to see that the install moved
-on to the second mirror and how far it is. Progress is therefore
-observer-shaped, host-core emits it as a notification, and the RPC layer owns
-the throttle.
+报告发往界面而不仅是日志。日志行对事后排查的运维人员有帮助；正在等待的
+人需要看到安装已经切换到第二个镜像以及进展到了哪里。因此进度被设计为
+观察者形态，host-core 以通知形式发出，RPC 层负责节流。
 
-`market.cancelInstall { id }` answers `{ cancelled, id }` and cancels only an
-install that is running right now, never a queued or finished one. Cancellation
-is honoured while bytes arrive, before each mirror is tried, and at the last
-safe point before the package is written, so only a download is actually
-interruptible: stopping after the package has been unpacked and the plugin's row
-is being written would leave the plugin directory and the registry in a state
-no later step can describe, which is worse than letting that step finish. A
-cancelled install fails with `PLUGIN_CANCELLED` (code 1019), and the dialog closes quietly instead of reporting an error.
+`market.cancelInstall { id }` 应答 `{ cancelled, id }`，且只取消当前正在
+运行的安装，绝不取消排队中或已完成的。取消在字节到达时、尝试每个镜像之前、
+以及写入包之前的最后一个安全点被响应，因此实际上只有下载是可中断的：在
+包已解压、插件的记录行正在写入时停止，会让插件目录和注册表处于后续任何
+步骤都无法描述的状态，这比让该步骤完成更糟。被取消的安装以
+`PLUGIN_CANCELLED`（错误码 1019）失败，对话框安静关闭而不是报错。
 
-The dialog is for a manual install or update only; a background auto-update
-stays silent. It shows the phase, `mirror n/N · name`, a determinate bar, and a
-cancel button enabled only during `resolve` and `download`; success closes it
-about two seconds after the install finishes, failure keeps it open with the
-readable error, the mirrors that were tried with a copy action, and a retry
-action.
+该对话框仅用于手动安装或更新；后台自动更新保持静默。它显示阶段、
+`mirror n/N · name`、一个确定进度条，以及仅在 `resolve` 和 `download` 阶段
+可用的取消按钮；成功时在安装完成约两秒后关闭，失败时保持打开并显示可读
+错误、已尝试的镜像（带复制操作）和重试操作。
 
-## Consequences
+## 后果
 
-- The official channel gains per-mirror fallback, withdrawal and archive
-  signals, and download counting, and it acquires a dependency: an install asks
-  the platform. The documented catalog-URL fallback and the two backup channels
-  are the mitigation.
-- Per-mirror digest verification becomes the reason a divergent mirror cannot
-  break an install. The measured CNB divergence (`pi.todo-0.6.5` at 92487 bytes
-  versus 92951) is exactly the case this absorbs.
-- A first third-party service now receives an installation-level identifier.
-  Only a digest is sent, the platform stores counts rather than identities, and
-  the privacy policy and the decisions log state it.
-- `429` costs at most one `Retry-After` wait per install; a batch update makes
-  one call per plugin, not one per mirror.
-- An install is no longer opaque: the interface sees the phase, the mirror being
-  tried, and the byte count, and a user can stop a download without leaving a
-  half-installed plugin. The cost is progress notifications on the RPC channel,
-  bounded by the 200 ms throttle and the per-phase reports.
-- No `.piplug` or manifest change, no catalog v1/v2 parsing change, no
-  permission-review change, no storage schema change, no migration of persisted
-  source values, and no change to the two backup install paths.
-- Still open, deliberately: signature verification (optional as before), any
-  automatic channel switching, and the center's own byte route, which stays the
-  marketplace page and console path.
+- 官方渠道获得了逐镜像回退、下架与归档信号以及下载计数，同时也获得了一
+  个依赖：安装要询问平台。文档化的目录 URL 回退和两个备用渠道就是缓解
+  措施。
+- 逐镜像摘要校验成为分叉镜像无法破坏安装的原因。实测到的 CNB 分叉
+  （`pi.todo-0.6.5` 为 92487 字节对 92951 字节）正是这一机制吸收的情况。
+- 现在有一个第三方服务首次收到安装级标识符。只发送摘要，平台只存计数
+  不存身份，隐私政策和决策记录都写明了这一点。
+- `429` 每次安装最多花费一次 `Retry-After` 等待；批量更新是每个插件一次
+  调用，而不是每个镜像一次。
+- 安装不再是不透明的：界面能看到阶段、正在尝试的镜像和字节数，用户可以
+  停止一次下载而不留下装了一半的插件。代价是 RPC 通道上的进度通知，由
+  200 ms 节流和逐阶段报告约束。
+- 无 `.piplug` 或 manifest 变更，无目录 v1/v2 解析变更，无权限审查变更，
+  无存储 schema 变更，无持久化来源值的迁移，两条备用安装路径也无变更。
+- 有意保持开放的事项：签名校验（仍与之前一样可选）、任何自动渠道切换，
+  以及中心自己的字节路由——它仍然是市场页面和控制台的路径。
 
-## Rejected alternatives
+## 被拒绝的替代方案
 
-- **Keep resolving the catalog's declared base on the client only.** The catalog
-  is a static file, so it cannot say which mirrors currently serve a version, it
-  cannot refuse an archived or unpublished plugin, and it is the same list for
-  every install. The client would also keep trusting a publisher-influenced base
-  without any per-mirror signal, and the platform would lose the counting and
-  rate-limit identity its contract depends on.
-- **Send a per-request identifier.** The platform counts one download per
-  device, version, and day and rate-limits per device, so a value that changes
-  per call counts every call as a new installation and degrades the limiter to
-  the source address. The requirement is stability.
-- **Send the raw machine code, or hash it without a prefix.** The platform only
-  compares values, so shipping the code itself would hand a third party a
-  reusable hardware identifier for no functional gain, and an unprefixed digest
-  could be correlated with other digests of the same machine.
-- **Expose the identifier in Settings (show or reset it).** It answers no user
-  question, it invites treating a counting key as an account, and a reset button
-  would silently let one machine inflate the platform's counters. The fallback
-  file is documented instead.
-- **An automatic fallback between channels.** A channel switch changes which
-  catalog, versions, trust verdicts, and bytes the user sees, so doing it
-  silently would attribute an install to a source the user did not choose. The
-  only automatic fallback stays inside the official channel, to the catalog URL
-  that channel served, and it is not counted.
-- **Cache the resolve answer.** The platform marks it `no-store` because mirrors
-  and availability change; a cached answer would pin a dead mirror and could
-  serve a version the platform has since withdrawn.
+- **只在客户端解析目录声明的 base。** 目录是静态文件，所以它无法说明哪些
+  镜像当前能提供某个版本，无法拒绝已归档或未发布的插件，而且对每次安装
+  都是同一个列表。客户端还会继续信任一个可被发布者影响的 base 而没有
+  任何逐镜像信号，平台也会失去其契约所依赖的计数和限流身份。
+- **每次请求发送不同的标识符。** 平台按设备、版本和天计数一次下载，并按
+  设备限流，因此每次调用都变化的值会把每次调用计为一次新安装，并把限流
+  器降级为按来源地址。需求是稳定性。
+- **发送原始机器码，或不带前缀地哈希。** 平台只做相等比较，所以发送机器
+  码本身等于毫无功能收益地把一个可复用的硬件标识符交给第三方；不带前缀
+  的摘要则可能与同一台机器的其他摘要关联起来。
+- **在设置中暴露该标识符（显示或重置）。** 它回答不了任何用户问题，还会
+  诱导人们把计数键当成账户，而重置按钮会悄悄地让一台机器虚增平台的计数
+  器。改为将回退文件写入文档。
+- **渠道间自动回退。** 渠道切换会改变用户看到的目录、版本、信任结论和
+  字节内容，静默切换会把一次安装归到用户没有选择的来源上。唯一的自动
+  回退保持在官方渠道内部，回退到该渠道提供的目录 URL，且不计数。
+- **缓存 resolve 应答。** 平台把它标记为 `no-store`，因为镜像和可用性会
+  变化；缓存的应答会钉死一个已失效的镜像，还可能提供一个平台后来已下架
+  的版本。

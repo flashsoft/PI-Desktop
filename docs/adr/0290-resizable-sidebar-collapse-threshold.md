@@ -1,74 +1,63 @@
-# ADR 0290: Restore Resizable Sidebar Width with Collapse-Below-Threshold
+# ADR 0290: 恢复可调侧栏宽度，低于阈值即折叠
 
-- Status: Accepted
-- Date: 2026-09-19
-- Decision: D451
-- Amends: [ADR 0141](0141-sidebar-width-resize.md) ·
+- 状态：已接受
+- 日期：2026-09-19
+- 决策：D451
+- 修订：[ADR 0141](0141-sidebar-width-resize.md) ·
   [ADR 0238](0238-three-column-width-priority.md)
-- Related: [01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
+- 相关：[01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
   [07-ui-design-system §10](../spec/04-ux/07-ui-design-system.md) ·
   [08-component-spec](../spec/04-ux/08-component-spec.md) ·
   [09-interaction-patterns §8](../spec/04-ux/09-interaction-patterns.md) ·
   E2E-168
 
-## Context
+## 背景
 
-ADR 0141 made the expanded sidebar a persisted `240px..520px` column. D408 /
-ADR 0238 later pinned that column at 275px and hid the handle so the
-three-column budget could treat the left dock as a constant while MainChat
-kept a 450px floor.
+ADR 0141 让展开状态的侧栏成为持久化的 `240px..520px` 列。D408 /
+ADR 0238 后来把该列钉在 275px 并隐藏了把手，以便三列预算把左侧停靠栏
+当作常量，同时 MainChat 保持 450px 下限。
 
-Users still need to widen the sidebar for long project and session labels, and
-to reclaim space. The right work panel already has a pointer divider; the left
-column should match that affordance. Dragging past a usable minimum should
-fold the sidebar rather than leave a cramped strip.
+用户仍然需要为过长的项目和会话标签加宽侧栏，也需要收回空间。右侧工作
+面板已经有指针分隔条；左列应有相同的操作能力。拖过可用最小值应该折叠
+侧栏，而不是留下一条挤瘪的窄条。
 
-## Decision
+## 决策
 
-1. Restore ADR 0141's renderer-owned handle on the expanded sidebar's right
-   edge. Pointer motion previews a width anchored at press, rounded and
-   clamped to `240px..520px` (default `275px`). Pointer release persists the
-   preferred width. Keyboard ArrowLeft/ArrowRight step 16px; Home and End
-   select the live bounds; keyboard changes commit immediately. Escape,
-   cancellation, lost capture, and unmount restore the press-time width.
-2. A pointer width below `160px` collapses the sidebar immediately. Collapse
-   is a user action: it does not record an automatic-yield, and it does not
-   persist the in-progress width. Reopening restores the preferred expanded
-   width from the start of the gesture (or the last committed value). Keyboard
-   resize never collapses; `Cmd/Ctrl+B` remains the keyboard fold.
-3. The live maximum is the three-column remainder after MainChat's 450px floor
-   and, when the work panel occupies space, its requested width. A user-chosen
-   sidebar width therefore cannot trip D408's `<= 450px` yield. Work-panel
-   growth and window shrink still collapse the expanded sidebar at that
-   threshold. Preview mode (MainChat unmounted) caps the sidebar so the panel
-   keeps at least its 244px minimum.
-4. Renderer only. No IPC, native-window bounds, host protocol, or storage
-   schema change. The existing `pi.desktop.sidebarWidth` preference is the
-   persistence key.
+1. 恢复 ADR 0141 的、由渲染进程拥有的把手，位于展开侧栏的右边缘。指针
+   移动预览以按下点为锚的宽度，取整并夹到 `240px..520px`（默认 `275px`）。
+   指针释放时持久化首选宽度。键盘 ArrowLeft/ArrowRight 步进 16px；Home
+   和 End 选择实时边界；键盘修改立即提交。Escape、取消、丢失捕获和卸载
+   恢复按下时刻的宽度。
+2. 指针宽度低于 `160px` 时立即折叠侧栏。折叠是用户动作：它不记录自动
+   让位，也不持久化进行中的宽度。重新打开时恢复手势开始时的首选展开
+   宽度（或最后提交的值）。键盘调整永不折叠；`Cmd/Ctrl+B` 仍是键盘折叠。
+3. 实时最大值是 MainChat 的 450px 下限、以及工作面板占位时其请求宽度
+   之后的三列剩余量。因此用户选择的侧栏宽度不会触发 D408 的 `<= 450px`
+   让位。工作面板增长和窗口缩小仍会在该阈值处折叠展开的侧栏。预览模式
+   （MainChat 未挂载）会限制侧栏，使面板至少保持其 244px 最小值。
+4. 仅渲染进程。无 IPC、原生窗口边界、宿主协议或存储 schema 变更。现有的
+   `pi.desktop.sidebarWidth` 偏好是持久化键。
 
-## Consequences
+## 后果
 
-- Long labels and compact workspaces share one persisted width instead of a
-  fixed 275px column.
-- Dragging the handle left past the snap threshold folds the sidebar the same
-  way the explicit collapse control does, without writing a sub-minimum width.
-- MainChat's 450px floor and the work-panel yield order stay intact.
+- 长标签和紧凑工作区共享一个持久化的宽度，而不是固定的 275px 列。
+- 把手向左拖过吸附阈值会以与显式折叠控件相同的方式折叠侧栏，且不写入
+  低于最小值的宽度。
+- MainChat 的 450px 下限和工作面板让位顺序保持完整。
 
-## Alternatives rejected
+## 被拒绝的替代方案
 
-### Keep the D408 fixed 275px column
+### 保持 D408 的固定 275px 列
 
-Rejected because it blocks the same inspection and space-reclaiming need ADR
-0141 already recorded, and the live budget can cap a user-chosen width without
-freezing it.
+被拒绝，因为它挡住了 ADR 0141 已经记录过的查看和收回空间需求，而且实时
+预算可以约束用户选择的宽度而不必冻结它。
 
-### Collapse at 240px with no snap zone
+### 在 240px 处折叠，不设吸附区
 
-Rejected because hitting the minimum during a small adjustment would fold the
-sidebar. The 160px threshold requires an explicit extra drag past the floor.
+被拒绝，因为微调时触及最小值就会折叠侧栏。160px 阈值要求用户在越过下限
+之后再多拖一段明确的距离。
 
-### Persist the in-progress width on collapse
+### 折叠时持久化进行中的宽度
 
-Rejected because collapse is a cancel of the current gesture plus a fold. The
-preferred expanded width stays the value captured at pointer-down (or the last
-committed width).
+被拒绝，因为折叠是取消当前手势加折叠。首选展开宽度保持为指针按下时捕获
+的值（或最后提交的宽度）。

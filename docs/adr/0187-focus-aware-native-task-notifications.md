@@ -1,45 +1,39 @@
-# ADR 0187: Focus-Aware Native Task Notifications
+# ADR 0187: 感知焦点的原生任务通知
 
-- Status: Accepted
-- Date: 2026-09-08
-- Related: ADR 0107, D117, D350, E2E-065, E2E-065a
-- Note: The native IPC field is `kind` (`task` | `interactive`). A duplicate
-  0187 that named the same field `source` was withdrawn.
+- 状态：已接受
+- 日期：2026-09-08
+- 相关：ADR 0107、D117、D350、E2E-065、E2E-065a
+- 说明：原生 IPC 字段为 `kind`（`task` | `interactive`）。一份把同一字段
+  命名为 `source` 的重复 0187 已被撤回。
 
-## Context
+## 背景
 
-Durable task completion rows are created for a focused background session, but
-the renderer and Electron main shared one native notification request with
-interactive ask/permission/plan prompts. Suppressing native output based only on
-the current session therefore showed a completion banner while the app was
-focused on another session, violating D117 and E2E-065.
+持久任务完成行会针对聚焦的后台会话创建，但渲染进程和 Electron 主进程
+与交互式 ask/permission/plan 提示共享同一个原生通知请求。因此，仅基于
+当前会话来抑制原生输出，会在应用聚焦于另一个会话时仍然显示完成横幅，
+违反 D117 和 E2E-065。
 
-## Decision
+## 决策
 
-Add an explicit `kind` to the Electron-only native notification request:
-`task` or `interactive`. A task completion is never shown natively while the
-main window is both visible and focused, regardless of which session is
-currently selected. It remains eligible when the window is hidden, minimized,
-or unfocused. Interactive prompts retain their previous rule: suppress only the
-exact visible focused session, while a focused background request remains
-visible so the user can answer it.
+为仅 Electron 的原生通知请求增加显式的 `kind`：`task` 或 `interactive`。
+当主窗口同时可见且聚焦时，无论当前选中哪个会话，任务完成都永不以原生
+方式显示。当窗口隐藏、最小化或未聚焦时它仍然可以显示。交互式提示保留
+其先前规则：只抑制精确可见的聚焦会话，而聚焦的后台请求保持可见，使
+用户可以回答它。
 
-The durable task insertion policy is unchanged: the exact visible focused
-session suppresses the inbox row, while background, hidden, unknown, and
-unfocused state creates it. Plugin-native notifications remain on their separate
-permission-gated path.
+持久任务插入策略不变：精确可见的聚焦会话抑制收件箱行，而后台、隐藏、
+未知和未聚焦状态会创建它。插件原生通知保持在其独立的、权限把关的路径
+上。
 
-## Consequences
+## 后果
 
-- Focused-background completions produce the durable inbox row without a
-  duplicate native banner.
-- Interactive requests remain actionable when another session is selected.
-- The behavior is unit-testable without launching Electron, and old callers
-  without a kind fail closed to the task behavior.
+- 聚焦后台的完成会产生持久收件箱行，而没有重复的原生横幅。
+- 选中另一个会话时，交互式请求仍然可以操作。
+- 该行为无需启动 Electron 即可单元测试，没有 kind 的旧调用方 fail-closed
+  到任务行为。
 
-## Alternatives considered
+## 已考虑的替代方案
 
-- Relax the shared focus gate for all calls: rejected because it would hide
-  actionable interactive prompts.
-- Add a second native IPC channel: rejected because an explicit kind keeps the
-  shared validation and click activation path without duplicating host code.
+- 对所有调用放宽共享的焦点关卡：否决，因为这会隐藏可操作的交互式提示。
+- 增加第二个原生 IPC 通道：否决，因为显式的 kind 保留了共享的校验和
+  点击激活路径，而无需重复宿主代码。

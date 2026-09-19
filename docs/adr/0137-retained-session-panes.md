@@ -1,4 +1,4 @@
-# ADR 0137: Retained Session Panes
+# ADR 0137: 保留的会话窗格
 
 - Status: Accepted
 - Date: 2026-08-30
@@ -10,141 +10,118 @@
   (per-session window reset and first-commit hydration), D162's
   "activation resets manual-scroll state" rule for revisits
 
-## Context
+## 背景
 
-D162 already avoided the worst session-switch artifact: it kept the last settled
-transcript mounted instead of tearing it down to a skeleton. The switch still
-flashed, because keeping *a* transcript mounted is not the same as keeping *the
-destination's* transcript mounted.
+D162 已经避免了最糟的会话切换瑕疵：它保持最近一份已落定的
+transcript 挂载，而不是拆成骨架屏。但切换仍然会闪烁，因为保持*某份*
+transcript 挂载并不等于保持*目标会话的* transcript 挂载。
 
-The store held one `messages: UiMessage[]` for the active session, and a switch
-replaced that array wholesale. One `ChatTranscript` instance served every
-session, so on a `sessionId` change it had to reset its scroll position, its
-mounted-row window, and its hydration state by hand, and every row remounted
-because row keys are message-scoped. Markdown was reparsed and Shiki retokenized
-for a transcript the user had read a moment earlier.
+store 为活动会话持有一个 `messages: UiMessage[]`，切换会整体替换该
+数组。一个 `ChatTranscript` 实例服务所有会话，因此在 `sessionId`
+变化时它必须手动重置滚动位置、已挂载行窗口和水合状态，并且每一行
+都会重新挂载，因为行 key 是消息作用域的。用户片刻前刚读过的
+transcript 会重新解析 Markdown、重新做 Shiki 分词。
 
-Three visible costs followed:
+随之而来的是三个可见成本：
 
-- The kept frame was **dimmed** (`opacity: .82`, `pointer-events: none`) under a
-  thin progress track. On a warm revisit the destination content was already in
-  renderer memory, so the dim was a wait animation for work that did not need to
-  happen.
-- **Scroll position was not the pane's**. A single scroller cannot hold two
-  reading positions, so returning to a session the user had scrolled up in
-  restarted at the bottom, and the reset had to be explicit to avoid inheriting
-  the *previous* session's offset instead.
-- The **two-stage progressive hydration** of ADR 0130 clause 5 ran on every
-  switch: mount the trailing 15 rows for one frame behind a `100vh` spacer, then
-  expand in a rAF and re-anchor. It exists only because the component instance is
-  shared, and it is the machinery most able to produce the jump it is there to
-  prevent.
+- 保留帧被**调暗**（`opacity: .82`、`pointer-events: none`），上方有
+  一条细进度轨。在热重访时，目标内容已经在渲染进程内存中，因此调暗
+  是为不需要发生的工作播放的等待动画。
+- **滚动位置不属于窗格。** 单个滚动容器无法持有两个阅读位置，因此
+  回到一个用户曾向上滚动过的会话会从底部重新开始，而且该重置必须
+  显式执行，以避免反而继承*上一个*会话的偏移。
+- ADR 0130 第 5 条的**两阶段渐进水合**在每次切换时都运行：先在一个
+  `100vh` 占位空间后挂载尾部 15 行一帧，然后在 rAF 中扩展并重新锚定。
+  它之所以存在，只是因为组件实例是共享的，而它恰恰是最有可能制造出
+  它本想防止的跳动的机制。
 
-## Decision
+## 决策
 
-1. `ChatSurface` mounts one **`SessionPane` per retained session id**, keyed by
-   session id. A pane owns its transcript DOM, its scroll position, and its
-   mounted-row window for its whole lifetime, so a switch is a visibility swap,
-   not a rebuild.
-2. Retention is a **bounded LRU of 3 panes**: the visible one plus the two most
-   recently visited. `retainedSessionIds` holds that order in the store and
-   eviction unmounts the oldest pane.
-3. An inactive pane stays mounted, hidden with `visibility: hidden` +
-   `content-visibility: hidden`, `aria-hidden`, and non-interactive. It is
-   explicitly **not** `display: none`: that destroys the layout box, which is
-   what holds `scrollTop`, so hiding by display would reset every retained
-   reading position and defeat the whole decision.
-4. `messages` remains the **live projection of the store-active session**. The
-   store adds a bounded per-session snapshot record, `retainedTranscripts`. A
-   pane renders `messages` when its session is the store-active one, and its own
-   snapshot otherwise, so no pane ever renders another session's rows.
-5. A **warm switch** — the destination already has a retained pane — reveals that
-   pane immediately from its retained content. The first frame is already
-   correct: no dim, no skeleton, no remount. The revalidated transcript lands in
-   the same pane afterwards with no visible change. If the destination is still
-   running, or still holds a completed reply the durable page has not caught up
-   to, that revalidation stitches the bounded durable page onto the live
-   snapshot in chronological order (older live rows before the page, in-flight
-   or not-yet-flushed tail after it) so D261's trailing mounted window still
-   shows the newest turn (D317, D324). Live provenance is cleared only once
-   that page already contains every live row.
-6. A **cold switch** — no retained pane — keeps the currently visible pane
-   showing its own session until the destination commits. Only the thin progress
-   track marks the wait. The opacity dim is removed entirely.
-7. **Scroll retention is per pane.** A pane restores its own position when it
-   becomes visible again: a pane still pinned re-anchors to the bottom, a pane
-   the user had scrolled up in returns to that offset. First activation of a
-   session still settles at its newest turn.
-8. The **first commit is per pane and local**. Because the component instance
-   belongs to one session, "the first commit of this pane" is plain mount state;
-   the cross-session hydration spacer, its rAF expansion, and its re-anchor are
-   deleted. ADR 0130's trailing window, two-stage escalation, and prepend anchor
-   are unchanged inside a pane.
-9. The **composer is mounted once** for the whole chat surface rather than once
-   per branch — it already carries a per-session draft cache. It stays
-   non-interactive while the visible pane is not yet the store-active session, so
-   a prompt cannot be sent to the session being left.
+1. `ChatSurface` 为每个保留的会话 id 挂载一个 **`SessionPane`**，按
+   会话 id 键控。窗格在其整个生命周期内持有自己的 transcript DOM、
+   滚动位置和已挂载行窗口，因此切换是一次可见性交换，而不是重建。
+2. 保留是一个**上限为 3 个窗格的有界 LRU**：可见窗格加最近访问的
+   两个。`retainedSessionIds` 在 store 中保存该顺序，驱逐会卸载最旧
+   的窗格。
+3. 非活动窗格保持挂载，以 `visibility: hidden` +
+   `content-visibility: hidden`、`aria-hidden` 隐藏且不可交互。明确
+   **不**使用 `display: none`：那会销毁布局盒，而 `scrollTop` 正是由
+   布局盒持有的，因此用 display 隐藏会重置每个保留的阅读位置，使整
+   个决策失去意义。
+4. `messages` 保持为 **store 活动会话的实时投影**。store 新增一个
+   有界的按会话快照记录 `retainedTranscripts`。窗格在其会话是 store
+   活动会话时渲染 `messages`，否则渲染自己的快照，因此任何窗格都
+   不会渲染另一个会话的行。
+5. **热切换**——目标已有保留窗格——立即从其保留内容显示该窗格。
+   第一帧就已经正确：无调暗、无骨架屏、无重新挂载。重新校验的
+   transcript 随后落入同一窗格，无可见变化。如果目标仍在运行，或仍
+   持有持久页面尚未追上的已完成回复，该校验会把有界的持久页面按
+   时间顺序缝合到实时快照上（页面之前是较旧的实时行，之后是进行中
+   或尚未落盘的尾部），使 D261 的尾部挂载窗口仍显示最新的轮次
+   （D317、D324）。只有当该页面已包含所有实时行时，实时来源标记才
+   被清除。
+6. **冷切换**——没有保留窗格——让当前可见窗格继续显示自己的会话，
+   直到目标提交。只有细进度轨标记等待。opacity 调暗被完全移除。
+7. **滚动保留按窗格计算。** 窗格在重新可见时恢复自己的位置：仍钉底
+   的窗格重新锚定到底部，用户曾向上滚动过的窗格回到那个偏移。会话
+   的首次激活仍落定在其最新轮次。
+8. **首次提交是按窗格且局部的。** 因为组件实例属于一个会话，"该窗格
+   的首次提交"只是普通的挂载状态；跨会话的水合占位空间、其 rAF 扩展
+   和重新锚定被删除。ADR 0130 的尾部窗口、两阶段升级和前插锚点在
+   窗格内部保持不变。
+9. **Composer 对整个聊天界面只挂载一次**，而不是每个分支一次——它
+   已经携带按会话的草稿缓存。当可见窗格还不是 store 活动会话时它
+   保持不可交互，因此提示词不会被发送到正在离开的会话。
 
-No IPC, storage, host protocol, or pagination change. Transcript reads, the
-latest-wins navigation generation, and the five-snapshot transcript cache of D162
-are untouched; panes are a renderer-side presentation bound, not a second cache.
+没有 IPC、存储、宿主协议或分页变更。transcript 读取、latest-wins
+导航代际和 D162 的五快照 transcript 缓存不受影响；窗格是渲染进程
+侧的呈现边界，而不是第二个缓存。
 
-## Consequences
+## 后果
 
-- Retained renderer memory grows by at most two extra mounted transcripts, each
-  itself bounded by ADR 0130's window. The ceiling is the pane budget times the
-  window, not the number of sessions visited.
-- A revisit within the budget costs no Markdown parse, no Shiki tokenization, and
-  no scroll correction — the frame the user left is the frame they return to.
-- Deleted: the `session-switching` opacity dim, the session-loading skeleton
-  path, the cross-session scroll/window/hydration resets inside `ChatTranscript`,
-  the `100vh` hydration spacer, and the per-branch composer mount.
-- Four invariants callers must keep:
-  - **Cross-session events must not write the visible projection.** Background
-    message, tool, and completion events update their own session's snapshot
-    only; writing `messages` from a non-store-active session would paint another
-    session's rows into the visible pane. This is the same boundary D142 draws
-    for work-panel contexts.
-  - **Deleting a session must release its pane.** Removing a session drops its
-    `retainedTranscripts` entry and its `retainedSessionIds` slot, so no pane
-    outlives its session or holds a snapshot of deleted history.
-  - **Leaving the chat with no active session must drop every pane.** Switching
-    or clearing the project makes the retained sessions unreachable. Because the
-    visible pane is the head of the retained order, a pane left behind would keep
-    the previous project's conversation on screen and suppress the empty state.
-  - **A hidden pane performs no reading work.** Follow scrolling, history
-    pagination, and row-position measurement all depend on a rendered scroller;
-    a hidden pane's scroller reports `scrollTop === 0`, which reads as "at the
-    top" and would page history for a session nobody is looking at. Hidden panes
-    keep their DOM and their offset, and nothing else.
-- Per-session scroll retention **supersedes** the older rule that activation
-  resets inherited manual-scroll state, for revisits: a revisited pane is
-  expected to return to where the user left it. First activation is unchanged and
-  still settles at the newest turn, and no pane may ever show another session's
-  offset.
-- An evicted session behaves like a cold open. This is intentional and must stay
-  indistinguishable from a first visit rather than surfacing an error or an empty
-  frame.
+- 渲染进程保留内存最多增加两个额外的已挂载 transcript，每个又受
+  ADR 0130 窗口约束。上限是窗格预算乘以窗口，而不是访问过的会话
+  数量。
+- 预算内的重访不花费 Markdown 解析、Shiki 分词或滚动修正——用户
+  离开时的帧就是他们回来时看到的帧。
+- 已删除：`session-switching` opacity 调暗、会话加载骨架屏路径、
+  `ChatTranscript` 内部的跨会话滚动/窗口/水合重置、`100vh` 水合
+  占位空间，以及按分支的 Composer 挂载。
+- 调用方必须保持的四个不变量：
+  - **跨会话事件不得写入可见投影。** 后台消息、工具和完成事件只更新
+    其自己会话的快照；从非 store 活动会话写入 `messages` 会把另一个
+    会话的行画进可见窗格。这与 D142 为工作面板上下文划定的边界相同。
+  - **删除会话必须释放其窗格。** 移除会话会丢弃其
+    `retainedTranscripts` 条目和 `retainedSessionIds` 槽位，因此没有
+    窗格会比其会话活得更久或持有已删除历史的快照。
+  - **在没有活动会话的情况下离开聊天时必须丢弃所有窗格。** 切换或
+    清除项目会让保留的会话不可达。由于可见窗格是保留顺序的头部，
+    遗留的窗格会把上一个项目的会话留在屏幕上并抑制空状态。
+  - **隐藏的窗格不执行任何阅读工作。** 跟随滚动、历史翻页和行位置
+    测量都依赖一个已渲染的滚动容器；隐藏窗格的滚动容器报告
+    `scrollTop === 0`，这会被读作"在顶部"，从而为一个没有人在看的
+    会话翻页。隐藏窗格只保留它们的 DOM 和偏移，别无其他。
+- 按会话的滚动保留在重访场景**取代**旧的"激活时重置继承的手动滚动
+  状态"规则：重访的窗格应回到用户离开的位置。首次激活不变，仍落定
+  在最新轮次，且任何窗格都不得显示另一个会话的偏移。
+- 被驱逐的会话表现得像冷打开。这是有意为之，且必须与首次访问无法
+  区分，而不是浮现错误或空帧。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- **Replace `messages` with a per-session message map:** rejected. It moves the
-  same wholesale swap one level down — a single transcript instance still reads
-  one entry at a time, so the row remount, the Markdown rebuild, and the shared
-  scroller all survive. The flash is a component-identity problem, not a store
-  shape problem.
-- **Deep-equality reuse of the cached array:** rejected. Making a revalidated
-  read reference-equal to the cached array suppresses one re-render but leaves
-  the destination sharing one instance with the session being left, so the first
-  frame after a switch is still built from scratch. It also pays a deep walk over
-  the transcript on every revalidation to save work the pane already saves
-  structurally.
-- **Keep the dim, only skip it when the cache is warm:** rejected. The dim was
-  never the affordance for a warm switch; a correct destination frame is. Keeping
-  it as a conditional leaves two switch appearances to reason about and two
-  states to test, for a wait that the retained pane has already removed. The
-  thin progress track is enough for the cold case.
-- **Retain every visited session's pane:** rejected. Unbounded panes reintroduce
-  exactly the unbounded retention ADR 0130 removed, on a low-memory machine that
-  reported the chat area degrading. Three panes cover the observed
-  switch-and-return pattern; the fourth is a cold open.
+- **用按会话的消息 map 替换 `messages`：** 否决。它只是把同样的整体
+  替换下移一层——单个 transcript 实例仍一次只读一个条目，因此行
+  重新挂载、Markdown 重建和共享滚动容器都会存活。闪烁是组件身份
+  问题，不是 store 形态问题。
+- **对缓存数组做深相等复用：** 否决。让重新校验的读取与缓存数组
+  引用相等可以抑制一次重渲染，但目标仍与正在离开的会话共享一个
+  实例，因此切换后的第一帧仍是从零构建的。它还在每次重新校验时
+  付出对整个 transcript 的深度遍历，去节省窗格已经在结构上省掉的
+  工作。
+- **保留调暗，只在缓存热时跳过：** 否决。调暗从来不是热切换的交互
+  形式；正确的目标帧才是。把它保留为条件分支会留下两种切换外观
+  需要推理、两种状态需要测试，只为了一个保留窗格已经消除的等待。
+  细进度轨对冷切换已足够。
+- **保留每个访问过会话的窗格：** 否决。无界窗格会在那台报告聊天
+  区域退化的低内存机器上，重新引入 ADR 0130 移除的无界保留。三个
+  窗格覆盖观察到的切换并返回模式；第四个就是冷打开。

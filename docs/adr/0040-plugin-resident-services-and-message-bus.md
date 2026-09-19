@@ -1,126 +1,116 @@
-# ADR 0040: Resident plugin services and the inter-plugin message bus
+# ADR 0040: 常驻插件服务与插件间消息总线
 
-- Status: Accepted
-- Date: 2026-07-31
-- Related: [Plugin lifecycle](../spec/07-plugins/05-plugin-lifecycle.md),
-  [Plugin IPC and host services](../spec/07-plugins/12-plugin-ipc-and-host-services.md),
+- 状态： 已接受
+- 日期： 2026-07-31
+- 相关： [插件生命周期](../spec/07-plugins/05-plugin-lifecycle.md)、
+  [插件 IPC 与宿主服务](../spec/07-plugins/12-plugin-ipc-and-host-services.md)、
   [ADR 0008](0008-plugin-runtime-isolation-target.md)
 
-## Context
+## 背景
 
-Two roadmap items were blocked on the same missing pieces.
+路线图上有两个事项被同一批缺失的能力卡住。
 
-**Background services.** A plugin could only do work when something called into
-it: a command, a tool, or `onLoad`. A watcher, a poller, or a sync worker had no
-supported home. Nothing stopped a plugin from starting a timer inside `onLoad`,
-but the host had no idea it existed, could not report it, and could not restart
-it — a crash simply lost the work silently.
+**后台服务。** 插件只有在被外部调用时才能工作：命令、工具或 `onLoad`。
+watcher、轮询器或同步 worker 都没有受支持的安放位置。没有东西阻止插件在
+`onLoad` 内启动定时器，但宿主根本不知道它的存在，无法上报它，也无法重启它
+——崩溃只会静默地丢失工作。
 
-**Inter-plugin messaging.** `pi.events.on` / `off` existed in the SDK as no-ops.
-Plugins that wanted to cooperate had only the filesystem, which is invisible to
-the host and unbounded.
+**插件间消息。** SDK 中的 `pi.events.on` / `off` 只是空操作。想要协作的插件
+只有文件系统可用，而文件系统对宿主不可见且无边界。
 
-Both need the same two things: a way for the host to know a plugin is doing
-something, and a parent→child push channel. The plugin wire protocol had only
-request/response frames (`init` / `call` / `res` / `log`) — every message
-originated in the child.
+两者需要相同的两样东西：让宿主知道插件正在做事的途径，以及一条父→子推送
+通道。插件线协议此前只有请求/响应帧（`init` / `call` / `res` / `log`）——
+每条消息都源自子进程。
 
-## Decision
+## 决策
 
-### One new frame
+### 一种新帧
 
-The broker gains a one-way parent→child frame:
+broker 获得一种单向的父→子帧：
 
 ```text
-{ t: "event", event, ... }   // no reply, no backpressure
+{ t: "event", event, ... }   // 无回复，无背压
 ```
 
-`bus.message` is its first user. The same frame finally implements
-`pi.events.on` / `off`, which now sees the raw event stream.
+`bus.message` 是它的首个使用者。同一帧最终实现了 `pi.events.on` / `off`，
+它们现在能看到原始事件流。
 
-### Resident services
+### 常驻服务
 
-1. A service is **declared** (`contributes.services`, at most 4 per plugin) and
-   gated on `background.service`. `pi.services.register({ id, start, stop })` in
-   the child is local bookkeeping only — the manifest already said the service
-   exists, so registration cannot create one.
-2. The **broker decides when it runs**: `start` after `onLoad` completes (5s
-   budget), `stop` before `onUnload`. A service is therefore never live outside
-   the window in which the plugin still has its API. `start` is idempotent inside
-   one process.
-3. A service lives in the plugin's `utilityProcess` (ADR 0008), so a crash takes
-   it down with the process. The supervisor restarts the **whole plugin**:
-   backoff 1s, 2s, 4s, 8s, 16s capped at 30s; at most 5 attempts; a process that
-   stays up 60s is healthy and resets the counter. `autoRestart: false` opts out.
-4. After the last attempt the plugin stays `failed`. Per-service state
-   (`starting` | `running` | `stopped` | `failed`) plus the restart count is read
-   over `plugin/services`, rendered as chips on the Plugins page, and audited as
-   `plugin.service.*`.
-5. Manual enable / disable outranks the supervisor: an explicit user action
-   cancels the pending timer and clears the attempt counter.
+1. 服务是**声明式**的（`contributes.services`，每个插件至多 4 个），并受
+   `background.service` 权限控制。子进程中的
+   `pi.services.register({ id, start, stop })` 只是本地记账——manifest 已经
+   声明了该服务存在，因此注册不能凭空创建服务。
+2. **broker 决定服务何时运行**：在 `onLoad` 完成之后（5 秒预算）调用
+   `start`，在 `onUnload` 之前调用 `stop`。因此服务永远不会在插件仍持有其
+   API 的窗口之外存活。`start` 在同一进程内是幂等的。
+3. 服务运行在插件的 `utilityProcess` 中（ADR 0008），所以崩溃会让它随进程
+   一起退出。supervisor 重启的是**整个插件**：退避为 1s、2s、4s、8s、16s，
+   上限 30s；至多 5 次尝试；存活满 60s 的进程视为健康并重置计数器。
+   `autoRestart: false` 可退出此行为。
+4. 最后一次尝试后插件保持 `failed` 状态。每个服务的状态
+   （`starting` | `running` | `stopped` | `failed`）以及重启计数通过
+   `plugin/services` 读取，在插件页面以 chip 形式渲染，并以
+   `plugin.service.*` 计入审计。
+5. 手动启用/禁用的优先级高于 supervisor：一次明确的用户操作会取消挂起的
+   定时器并清零尝试计数器。
 
-### Message bus
+### 消息总线
 
-1. Traffic is **declared in the manifest**: `contributes.bus.publish` lists
-   concrete topics, `contributes.bus.subscribe` lists patterns. The permissions
-   `bus.publish` / `bus.subscribe` are necessary but not sufficient — a granted
-   permission with no declaration routes nothing.
-2. Topics are dot-separated segments (`[a-zA-Z0-9][a-zA-Z0-9_-]*`, ≤8 segments,
-   ≤128 chars). `*` matches one segment; `**` matches one or more trailing
-   segments and may appear only as the final segment.
-3. **Routing lives in the broker.** A message carries `topic`, `from`, `payload`,
-   and a host-assigned `at`. The publisher is excluded from its own fan-out.
-   Delivery is fire-and-forget, so a wedged subscriber cannot stall a publisher.
-4. Caps: 64KB per payload, 16 subscriptions per plugin, 100 publishes per rolling
-   10s window; over-cap calls fail `LIMIT_EXCEEDED` / `RATE_LIMITED` and are
-   audited with the topic.
-5. A payload is **data, never capability**. Receiving a message grants the
-   subscriber nothing it did not already hold, so no permission can be laundered
-   across the bus.
+1. 流量**在 manifest 中声明**：`contributes.bus.publish` 列出具体的 topic，
+   `contributes.bus.subscribe` 列出 pattern。`bus.publish` / `bus.subscribe`
+   权限是必要但不充分条件——已授予但没有声明的权限不会路由任何消息。
+2. topic 是由点分隔的段（`[a-zA-Z0-9][a-zA-Z0-9_-]*`，至多 8 段，至多
+   128 字符）。`*` 匹配一段；`**` 匹配一段或多段结尾段，且只能作为最后一
+   段出现。
+3. **路由位于 broker 中。** 消息携带 `topic`、`from`、`payload` 以及宿主赋
+   予的 `at`。发布者被排除在自己的扇出之外。投递是即发即弃的，所以卡死的
+   订阅者无法拖住发布者。
+4. 上限：每条 payload 64KB，每个插件 16 个订阅，每个滚动 10s 窗口 100 次
+   发布；超限调用以 `LIMIT_EXCEEDED` / `RATE_LIMITED` 失败，并连同 topic 一
+   起计入审计。
+5. payload 是**数据，绝不是能力**。接收消息不会给订阅者授予任何它原本没
+   有的东西，因此没有任何权限能经由总线被洗白。
 
-## Consequences
+## 后果
 
-- A background worker is now a first-class, visible, supervised thing: the user
-  sees it running, sees it restart, and sees it give up.
-- Restarting the plugin rather than the service is coarse — a crash re-runs
-  `onLoad` — but it is the only honest unit, because the crash already destroyed
-  the process the service lived in.
-- The 5-attempt ceiling means a genuinely broken service stops retrying. That is
-  the intent: a visible `failed` chip beats an invisible crash loop burning CPU.
-- Declared topics make plugin-to-plugin coupling reviewable, and let the host
-  reject undeclared traffic without knowing anything about payload semantics.
-- Because the publisher is excluded from its own fan-out, a plugin cannot use the
-  bus as an internal event emitter — it must use ordinary function calls, which
-  is what it should have done anyway.
-- Any plugin holding `bus.subscribe` and a matching pattern sees a topic, so a
-  topic is effectively public within the app. Secrets do not belong on it.
+- 后台 worker 现在是一等的、可见的、被监督的存在：用户能看到它运行、看到
+  它重启、看到它放弃。
+- 重启插件而不是服务是粗粒度的——崩溃会重跑 `onLoad`——但这是唯一诚实
+  的单位，因为崩溃已经摧毁了服务所在的进程。
+- 5 次尝试的上限意味着真正坏掉的服务会停止重试。这正是意图：一个可见的
+  `failed` chip 胜过看不见的崩溃循环持续烧 CPU。
+- 声明式 topic 使插件与插件之间的耦合可被评审，也让宿主无需了解 payload
+  语义就能拒绝未声明的流量。
+- 因为发布者被排除在自己的扇出之外，插件不能把总线当作内部事件发射器使
+  用——它必须使用普通函数调用，而这本来就是它该做的。
+- 任何持有 `bus.subscribe` 且 pattern 匹配的插件都能看到某个 topic，因此
+  topic 在应用内实际上是公开的。密钥不应出现在总线上。
 
-## Alternatives
+## 备选方案
 
-### Let plugins start their own timers and call it a service
+### 让插件自己启动定时器，并称之为服务
 
-Rejected. That is the status quo. The host cannot report, stop, or restart work
-it does not know about, and the user cannot see it at all.
+已拒绝。那就是现状。宿主无法上报、停止或重启它不知道的工作，用户也完全
+看不到它。
 
-### Restart the service in place instead of the plugin
+### 就地重启服务而不是重启插件
 
-Rejected. The service runs inside the plugin's process; if it crashed the
-process, there is no in-place to restart into. A separate process per service
-would multiply ADR 0008's isolation cost for no gain at this scale.
+已拒绝。服务运行在插件的进程内；如果它把进程搞崩了，就没有可以就地重启
+进去的地方。为每个服务开独立进程会把 ADR 0008 的隔离成本成倍放大，在这
+个规模下毫无收益。
 
-### Unlimited restarts
+### 无限次重启
 
-Rejected. A crash loop with backoff still burns CPU forever and hides the
-failure behind a chip that flickers between `starting` and `failed`.
+已拒绝。即使带退避，崩溃循环仍会永远烧 CPU，并把失败藏在一个在
+`starting` 与 `failed` 之间闪烁的 chip 后面。
 
-### An open pub/sub with permissions only
+### 只靠权限的开放 pub/sub
 
-Rejected. `bus.publish` would then mean "talk to every plugin about anything",
-which is unreviewable. Declared topics keep the manifest a complete statement of
-what a plugin says and hears.
+已拒绝。那样 `bus.publish` 就意味着"可以和每个插件谈论任何事"，这是无法
+评审的。声明式 topic 让 manifest 成为插件说了什么、听到什么的完整陈述。
 
-### Direct plugin-to-plugin RPC
+### 插件间直接 RPC
 
-Rejected. It creates hard dependencies between independently installable,
-independently versioned plugins, and it hands one plugin a handle on another.
-Topic pub/sub keeps both sides ignorant of each other.
+已拒绝。它会在可独立安装、可独立版本化的插件之间制造硬依赖，还会把一个
+插件的句柄交到另一个插件手里。topic pub/sub 让双方互相不知情。

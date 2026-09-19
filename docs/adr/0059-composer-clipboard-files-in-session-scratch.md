@@ -1,100 +1,85 @@
-# ADR 0059: Persist Composer Clipboard Files in Session Scratch
+# ADR 0059: 把 Composer 剪贴板文件持久化到会话 Scratch
 
-- Status: Accepted
-- Date: 2026-08-05
-- Deciders: PI-Desktop core
-- Related: D197, D209, ADR 0024 (composer commands and @ file references), ADR 0070 (compact reference display), D114 (session scratch directory), D119 (transcript file store)
+- 状态： 已接受
+- 日期： 2026-08-05
+- 决策者： PI-Desktop 核心
+- 相关： D197、D209、ADR 0024（composer 命令与 @ 文件引用）、ADR 0070（紧凑引用显示）、D114（会话 scratch 目录）、D119（transcript 文件存储）
 
-## Context
+## 背景
 
-The composer is a controlled textarea. Chromium exposes pasted operating-system
-files and screenshots as `File` objects, while the native picker exposes files
-that may live outside the active workspace. The text-only prompt contract has
-no binary `ImageContent` channel and an attached file must remain available to
-the agent after the prompt is sent. Writing the bytes into the project would
-dirty git state and would not follow the session-bound workspace/scratch
-ownership rules.
+composer 是受控 textarea。Chromium 把粘贴的操作系统文件与截图暴露为 `File`
+对象，而原生选择器暴露的文件可能位于活动 workspace 之外。纯文本 prompt 契
+约没有二进制 `ImageContent` 通道，而附件文件必须在 prompt 发送之后仍对
+agent 可用。把字节写进项目会弄脏 git 状态，也不符合会话绑定的
+workspace/scratch 所有权规则。
 
-## Decision
+## 决策
 
-1. The renderer intercepts paste only when the clipboard contains one or more
-   `File` objects. Text-only paste remains native textarea behavior.
-2. The renderer transfers bounded file bytes plus the browser-provided name and
-   MIME type to Electron main through `composer/pasteFiles`, together with the
-   durable session id. A home composer creates or reuses a session before the
-   transfer. Native picker selections use the additive `composer/importFiles`
-   channel with the same session id; main resolves and copies those source
-   paths before returning references to the renderer.
-3. Electron main validates that the session exists, limits the request to 20
-   files, 64 MiB per file, and 128 MiB total, strips directory components and
-   unsafe name characters, and writes unique files with exclusive-create
-   semantics below:
+1. 渲染进程只在剪贴板包含一个或多个 `File` 对象时拦截粘贴。纯文本粘贴保
+   持原生 textarea 行为。
+2. 渲染进程通过 `composer/pasteFiles` 把有界的文件字节加上浏览器提供的名
+   称与 MIME 类型传给 Electron 主进程，同时携带持久会话 id。home composer
+   在传输之前创建或复用一个会话。原生选择器的选择使用加法式的
+   `composer/importFiles` 通道，带相同的会话 id；主进程解析并复制这些源路
+   径，然后把引用返回给渲染进程。
+3. Electron 主进程校验会话存在，把请求限制为 20 个文件、每文件 64 MiB、
+   总计 128 MiB，剥离目录组成部分与不安全的名称字符，并以排他创建语义把
+   唯一文件写入：
 
    ```text
    <data_dir>/scratch/<sessionId>/pasted/
    ```
 
-4. Main returns each UUID-backed absolute path plus its sanitized original leaf
-   name. Under ADR 0070 the renderer keeps the path in transient reference
-   state, shows the leaf name as a compact chip, and serializes the path into
-   the prompt as an `@` reference using the existing whitespace quoting rule.
-   The prompt and transcript carry paths, never clipboard bytes.
-5. Pasted files follow the existing scratch lifecycle: deleting the session or
-   the orphan/stale startup sweep removes them. They are not workspace
-   artifacts and never change project git status.
+4. 主进程返回每个以 UUID 支撑的绝对路径及其消毒后的原始叶名。在 ADR 0070
+   下，渲染进程把路径保存在瞬态引用状态中，把叶名显示为紧凑 chip，并使用
+   现有的空白引用规则把路径序列化为 prompt 中的 `@` 引用。prompt 与
+   transcript 携带路径，绝不携带剪贴板字节。
+5. 粘贴的文件遵循现有的 scratch 生命周期：删除会话或孤儿/过期启动清扫会
+   移除它们。它们不是 workspace 产物，且从不改变项目 git 状态。
 
-## Security and boundary notes
+## 安全与边界说明
 
-- The renderer cannot select the destination directory; the session id is
-  checked in main and the output root is constructed from the host data dir.
-  Picker source paths are resolved through `realpath` and must be regular files;
-  they never become prompt references or destination paths.
-- Renderer names are reduced to a basename and sanitized. A UUID prefix and
-  exclusive creation prevent collisions and overwrite-by-name.
-- The bridge is Electron-only. It adds no host RPC method and does not expose
-  arbitrary filesystem write access to the renderer.
+- 渲染进程无法选择目标目录；会话 id 在主进程中校验，输出根由宿主数据目
+  录构造。选择器源路径通过 `realpath` 解析且必须是常规文件；它们绝不成为
+  prompt 引用或目标路径。
+- 渲染进程名称被削减为 basename 并消毒。UUID 前缀与排他创建防止冲突与按
+  名覆盖。
+- 该桥仅 Electron 使用。它不新增宿主 RPC 方法，也不向渲染进程暴露任意文
+  件系统写访问。
 
-## Alternatives considered
+## 已考虑的备选方案
 
-- **Insert the browser file name only:** loses the bytes and gives the agent no
-  usable path. Rejected.
-- **Write into the workspace:** makes a normal paste dirty the project and
-  breaks session scratch isolation. Rejected.
-- **Send binary inline with the prompt:** changes the text-only prompt contract,
-  inflates context, and requires provider-specific attachment handling.
-  Rejected.
-- **Use an Electron file picker for paste:** does not support screenshots and
-  adds an extra interaction for the common clipboard workflow. Rejected as the
-  paste path; the separate picker upload action now reuses this scratch
-  contract for explicitly selected files.
+- **只插入浏览器文件名：** 丢失字节，agent 得不到可用路径。已拒绝。
+- **写进 workspace：** 让普通粘贴弄脏项目，并破坏会话 scratch 隔离。已拒
+  绝。
+- **随 prompt 内联发送二进制：** 改变纯文本 prompt 契约，膨胀上下文，并需
+  要 provider 特有的附件处理。已拒绝。
+- **为粘贴使用 Electron 文件选择器：** 不支持截图，并为常见的剪贴板工作
+  流增加额外交互。作为粘贴路径已拒绝；独立的选择器上传操作现在为显式选择
+  的文件复用此 scratch 契约。
 
-## Consequences
+## 后果
 
-- File and image paste works from both home and docked composers without a
-  project file mutation.
-- The visible draft gains compact leaf-name references; the dispatched prompt
-  gains the same normal `@absolute/path` references, so existing Read/Glob/Grep
-  behavior handles the materialized files.
-- Large or malformed clipboard payloads fail visibly in the composer and do
-  not partially write because bytes are validated before the first write.
+- 文件与图片粘贴从 home 与停靠 composer 都能工作，且不修改项目文件。
+- 可见草稿获得紧凑的叶名引用；发出的 prompt 获得相同的普通
+  `@absolute/path` 引用，因此现有的 Read/Glob/Grep 行为可以处理物化的文
+  件。
+- 过大或畸形的剪贴板负载在 composer 中可见地失败，且不会部分写入，因为字
+  节在首次写入之前校验。
 
-## Amendment (2026-09-14): clipboard text representation for mixed Word pastes
+## 修订（2026-09-14）：混合 Word 粘贴的剪贴板文本表示
 
-Issue #138: Microsoft Word can place non-whitespace `text/plain` together with an
-`image/*` copy of the same selection on the clipboard, so the `File`-only rule of
-decision 1 discarded editable text and materialized the image instead. This
-amendment replaces that selection rule; the remaining decisions are unchanged.
+Issue #138：Microsoft Word 可能把非空白的 `text/plain` 与同一选区的
+`image/*` 副本一起放到剪贴板上，因此决定 1 的仅 `File` 规则丢弃了可编辑文
+本并物化了图片。本修订替换该选择规则；其余决定不变。
 
-- The renderer selects the clipboard representation before the attachment flow.
-  It prefers the editable text when the text is not whitespace-only and every
-  accompanying clipboard file is `image/*` and resolves to no native filesystem
-  path.
-- Any native file path, any non-image file, absent or whitespace-only text, and
-  image-only pastes keep the file and image attachment flow of decision 1.
-- Selected text follows ADR 0131's existing `largePasteThreshold`: text at or
-  below the threshold stays editable inline, and larger text becomes a session
-  scratch `text/plain` reference.
-- Short multiline text is escaped and inserted as text plus generated line
-  breaks, so paragraphs, blank and trailing lines, the replaced selection, the
-  surrounding text, the caret, and native undo all survive. Clipboard HTML is
-  still never read, and CRLF/CR line endings become editor LF line breaks.
+- 渲染进程在附件流程之前选择剪贴板表示。当文本不是纯空白，且每个伴随的剪
+  贴板文件都是 `image/*` 且不解析到任何原生文件系统路径时，它偏好可编辑文
+  本。
+- 任何原生文件路径、任何非图片文件、缺失或纯空白的文本，以及纯图片粘贴，
+  都保持决定 1 的文件与图片附件流程。
+- 选中的文本遵循 ADR 0131 现有的 `largePasteThreshold`：处于或低于阈值的文
+  本保持内联可编辑，更大的文本变成会话 scratch 的 `text/plain` 引用。
+- 短多行文本被转义并作为文本加生成的换行插入，因此段落、空白与末尾行、被
+  替换的选区、周围文本、光标与原生撤销全部保留。剪贴板 HTML 仍从不读取，
+  CRLF/CR 行尾变为编辑器 LF 换行。

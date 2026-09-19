@@ -1,61 +1,57 @@
-# ADR 0025: Keep Application Menus out of Windows/Linux Windows
+# ADR 0025: 让应用菜单退出 Windows/Linux 窗口
 
-- Status: Accepted
-- Date: 2026-07-27
-- Deciders: PI-Desktop core
-- Related: D118, D129, ADR 0021
+- 状态: 已接受
+- 日期: 2026-07-27
+- 决策者: PI-Desktop 核心团队
+- 相关: D118, D129, ADR 0021
 
-## Context
+## 背景
 
-ADR 0021 introduced a native macOS system menu and a renderer-owned
-File/Edit/View/Window/Help menubar inside Windows/Linux windows. The in-window
-menubar consumes the left side of the 46px titlebar and applies a macOS menu
-model to frameless Windows/Linux chrome. Product direction now keeps that menu
-surface specific to the macOS system menu.
+ADR 0021 引入了原生 macOS 系统菜单和 Windows/Linux 窗口内渲染进程
+拥有的 File/Edit/View/Window/Help 菜单栏。窗口内菜单栏占用 46px
+标题栏的左侧，并把 macOS 菜单模型套用到无边框的 Windows/Linux
+外观上。产品方向现在让该菜单界面专属于 macOS 系统菜单。
 
-Windows/Linux still require window controls and access to common application,
-editing, zoom, and fullscreen commands after the visible menubar is removed.
+移除可见菜单栏后，Windows/Linux 仍需要窗口控件以及常用应用、编辑、
+缩放和全屏命令的访问途径。
 
-## Decision
+## 决策
 
-1. macOS keeps the conventional native Electron application menu and
-   hidden-inset traffic lights defined by ADR 0021.
-2. Windows/Linux keep the frameless 46px titlebar and renderer-drawn
-   minimize, maximize/restore, and close controls, but render no application
-   menubar inside the window.
-3. Windows/Linux titlebar navigation reclaims the space previously reserved
-   for File/Edit/View/Window/Help.
-4. Common Windows/Linux application, close-window, zoom, and fullscreen
-   shortcuts are handled without a visible menu. Standard editing shortcuts
-   remain native web-content behavior.
-5. Existing allowlisted menu-command and native-action IPC stays in place for
-   the macOS system menu, renderer readiness, and shortcut dispatch. No new
-   privileged surface is introduced.
+1. macOS 保留 ADR 0021 定义的常规原生 Electron 应用菜单和
+   hidden-inset traffic light。
+2. Windows/Linux 保留无边框 46px 标题栏和渲染进程绘制的最小化、
+   最大化/还原、关闭控件，但窗口内不渲染应用菜单栏。
+3. Windows/Linux 标题栏导航收回此前为
+   File/Edit/View/Window/Help 保留的空间。
+4. Windows/Linux 的常用应用、关闭窗口、缩放和全屏快捷键在没有可见
+   菜单的情况下处理。标准编辑快捷键保持原生 web 内容行为。
+5. 现有的白名单菜单命令和原生操作 IPC 继续保留，用于 macOS 系统
+   菜单、渲染进程就绪和快捷键分发。不引入新的特权接口面。
 
-## Consequences
+## 后果
 
-- The window titlebar is quieter and gives navigation the full left edge.
-- macOS retains the platform-standard system menu and all native roles.
-- Windows/Linux users rely on visible in-app controls, Settings -> Info, the
-  command palette, and keyboard shortcuts instead of an in-window menubar.
-- F10 and Shift+F10 are no longer consumed by renderer shell chrome.
-- The removed renderer menubar component, styling, focus model, and localized
-  popover behavior no longer require maintenance or qualification.
+- 窗口标题栏更安静，把整个左边缘让给导航。
+- macOS 保留平台标准的系统菜单和所有原生 role。
+- Windows/Linux 用户依靠可见的应用内控件、Settings -> Info、命令
+  面板和键盘快捷键，而不是窗口内菜单栏。
+- F10 和 Shift+F10 不再被渲染进程外壳外观消费。
+- 被移除的渲染进程菜单栏组件、样式、焦点模型和本地化弹出行为不再
+  需要维护或合格性验证。
 
-## Alternatives
+## 备选方案
 
-### Keep the renderer menubar but hide it by default
+### 保留渲染进程菜单栏但默认隐藏
 
-Rejected because an Alt/F10-revealed menu still reserves a platform concept
-that product direction does not want inside the window.
+否决，因为由 Alt/F10 唤出的菜单仍保留了一个产品方向不希望在窗口
+内出现的平台概念。
 
-### Remove all menu-related IPC
+### 移除所有菜单相关 IPC
 
-Rejected for this change because the macOS system menu still dispatches
-allowlisted renderer commands, and Windows/Linux shortcuts can reuse the
-bounded native-action surface without broadening Main-process authority.
+本次否决，因为 macOS 系统菜单仍在分发白名单渲染进程命令，而且
+Windows/Linux 快捷键可以复用有界的原生操作接口面，而不扩大主进程
+权限。
 
-## References
+## 参考
 
 - `docs/adr/0021-platform-application-chrome.md`
 - `docs/spec/03-runtime/01-ipc-protocol.md`

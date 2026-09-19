@@ -1,58 +1,51 @@
-# ADR 0196: Show provider retry causes in the active-turn status
+# ADR 0196: 在活动轮次状态中显示 provider 重试原因
 
-- Status: Accepted
-- Date: 2026-09-08
-- Related: ADR 0175, D358, US-UI-60d
-- Note: First filed as ADR 0186, then 0195; 0186 is session titles and 0195 is the work-panel toggle.
+- 状态：已接受
+- 日期：2026-09-08
+- 相关：ADR 0175、D358、US-UI-60d
+- 说明：最初编号为 ADR 0186，后改为 0195；0186 是会话标题，0195 是工作
+  面板开关。
 
-## Context
+## 背景
 
-The live `retrying` status row tells users that a provider request is being
-retried, but not why. The same classified provider failures already become
-structured assistant errors when the retry budget is exhausted. During the
-backoff, users should be able to inspect the current cause without creating a
-duplicate transcript error or waiting for the retry to finish.
+实时的 `retrying` 状态行告诉用户 provider 请求正在重试，但不说明原因。
+同样的已分类 provider 失败在重试预算耗尽时已经会变成结构化的 assistant
+错误。在退避期间，用户应当能够查看当前原因，而不产生重复的 transcript
+错误或等待重试结束。
 
-## Decision
+## 决策
 
-Extend the shared `AgentActivity.retrying` payload with optional bounded error
-details: the stable error code, the already-redacted and length-limited provider
-message, and the HTTP status when known. The runtime supplies the details for
-both request-setup and mid-stream retries.
+用可选的、有界的错误详情扩展共享的 `AgentActivity.retrying` 负载：稳定
+的错误码、已脱敏且限长的 provider 消息，以及已知时的 HTTP 状态码。运行
+时为请求建立阶段和流中阶段的重试都提供这些详情。
 
-The renderer keeps the existing compact retry row at rest. Hovering or focusing
-its retry label reveals a small error-styled tooltip that reuses the assistant
-error card's hierarchy: icon, localized summary, stable code/status, and the
-provider message. The trigger is keyboard-focusable and exposes the same reason
-through its accessible name. The tooltip closes when the activity phase clears;
-the final assistant error and outcome surfaces remain the only terminal error
-presentation.
+渲染进程在静止时保留现有的紧凑重试行。悬停或聚焦其重试标签会显示一个
+小型错误风格的 tooltip，复用 assistant 错误卡片的层次结构：图标、本地
+化摘要、稳定的错误码/状态码，以及 provider 消息。触发器可键盘聚焦，并
+通过其无障碍名称暴露同样的原因。tooltip 在活动阶段清除时关闭；最终的
+assistant 错误和结果界面仍是唯一的终止性错误呈现。
 
-## Consequences
+## 后果
 
-- Users can identify rate limits, timeouts, network failures, and provider
-  errors during a retry wait.
-- The transcript remains free of intermediate error rows and retry behavior is
-  unchanged.
-- The protocol exposes only diagnostics already classified and redacted by the
-  runtime; arbitrary provider payloads do not cross the boundary.
-- Older status payloads without `error` continue to render the ordinary retry
-  label.
+- 用户可以在重试等待期间识别限流、超时、网络故障和 provider 错误。
+- Transcript 保持没有中间错误行，重试行为不变。
+- 协议只暴露运行时已经分类并脱敏的诊断信息；任意的 provider 负载不会
+  跨越边界。
+- 没有 `error` 的旧状态负载继续渲染普通的重试标签。
 
-## Alternatives
+## 替代方案
 
-### Use only a native `title`
+### 只使用原生 `title`
 
-Rejected because it cannot match the existing error presentation, is difficult
-to read for long provider messages, and provides inconsistent keyboard access.
+否决，因为它无法匹配现有的错误呈现，对较长的 provider 消息难以阅读，
+且键盘访问不一致。
 
-### Add an assistant error row for every retry
+### 为每次重试添加一行 assistant 错误
 
-Rejected because intermediate failures would duplicate the final assistant
-error and make a successful same-turn retry look like a failed turn.
+否决，因为中间失败会重复最终的 assistant 错误，并让一次成功的同轮次
+重试看起来像失败的轮次。
 
-### Expose the full provider response
+### 暴露完整的 provider 响应
 
-Rejected because provider responses can contain unstable or sensitive data. The
-existing classifier's bounded message and low-cardinality status are sufficient
-for diagnosis.
+否决，因为 provider 响应可能包含不稳定或敏感的数据。现有分类器的有界
+消息和低基数状态码已足以诊断。

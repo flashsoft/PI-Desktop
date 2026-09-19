@@ -1,57 +1,53 @@
-# ADR 0088: Plugin file access is declared per mode, and deletion is recoverable
+# ADR 0088: 插件文件访问按模式声明作用域，删除可恢复
 
 - Status: Accepted (Implemented 2026-08-15)
 - Date: 2026-08-15
 
-## Context
+## 背景
 
-ADR 0008 put plugin main code in its own `utilityProcess`, but noted that the
-process is a full Node environment: permissions gate the `pi.*` surface, not
-`require("node:fs")`. Capability sandboxing is still the open half (ADR 0008,
-D009). Until it lands, the `pi.*` gate is what a well-behaved plugin is held to
-and what a review can be based on, so its granularity is the whole design.
+ADR 0008 将插件主代码放入独立的 `utilityProcess`，但也指出该进程
+是完整的 Node 环境：权限门控的是 `pi.*` 接口，而不是
+`require("node:fs")`。能力沙箱仍是未完成的那一半（ADR 0008，
+D009）。在它落地之前，`pi.*` 权限门就是约束行为良好的插件的依
+据，也是审查可以基于的依据，因此其粒度就是整个设计。
 
-That granularity was three workspace-wide switches:
+此前的粒度是三个工作区级开关：
 
-- `fs.read.workspace` → any file in the workspace, including `.env` and
+- `fs.read.workspace` → 工作区中的任何文件，包括 `.env` 和
   `.git/config`
-- `fs.write.workspace` → any path in the workspace
-- `fs.delete.workspace` → `fs.remove` with `recursive: false`, which bounds one
-  call and not the blast radius: `fs.glob("**/*")` followed by a loop empties a
-  workspace as thoroughly as `rm -rf` does
+- `fs.write.workspace` → 工作区中的任何路径
+- `fs.delete.workspace` → `recursive: false` 的 `fs.remove`，它约束
+  的是单次调用而不是爆炸半径：`fs.glob("**/*")` 加一次循环可以像
+  `rm -rf` 一样彻底地清空一个工作区
 
-Two implementation faults made it worse than the design admitted. Containment
-was a lexical prefix comparison, so a symlink inside the workspace pointing at
-`~/.ssh` satisfied it; and the runtime fell back to
-`grantedPermissions ?? manifest.permissions`, which auto-granted everything the
-manifest asked for whenever a caller omitted the grants.
+两个实现缺陷使情况比设计所承认的更糟。包含性检查是词法前缀比
+较，因此工作区内指向 `~/.ssh` 的符号链接也能通过；且运行时会回
+退到 `grantedPermissions ?? manifest.permissions`，每当调用方省略
+授权时就自动授予 manifest 请求的一切。
 
-`07-plugins/13-plugin-permissions-matrix.md` had always specified "Confirm on
-first use" / "Confirm each time or per session" for these permissions. None of
-it was implemented. The narrowing below is that spec being delivered, not a new
-direction.
+`07-plugins/13-plugin-permissions-matrix.md` 一直为这些权限规定着
+"首次使用时确认" / "每次或每会话确认"。这些从未被实现。下面的收
+窄是那份 spec 的交付，而不是新方向。
 
-Tightening cannot be the whole answer, because a plugin system that can only
-read is not worth installing. The risks are not symmetric, and the response
-should not be either:
+收紧不可能是全部答案，因为一个只能读取的插件系统不值得安装。风
+险并不对称，应对方式也不应对称：
 
-- A **read** is dangerous when the bytes can leave. That half is closed
-  separately by the egress allowlist (`manifest.net.domains`), which confines
-  the panel session, `pi.net.fetch`, and remote MCP endpoints to declared
-  hostnames. With egress closed, a broad read is a much smaller problem.
-- A **write** is dangerous on its own, and the damage is bounded by where it can
-  land.
-- A **delete** is dangerous on its own and, unlike the other two, is
-  unrecoverable — unless the deletion goes to the operating system's trash, in
-  which case it is fully recoverable and no worse than a write.
+- **读取**在字节可以离开时才危险。那一半由出站白名单
+  （`manifest.net.domains`）单独关闭，它将面板会话、`pi.net.fetch`
+  和远程 MCP 端点限制在已声明的主机名内。出站关闭后，宽泛的读取
+  是小得多的问题。
+- **写入**本身就是危险的，其损害由它能落在哪里来界定。
+- **删除**本身就是危险的，而且与前两者不同，它是不可恢复的——
+  除非删除进入操作系统的回收站，那样它就完全可恢复，不比一次写
+  入更糟。
 
-## Decision
+## 决策
 
-### 1. `manifest.fs` declares scope; permission names stay flat strings
+### 1. `manifest.fs` 声明作用域；权限名保持扁平字符串
 
-`permissions` remains `readonly string[]` and gains `fs.read`, `fs.write`,
-`fs.delete` — "may this plugin touch files at all". A separate `fs` block says
-"which files":
+`permissions` 保持为 `readonly string[]`，并新增 `fs.read`、
+`fs.write`、`fs.delete` —— "这个插件能不能碰文件"。单独的 `fs`
+块说明"哪些文件"：
 
 ```json
 {
@@ -64,127 +60,116 @@ should not be either:
 }
 ```
 
-A separate field rather than objects inside `permissions` because permissions
-are handled as strings end to end — install review, chips, grant round-trips,
-catalog validation — and the marketplace catalog format is versioned separately.
+使用单独字段而不是在 `permissions` 内放对象，是因为权限端到端都
+按字符串处理——安装审查、权限角标、授权往返、目录校验——且市场
+目录格式是独立版本化的。
 
-`fs.read` may declare the whole tree; `fs.write` and `fs.delete` may not, and a
-whole-tree pattern (`**`, `**/*`, `*/**`, `./*`) is refused at validation time.
-An absent or empty scope is not an error: it means the plugin has no standing
-reach and every access falls to the user.
+`fs.read` 可以声明整棵树；`fs.write` 和 `fs.delete` 不可以，整树
+模式（`**`、`**/*`、`*/**`、`./*`）会在校验时被拒绝。缺失或空的
+作用域不是错误：它意味着插件没有常备触达能力，每次访问都会落到
+用户那里。
 
-### 2. Four gates, in a fixed order
+### 2. 四道门，按固定顺序
 
-Every `pi.fs.*` call passes, in order:
+每个 `pi.fs.*` 调用按顺序通过：
 
-1. `assertPermission` — is `fs.<mode>` declared **and** granted (intersection,
-   so a revoked permission actually stops working)
-2. Containment — `realpath` on both the root and the target; for a path being
-   created, `realpath` of the nearest existing ancestor. A symlink out of the
-   root fails here, and a path that simply does not exist is reported
-   `NOT_FOUND` rather than as an escape attempt
-3. Unconditional deny-list — credentials and history refused under every root,
-   scope, and grant: `.env*`, `.npmrc`, `.netrc`, `.git-credentials`, `id_rsa*`,
-   `*.pem`/`*.p12`/`*.pfx`/`*.keystore`, and anything inside `.git`, `.ssh`,
-   `.aws`, `.gnupg`, `.kube`, `.docker`, plus the host's own data directory
-   (provider keys, session store)
-4. Declared scope, else user consent
+1. `assertPermission` —— `fs.<mode>` 是否已声明**且**已授予（取
+   交集，因此被撤销的权限确实会停止工作）
+2. 包含性 —— 对根和目标都做 `realpath`；对于正在创建的路径，对
+   最近的已存在祖先做 `realpath`。逃出根的符号链接在这里失败；
+   单纯不存在的路径报告为 `NOT_FOUND`，而不是逃逸企图
+3. 无条件拒绝清单 —— 在每个根、作用域和授权之下都拒绝凭据和历
+   史：`.env*`、`.npmrc`、`.netrc`、`.git-credentials`、`id_rsa*`、
+   `*.pem`/`*.p12`/`*.pfx`/`*.keystore`，以及 `.git`、`.ssh`、
+   `.aws`、`.gnupg`、`.kube`、`.docker` 内的一切，外加宿主自己的
+   数据目录（provider 密钥、会话存储）
+4. 已声明作用域，否则用户同意
 
-`pi.fs.glob` answers to the same rules: results are filtered by the read scope,
-denied paths and reserved trees are omitted (a name is a read too), and
-`node_modules` / `.git` / `.venv` / `__pycache__` are not walked at all.
+`pi.fs.glob` 遵循同样的规则：结果按读取作用域过滤，被拒绝的路径
+和保留树被省略（文件名也是一种读取），且完全不遍历
+`node_modules` / `.git` / `.venv` / `__pycache__`。
 
-### 3. Deletion has two tiers, and always goes to the trash
+### 3. 删除分两级，且永远进回收站
 
-- **`fs.delete` with `own: true`** — the host appends every successful
-  `fs.writeText` to a write ledger in the plugin's own data directory (path plus
-  mtime, host-owned, not reachable from the plugin API). A path in the ledger can
-  be removed with no scope and no prompt: cleaning up your own output surprises
-  nobody. If the file's mtime has moved past the recorded one, the user has
-  touched it since and it is no longer the plugin's — the delete falls to
-  consent.
-- **`fs.delete` with `scope`** — deleting somebody else's file requires the
-  globs up front, and they are shown to the user where the permissions are
-  shown.
+- **`own: true` 的 `fs.delete`** —— 宿主把每次成功的
+  `fs.writeText` 追加到插件自己数据目录中的写入台账（路径加
+  mtime，宿主拥有，插件 API 无法触及）。台账中的路径可以在没有作
+  用域、没有提示的情况下被移除：清理自己的输出不会吓到任何人。
+  如果文件的 mtime 晚于记录的值，说明用户此后碰过它，它就不再属
+  于插件——删除落入用户同意。
+- **带 `scope` 的 `fs.delete`** —— 删除别人的文件需要预先给出
+  glob，且它们会在权限展示的地方展示给用户。
 
-Both tiers additionally:
+两级都额外满足：
 
-- go through `shell.trashItem`, never `rm`. This is the backstop that makes the
-  whole delete path survivable: any single gate above can be wrong without the
-  user losing data
-- keep `recursive: false`; a non-empty directory is refused rather than emptied
-- answer to a rolling brake of 50 deletes per 60s per plugin. Past it the user
-  is asked once, with the reason stated as "this many, this fast" rather than
-  being asked to adjudicate one file. This is the only thing that separates a
-  cleanup routine from a wipe
+- 经由 `shell.trashItem`，绝不用 `rm`。这是让整个删除路径可幸存
+  的兜底：上面任何一道门出错都不会让用户丢失数据
+- 保持 `recursive: false`；非空目录被拒绝而不是被清空
+- 服从每个插件每 60 秒 50 次删除的滚动刹车。超过后只问用户一
+  次，理由陈述为"这么多、这么快"，而不是请用户裁决单个文件。这
+  是区分清理例程和清空操作的唯一东西
 
-### 4. Consent is a native dialog, and never more durable than the session
+### 4. 同意是原生对话框，且持久度绝不超过会话
 
-Out-of-scope access calls `dialog.showMessageBox`: **Deny** / **Allow once** /
-**Allow this session**. A session grant covers the containing directory and dies
-with the process; nothing is persisted. A rate-brake prompt is offered no
-session option at all. A host with no consent service refuses — a host that
-cannot ask must not assume yes.
+作用域外的访问调用 `dialog.showMessageBox`：**拒绝** / **允许一
+次** / **本会话内允许**。会话授权覆盖包含目录并随进程消亡；不持
+久化任何东西。速率刹车的提示完全不提供会话选项。没有同意服务的
+宿主会拒绝——无法询问的宿主不得假设同意。
 
 ### 5. `root: "userSelected"`
 
-`pi.fs.requestDirectory()` opens the native directory picker and returns a
-handle. Inside that directory the plugin needs no manifest scope — the user just
-pointed at it, which *is* the grant — while containment and the deny-list still
-apply. The handle is memory-only and dies with the process.
+`pi.fs.requestDirectory()` 打开原生目录选择器并返回一个句柄。在该
+目录内插件无需 manifest 作用域——用户刚刚指向了它，这*就是*授权
+——而包含性和拒绝清单仍然适用。句柄仅存在于内存中并随进程消亡。
 
-This is where the capability comes back. "Organize my whole photo folder",
-"bulk import/export" plugins become possible with **zero standing power**,
-modelled on the browser's File System Access API.
+能力在这里回归。"整理我整个照片文件夹"、"批量导入/导出"类插件
+以**零常备权力**变得可能，仿照浏览器的 File System Access API。
 
-### 6. Migration is a breaking downgrade
+### 6. 迁移是一次破坏性的能力降级
 
-| Legacy permission | What it is worth now |
+| 旧权限 | 现在的价值 |
 |---|---|
-| `fs.read.workspace` | `fs.read`, `scope: ["**/*"]` — unchanged, because egress is closed |
-| `fs.write.workspace` | `fs.write` with an empty scope — every write asks the user |
-| `fs.delete.workspace` | `fs.delete` with `own: true` — only its own output goes without asking |
+| `fs.read.workspace` | `fs.read`，`scope: ["**/*"]` —— 不变，因为出站已关闭 |
+| `fs.write.workspace` | `fs.write` 加空作用域 —— 每次写入都询问用户 |
+| `fs.delete.workspace` | `fs.delete` 加 `own: true` —— 只有它自己的输出无需询问 |
 
-Capability is reduced; no hole is left open. An explicit rule always beats the
-legacy default, so an author upgrades by adding `fs`, never by renaming
-anything. The Plugins page marks a downgraded plugin so the user knows why it
-stopped working and what the author has to do.
+能力被削减；没有留下敞开的洞。显式规则永远胜过旧的默认值，因此
+作者通过添加 `fs` 来升级，永远不需要重命名任何东西。插件页面会
+标记被降级的插件，让用户知道它为什么停止工作以及作者需要做什
+么。
 
-## Consequences
+## 后果
 
-- A plugin that writes or deletes outside its declared scope now prompts, and a
-  prompt the user denies is audited as `PERMISSION_DENIED`. Authors who never
-  declared scope see writes fail until they do.
-- Installed plugins that predate `manifest.fs` lose write and delete reach on
-  the next load. This is intentional and visible rather than silent.
-- Reads stay generous, which keeps the interesting plugins possible. That is a
-  bet on the egress allowlist: if egress were reopened, read scope would have to
-  be revisited.
-- Deletion is recoverable through the OS trash on every platform Electron
-  supports it, and we store none of the user's data to achieve that — no
-  quarantine copy, no undo journal.
-- The rate brake is per plugin and rolling, so a legitimate large cleanup is
-  interrupted once rather than refused.
-- None of this binds a *malicious* plugin, which can still call
-  `require("node:fs")` directly. It bounds what a plugin can do through the API
-  it is supposed to use, and gives review something concrete to read. The
-  malicious case remains ADR 0008 D009 — capability sandboxing inside the plugin
-  process — and is the next item on this line of work.
+- 在其声明作用域之外写入或删除的插件现在会弹出提示，被用户拒绝
+  的提示会被审计为 `PERMISSION_DENIED`。从未声明作用域的作者会
+  看到写入失败，直到他们声明。
+- 早于 `manifest.fs` 的已安装插件在下一次加载时失去写入和删除触
+  达能力。这是刻意且可见的，而不是静默的。
+- 读取保持宽松，这让有趣的插件仍然可能。这是对出站白名单的下
+  注：如果出站被重新打开，读取作用域就必须重新审视。
+- 在 Electron 支持的每个平台上，删除都可以通过操作系统回收站恢
+  复，而且我们为此不存储任何用户数据——没有隔离副本，没有撤销
+  日志。
+- 速率刹车是按插件且滚动的，因此合法的大规模清理只会被打断一
+  次，而不是被拒绝。
+- 这些都不约束*恶意*插件，它仍可直接调用 `require("node:fs")`。
+  它约束的是插件通过它应该使用的 API 能做什么，并给审查提供具
+  体可读的东西。恶意情形仍属于 ADR 0008 D009——插件进程内的能
+  力沙箱——是这条工作线上的下一项。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- **A host-owned quarantine directory with an undo UI** instead of the OS trash:
-  rejected. It would mean copying and retaining the user's files inside app
-  storage to provide a recovery path the operating system already provides.
-- **Objects inside `permissions`** (`{ "name": "fs.write", "scope": [...] }`):
-  rejected. Permissions are strings across the install review, the grant
-  round-trip, the registry, and the marketplace catalog; the change would touch
-  all of them to express something a sibling field expresses cleanly.
-- **Prompt on every file access, no manifest scope**: rejected. Consent fatigue
-  turns into blanket approval, and a plugin that legitimately writes 40 files
-  becomes unusable.
-- **Keeping `recursive: false` as the only delete bound**: rejected. It bounds a
-  call, not a loop, which is what the rate brake exists to catch.
-- **Denying `fs.write` outright and offering only the plugin's data directory**:
-  rejected as too narrow — an export or formatter plugin has to be able to put a
-  file where the user asked for it.
+- **宿主拥有的隔离目录加撤销 UI**，代替操作系统回收站：被拒绝。
+  这意味着把用户文件复制并保留在应用存储中，以提供操作系统已经
+  提供的恢复路径。
+- **在 `permissions` 内放对象**（`{ "name": "fs.write", "scope": [...] }`）：
+  被拒绝。权限在安装审查、授权往返、注册表和市场目录中都是字符
+  串；这个改动会触及所有这些环节，来表达一个兄弟字段能干净表达
+  的东西。
+- **每次文件访问都提示，不给 manifest 作用域**：被拒绝。同意疲劳
+  会变成一揽子批准，而一个合法写入 40 个文件的插件会变得不可
+  用。
+- **保持 `recursive: false` 作为唯一的删除约束**：被拒绝。它约束
+  的是一次调用，而不是循环，而速率刹车正是为捕获循环而存在的。
+- **完全拒绝 `fs.write`，只提供插件数据目录**：因过于狭窄而被拒
+  绝——导出或格式化插件必须能把文件放到用户要求的地方。

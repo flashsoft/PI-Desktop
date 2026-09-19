@@ -1,88 +1,77 @@
-# ADR 0271: Rebuild the shared provider transport after repeated unanswered failures
+# ADR 0271：在反复无应答失败后重建共享 provider 传输
 
 - Status: Accepted for implementation
 - Date: 2026-09-16
 - Related: [Error codes](../spec/03-runtime/08-error-codes.md) · [Agent runtime](../spec/03-runtime/02-agent-runtime.md) · [ADR 0212](0212-remove-diagnostic-timing-log-streams.md) · issue #234
 
-## Context
+## 背景
 
-One turn on a long session retried a Codex request ten times over ~112 seconds and
-reported `NETWORK_ERROR: fetch failed` for every attempt; a new turn on the same
-provider, model, and network succeeded immediately. The log record carried
-`phase=stream`, `streamMs=1~2`, and `retryAttempt=10`, and nothing else.
+长 session 上的一个 turn 在约 112 秒内重试 Codex 请求十次，每次尝试都报
+告 `NETWORK_ERROR: fetch failed`；同一 provider、模型和网络上的新 turn
+立即成功。日志记录携带 `phase=stream`、`streamMs=1~2` 和
+`retryAttempt=10`，别无其他。
 
-Two readings of that evidence were possible, and the first one was wrong:
+对该证据有两种解读，而第一种是错的：
 
-- `phase=stream` with a two-millisecond stream looks like a failure *after* the
-  response headers arrived, which would mean the connection worked and the retry
-  hypothesis is empty.
-- The pair is actually the fingerprint of the opposite: pi-agent-core emits
-  `message_start` for a stream that ended **without** ever emitting `start`, so
-  `streamMs` measures the synthetic start/end pair, not a started stream. With
-  `providerWaitMs=112442` covering the whole retry loop and each attempt spending
-  seconds in `phase=request` retries, every one of the ten attempts died before
-  any response.
+- `phase=stream` 配上两毫秒的流，看起来像响应头到达*之后*的失败，那意
+  味着连接是好的，重试假设是空的。
+- 这一对实际上是指纹相反的东西：pi-agent-core 为**从未**发出 `start`
+  就结束的流发出 `message_start`，因此 `streamMs` 衡量的是合成的
+  start/end 对，而不是已开始的流。`providerWaitMs=112442` 覆盖整个重试
+  循环，每次尝试在 `phase=request` 重试中花费数秒，十次尝试中的每一次
+  都在任何响应之前死去。
 
-The consequence of the wrong reading was that the shared transport was never
-touched: `node-proxy.ts` installs one process-wide undici dispatcher (a
-`ProxyAgent`, a SOCKS5 agent, or the plain agent) and `closeActiveDispatchers()`
-ran only when settings changed. A pooled connection that died without the pool
-noticing therefore stayed in use for the whole retry budget, and the first-hand
-`error.cause` — where node and undici keep `ENOTFOUND`, `ECONNRESET`,
-`UND_ERR_SOCKET`, or a TLS code — was already flattened into an `errorMessage`
-string by pi-ai before classification, so the log could only say
-`networkCategory: unknown`.
+错误解读的后果是共享传输从未被触碰：`node-proxy.ts` 安装一个进程级的
+undici dispatcher（`ProxyAgent`、SOCKS5 agent 或普通 agent），而
+`closeActiveDispatchers()` 只在设置变化时运行。因此一个池没有注意到就
+死去的池化连接在整个重试预算内保持使用，而第一手的 `error.cause`——
+node 和 undici 保存 `ENOTFOUND`、`ECONNRESET`、`UND_ERR_SOCKET` 或 TLS
+代码的地方——在分类之前已经被 pi-ai 压平成 `errorMessage` 字符串，因
+此日志只能说 `networkCategory: unknown`。
 
-## Decision
+## 决策
 
-1. Describe the rejected provider fetch where the original Error still exists:
-   the fetch wrapper in `provider-retry.ts` runs `describeNetworkFailure` on the
-   live cause chain and reports the same validated fields a directly classified
-   network error carries (`networkCategory`, `networkCode`, `networkSyscall`,
-   `networkHost`) instead of letting a bare `fetch failed` fall back to
-   `unknown`. Field shapes, bounds, and redaction stay owned by
-   `agent-errors.ts`; no new error code and no new locale string is introduced.
-2. Report the transport route (`networkRoute`: `direct`, `environment-proxy`,
-   `http-proxy`, `socks5-proxy`) with the diagnosis, so a failure at the proxy
-   hop is readable without inferring it from an errno.
-3. Report `phase: request` for a failure that never received a response. The
-   phase describes what actually happened to the attempt, not which message
-   lifecycle surfaced it.
-4. Rebuild the shared transport when one origin fails this way **repeatedly**:
-   after the second consecutive unanswered failure for the same origin inside a
-   turn, once per streak, at most once every 30 seconds process-wide, never for a
-   `dns` failure (name resolution happens before a socket exists). Rebuild means
-   rebuilding the configured route from the settings already applied.
-5. Swap before closing: the replacement dispatcher is installed, then the
-   previous one is closed with `close()` — never `destroy()` — and the captured
-   original-dispatcher reference is repointed if the closed pool was it. In-flight
-   requests finish on the pool they were dispatched on.
+1. 在原始 Error 仍存在的地方描述被拒绝的 provider fetch：
+   `provider-retry.ts` 中的 fetch 包装器对活跃的 cause 链运行
+   `describeNetworkFailure`，并报告与直接分类的网络错误相同的经过校验
+   的字段（`networkCategory`、`networkCode`、`networkSyscall`、
+   `networkHost`），而不是让裸的 `fetch failed` 回退到 `unknown`。字段
+   形态、边界和脱敏仍由 `agent-errors.ts` 拥有；不引入新的错误码和新
+   的本地化字符串。
+2. 随诊断报告传输路由（`networkRoute`：`direct`、`environment-proxy`、
+   `http-proxy`、`socks5-proxy`），使代理跳上的失败无需从 errno 推断即
+   可读。
+3. 对从未收到响应的失败报告 `phase: request`。phase 描述尝试实际发生
+   了什么，而不是哪个消息生命周期浮现了它。
+4. 当一个来源**反复**以这种方式失败时重建共享传输：在同一 turn 内对
+   同一来源第二次连续无应答失败之后，每段连续 streak 一次，进程级每
+   30 秒至多一次，绝不因 `dns` 失败（名称解析发生在 socket 存在之前）。
+   重建意味着从已应用的设置重建配置的路由。
+5. 先交换再关闭：替换 dispatcher 先被安装，然后先前的用 `close()` 关
+   闭——绝不用 `destroy()`——如果被关闭的池就是捕获的原始
+   dispatcher 引用，则重新指向它。在途请求在它们被派发的池上完成。
 
-## Consequences
+## 后果
 
-- The next occurrence of issue #234 is diagnosable: the log names the layer and
-  the route, and the retry indicator names the errno.
-- A turn can now spend one of its retry attempts on a fresh pool, so a transport
-  that never recovers on its own stops being reused. A rebuild does not change
-  the retry budget, the backoff curve, or the error classification.
-- Other sessions can observe a rebuild: their idle pooled sockets are closed, so
-  their next request pays a new TCP/TLS handshake. That is a latency cost, never
-  a correctness cost, and the 30-second throttle plus the per-origin streak bound
-  it.
-- A transport failure during a `dns` outage triggers no rebuild, which is
-  deliberate: throttling the pool would spend the cost for no possible benefit.
+- issue #234 的下一次发生是可诊断的：日志指明层和路由，重试指示器指
+  明 errno。
+- Turn 现在可以把一次重试尝试花在新的池上，因此从不自行恢复的传输停
+  止被复用。重建不改变重试预算、退避曲线或错误分类。
+- 其他 session 能观察到重建：它们的空闲池化 socket 被关闭，因此下一
+  个请求要付新的 TCP/TLS 握手。这是延迟代价，绝不是正确性代价，30 秒
+  节流加按来源 streak 约束了它。
+- `dns` 中断期间的传输失败不触发重建，这是刻意的：搅动池会为不可能
+  的收益付出代价。
 
-## Alternatives considered
+## 已考虑的替代方案
 
-- **Rebuild on every failure.** Rejected: the dispatcher is process-wide, so one
-  session's single transient failure would churn every other session's pool, and
-  a long outage would rebuild once per attempt.
-- **Never rebuild.** Rejected: it leaves a repeated unanswered failure on the
-  same origin with no recovery path, which is exactly the reported behavior.
-- **Per-session dispatchers.** Rejected for this change: it changes the ownership
-  model of the transport and the proxy/bypass composition for every provider
-  request, which is a larger and separate architectural decision.
-- **Retain the raw cause message and its `name`.** Rejected: it would put
-  free-form provider text (URLs, header values, query strings) into logs and the
-  transcript for a small diagnostic gain over the errno, the category, and the
-  route.
+- **每次失败都重建。** 被拒绝：dispatcher 是进程级的，因此一个
+  session 的单一瞬时失败会搅动其他每个 session 的池，长时间中断会每
+  次尝试重建一次。
+- **从不重建。** 被拒绝：它让同一来源上反复的无应答失败没有恢复路径，
+  这正是被报告的行为。
+- **按 session 的 dispatcher。** 本次变更拒绝：它改变每个 provider 请
+  求的传输所有权模型和代理/绕过组合，这是更大且独立的架构决策。
+- **保留原始 cause 消息及其 `name`。** 被拒绝：它会把自由文本的
+  provider 文本（URL、header 值、查询字符串）放进日志和 transcript，
+  而相比 errno、类别和路由只有很小的诊断收益。

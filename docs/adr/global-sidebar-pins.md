@@ -1,44 +1,41 @@
-# ADR: Show pinned conversations in a global sidebar section
+# ADR: 在全局侧栏区块中显示置顶会话
 
-- Status: Accepted
-- Date: 2026-09-13
-- Related issue: [#306](https://github.com/vastsa/PI-Desktop/issues/306)
-- Amends: [ADR 0016](0016-sidebar-organization-and-multi-project-tabs.md)
+- 状态：已接受
+- 日期：2026-09-13
+- 相关 issue：[#306](https://github.com/vastsa/PI-Desktop/issues/306)
+- 修订：[ADR 0016](0016-sidebar-organization-and-multi-project-tabs.md)
 
-## Context
+## 背景
 
-Conversation sorting puts pinned rows first, but project rendering then places
-them in chronological buckets. An older pin can therefore appear below today's
-unpinned conversations. Pins also disappear when their project tab is collapsed
-or closed, which defeats their role as quick access to frequently used sessions.
+会话排序把置顶行放在最前，但项目渲染随后会把它们放入按时间排序的分桶。
+因此一条较早的置顶可能出现在今天未置顶会话的下方。当所属项目标签页被
+折叠或关闭时，置顶也会消失，这违背了它们作为高频会话快捷入口的角色。
 
-## Decision
+## 决策
 
-- Render one global Pinned section above standalone Sessions and Projects.
-  Derive it from existing session summaries and organization metadata, including
-  sessions whose project tab is not retained. Do not create another pin registry.
-- Apply archive visibility to both the session and its owning project. Closed
-  and collapsed projects do not hide otherwise visible pins.
-- Show project context on each pin and use the existing session sort within the
-  section without date buckets. Keep project pinning and project sorting intact.
-- Remove visible pins from ordinary rows before chronological grouping and the
-  per-project ten-row limit. Preserve full project membership for activity
-  ordering, archive/delete navigation, and workspace ownership.
-- Reuse ordinary row selection and actions. Unpinning returns a session to its
-  normal history location and visibility rules. Restore focus to its relocated
-  overflow control, with the Sessions sort control as a fallback when hidden.
-- Omit an empty section and bound its scroll area to `min(224px, 30vh)`.
+- 在独立的 Sessions 和 Projects 之上渲染一个全局的置顶区块。它从现有
+  会话摘要和组织元数据派生，包括其项目标签页未被保留的会话。不创建
+  另一个置顶注册表。
+- 归档可见性同时应用于会话及其所属项目。已关闭和已折叠的项目不会隐藏
+  本来可见的置顶。
+- 在每个置顶行上显示项目上下文，并在区块内使用现有的会话排序，不使用
+  日期分桶。项目置顶和项目排序保持不变。
+- 在按时间分组和每个项目十行上限之前，把可见的置顶从普通行中移除。
+  保留完整的项目成员关系，用于活跃排序、归档/删除导航和工作区所有权。
+- 复用普通行的选择与操作。取消置顶会让会话回到它正常的历史位置和
+  可见性规则。焦点恢复到它重新定位后的溢出控件；当该控件隐藏时，回退
+  到 Sessions 排序控件。
+- 空区块不渲染，其滚动区域限制为 `min(224px, 30vh)`。
 
-## Consequences
+## 后果
 
-Pins remain discoverable across dates and projects without duplicate rows.
-Existing persisted pins take effect automatically; no storage migration, IPC
-change, or host ownership change is required. Rendering project context costs
-some row width, so it is ellipsized and subordinate to the session title.
+置顶在不同日期和项目之间保持可发现，且没有重复行。已持久化的置顶自动
+生效；不需要存储迁移、IPC 变更或 host 所有权变更。渲染项目上下文会
+占用一些行宽，因此它被省略号截断并从属于会话标题。
 
-## Validation
+## 验证
 
-Pure grouping tests cover old, temporary, closed-project, archived, deleted,
-unbound, and unpinned sessions. Sidebar rendering coverage checks actual section
-order, uniqueness, project folding, archive visibility, and the history limit.
-The interaction contract is E2E-SIDEBAR-global-pinned-conversations.
+纯分组测试覆盖较旧的、临时的、项目已关闭的、已归档的、已删除的、
+未绑定的和未置顶的会话。侧栏渲染覆盖检查实际的区块顺序、唯一性、
+项目折叠、归档可见性和历史上限。交互契约为
+E2E-SIDEBAR-global-pinned-conversations。

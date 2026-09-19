@@ -1,4 +1,4 @@
-# ADR 0083: Custom global UI font
+# ADR 0083: 自定义全局 UI 字体
 
 - Status: Accepted for implementation
 - Date: 2026-08-14
@@ -6,98 +6,93 @@
 - Protocol: v9 (one additive Electron-main IPC channel; host RPC unchanged)
 - Storage schema: v10 (optional `AppSettings.fontFamily` JSON field)
 
-## Context
+## 背景
 
-The shell typography is a single hardcoded token stack (`--font-sans`). Users
-want to choose a global UI font from Settings — including open-licensed fonts
-that are safe for commercial use — similar to the font picker in the dbx
-desktop client, which enumerates system fonts and bundles an OFL family.
+外壳排版是单一硬编码的 token 栈（`--font-sans`）。用户希望在设置
+中选择全局 UI 字体——包括可安全商用的开放许可字体——类似于 dbx
+桌面客户端的字体选择器，它会枚举系统字体并内置一个 OFL 字体家族。
 
-The renderer is sandboxed behind the preload IPC allowlist, and the app ships
-a bundled renderer, so the font source must be local (no CDN/CSS font
-services, per [07-ui-design-system §2](../spec/04-ux/07-ui-design-system.md)).
+渲染进程位于 preload IPC 白名单之后的沙箱中，且应用分发的是打包
+后的渲染包，因此字体来源必须是本地的（不使用 CDN/CSS 字体服务，
+见 [07-ui-design-system §2](../spec/04-ux/07-ui-design-system.md)）。
 
-## Decision
+## 决策
 
-### 1. Settings picker and persistence
+### 1. 设置选择器与持久化
 
-Settings → Basics → Appearance gains a **Font** row with a searchable picker.
-Selections persist as `AppSettings.fontFamily`, a CSS `font-family` stack
-string. An absent or empty value means the built-in token stack; the picker
-always offers **System default** first. Selecting System default persists an
-empty stack (`fontFamily: ""`) rather than removing the key: `settings.set`
-merges supplied fields into stored settings and JSON serialization drops
-`undefined`, so an omitted key cannot clear a stored override.
+设置 → 基础 → 外观新增一个**字体**行，带可搜索的选择器。所选值持
+久化为 `AppSettings.fontFamily`，即一个 CSS `font-family` 栈字符
+串。缺失或空值表示使用内置 token 栈；选择器始终将**系统默认**列
+在首位。选择系统默认会持久化一个空栈（`fontFamily: ""`）而不是移
+除该键：`settings.set` 会将提供的字段合并进已存储的设置，且 JSON
+序列化会丢弃 `undefined`，因此省略该键无法清除已存储的覆盖值。
 
-The picker menu portals to `document.body` as a fixed body-level floating
-layer (measured against the trigger and clamped to the viewport), so the
-settings card's `overflow` cannot clip or squeeze it; it follows the body-level
-floating-layer contract in the component spec.
+选择器菜单以 portal 形式挂载到 `document.body`，作为 body 级固定
+浮层（相对触发元素测量并钳制在视口内），因此设置卡片的
+`overflow` 无法裁剪或挤压它；它遵循组件规范中的 body 级浮层契约。
 
-### 2. Bundled open-licensed families
+### 2. 内置开放许可字体家族
 
-Four families ship with the app as `woff2`, all under the SIL Open Font
-License 1.1 (free for commercial use and redistribution; license texts are
-shipped under `apps/desktop/src/assets/fonts/licenses/`):
+四个字体家族以 `woff2` 随应用分发，均采用 SIL Open Font License
+1.1（可免费商用和再分发；许可证文本随附于
+`apps/desktop/src/assets/fonts/licenses/`）：
 
-| Family | Script coverage | Source |
+| 字体家族 | 文字覆盖 | 来源 |
 |---|---|---|
 | Geist | Latin (variable) | vercel/geist-font |
 | Inter | Latin (variable) | rsms/inter |
 | Noto Sans SC | CJK (variable) | google/fonts (Source Han Sans lineage) |
 | LXGW WenKai | CJK kai (regular) | lxgw/LxgwWenKai |
 
-Every stack appends a CJK fallback tier (`Noto Sans SC`, `PingFang SC`,
-`Hiragino Sans GB`, `Microsoft YaHei`, `sans-serif`) so Chinese text stays
-readable when the selected family has no CJK glyphs. The mono stack
-(`--font-mono`) is unchanged.
+每个字体栈都追加一个 CJK 回退层（`Noto Sans SC`、`PingFang SC`、
+`Hiragino Sans GB`、`Microsoft YaHei`、`sans-serif`），使所选家族
+没有 CJK 字形时中文文本仍保持可读。等宽栈（`--font-mono`）不变。
 
-### 3. System font enumeration in Electron main
+### 3. Electron 主进程中的系统字体枚举
 
-Electron main resolves installed system font families using platform tooling
-only (no native modules), so the main bundle stays self-contained:
+Electron 主进程仅使用平台工具解析已安装的系统字体家族（不使用原
+生模块），使主进程包保持自包含：
 
-- macOS: `osascript` JXA bridging
-  `CTFontManagerCopyAvailableFontFamilyNames` — the same CoreText query
-  `font_kit::all_families()` uses, returning canonical CSS family names in
-  tens of milliseconds — with `system_profiler SPFontsDataType -json` kept as
-  a fallback when osascript is unavailable
+- macOS: `osascript` JXA 桥接
+  `CTFontManagerCopyAvailableFontFamilyNames` —— 与
+  `font_kit::all_families()` 使用的同一个 CoreText 查询，在数十毫
+  秒内返回规范的 CSS 家族名 —— 当 osascript 不可用时保留
+  `system_profiler SPFontsDataType -json` 作为回退
 - Windows: PowerShell `[Windows.Media.Fonts]::SystemFontFamilies`
 - Linux: `fc-list -f "%{family[0]}\n"`
 
-Results are deduplicated, filtered (hidden `.`-prefixed families excluded),
-sorted, and cached for 60 seconds per process. The renderer reaches them
-through one new allowlisted IPC channel, `pi-desktop/app/systemFonts`.
+结果会去重、过滤（排除以 `.` 开头的隐藏家族）、排序，并按进程缓
+存 60 秒。渲染进程通过一个新的白名单 IPC 通道
+`pi-desktop/app/systemFonts` 访问它们。
 
-### 4. Application
+### 4. 应用方式
 
-The renderer overrides `--font-sans` on `document.documentElement` from
-`AppSettings.fontFamily`; `body` and every `var(--font-sans)` consumer pick it
-up without a reload. `@font-face` rules for the bundled families live in
-`apps/desktop/src/styles/fonts.css`, imported before the token layer.
+渲染进程根据 `AppSettings.fontFamily` 在 `document.documentElement`
+上覆盖 `--font-sans`；`body` 和每个 `var(--font-sans)` 消费方无需
+重载即可生效。内置字体家族的 `@font-face` 规则位于
+`apps/desktop/src/styles/fonts.css`，在 token 层之前导入。
 
-## Consequences
+## 后果
 
-- Users pick a global UI font once; it persists across restarts and renders
-  offline from the bundled files.
-- CJK coverage stays correct for every option via the appended fallback tier.
-- macOS enumeration resolves through the fast CoreText path in tens of
-  milliseconds (the previous `system_profiler` path took 2–5 s and is now only
-  a fallback); the result is cached 60 s per process and returns canonical
-  family names such as `PingFang SC` rather than system_profiler's localized
-  aliases such as `苹方-简`.
-- The installer grows by roughly 16 MB from the bundled font files.
-- `@font-face` `font-weight` descriptors are exempted from the style-token
-  guard because they describe font files, not UI typography.
+- 用户一次选择全局 UI 字体；它跨重启持久化，并从内置文件离线渲
+  染。
+- 借助追加的回退层，每个选项的 CJK 覆盖都保持正确。
+- macOS 枚举通过快速 CoreText 路径在数十毫秒内完成（此前的
+  `system_profiler` 路径耗时 2–5 秒，现在仅作回退）；结果按进程
+  缓存 60 秒，并返回规范家族名（如 `PingFang SC`），而非
+  system_profiler 的本地化别名（如 `苹方-简`）。
+- 内置字体文件使安装包增大 16 MB 左右。
+- `@font-face` 的 `font-weight` 描述符被豁免于样式 token 检查，因
+  为它们描述的是字体文件，而非 UI 排版。
 
-## Alternatives
+## 替代方案
 
-- **`font_kit` in host-core** (dbx's approach): fast native enumeration, but
-  adds a host RPC method and widens the host protocol surface for a
-  renderer-only preference; Electron main reaches the same CoreText family
-  list through an `osascript` JXA bridge without widening the protocol.
-- **`font-list` npm package**: clean API, but its internal directory
-  `require("./libs/core")` does not survive electron-vite main bundling, and
-  its macOS helper is a prebuilt binary that would need asar unpacking.
-- **`queryLocalFonts()` (Local Font Access API)**: permission-gated in the
-  sandboxed renderer and still experimental in Electron.
+- **host-core 中的 `font_kit`**（dbx 的做法）：快速的原生枚举，但
+  需要新增一个宿主 RPC 方法，为一个仅渲染进程使用的偏好扩大宿主
+  协议面；Electron 主进程通过 `osascript` JXA 桥接即可得到相同的
+  CoreText 家族列表，无需扩大协议。
+- **`font-list` npm 包**：API 干净，但其内部目录
+  `require("./libs/core")` 无法通过 electron-vite 主进程打包，且其
+  macOS 助手是预编译二进制，需要 asar 解包。
+- **`queryLocalFonts()`（Local Font Access API）**：在沙箱渲染进程
+  中受权限门控，且在 Electron 中仍是实验性 API。

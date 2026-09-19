@@ -1,64 +1,53 @@
-# ADR 0144: Allow User-Configured Thinking-Level Overrides
+# ADR 0144: 允许用户配置的推理级别覆盖
 
 - Status: Accepted
 - Date: 2026-09-01
 - Deciders: PI-Desktop core
 - Updates ADR 0114 and ADR 0134
 
-## Context
+## 背景
 
-The provider model list combines published model metadata with a persisted
-`ModelBinding`. Electron main applied the binding before returning `ModelInfo`
-to Settings. An existing binding with no enabled thinking levels therefore
-made a models.dev reasoning record look non-reasoning, even when the catalog
-correctly described the model as reasoning-capable.
+provider 模型列表把已发布的模型元数据与持久化的 `ModelBinding`
+组合。Electron 主进程在把 `ModelInfo` 返回给 Settings 之前应用绑定。
+因此，一个没有启用任何推理级别的既有绑定会让一条 models.dev 推理
+记录看起来不具备推理能力，即使目录正确地把该模型描述为支持推理。
 
-The same intersection also prevented a compatible proxy or newly released
-model from being configured when its endpoint supported a thinking level that
-the current catalog snapshot did not publish.
+同样的交集还会阻止兼容代理或新发布的模型被配置——当它们的端点
+支持当前目录快照未发布的推理级别时。
 
-## Decision
+## 决策
 
-Keep `ModelInfo` as the raw published models.dev record. Stored binding values
-must not rewrite its published reasoning fields or capability tags. Effective
-provider and session capability is resolved separately from the exact
-`ModelBinding` for the selected model.
+`ModelInfo` 保持为原始的已发布 models.dev 记录。存储的绑定值不得
+改写其已发布的推理字段或能力标签。有效的 provider 和会话能力根据
+所选模型的精确 `ModelBinding` 单独解析。
 
-The Settings picker always renders the seven canonical thinking levels:
-`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Published levels
-seed a newly added known-model binding. For a non-reasoning or unknown model,
-the same choices are shown unselected with a concise manual-override hint.
-Explicit user selections are saved unchanged and are not intersected with the
-models.dev list. An empty binding or a binding containing only `off` means
-thinking is disabled; at least one non-`off` selection enables reasoning for
-that provider/model.
+Settings 选择器始终渲染七个规范推理级别：`off`、`minimal`、`low`、
+`medium`、`high`、`xhigh` 和 `max`。已发布的级别为新添加的已知模型
+绑定提供初始值。对于非推理或未知模型，同样的选项以未选中状态显示，
+并附简洁的手动覆盖提示。显式的用户选择原样保存，不与 models.dev
+列表求交集。空绑定或只含 `off` 的绑定表示推理被禁用；至少一个
+非 `off` 选择为该 provider/model 启用推理。
 
-Composer resolves the selected model's exact binding before rendering its
-reasoning menu. Runtime clamping uses the binding's enabled levels. This is an
-explicit endpoint configuration, not an automatic claim that the upstream
-model supports the selected level; the user is responsible for choosing levels
-accepted by a proxy or endpoint.
+Composer 在渲染其推理菜单之前解析所选模型的精确绑定。运行时钳制
+使用绑定启用的级别。这是一种显式的端点配置，而不是自动声明上游
+模型支持所选级别；用户负责选择代理或端点接受的级别。
 
-## Consequences
+## 后果
 
-- Correct models.dev reasoning metadata remains visible in Settings, including
-  when an older or manually cleared binding exists.
-- OpenAI-compatible proxies and newly released models can opt into thinking
-  without waiting for a catalog update.
-- Catalog metadata remains the sole source of published model facts; it only
-  seeds defaults and does not silently erase explicit endpoint configuration.
-- No IPC, storage schema, or host protocol change is required.
-- An endpoint may reject an explicitly enabled level; the desktop does not
-  infer or guarantee upstream support from the user's selection.
+- 正确的 models.dev 推理元数据在 Settings 中保持可见，包括存在较旧
+  或被手动清空的绑定时。
+- OpenAI 兼容代理和新发布的模型无需等待目录更新即可启用推理。
+- 目录元数据仍是已发布模型事实的唯一来源；它只提供初始默认值，
+  不会静默抹掉显式的端点配置。
+- 不需要 IPC、存储 schema 或宿主协议变更。
+- 端点可能拒绝显式启用的级别；桌面不会从用户的选择推断或保证上游
+  支持。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- Treat models.dev as an absolute thinking capability gate: rejected because it
-  made valid proxy configurations impossible and caused stored bindings to
-  hide published reasoning metadata.
-- Mark every OpenAI-compatible model as reasoning-capable automatically:
-  rejected because compatibility endpoints differ and discovery must not infer
-  unsupported behavior.
-- Add a separate per-model "Enable thinking" boolean: rejected because the
-  existing `thinkingLevels` set already expresses both the enabled levels and
-  the deterministic default.
+- 把 models.dev 当作绝对的推理能力门：否决，因为这会让有效的代理
+  配置变得不可能，并导致存储的绑定隐藏已发布的推理元数据。
+- 自动把每个 OpenAI 兼容模型标记为支持推理：否决，因为兼容端点
+  各不相同，发现机制绝不能推断不受支持的行为。
+- 新增一个按模型的"Enable thinking"布尔值：否决，因为既有的
+  `thinkingLevels` 集合已经同时表达了启用的级别和确定性的默认值。
