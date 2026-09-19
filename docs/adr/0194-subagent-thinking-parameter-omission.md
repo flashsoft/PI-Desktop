@@ -1,40 +1,33 @@
-# ADR 0194: Optional subagent thinking override
+# ADR 0194: 可选的子 agent 思考级别覆盖
 
-- Status: Accepted for implementation
-- Date: 2026-09-09
-- Deciders: PI-Desktop runtime and UX maintainers
-- Related: D356, E2E-203, ADR 0062, ADR 0063, ADR 0144
+- 状态：已接受，进入实现阶段
+- 日期：2026-09-09
+- 决策者：PI-Desktop 运行时与 UX 维护者
+- 相关：D356、E2E-203、ADR 0062、ADR 0063、ADR 0144
 
-## Context
+## 背景
 
-The subagent editor previously offered inheritance and explicit thinking
-levels, but no way to leave the provider's default untouched. The normal
-provider-neutral stream path can translate the agent's `off` state into an
-explicit provider setting. That is not equivalent to omitting a thinking
-parameter for endpoints whose own default should remain in control. The model
-configuration thinking chips also used a raised dark-theme fill with too
-little contrast against their track.
+子 agent 编辑器此前提供继承和显式思考级别，但没有办法让 provider 自身
+的默认保持不动。常规的 provider 中立流路径可以把 agent 的 `off` 状态
+翻译为显式的 provider 设置。但对于那些应由其自身默认保持控制的端点
+来说，这并不等同于省略 thinking 参数。模型配置的思考芯片在深色主题下
+还使用了凸起填充，与其轨道之间对比度过低。
 
-## Decision
+## 决策
 
-1. Subagent frontmatter and input accept `thinkingLevel: omit` in addition to
-   the empty inherit value and the seven canonical levels. The value is stored
-   in frontmatter and is scoped to subagents; session and model thinking-level
-   lists remain canonical.
-2. The runtime represents `omit` as the agent's bookkeeping `off` state, but
-   uses pi-ai's low-level stream for the provider request so no
-   provider-neutral thinking override is synthesized. Explicit `off` continues
-   through the normal simple stream path.
-3. Selected model-configuration thinking chips use the accent background and
-   inverted primary text in both themes.
-4. This is an additive frontmatter/API value. It requires no SQLite migration,
-   protocol version bump, or change to capability enablement storage.
+1. 子 agent frontmatter 和输入在空继承值和七个规范级别之外，额外接受
+   `thinkingLevel: omit`。该值存储在 frontmatter 中，作用域限于子 agent；
+   会话和模型的思考级别列表保持规范集合。
+2. 运行时将 `omit` 表示为 agent 记账用的 `off` 状态，但 provider 请求
+   使用 pi-ai 的低级流，因此不会合成 provider 中立的思考覆盖。显式的
+   `off` 继续走常规的简单流路径。
+3. 选中的模型配置思考芯片在两种主题下都使用强调色背景和反白主文本。
+4. 这是一个增量式 frontmatter/API 值。它不需要 SQLite 迁移、协议版本
+   升级，或能力启用存储的变更。
 
-## Consequences
+## 后果
 
-- Users can distinguish inherit, explicit off, and no provider override.
-- Existing definitions remain valid and retain their current behavior.
-- Provider adapters remain responsible for deciding their default behavior
-  when the subagent selects `omit`.
-- The selected chip state is more legible in dark mode while staying aligned
-  with the existing accent tokens.
+- 用户可以区分继承、显式 off 和不覆盖 provider 三种状态。
+- 现有定义保持有效并保留其当前行为。
+- 当子 agent 选择 `omit` 时，provider 适配器仍负责决定其默认行为。
+- 选中芯片状态在深色模式下更易读，同时与现有强调色 token 保持一致。

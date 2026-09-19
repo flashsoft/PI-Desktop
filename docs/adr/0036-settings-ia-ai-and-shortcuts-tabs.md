@@ -1,104 +1,99 @@
-# ADR 0036: Split Settings into AI and Shortcuts destinations
+# ADR 0036: 把 Settings 拆分为 AI 和 Shortcuts 目标页
 
-- Status: Accepted
-- Date: 2026-07-30
-- Deciders: PI-Desktop core
-- Related: D090, D133, ADR 0013, ADR 0026
+- 状态: 已接受
+- 日期: 2026-07-30
+- 决策者: PI-Desktop 核心团队
+- 相关: D090, D133, ADR 0013, ADR 0026
 
-## Context
+## 背景
 
-ADR 0026 froze the Settings directory at five destinations: Basics, Model
-configuration, Import, Project archive, and Info. Over time Basics accumulated
-six unrelated cards — Appearance, Defaults, Permissions, Context management,
-Keyboard shortcuts, and Developer — making the single page long to scan and
-burying two conceptually distinct concerns:
+ADR 0026 把 Settings 目录冻结为五个目标页：Basics、Model
+configuration、Import、Project archive 和 Info。随时间推移，Basics
+积累了六张互不相关的卡片——Appearance、Defaults、Permissions、
+Context management、Keyboard shortcuts 和 Developer——使单个页面
+难以扫视，并埋下了两个概念上不同的关注点：
 
-1. **Global AI behavior** (the permission mode that governs how autonomously the
-   agent acts, and context management that governs how the agent compacts its
-   context) is an AI-runtime concern, not a look-and-feel basic.
-2. **Keyboard shortcuts** is a self-contained, frequently referenced surface
-   that benefits from its own destination, especially now that the global search
-   dialog and command palette route users to shortcut configuration.
+1. **全局 AI 行为**（决定 agent 自主行动程度的权限模式，以及决定
+   agent 如何压缩其上下文的上下文管理）是 AI 运行时关注点，不是
+   外观层面的基础项。
+2. **Keyboard shortcuts** 是一个自包含、被频繁查阅的界面，拥有自己
+   的目标页会受益，尤其是现在全局搜索对话框和命令面板会把用户路由
+   到快捷键配置。
 
-The Model configuration destination already owns *which* provider/model the AI
-uses; the global AI-behavior controls currently share a page with theme and
-language, which is the wrong neighborhood. Developer mode is a system/advanced
-concern that fits better beside versions, logs, and updates than beside
-appearance.
+Model configuration 目标页已经拥有 AI 使用*哪个* provider/模型；
+全局 AI 行为控件目前与主题和语言同处一页，这是错误的邻域。
+Developer mode 是系统/高级关注点，放在版本、日志和更新旁边比放在
+外观旁边更合适。
 
-Changing the frozen five-destination directory (D133) requires an explicit
-baseline decision rather than a silent rewrite.
+修改冻结的五目标页目录（D133）需要显式的基线决策，而不是悄悄改写。
 
-## Decision
+## 决策
 
-Keep the full-page Settings shell, Back to app action, search control, rail
-metrics, content cards, and theme behavior unchanged. Replace the five-
-destination rail with seven destinations in this exact order:
+保持整页 Settings 外壳、返回应用操作、搜索控件、侧栏度量、内容卡片
+和主题行为不变。把五目标页侧栏替换为恰好按此顺序排列的七个目标页：
 
-1. **Basics** (`general`, Lucide `SlidersHorizontal`) — Appearance and Defaults
-2. **全局 AI / AI** (`ai`, Lucide `Sparkles`) — Permissions and Context
-   management
-3. **Shortcuts** (`shortcuts`, Lucide `Keyboard`) — Keyboard shortcuts
-4. **Model configuration** (`agent`, Lucide `Bot`) — provider studio and default
-   model
-5. **Import** (`import`, Lucide `Download`) — session import
-6. **Project archive** (`projects`, Lucide `Archive`) — durable project index
-7. **Info** (`about`, Lucide `Info`) — versions, logs, updates, and Developer
+1. **Basics**（`general`，Lucide `SlidersHorizontal`）——Appearance
+   和 Defaults
+2. **全局 AI / AI**（`ai`，Lucide `Sparkles`）——Permissions 和
+   Context management
+3. **Shortcuts**（`shortcuts`，Lucide `Keyboard`）——Keyboard
+   shortcuts
+4. **Model configuration**（`agent`，Lucide `Bot`）——provider
+   工作室和默认模型
+5. **Import**（`import`，Lucide `Download`）——会话导入
+6. **Project archive**（`projects`，Lucide `Archive`）——持久项目
+   索引
+7. **Info**（`about`，Lucide `Info`）——版本、日志、更新和
+   Developer
 
-Content moves only; no setting is added, removed, or renamed:
+只移动内容；不添加、移除或重命名任何设置：
 
-- Permissions and Context management cards move from Basics to the new **AI**
-  destination.
-- The Keyboard shortcuts card moves from Basics to the new **Shortcuts**
-  destination.
-- The Developer card moves from Basics to **Info**.
-- Basics keeps only Appearance and Defaults.
-- Model configuration, Import, Project archive, and their contents are
-  unchanged.
+- Permissions 和 Context management 卡片从 Basics 移到新的 **AI**
+  目标页。
+- Keyboard shortcuts 卡片从 Basics 移到新的 **Shortcuts** 目标页。
+- Developer 卡片从 Basics 移到 **Info**。
+- Basics 只保留 Appearance 和 Defaults。
+- Model configuration、Import、Project archive 及其内容不变。
 
-Destination IDs `ai` and `shortcuts` are added to the `settingsTab` state union
-and the shared settings-search index (`SETTINGS_NAV`), so global Settings search
-surfaces the new destinations and deep-links to them. Provider setup deep links
-and model-menu actions continue to target Model configuration. Settings search
-indexes the relocated rows under their new owning destination.
+目标页 ID `ai` 和 `shortcuts` 被加入 `settingsTab` 状态联合和共享的
+设置搜索索引（`SETTINGS_NAV`），因此全局 Settings 搜索能暴露新目标
+页并深层链接到它们。Provider 设置深层链接和模型菜单操作继续指向
+Model configuration。Settings 搜索把迁移的行索引到其新的所属目标页
+下。
 
-## Consequences
+## 后果
 
-- Basics is shorter and focused on look-and-feel; AI behavior, shortcuts, and
-  developer controls are each one click away without scrolling a single long
-  page.
-- The frozen five-destination count and order from D133/ADR 0026 is superseded
-  for the destination count and ordering only; no IPC, host RPC, database,
-  security, or project-activation contract changes.
-- Specs and E2E scenarios that assert the exact five-item rail order must be
-  updated to the seven-item order, including the assertion that there is "no
-  Keyboard destination" (now reversed).
-- Developer mode moves from Basics to Info; Settings search and the developer-
-  tools gating behavior are unchanged.
-- The shared `settingsTab` union and `SETTINGS_NAV` index grow by two entries;
-  existing persisted/default tab (`general`) is unaffected.
+- Basics 更短并聚焦于外观；AI 行为、快捷键和开发者控件各一次点击
+  即可到达，无需滚动单个长页面。
+- D133/ADR 0026 冻结的五目标页数量和顺序仅在目标页数量和排序上被
+  取代；没有 IPC、宿主 RPC、数据库、安全或项目激活契约的变更。
+- 断言精确五项侧栏顺序的 spec 和 E2E 场景必须更新为七项顺序，包括
+  "没有 Keyboard 目标页"的断言（现已反转）。
+- Developer mode 从 Basics 移到 Info；Settings 搜索和开发者工具门控
+  行为不变。
+- 共享的 `settingsTab` 联合和 `SETTINGS_NAV` 索引增加两个条目；现有
+  持久化/默认标签页（`general`）不受影响。
 
-## Alternatives
+## 备选方案
 
-### Keep all six cards in Basics
+### 把六张卡片全部保留在 Basics
 
-Rejected because the single page is long to scan and groups unrelated concerns
-(appearance alongside AI permission policy and shortcut recording).
+否决，因为单个页面难以扫视，并把不相关的关注点（外观与 AI 权限
+策略和快捷键录制并列）混在一起。
 
-### Merge AI behavior into Model configuration
+### 把 AI 行为合并进 Model configuration
 
-Rejected because Model configuration owns *which* provider/model to use (a
-connection/identity concern), while permission mode and context compaction are
-*runtime behavior* concerns. Merging them overloads the provider studio page and
-hides global AI behavior behind provider setup.
+否决，因为 Model configuration 拥有使用*哪个* provider/模型（连接/
+身份关注点），而权限模式和上下文压缩是*运行时行为*关注点。合并
+它们会让 provider 工作室页面过载，并把全局 AI 行为藏在 provider
+设置背后。
 
-### Move Developer to a dedicated Advanced destination
+### 把 Developer 移到专用的 Advanced 目标页
 
-Rejected because a one-card destination is not worth a rail row; Info already
-groups system/advanced surfaces (versions, logs, updates) and is the natural
-home for developer-tool gating.
+否决，因为单卡片目标页不值一行侧栏；Info 已经收纳了系统/高级界面
+（版本、日志、更新），是开发者工具门控的天然归宿。
 
-## References
+## 参考
 
 - `docs/spec/00-baseline.md`
 - `docs/spec/04-ux/01-ui-ia.md`

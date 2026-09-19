@@ -1,55 +1,50 @@
-# ADR 0099: Add titled visual clusters to the Settings directory
+# ADR 0099: 为设置目录添加带标题的视觉分组
 
 - Status: Accepted
 - Date: 2026-08-18
 - Deciders: PI-Desktop core
 - Related: D238, D241, ADR 0096
 
-## Context
+## 背景
 
-The Settings rail is intentionally a flat, searchable directory of eight
-destinations. The rows are correct and remain in one navigation level, but the
-unbroken list is visually dense. The previous visual-only spacing used divider
-lines, which was especially easy to lose against the dark rail and did not
-provide a useful scan landmark.
+设置侧栏刻意是一个扁平、可搜索的八目的地目录。各行是正确的且保
+持在一个导航层级内，但不间断的列表在视觉上很密集。之前的纯视觉
+分隔使用分割线，在深色侧栏上特别容易丢失，也无法提供有用的扫读
+地标。
 
-## Decision
+## 决策
 
-Keep the destination index flat and preserve its order, IDs, search behavior,
-and ownership. Render four localized, non-interactive headings above the
-existing row clusters:
+保持目的地索引扁平，保留其顺序、ID、搜索行为和所有权。在现有的
+行分组上方渲染四个本地化的、非交互的标题：
 
-- Personal / 个人: Basics, AI, Shortcuts
-- Agent / 智能体: Instructions, Model configuration
-- Workspace / 工作区: Import, Project archive
-- About / 关于: Info
+- Personal / 个人: 基础、AI、快捷键
+- Agent / 智能体: 指令、模型配置
+- Workspace / 工作区: 导入、项目归档
+- About / 关于: 关于
 
-Use muted typography and whitespace between clusters. Do not render divider
-lines or add nested navigation. Search continues to filter destinations as one
-flat index; a cluster and its heading disappear when no destination remains in
-that cluster.
+使用弱化的排印和分组之间的留白。不渲染分割线，也不添加嵌套导
+航。搜索继续把目的地作为一个扁平索引过滤；当某分组中没有剩余目
+的地时，该分组及其标题消失。
 
-## Consequences
+## 后果
 
-- The rail gains clear scan landmarks without introducing another interactive
-  navigation level.
-- The headings are available in both supported UI locales.
-- The rail no longer depends on border contrast to communicate grouping in
-  either theme.
-- The existing destination ordering and deep-link behavior remain stable.
+- 侧栏获得了清晰的扫读地标，而不引入另一个交互式导航层级。
+- 标题在两种受支持的 UI 语言中都可用。
+- 侧栏在任一主题下都不再依赖边框对比度来传达分组。
+- 现有的目的地顺序和深链行为保持稳定。
 
-## Alternatives
+## 替代方案
 
-### Keep the completely flat rail
+### 保持完全扁平的侧栏
 
-Rejected because the compact rows remain difficult to scan as one block.
+被拒绝，因为紧凑的行作为一个整块仍然难以扫读。
 
-### Use divider lines between groups
+### 在分组之间使用分割线
 
-Rejected because the previous rule was low-salience in dark mode and added
-chrome without naming the groups.
+被拒绝，因为此前的分割线在深色模式下显著性低，而且增加了外框却
+没有为分组命名。
 
-### Add interactive nested navigation
+### 添加交互式嵌套导航
 
-Rejected because the Settings IA is intentionally a flat destination index and
-the groups do not own additional navigation state.
+被拒绝，因为设置 IA 刻意是一个扁平目的地索引，且这些分组不拥有
+额外的导航状态。

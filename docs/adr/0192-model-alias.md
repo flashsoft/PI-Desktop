@@ -1,57 +1,50 @@
-# ADR 0192: Alias a configured model and make model ids copyable
+# ADR 0192: 为已配置模型设置别名并使模型 id 可复制
 
-- Status: Accepted
-- Date: 2026-09-08
-- Deciders: PI-Desktop renderer and UX maintainers
-- Amends: D266
-- Related: E2E-201
+- 状态：已接受
+- 日期：2026-09-08
+- 决策者：PI-Desktop 渲染进程与 UX 维护者
+- 修订：D266
+- 相关：E2E-201
 
-## Context
+## 背景
 
-Settings → Model configuration lists models by their wire id, while the
-composer shows the catalog's published `displayName`. Two gaps surfaced in
-daily use:
+设置 → 模型配置按传输 id 列出模型，而 composer 显示目录发布的
+`displayName`。日常使用中暴露出两个缺口：
 
-1. One provider row can carry several models with near-identical published
-   names, and a user cannot attach a short personal label ("fast", "pro") to
-   one of them. The published display name is catalog-owned and read-only.
-2. Model ids in the configuration page could not be copied. The shell disables
-   text selection globally, and the id sits inside the row's `<label>`, so a
-   drag-select toggled the model checkbox instead of selecting text.
+1. 一个 provider 行可以携带多个发布名称几乎相同的模型，而用户无法给
+   其中一个贴上简短的个人标签（"fast"、"pro"）。发布的显示名由目录
+   拥有且只读。
+2. 配置页面中的模型 id 无法复制。外壳全局禁用文本选择，且 id 位于行
+   的 `<label>` 内，因此拖选会切换模型复选框而不是选中文本。
 
-## Decision
+## 决策
 
-1. `ModelBinding` gains an optional `alias?: string`, persisted with the
-   provider's `models` array. It is a display label only: `id` remains the wire
-   identity sent to the provider.
-2. The alias is edited in the selected model's Advanced body and shown as a chip
-   beside the id in the selected-model row.
-3. Where the composer names a model, a non-empty trimmed alias replaces the
-   published display name. An absent or blank alias leaves the published name
-   unchanged, so clearing the field restores catalog naming.
-4. Model ids and names in the configuration page opt back into text selection
-   (`.selectable`). A click that carries a selection no longer toggles the
-   model checkbox, so drag-to-copy and click-to-toggle coexist.
-5. Host-core persists and normalizes the alias inside the existing provider
-   `config_json` `models` array: a blank or absent alias is dropped, and an
-   alias longer than 60 characters is rejected with `MODEL_ALIAS_TOO_LONG`. No
-   protocol, host RPC, or SQLite schema change; the storage schema stays v13.
+1. `ModelBinding` 增加可选的 `alias?: string`，随 provider 的 `models`
+   数组持久化。它只是显示标签：`id` 仍是发送给 provider 的传输身份。
+2. 别名在所选模型的高级区域中编辑，并在选中模型行中以芯片形式显示在
+   id 旁边。
+3. 在 composer 命名模型的位置，非空的修剪后别名取代发布的显示名。
+   缺失或空白的别名保持发布名不变，因此清空该字段会恢复目录命名。
+4. 配置页面中的模型 id 和名称重新启用文本选择（`.selectable`）。带有
+   选择的点击不再切换模型复选框，因此拖动复制和点击切换可以共存。
+5. host-core 在现有 provider `config_json` 的 `models` 数组内持久化并
+   规范化别名：空白或缺失的别名被丢弃，超过 60 字符的别名以
+   `MODEL_ALIAS_TOO_LONG` 拒绝。不改变协议、宿主 RPC 或 SQLite schema；
+   存储 schema 保持 v13。
 
-## Consequences
+## 后果
 
-- One provider can host several models under short personal labels without
-  renaming anything the catalog owns.
-- The composer, its search, and the model picker show the alias, while the
-  configuration page and the transcript badge keep the real id, so a mistyped
-  alias cannot hide which model will be called.
-- Copying a model id no longer requires retyping it by hand.
+- 一个 provider 可以在简短的个人标签下托管多个模型，而不重命名目录
+  拥有的任何东西。
+- composer、其搜索和模型选择器显示别名，而配置页面和 transcript 徽章
+  保留真实 id，因此输错的别名无法掩盖将调用哪个模型。
+- 复制模型 id 不再需要手工重打。
 
-## Rejected alternatives
+## 已否决的替代方案
 
-- **Rename `displayName` on the binding:** duplicates catalog data and loses the
-  published name once the alias is cleared.
-- **A separate alias registry keyed by model id:** an alias belongs to one
-  provider row's configuration; a global map would collide across providers
-  that serve the same id.
-- **Make the whole row selectable and drop click-to-toggle:** removes the fast
-  multi-select gesture the page is built around.
+- **在绑定上重命名 `displayName`：** 会复制目录数据，且别名清空后丢失
+  发布名。
+- **按模型 id 键控的独立别名注册表：** 别名属于一个 provider 行的配置；
+  全局 map 会在提供相同 id 的多个 provider 之间冲突。
+- **让整行可选择并去掉点击切换：** 会移除该页面赖以构建的快速多选
+  手势。

@@ -1,54 +1,49 @@
-# ADR 0163: Transcript File References Render as Previewable Chips
+# ADR 0163: Transcript 中的文件引用渲染为可预览的芯片
 
-- Status: Accepted
-- Date: 2026-09-05
-- Deciders: PI-Desktop core
-- Related: D124, D209, D320, ADR 0024, ADR 0070, ADR 0019
+- 状态：已接受
+- 日期：2026-09-05
+- 决策者：PI-Desktop 核心团队
+- 相关：D124、D209、D320、ADR 0024、ADR 0070、ADR 0019
 
-## Context
+## 背景
 
-Composer file references are compact leaf-name chips in the draft (ADR 0070).
-On send they serialize to canonical `@path` / `@"path with spaces"` text so
-the agent can Read them. The transcript then painted those tokens as full
-paths, which crowded the user bubble and hid the node the user had just
-placed in the input.
+Composer 中的文件引用在草稿中是紧凑的叶子名芯片（ADR 0070）。发送时
+它们序列化为规范的 `@path` / `@"path with spaces"` 文本，以便 agent 可以
+Read 它们。随后 transcript 把这些 token 绘制为完整路径，使用户气泡拥挤，
+并掩盖了用户刚刚放入输入框的节点。
 
-Clicking a path opened the work-panel files viewer, which cannot render HTML
-as a page and cannot open PDF, office, or other OS-handled types. Scratch
-absolute paths also failed the workspace-relative preview gate, so pasted
-files were not clickable at all.
+点击路径会打开工作面板的文件查看器，但它无法将 HTML 渲染为页面，也无法
+打开 PDF、office 或其他由 OS 处理的类型。scratch 的绝对路径也无法通过
+工作区相对路径的预览关卡，因此粘贴的文件完全不可点击。
 
-## Decision
+## 决策
 
-1. The transcript parses serialized `@path` tokens (quoted and unquoted,
-   relative and absolute) and renders each as a compact chip matching the
-   composer node: file-family icon, ellipsized leaf name, canonical path in
-   the tooltip and accessible name. HTTP(S) URLs stay inline text links.
-2. Clicking a workspace `.html` / `.htm` chip opens the work-panel browser
-   (existing local-file preview). Clicking any other allowed file opens it
-   with the OS default application for that suffix via a new read-only
-   Electron channel `pi-desktop/fs/open`.
-3. `fs/open` resolves relative paths inside the current workspace and
-   absolute paths only when they already live under the workspace, 
-   `<data_dir>/scratch/`, or `<data_dir>/attachments/`. Traversal, `~`, and
-   paths outside those roots are rejected. No host-protocol or storage
-   schema change.
-4. Structured message attachments that are not already represented by an
-   inline `@path` chip use the same chip and click contract. Tool-row
-   summaries keep the existing work-panel files/URL preview.
+1. Transcript 解析序列化的 `@path` token（带引号和不带引号、相对和绝对
+   路径），并将每个渲染为与 composer 节点一致的紧凑芯片：文件族图标、
+   省略显示的叶子名，规范路径出现在 tooltip 和无障碍名称中。HTTP(S)
+   URL 保持为内联文本链接。
+2. 点击工作区内的 `.html` / `.htm` 芯片打开工作面板浏览器（现有的本地
+   文件预览）。点击任何其他允许的文件，通过新的只读 Electron 通道
+   `pi-desktop/fs/open`，以该后缀的 OS 默认应用打开。
+3. `fs/open` 将相对路径解析到当前工作区内，绝对路径仅在其已位于工作
+   区、`<data_dir>/scratch/` 或 `<data_dir>/attachments/` 之下时才被接受。
+   路径穿越、`~` 以及这些根目录之外的路径均被拒绝。无宿主协议或存储
+   schema 变更。
+4. 未由内联 `@path` 芯片表示的结构化消息附件，使用相同的芯片和点击
+   契约。工具行摘要保留现有的工作面板文件/URL 预览。
 
-## Alternatives considered
+## 已考虑的替代方案
 
-- **Keep full-path text links:** rejected because it undoes ADR 0070's
-  compact display the moment the user sends.
-- **Always open in the files tab:** rejected because HTML should preview as
-  a page and many suffixes need the OS handler.
-- **Always `shell.openPath`:** rejected for workspace HTML, which already
-  has a live-reloading in-app browser.
+- **保留完整路径文本链接：** 否决，因为它会在用户发送的那一刻撤销
+  ADR 0070 的紧凑展示。
+- **一律在文件标签页中打开：** 否决，因为 HTML 应作为页面预览，且许多
+  后缀需要 OS 处理器。
+- **一律使用 `shell.openPath`：** 对工作区 HTML 予以否决，因为已有支持
+  实时重载的应用内浏览器。
 
-## Consequences
+## 后果
 
-- Sent user turns show the same file nodes as the composer.
-- Users can preview HTML in-app and open other files with the default app.
-- Main gains one allowlisted open channel with the same containment roots
-  as scratch/workspace file tools.
+- 已发送的用户轮次展示与 composer 相同的文件节点。
+- 用户可以在应用内预览 HTML，并用默认应用打开其他文件。
+- 主进程新增一个允许列表管控的打开通道，其包含根目录与
+  scratch/工作区文件工具一致。

@@ -31,6 +31,13 @@ const docsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 const ignoredDirectories = new Set(['node_modules', '.vitepress', 'dist', 'cache'])
 const PLACEHOLDER = 'PIHOLDTOKEN'
+// Section anchors accept both the historical English headings and the
+// Chinese-primary headings (背景/决策/后果).
+const ADR_SECTION_ALTERNATIVES = {
+  Context: ['Context', '背景'],
+  Decision: ['Decision', '决策'],
+  Consequences: ['Consequences', '后果'],
+}
 const REQUIRED_ADR_SECTIONS = ['Context', 'Decision']
 const OPTIONAL_ADR_SECTIONS = ['Consequences']
 const INDEX_FILE = 'README.md'
@@ -209,16 +216,18 @@ export function verifyAdrCatalog({ records, malformed }) {
       failures.push(`adr/${fileName}: H1 does not declare ${id}`)
     }
 
-    const hasStatus = /^#{2,3}\s+Status\b/m.test(source) || /^[-*]\s+\*{0,2}Status\*{0,2}\s*:/m.test(source)
+    const hasStatus = /^#{2,3}\s+(Status|状态)(\b|[：:]|[\u4e00-\u9fff]|$)/m.test(source) || /^[-*]\s+\*{0,2}(Status|状态)\*{0,2}\s*[:：]/m.test(source)
     if (!hasStatus) failures.push(`adr/${fileName}: no Status heading or "Status:" line`)
     for (const title of REQUIRED_ADR_SECTIONS) {
       // A heading may qualify the word, as "## Original Decision" does.
-      if (!new RegExp(`^#{2,3}\\s+.*\\b${title}\\b`, 'm').test(source)) {
+      const alternatives = ADR_SECTION_ALTERNATIVES[title] ?? [title]
+      if (!alternatives.some((word) => new RegExp(`^#{2,3}\\s+.*${word}`, 'm').test(source))) {
         failures.push(`adr/${fileName}: missing the "${title}" section`)
       }
     }
     for (const title of OPTIONAL_ADR_SECTIONS) {
-      if (!new RegExp(`^#{2,3}\\s+.*\\b${title}\\b`, 'm').test(source)) {
+      const alternatives = ADR_SECTION_ALTERNATIVES[title] ?? [title]
+      if (!alternatives.some((word) => new RegExp(`^#{2,3}\\s+.*${word}`, 'm').test(source))) {
         notes.push(`adr/${fileName}: no "${title}" section, which adr/${INDEX_FILE} lists in the format`)
       }
     }

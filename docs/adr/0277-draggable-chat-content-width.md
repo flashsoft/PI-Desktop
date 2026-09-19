@@ -1,64 +1,56 @@
-# ADR 0277: Draggable Chat Content Width
+# ADR 0277: 可拖拽的聊天内容宽度
 
-- Status: Accepted
-- Date: 2026-09-16
-- Deciders: PI-Desktop desktop UI maintainers
-- Amends: D058, D101, the collapsed-sidebar 640px band
-- Related: [04-ux/01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
+- 状态：已接受
+- 日期：2026-09-16
+- 决策者：PI-Desktop 桌面 UI 维护者
+- 修订：D058、D101、折叠侧栏时的 640px 区段
+- 相关：[04-ux/01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
   [04-ux/07-ui-design-system](../spec/04-ux/07-ui-design-system.md) ·
   [04-ux/08-component-spec](../spec/04-ux/08-component-spec.md) ·
-  [08-meta/decisions-log](../spec/08-meta/decisions-log.md) (D439) ·
+  [08-meta/decisions-log](../spec/08-meta/decisions-log.md)（D439）·
   E2E-CHAT-content-width-handles · E2E-208
 
-## Context
+## 背景
 
-The conversation column, empty-home stack, and composer were capped at
-760–768px (640px while the sidebar was collapsed) so a wide shell would not
-become a low-density reading surface. Code, tables, diagrams, and tool output
-then wrapped inside a second 720px assistant cap, and there was no way to
-spend the extra pane width when the user wanted it.
+对话列、空主页堆叠和输入框被限制在 760–768px（侧栏折叠时为 640px），
+以免宽外壳变成低密度的阅读表面。代码、表格、图表和工具输出随后又被包在
+第二层 720px 的助手上限内换行，而且当用户想要利用额外的面板宽度时没有任何
+办法。
 
-A Comfort/Wide toggle was rejected: two presets cannot match monitor size,
-work-panel squeeze, or a one-off wider reading of a diff.
+Comfort/Wide（舒适/加宽）切换方案被拒绝：两个预设无法匹配显示器尺寸、
+工作面板的挤压，或一次性加宽阅读 diff 的需求。
 
-## Decision
+## 决策
 
-1. The transcript, empty-home stack, and composer share one preferred max
-   width, default **760px**, persisted as `AppSettings.chatContentMaxWidth`.
-   Absent or invalid values keep 760. The live band is always
-   `min(available pane minus 24px gutters, preferred)`, so a squeezed
-   sidebar or work panel compresses the band without rewriting the
-   preference.
-2. Two 12px handles sit on the left and right edges of that centered band,
-   from the top of `.chat-surface` down to the composer dock. Both handles
-   change the same width (1px pointer → 2px band) so the column stays
-   centered. Drag minimum is **560px**, or the available pane if smaller.
-3. Rest: the handles are invisible. Hover/focus: a short 2×40px capsule mixed
-   from `--ds-text-primary` (18% on dark, 12% on light). Drag: both capsules
-   lengthen to 56px at a slightly stronger mix. Double-click resets to 760.
-   Arrow keys step 16px (Shift 32px); Home restores 760; End expands to the
-   pane; Escape cancels an in-flight drag.
+1. 转录区、空主页堆叠和输入框共享一个首选最大宽度，默认 **760px**，持久化
+   为 `AppSettings.chatContentMaxWidth`。缺失或非法的值保持 760。实际生效
+   的区段始终是 `min(可用面板宽度减去 24px 两侧留白, 首选值)`，因此被挤压的
+   侧栏或工作面板会压缩该区段，而不会改写偏好设置。
+2. 两个 12px 的把手位于该居中区段的左右边缘，从 `.chat-surface` 顶部一直
+   延伸到输入框停靠区。两个把手改变的是同一个宽度（指针移动 1px → 区段
+   变化 2px），因此列保持居中。拖拽最小值为 **560px**，或可用面板宽度（取
+   较小者）。
+3. 静止时：把手不可见。悬停/聚焦时：一个由 `--ds-text-primary` 混合出的
+   2×40px 短胶囊（深色主题 18%，浅色主题 12%）。拖拽时：两个胶囊以略强
+   的混合度加长到 56px。双击重置为 760。方向键步进 16px（Shift 为
+   32px）；Home 恢复 760；End 扩展到面板宽度；Escape 取消进行中的拖拽。
 
-4. User bubbles stay `min(82%, 600px)`. Assistant, tool, permission, ask,
-   review, and turn-outcome rows follow `--chat-prose-max-width`, which
-   tracks the band. The collapsed-sidebar 640px ceiling is removed.
-5. Renderer only: no protocol, storage schema, host, or IPC change. Host-core
-   already preserves unknown settings keys.
+4. 用户气泡保持 `min(82%, 600px)`。助手、工具、权限、询问、审查和轮次
+   结果行跟随 `--chat-prose-max-width`，它跟踪该区段。折叠侧栏的 640px
+   上限被移除。
+5. 仅渲染进程改动：无协议、存储 schema、host 或 IPC 变更。host-core 本来就
+   会保留未知的设置键。
 
-## Consequences
+## 后果
 
-- Users who never touch the handles keep today's 760px column, including
-  after collapsing the sidebar (the pane grows; the band does not jump to
-  640px).
-- A saved 1100px preference on a large window compresses cleanly when the
-  work panel opens, then returns when it closes.
-- Handle hit targets can sit near the minimap when the band is almost full
-  pane width; the 24px gutter keeps both usable.
+- 从不碰把手的用户保持今天的 760px 列宽，包括折叠侧栏之后（面板变宽；
+  区段不会跳到 640px）。
+- 在大窗口上保存的 1100px 偏好会在工作面板打开时干净地压缩，关闭后恢复。
+- 当区段几乎占满面板宽度时，把手的命中区域可能靠近 minimap；24px 的留白
+  让两者都保持可用。
 
-## Rejected alternatives
+## 被拒绝的替代方案
 
-- **Comfort / Wide presets:** cannot match the live pane or a one-off width.
-- **Independent left/right insets:** un-centers the column and fights the
-  composer, which is also centered.
-- **Full-bleed to the pane edge by default:** reopens the over-wide reading
-  surface the 760px cap was there to prevent.
+- **Comfort / Wide 预设：** 无法匹配实时面板宽度或一次性加宽的需求。
+- **左右独立内边距：** 会让列失去居中，并与同样居中的输入框冲突。
+- **默认铺满到面板边缘：** 会重新打开 760px 上限本要防止的过宽阅读表面。

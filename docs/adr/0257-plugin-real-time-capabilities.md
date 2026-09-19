@@ -1,119 +1,103 @@
-# ADR 0257: Host-mediated real-time capabilities for plugins
+# ADR 0257：宿主中介的插件实时能力
 
 ## Status
 
 Accepted for implementation.
 
-## Context
+## 背景
 
-A plugin that wants to behave like an always-on voice assistant needs four
-capabilities the plugin runtime does not offer today. Each one would otherwise
-force a plugin out of the host's control:
+想要表现得像常驻语音助手的插件需要插件运行时今天不提供的四种能力。
+缺少其中任何一种都会迫使插件脱离宿主控制：
 
-- `ui.microphone` grants a *visible* plugin surface an audio-only `media`
-  permission inside its own Chromium session. It cannot run with no page open,
-  and a page is not a lifecycle this app can keep alive in the background.
-- `globalShortcut` is used in exactly two places, both owned by the app
-  (`bootstrap/launcher.ts`), with a Windows low-level hook as the fallback for
-  `Alt+Space` in host-core. A plugin has no path to a system-wide accelerator,
-  and the plugin-scoped shortcut setting is deliberately window-local.
-- `pi.net.fetch` is confined to `manifest.net.domains` but carries one request
-  and one response; it cannot hold a long-lived frame stream.
-- The plugin host process is a Node `utilityProcess`; the plugin itself runs
-  inside that process. "Not exposed by the host API" is a contract enforced by
-  the broker, not a sandbox.
+- `ui.microphone` 授予*可见*插件界面在其自己的 Chromium session 内仅
+  音频的 `media` 权限。它不能在没有打开页面的情况下运行，而页面不是
+  本应用能在后台保活的生命周期。
+- `globalShortcut` 恰好用在两个地方，都由应用拥有
+  （`bootstrap/launcher.ts`），host-core 中有 Windows 低级钩子作为
+  `Alt+Space` 的回退。插件没有通往系统级快捷键的路径，而插件作用域
+  的快捷键设置被刻意限定为窗口本地。
+- `pi.net.fetch` 被限定在 `manifest.net.domains`，但只承载一次请求和
+  一次响应；它无法持有长生命周期的帧流。
+- 插件宿主进程是 Node `utilityProcess`；插件本身在该进程内运行。
+  「宿主 API 未暴露」是 broker 强制的契约，而不是沙箱。
 
-The four capabilities are therefore added as host-owned services behind
-explicit permissions, following the existing broker, permission-gateway and
-audit model rather than widening what plugin code may touch.
+因此这四种能力作为显式权限之后的宿主持有服务被添加，遵循现有的
+broker、权限网关和审计模型，而不是放宽插件代码可触及的范围。
 
-## Decision
+## 决策
 
-1. Four permissions are added additively: `audio.capture.background` (high),
-   `audio.playback.background` (medium), `keyboard.globalShortcut` (medium),
-   `net.websocket` (high). `ui.microphone` keeps its panel-scoped meaning and is
-   not widened. Manifests, install copy, devkit checks, the renderer risk map
-   and the validators (TypeScript and Rust) gain the same entries.
+1. 以增量方式新增四个权限：`audio.capture.background`（高）、
+   `audio.playback.background`（中）、`keyboard.globalShortcut`（中）、
+   `net.websocket`（高）。`ui.microphone` 保持其面板作用域含义，不被
+   放宽。Manifest、安装文案、devkit 检查、渲染进程风险映射和校验器
+   （TypeScript 和 Rust）获得相同的条目。
 
-2. Devices and transports are host-owned. Plugins exchange typed frames — PCM16
-   in and out, text and binary messages — through host APIs. No `MediaStream`,
-   device handle, Node stream, socket object, or native handle crosses the
-   boundary, and no plugin code runs inside the audio path.
+2. 设备和传输由宿主持有。插件通过宿主 API 交换类型化帧——PCM16 输入
+   和输出、文本和二进制消息。没有 `MediaStream`、设备句柄、Node 流、
+   socket 对象或原生句柄越过边界，也没有插件代码在音频路径内运行。
 
-3. System-wide shortcuts stay inside the host's registration model. A plugin
-   declares `contributes.globalShortcuts` (at most 8 entries, each mapping one
-   accelerator to one of its own declared commands) and may adjust that set at
-   runtime through `pi.keyboard.*`. Registration is refused, never taken over:
-   `SHORTCUT_CONFLICT` for an OS-reserved binding, one the app itself spends,
-   or one another plugin holds; `SHORTCUT_UNAVAILABLE` when the platform
-   refuses; `INVALID_ACCELERATOR`; `LIMIT_EXCEEDED`. A plugin cannot monitor
-   keys, read raw events, or install a hook — the only thing an accelerator can
-   do is run a command that belongs to that plugin.
+3. 系统级快捷键留在宿主的注册模型内。插件声明
+   `contributes.globalShortcuts`（至多 8 条，每条把一个 accelerator
+   映射到它自己声明的一个命令），并可在运行时通过 `pi.keyboard.*`
+   调整该集合。注册被拒绝，绝不被接管：OS 保留的绑定、应用自己使用
+   的绑定或另一个插件持有的绑定返回 `SHORTCUT_CONFLICT`；平台拒绝时
+   返回 `SHORTCUT_UNAVAILABLE`；还有 `INVALID_ACCELERATOR` 和
+   `LIMIT_EXCEEDED`。插件不能监视按键、读取原始事件或安装钩子——
+   accelerator 唯一能做的是运行属于该插件的命令。
 
-4. `net.websocket` connects are confined by the same `manifest.net.domains`
-   allowlist and the same `assertEgress` chokepoint as `pi.net.fetch`. The host
-   owns the socket, so an undeclared domain, a loopback or private host not in
-   the allowlist, and a redirect to an undeclared host are refused for exactly
-   the same reasons they are refused today.
+4. `net.websocket` 连接受与 `pi.net.fetch` 相同的
+   `manifest.net.domains` 允许列表和相同的 `assertEgress` 卡点约束。
+   宿主拥有 socket，因此未声明的域名、不在允许列表中的 loopback 或
+   私有主机，以及到未声明主机的重定向，出于与今天完全相同的原因被
+   拒绝。
 
-5. Fail closed, and release on every exit path. An undeclared or ungranted
-   capability denies the call and is audited. Plugin disable, unload, crash,
-   permission revocation, and app exit stop capture, drop queued playback, close
-   sockets, and unregister accelerators; none of them may leave an orphan
-   device, process, listener, or timer behind.
+5. 失败关闭，并在每条退出路径上释放。未声明或未授权的能力拒绝调用
+   并被审计。插件禁用、卸载、崩溃、权限撤销和应用退出会停止捕获、
+   丢弃排队的播放、关闭 socket 并注销 accelerator；它们中的任何一个
+   都不得留下孤立的设备、进程、监听器或定时器。
 
-6. The host bounds every stream: one input stream per plugin, a bounded frame
-   queue with backpressure and dropped-frame accounting, bounded send and
-   receive buffers, a maximum frame size, and a maximum socket count.
+6. 宿主对每个流设界：每个插件一个输入流、带背压和丢帧统计的有界帧
+   队列、有界的发送和接收缓冲、最大帧大小，以及最大 socket 数。
 
-7. Audit records the operations that change authority — open and close of an
-   input, open, stop and close of an output, shortcut register and unregister,
-   socket connect and close — with plugin id, operation, result, and timestamp.
-   It never records audio bytes, message bodies, request headers, tokens, or
-   keys.
+7. 审计记录改变权限的操作——输入的打开和关闭、输出的打开、停止和
+   关闭、快捷键注册和注销、socket 连接和关闭——附带插件 id、操作、
+   结果和时间戳。它绝不记录音频字节、消息正文、请求头、token 或密钥。
 
-8. Existing Control semantics are unchanged. A voice assistant drives the app
-   through `pi.desktop.*` exactly as any other plugin does; dangerous
-   operations keep their native confirmation even when a caller passes
-   `confirm: true`, and `session/collaboration/*` remains reachable only from
-   an authenticated plugin agent tool invocation.
+8. 现有 Control 语义不变。语音助手完全像任何其他插件一样通过
+   `pi.desktop.*` 驱动应用；危险操作即使在调用方传 `confirm: true` 时
+   也保留原生确认，`session/collaboration/*` 仍只能从认证的插件 agent
+   工具调用到达。
 
-9. Delivery is staged under this single decision. The first change implements
-   the permission plumbing for all four capabilities and the full
-   `keyboard.globalShortcut` runtime; `net.websocket` ships in the same line of
-   work. The two audio permissions are declared and their `pi.audio` surface is
-   callable — the permission gate still runs first — but the device service is
-   not implemented, so every authorized call is answered with a coded
-   `UNSUPPORTED` refusal, audited, rather than silently degrading; the two
-   synchronous registration helpers throw the same code. That refusal is the
-   part a later change replaces.
+9. 交付在这一单一决策下分阶段进行。第一个变更实现全部四种能力的权限
+   管线和完整的 `keyboard.globalShortcut` 运行时；`net.websocket` 在同
+   一条工作线中发布。两个音频权限被声明，其 `pi.audio` 界面可调用——
+   权限闸门仍最先运行——但设备服务未实现，因此每个已授权的调用都以
+   带编码的 `UNSUPPORTED` 拒绝回应，并被审计，而不是静默降级；两个
+   同步注册 helper 抛出相同的编码。该拒绝正是后续变更要替换的部分。
 
-## Consequences
+## 后果
 
-- The plugin surface grows by four permissions and three host API namespaces
-  (`pi.audio`, `pi.keyboard`, `pi.net.websocket`). The permission matrix, install
-  dialog copy in every shipped locale, devkit checks, and both validators must
-  stay in sync from now on.
-- Background audio adds a second audio path to the app that is not the
-  renderer's own playback. It must stay off the main thread and be released
-  deterministically, which is why the device is host-owned in this decision.
-- A signed macOS build cannot capture audio until the microphone usage string
-  and the audio-input entitlement are added to packaging; background playback
-  works without them. Deployment stays incomplete until that is done.
-- Because the plugin process is a Node process, these permissions govern what
-  the host *provides* and audits, not what the process could technically reach.
-  The existing note that the plugin sandbox is a contract, not a kernel
-  boundary, remains true.
+- 插件界面增加四个权限和三个宿主 API 命名空间（`pi.audio`、
+  `pi.keyboard`、`pi.net.websocket`）。权限矩阵、每个已发布语言环境的
+  安装对话文案、devkit 检查和两个校验器从现在起必须保持同步。
+- 后台音频为应用增加了第二条音频路径，它不是渲染进程自己的播放。它
+  必须留在主线程之外并被确定性地释放，这正是本决策中设备由宿主持有
+  的原因。
+- 签名的 macOS 构建在麦克风用途字符串和音频输入 entitlement 加入打包
+  之前无法捕获音频；后台播放没有它们也能工作。在完成之前部署保持不
+  完整。
+- 因为插件进程是 Node 进程，这些权限约束的是宿主*提供*和审计什么，
+  而不是该进程技术上能到达什么。现有的「插件沙箱是契约而非内核边界」
+  的说明仍然成立。
 
-## Alternatives
+## 替代方案
 
-- Hand plugins a `MediaStream` or a Node stream. Rejected: it grants device and
-  process authority the host cannot bound, audit, or release.
-- Keep an invisible panel alive to own the audio. Rejected: renderer throttling
-  and teardown would drop frames silently, and the microphone would outlive any
-  component the user can see.
-- Move voice into a dedicated sidecar process. Rejected: it duplicates the
-  plugin lifecycle, permission model, and packaging surface for no gain.
-- Reach system-wide shortcuts through a low-level keyboard hook on every
-  platform. Rejected: accelerator → own command is all a plugin needs, and a
-  hook is precisely the keylogger-shaped surface the security model forbids.
+- 把 `MediaStream` 或 Node 流交给插件。被拒绝：它授予宿主无法设界、
+  审计或释放的设备和进程权限。
+- 保持一个不可见面板存活来拥有音频。被拒绝：渲染进程节流和拆除会
+  静默丢帧，而且麦克风会比用户能看到的任何组件活得更久。
+- 把语音移入专用 sidecar 进程。被拒绝：它复制插件生命周期、权限模型
+  和打包界面而毫无收益。
+- 在每个平台上通过低级键盘钩子实现系统级快捷键。被拒绝：
+  accelerator → 自己的命令就是插件所需的全部，而钩子正是安全模型
+  禁止的键盘记录器形态的界面。

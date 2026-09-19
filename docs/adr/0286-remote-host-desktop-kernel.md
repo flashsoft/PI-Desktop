@@ -1,213 +1,183 @@
-# ADR 0286: Remote-host desktop kernel
+# ADR 0286: 远程宿主的桌面内核
 
-- Status: Accepted for implementation
-- Date: 2026-09-18
-- Decision: D449
-- Related: ADR 0205 (D373 / D374 / D375), ADR 0285 (D448),
-  `03-runtime/19-remote-agent-control-protocol.md` §3.4, §4, §5, §7, §8,
-  `05-security/02-remote-control-security.md` §3.4,
+- 状态：已接受，待实现
+- 日期：2026-09-18
+- 决策：D449
+- 相关：ADR 0205（D373 / D374 / D375）、ADR 0285（D448）、
+  `03-runtime/19-remote-agent-control-protocol.md` §3.4、§4、§5、§7、§8、
+  `05-security/02-remote-control-security.md` §3.4、
   `06-delivery/07-remote-control-rollout.md` §2 R2
 
-## Context
+## 背景
 
-ADR 0285 delivered the `RACP-WS` transport and pairing on both ends. The
-`pi-host` bundle now binds a real WebSocket server on loopback and speaks the
-frozen contract; a `RacpClient` in `packages/racp` reaches it with header
-authentication. What was still missing on the desktop side of R2 was the
-kernel — the code that lets the renderer treat a remote session exactly the
-way it treats a local one (spec §3.4). Without it, the transport can only be
-observed from tests.
+ADR 0285 在两端交付了 `RACP-WS` 传输和配对。`pi-host` 包现在在回环地址上
+绑定一个真实的 WebSocket 服务器并说冻结的契约；`packages/racp` 中的
+`RacpClient` 用头部认证到达它。R2 桌面侧仍然缺少的是内核——让渲染进程
+把远程会话当作本地会话一样对待的那段代码（规范 §3.4）。没有它，传输只能
+从测试中观察到。
 
-Three constraints shaped the kernel:
+三个约束塑造了内核：
 
-- The renderer must never learn the transport. Every existing per-session IPC
-  call — 17 channels covering agent, session, tool approval, ask-tool, and
-  plan resolution — has one call site in `apps/desktop/src/lib/api.ts` that
-  cannot know whether the answer came from `host-core` or from a paired host.
-- The frozen architecture pins `apps/desktop/electron/main/index.ts` at
-  1500 LOC (`scripts/check-architecture.mjs`). Every new module must live
-  outside it; wiring must fit the existing composition root.
-- The desktop cannot open a network listener of its own (security §7). All
-  outbound flows go through the RACP client to a host the user paired with,
-  and every registration is per-session so a lost host cannot silently
-  hijack a local session id.
+- 渲染进程绝不能感知传输。每一个现有的按会话 IPC 调用——覆盖 agent、
+  会话、工具批准、ask-tool 和计划决议的 17 个通道——在
+  `apps/desktop/src/lib/api.ts` 中都只有一个调用点，它不能知道应答来自
+  `host-core` 还是来自某个已配对的宿主。
+- 冻结的架构把 `apps/desktop/electron/main/index.ts` 钉在 1500 行
+  （`scripts/check-architecture.mjs`）。每个新模块必须住在它之外；接线
+  必须适配现有的组合根。
+- 桌面不能打开自己的网络监听器（安全规范 §7）。所有出站流量通过 RACP
+  客户端流向用户配对过的宿主，且每个注册都是按会话的，因此丢失的宿主
+  不能静默劫持本地会话 id。
 
-## Decision
+## 决策
 
-The desktop-side R2 kernel is five modules and one boot hook, all under
-`apps/desktop/electron/main/remote/` (module state) and
-`apps/desktop/electron/main/bootstrap/` (boot state), and one new workspace
-dependency (`@pi-desktop/racp`).
+桌面侧 R2 内核是五个模块加一个启动钩子，全部位于
+`apps/desktop/electron/main/remote/`（模块状态）和
+`apps/desktop/electron/main/bootstrap/`（启动状态）之下，外加一个新的
+工作区依赖（`@pi-desktop/racp`）。
 
-1. **A single interception seam: `backend-router.ts`.** The router is
-   consulted from `ipc/register.ts`'s `handle()` wrapper; it returns the
-   sentinel `ROUTE_LOCAL` when no `RemoteBackend` is registered for the call's
-   session id, and the local handler runs unchanged. A session becomes remote
-   only once its renderer-visible id (`remote:<hostKey>:<hostSessionId>`,
-   mirroring `native-pi:`) has an explicit registration. This makes remote
-   support byte-for-byte compatible when disabled and prevents accidental
-   routing of a local id.
+1. **单一拦截接缝：`backend-router.ts`。** 路由器从 `ipc/register.ts`
+   的 `handle()` 包装器中被咨询；当没有为该调用的会话 id 注册
+   `RemoteBackend` 时，它返回哨兵 `ROUTE_LOCAL`，本地处理器照常运行。
+   一个会话只有在它的渲染进程可见 id
+   （`remote:<hostKey>:<hostSessionId>`，镜像 `native-pi:`）有了显式注册
+   之后才成为远程。这使远程支持在未启用时逐字节兼容，并防止本地 id 被
+   意外路由。
 
-2. **A stateless per-request session id.** `sessionIdForCall` recovers the
-   session from either the first positional argument, `first.sessionId`,
-   `first.id` (`sessionGet` uses this shape), or a
-   `<remoteSessionId>#racp-approval:<hostApprovalId>` requestId used by tool
-   approval. This last one lets `toolResolvePermission` route without a
-   correlation map: the router encodes the session into the id it hands the
-   renderer and decodes it when the renderer echoes the id back.
+2. **无状态的按请求会话 id。** `sessionIdForCall` 从以下位置恢复会话：
+   第一个位置参数、`first.sessionId`、`first.id`（`sessionGet` 使用这种
+   形态），或工具批准使用的
+   `<remoteSessionId>#racp-approval:<hostApprovalId>` requestId。最后一种
+   让 `toolResolvePermission` 无需关联映射即可路由：路由器把会话编码进
+   它交给渲染进程的 id，渲染进程回显该 id 时再解码出来。
 
-3. **A transport-agnostic backend: `remote-backend.ts`.** One
-   `createRemoteBackend({hostKey, client, ...})` instance serves every session
-   of a paired host — the router registers it under each id. The backend
-   translates 17 channels to RACP requests and reshapes the results back into
-   the exact response shapes `apps/desktop/src/lib/api.ts` already returns for
-   the local handler. Channels the remote profile does not cover
-   (`agentSteer`, attachments, desktop-only settings) either return false from
-   `handles()` or throw `CAPABILITY_UNAVAILABLE`, so those calls fall back to
-   the local handler while the session's transcript stays remote.
+3. **传输无关的后端：`remote-backend.ts`。** 一个
+   `createRemoteBackend({hostKey, client, ...})` 实例服务一个已配对宿主的
+   所有会话——路由器把它注册在每个 id 之下。后端把 17 个通道翻译成
+   RACP 请求，并把结果整形回 `apps/desktop/src/lib/api.ts` 对本地处理器
+   已经返回的确切响应形态。远程配置未覆盖的通道（`agentSteer`、附件、
+   仅桌面的设置）要么从 `handles()` 返回 false，要么抛出
+   `CAPABILITY_UNAVAILABLE`，因此这些调用回退到本地处理器，而该会话的
+   转录保持远程。
 
-4. **Two synthesis rules to reconcile schema mismatches without a
-   round-trip.**
-   - Tool-approval resolution has no session id in its wire payload, so the
-     backend encodes `<remoteSessionId>#racp-approval:<hostApprovalId>` into
-     the requestId (§ Decision 2) and decodes it back for `approval/respond`.
-   - `plansResolve` returns `PlanResolutionResult` to the renderer, but RACP's
-     `approval/respond` returns only `RacpApprovalResult`. The backend
-     synthesizes a minimal `PlanProposal` from the request identity to dismiss
-     the card optimistically; the authoritative snapshot arrives on the
-     follow-up `session.changed` event and replaces the placeholder.
+4. **两条合成规则，在不增加往返的情况下调和 schema 不匹配。**
+   - 工具批准决议的线上载荷中没有会话 id，因此后端把
+     `<remoteSessionId>#racp-approval:<hostApprovalId>` 编码进 requestId
+     （§ 决策 2），并为 `approval/respond` 解码回来。
+   - `plansResolve` 向渲染进程返回 `PlanResolutionResult`，但 RACP 的
+     `approval/respond` 只返回 `RacpApprovalResult`。后端从请求身份合成
+     一个最小的 `PlanProposal`，以乐观地关闭卡片；权威快照随随后的
+     `session.changed` 事件到达并替换占位符。
 
-5. **A pure event bridge: `remote-event-bridge.ts`.** RACP events are
-   translated into `IPC.event.agentMessage` / `IPC.event.sessionsChanged` for
-   the renderer. Item/turn/tool payloads already carry a local `AgentEvent`
-   in `payload.event` and forward verbatim under an `AgentEventEnvelope` keyed
-   by the remote session id. `approval.requested` of kind `tool` becomes a
-   local `tool_permission_request` with the encoded requestId; plan and goal
-   approvals ride the following `planning_state` event and are dropped. An
-   `onLifecycle` callback signals `session.created`/`archived` for the router
-   without a second subscription to the same stream.
+5. **纯事件桥：`remote-event-bridge.ts`。** RACP 事件被翻译为渲染进程的
+   `IPC.event.agentMessage` / `IPC.event.sessionsChanged`。条目/轮次/工具
+   载荷已经在 `payload.event` 中携带本地 `AgentEvent`，在按远程会话 id
+   键控的 `AgentEventEnvelope` 下逐字转发。kind 为 `tool` 的
+   `approval.requested` 变为带编码 requestId 的本地
+   `tool_permission_request`；计划和目标批准搭乘随后的 `planning_state`
+   事件，因而被丢弃。`onLifecycle` 回调为路由器发出
+   `session.created`/`archived` 信号，无需对同一流的第二次订阅。
 
-6. **A coordinator per paired host:
-   `remote-host-connection.ts`.** `createRemoteHostConnection({hostKey,
-   client, router, emit})` composes the backend, the bridge, and the router.
-   Its `open()` sequence closes the create-race between listing sessions and
-   receiving lifecycle events: attach listener → subscribe host scope →
-   `session/list` → per-session subscribes. `close()` unregisters every
-   session and drops internal state; it is idempotent and safe to call before
-   `open()`.
+6. **每个已配对宿主一个协调器：`remote-host-connection.ts`。**
+   `createRemoteHostConnection({hostKey, client, router, emit})` 组合后端、
+   桥和路由器。它的 `open()` 序列消除了列出会话与接收生命周期事件之间
+   的创建竞态：挂监听器 → 订阅宿主范围 → `session/list` → 逐会话订阅。
+   `close()` 注销每个会话并丢弃内部状态；它幂等，且在 `open()` 之前调用
+   也安全。
 
-7. **A `RemoteHostClient` seam with multi-listener `subscribe`.** The
-   connection consumes `{request, subscribe}`. `packages/racp` exposes
-   `RacpClient.onEvent` as a single-slot construction option, which is not
-   enough for a bridge + resync watchdog + later features. `racp-remote-host-client.ts`
-   is the only file in `electron/main/remote/` that imports
-   `@pi-desktop/racp`; it wraps the client, fans out its callback to every
-   `subscribe()` listener, and swallows listener throws so a bad subscriber
-   cannot silence the others.
+7. **带多监听器 `subscribe` 的 `RemoteHostClient` 接缝。** 连接消费
+   `{request, subscribe}`。`packages/racp` 把 `RacpClient.onEvent` 暴露为
+   单槽构造选项，这对事件桥 + 重同步看门狗 + 后续功能不够用。
+   `racp-remote-host-client.ts` 是 `electron/main/remote/` 中唯一导入
+   `@pi-desktop/racp` 的文件；它包装客户端，把回调扇出给每个
+   `subscribe()` 监听器，并吞掉监听器的异常，使一个坏订阅者无法让其他
+   订阅者失声。
 
-8. **Encrypted-at-rest registry: `remote-host-registry.ts`.** Paired hosts
-   live in `<dataDir>/remote-hosts.json`. Device tokens are encrypted with
-   Electron's `safeStorage` before write and decrypted on read; a stolen file
-   without keychain access reveals only URL and label. The registry is
-   injected with an `EncryptionPort` (isAvailable / encryptString /
-   decryptString) so Node-side tests supply a fake without pulling in
-   Electron. `upsert` refuses to write when the keychain is unavailable;
-   `list` drops any record it cannot decrypt rather than surfacing an empty
-   token that would auth-fail downstream.
+8. **静态加密的注册表：`remote-host-registry.ts`。** 已配对宿主存放在
+   `<dataDir>/remote-hosts.json`。设备令牌在写入前用 Electron 的
+   `safeStorage` 加密，读取时解密；没有钥匙串访问权的窃得文件只暴露
+   URL 和标签。注册表被注入一个 `EncryptionPort`（isAvailable /
+   encryptString / decryptString），因此 Node 侧测试可以提供假实现而不
+   引入 Electron。`upsert` 在钥匙串不可用时拒绝写入；`list` 丢弃任何无法
+   解密的记录，而不是把一个会在下游认证失败的空令牌暴露出来。
 
-9. **Boot hook: `bootstrap/remote-hosts.ts`.** `createRemoteHostsBoot(...)`
-   reads the registry, opens one adapter + one connection per host, and
-   returns `{open, closeAll}`. Sequential open — a host's failure is logged
-   and skipped, not fatal. An empty registry (the default install) is a full
-   no-op: nothing connects, no backend registers, every renderer call keeps
-   hitting the local handler byte-for-byte. `bootstrap/startup.ts` calls
-   `open()` in the background so a slow host never delays the first window;
-   `bootstrap/shutdown.ts` calls `closeAll()` from the existing shutdown
-   promise so paired sockets are drained before host-core is torn down. A
-   single module-level `activeRemoteHostsBoot` handle bridges startup and
-   shutdown without expanding `index.ts` past its 1500-LOC ceiling.
+9. **启动钩子：`bootstrap/remote-hosts.ts`。** `createRemoteHostsBoot(...)`
+   读取注册表，为每个宿主打开一个适配器 + 一个连接，并返回
+   `{open, closeAll}`。顺序打开——某个宿主的失败被记录并跳过，不是致命
+   错误。空注册表（默认安装）是完整的 no-op：没有任何连接，没有后端
+   注册，每个渲染进程调用继续逐字节命中本地处理器。
+   `bootstrap/startup.ts` 在后台调用 `open()`，慢宿主绝不会拖延第一个
+   窗口；`bootstrap/shutdown.ts` 从现有的关机 promise 调用 `closeAll()`，
+   使已配对的 socket 在 host-core 拆除前排空。一个模块级的
+   `activeRemoteHostsBoot` 句柄连接启动与关机，而不让 `index.ts` 超过
+   1500 行上限。
 
-## Invariants the kernel keeps
+## 内核保持的不变量
 
-- **Renderer transport-agnosticism.** The renderer's `api.ts` code does not
-  mention "remote". Its session ids may be namespaced; every response shape it
-  parses is the local one.
-- **Router-off default.** With no `RemoteBackend` registered, `route()`
-  returns `ROUTE_LOCAL` for every call and the existing handler runs
-  unchanged. Adding the kernel to a build without pairing is a zero-behavior
-  change.
-- **Least privilege at rest.** No plaintext device token ever touches disk.
-  A `safeStorage` unavailable environment cannot write a token; it can still
-  read what was already written when that platform was available.
-- **Bounded shutdown.** `closeAll` closes every paired socket inside the same
-  `Promise.allSettled` block that handles plugin, sidecar, and MCP disposals,
-  before `host-core` is disposed, so in-flight remote turns can send their
-  abort over a live socket.
+- **渲染进程传输无关。** 渲染进程的 `api.ts` 代码不提"远程"。它的会话
+  id 可能带命名空间；它解析的每个响应形态都是本地的。
+- **路由器默认关闭。** 没有注册 `RemoteBackend` 时，`route()` 对每个
+  调用返回 `ROUTE_LOCAL`，现有处理器照常运行。在没有配对的情况下把内核
+  加入构建是零行为变化。
+- **静态最小权限。** 明文设备令牌从不落盘。`safeStorage` 不可用的环境
+  不能写入令牌；它仍能读取该平台可用时已写入的内容。
+- **有界关机。** `closeAll` 在处理插件、sidecar 和 MCP 处置的同一个
+  `Promise.allSettled` 块中、在 `host-core` 被处置之前关闭每个已配对
+  socket，使在途的远程轮次能通过活着的 socket 发出它们的中止。
 
-## Out of scope
+## 范围外
 
-The kernel is complete for a paired host to answer renderer calls and stream
-events. What is scheduled for later stages of R2:
+内核对"已配对宿主应答渲染进程调用并流式推送事件"是完整的。排期到 R2
+后续阶段的有：
 
-- **Pairing UX (renderer + IPC).** Settings surfaces to enter a URL and
-  pairing token, exchange it, and store the device token. The registry API
-  is ready for this; the surface is not.
-- **SSH bootstrap (Stage 4).** A supervisor that detects system `ssh`,
-  downloads the `pi-host-bundle` (verified by SHA-256 from ADR 0285's
-  release pipeline), starts the remote binary, and opens the `-L` tunnel.
-  Every paired host today assumes the loopback URL already exists.
-- **Terminal work-panel client (Stage 5).** RACP terminal events are dropped
-  by the event bridge; the work-panel session client will consume them.
-- **Reverse tool relay (Stage 6).** A `RelayToolPort` bridge that lets the
-  agent host run local desktop tools against a remote session. Belongs on the
-  agent-host and pi-host, not on `packages/racp`.
-- **Resync watchdog.** `resync.required` events are dropped today; the
-  connection layer will eventually rebuild subscriptions from the last
-  cursor per session (`RacpClient.cursorFor`).
-- **Multi-listener contract.** `subscribe()` is used by exactly one consumer
-  today (the event bridge); Stage 3b's resync watchdog will be the second.
+- **配对 UX（渲染进程 + IPC）。** 输入 URL 和配对令牌、完成交换、存储
+  设备令牌的设置界面。注册表 API 已就绪；界面尚未。
+- **SSH 引导（第 4 阶段）。** 一个检测系统 `ssh`、下载 `pi-host-bundle`
+  （用 ADR 0285 发布管线的 SHA-256 校验）、启动远程二进制并打开 `-L`
+  隧道的监督器。今天每个已配对宿主都假设回环 URL 已存在。
+- **终端工作面板客户端（第 5 阶段）。** RACP 终端事件今天被事件桥丢弃；
+  工作面板会话客户端将消费它们。
+- **反向工具中继（第 6 阶段）。** 一个 `RelayToolPort` 桥，让 agent host
+  针对远程会话运行本地桌面工具。属于 agent-host 和 pi-host，不属于
+  `packages/racp`。
+- **重同步看门狗。** `resync.required` 事件今天被丢弃；连接层最终将按
+  每个会话的最后游标重建订阅（`RacpClient.cursorFor`）。
+- **多监听器契约。** `subscribe()` 今天恰好有一个消费者（事件桥）；第
+  3b 阶段的重同步看门狗将是第二个。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- **Route from each per-domain IPC handler.** Every one of 17 handlers would
-  need to know about "remote" and duplicate the same dispatch. Rejected:
-  God-modules would grow, and any new channel would need to be wired in twice.
-- **Bake remote knowledge into the renderer.** A `remote:` prefix visible to
-  the renderer forces `api.ts` to branch, and every store slice ends up
-  aware of the transport. Rejected by spec §3.4.
-- **Have the connection layer own its own RacpClient construction.** It would
-  couple the coordinator to `packages/racp` and prevent unit tests from
-  running without a real client. Rejected in favour of the injected
-  `RemoteHostClient` seam.
-- **A single-listener `RemoteHostClient`.** Simpler, but forces the resync
-  watchdog and the event bridge to share the same callback. Rejected: their
-  concerns are independent and their subscriptions should be too.
-- **Plain-text registry.** Simpler read/write, but a compromised backup would
-  hand attackers a device token that authenticates against a real `pi-host`.
-  Rejected by security §3.4.
+- **从每个按域 IPC 处理器做路由。** 17 个处理器中的每一个都得知道"远程"
+  并重复同样的分发。被拒绝：上帝模块会膨胀，且任何新通道都要接线两次。
+- **把远程知识烘焙进渲染进程。** 渲染进程可见的 `remote:` 前缀迫使
+  `api.ts` 分支，每个 store 切片最终都会感知传输。被规范 §3.4 拒绝。
+- **让连接层自己构造 RacpClient。** 会把协调器耦合到 `packages/racp`，并
+  使单元测试无法在没有真实客户端的情况下运行。被拒绝，改用注入的
+  `RemoteHostClient` 接缝。
+- **单监听器的 `RemoteHostClient`。** 更简单，但迫使重同步看门狗和事件桥
+  共享同一个回调。被拒绝：它们的关注点相互独立，订阅也应如此。
+- **明文注册表。** 读写更简单，但被攻破的备份会把一个能认证真实
+  `pi-host` 的设备令牌交给攻击者。被安全规范 §3.4 拒绝。
 
-## Testing
+## 测试
 
-Every module has a `node --test` fixture that exercises the seam in isolation
-(fake RACP client, fake encryption, fake router). The RACP adapter runs
-against the real in-memory harness (`@pi-desktop/racp/test-harness`), so its
-fan-out and lifecycle contracts are checked against the same client the
-production factory builds. The full desktop suite runs 2120+ tests with the
-kernel on and every one passes; no `test:e2e:*` scenario is scheduled for the
-kernel alone because it is dead code until pairing lands.
+每个模块都有一个 `node --test` fixture，在隔离中演练接缝（假 RACP 客户端、
+假加密、假路由器）。RACP 适配器针对真实的内存测试工具
+（`@pi-desktop/racp/test-harness`）运行，因此它的扇出和生命周期契约是与
+生产工厂构建的同一个客户端对照检查的。完整桌面测试套件在内核开启下运行
+2120+ 个测试并全部通过；不为内核单独排期任何 `test:e2e:*` 场景，因为在
+配对落地之前它是死代码。
 
-## Consequences
+## 后果
 
-- The desktop can host a paired remote `pi-host` today; adding a URL and
-  device token to `<dataDir>/remote-hosts.json` (encrypted-at-rest through
-  `safeStorage`) makes the kernel connect, register sessions, and stream
-  events into the existing renderer, no other flag or setting required.
-- `apps/desktop` now depends on `@pi-desktop/racp`, and the racp package
-  publishes a `./test-harness` export subpath. Both changes are additive.
-- `apps/desktop/electron/main/index.ts` stays at exactly 1500 LOC. The
-  startup/shutdown bridge is a module-level handle inside
-  `bootstrap/remote-hosts.ts` — small, contained, and easy to remove once
-  R2b lets the wiring live inside a broader remote-hosts service object.
-- Any Stage 4–7 work (SSH bootstrap, terminal work-panel client, reverse
-  tool relay, pairing UX) plugs into existing seams — the router, the event
-  bridge, the registry — and does not need to revisit the transport layer.
+- 桌面今天就能托管一个已配对的远程 `pi-host`；向
+  `<dataDir>/remote-hosts.json` 添加 URL 和设备令牌（通过 `safeStorage`
+  静态加密）即可让内核连接、注册会话并把事件流进现有的渲染进程，不需要
+  其他任何开关或设置。
+- `apps/desktop` 现在依赖 `@pi-desktop/racp`，且 racp 包发布了
+  `./test-harness` 导出子路径。两处变更都是增量添加。
+- `apps/desktop/electron/main/index.ts` 保持在恰好 1500 行。启动/关机桥
+  是 `bootstrap/remote-hosts.ts` 内的一个模块级句柄——小、可控，且当
+  R2b 让接线住进更宽的 remote-hosts 服务对象后容易移除。
+- 任何第 4–7 阶段的工作（SSH 引导、终端工作面板客户端、反向工具中继、
+  配对 UX）都插入现有接缝——路由器、事件桥、注册表——无需重访传输层。

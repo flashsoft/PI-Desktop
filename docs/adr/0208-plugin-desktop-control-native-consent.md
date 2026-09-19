@@ -1,4 +1,4 @@
-# ADR 0208: Plugin Desktop Control Requires Native User Consent
+# ADR 0208: 插件桌面控制需要原生用户同意
 
 - Status: Accepted
 - Date: 2026-09-10
@@ -10,53 +10,44 @@
 
 ## Context
 
-`desktop.control` gives a plugin the reviewed operation catalog that the local
-MCP control plane exposes: project, session, Agent, and workspace operations,
-each tagged `read`, `write`, or `dangerous`. The catalog and the invocation
-path are shared with MCP so there is one permission and persistence
-implementation.
+`desktop.control` 赋予插件本地 MCP 控制面所暴露的经审查操作目录：
+项目、会话、Agent 和工作区操作，各自标记为 `read`、`write` 或
+`dangerous`。目录和调用路径与 MCP 共享，因此只有一套权限和持久化
+实现。
 
-The shared controller requires `confirm: true` for a `dangerous` operation.
-For an external MCP agent that flag is the documented contract: it is an
-acknowledgement by the agent, not a desktop prompt (D372). When the same
-controller is reached from plugin code, the flag is set by the plugin, so a
-plugin with `desktop.control` could delete sessions, switch a session to
-`auto` tool approval, or resolve a pending tool permission with no human in
-the loop. A conversational plugin that shows its own confirmation card is
-self-policing, and the card can only show what the plugin (or a model behind
-it) chooses to display.
+共享控制器对 `dangerous` 操作要求 `confirm: true`。对外部 MCP agent
+来说，该标志是文档化的契约：它是 agent 的确认，而不是桌面提示
+（D372）。当同一控制器从插件代码触达时，该标志由插件设置，因此持
+有 `desktop.control` 的插件可以在没有人在回路的情况下删除会话、把
+会话切换为 `auto` 工具审批，或解决一个待处理的工具权限。展示自己
+确认卡片的对话式插件是自我监管的，而且卡片只能显示插件（或其背后
+的模型）选择展示的内容。
 
 ## Decision
 
-1. A `dangerous` desktop operation from a plugin needs two answers. The
-   plugin's `confirm: true` remains required first (`CONFIRMATION_REQUIRED`
-   otherwise) so an unacknowledged call never reaches the user.
-2. After that, Electron main asks the user in a native, blocking dialog
-   (`plugin-desktop-consent.ts`) attached to the main window. The dialog
-   shows the catalog operation id, the catalog description, and a bounded
-   preview of the arguments. It never shows plugin- or model-authored text,
-   so a prompt-injected transcript cannot relabel `session/delete` as
-   something benign.
-3. Escape, dismissal, and Deny are refusals (`PERMISSION_DENIED`). The
-   answer is per call; there is no "allow until quit" for dangerous
-   operations.
-4. A host that supplies no dialog service (headless or test runtime)
-   refuses every dangerous operation from plugins. `read` and `write`
-   operations are unchanged.
-5. Every invocation is audited with plugin id, operation, and risk; a
-   refusal is audited as `PERMISSION_DENIED`.
-6. `ui.microphone` stays a separate, narrower grant: audio capture only,
-   inside the plugin's isolated panel session; camera and other device
-   permissions remain denied.
+1. 来自插件的 `dangerous` 桌面操作需要两个答案。首先仍然要求插件的
+   `confirm: true`（否则返回 `CONFIRMATION_REQUIRED`），因此未确认
+   的调用永远不会到达用户。
+2. 之后，Electron 主进程在附着于主窗口的原生阻塞对话框
+   （`plugin-desktop-consent.ts`）中询问用户。对话框显示目录操作
+   id、目录描述和有界的参数预览。它绝不显示插件或模型撰写的文本，
+   因此被提示注入的 transcript 无法把 `session/delete` 重新标注为某
+   种无害操作。
+3. Escape、关闭和 Deny 都是拒绝（`PERMISSION_DENIED`）。答案按调用
+   生效；危险操作没有“允许直到退出”。
+4. 不提供对话框服务的宿主（无头或测试运行时）拒绝来自插件的每一个
+   危险操作。`read` 和 `write` 操作不变。
+5. 每次调用都以插件 id、操作和风险进行审计；拒绝以
+   `PERMISSION_DENIED` 审计。
+6. `ui.microphone` 保持为一个独立的、更窄的授权：仅音频采集，且仅在
+   插件的隔离面板会话内；摄像头和其他设备权限保持拒绝。
 
 ## Consequences
 
-- Plugin-originated destructive desktop operations gain the same
-  human-in-the-loop guarantee that plugin file access outside the manifest
-  scope already has (`confirmFsAccess`).
-- The MCP contract is unchanged: an external agent still acknowledges with
-  `confirm: true` and the desktop user is the one who enabled the loopback
-  control plane.
-- Plugin authors must expect a native prompt and should not promise
-  unattended dangerous operations.
-- Covered by `apps/desktop/test/plugin-desktop-control.test.mjs` and E2E-236.
+- 插件发起的破坏性桌面操作获得了与插件在 manifest 范围之外访问文件
+  已有的人 in-the-loop 保证（`confirmFsAccess`）相同的保障。
+- MCP 契约不变：外部 agent 仍然以 `confirm: true` 确认，而桌面用户
+  正是启用回环控制面的人。
+- 插件作者必须预期会出现原生提示，不应承诺无人值守的危险操作。
+- 由 `apps/desktop/test/plugin-desktop-control.test.mjs` 和 E2E-236
+  覆盖。

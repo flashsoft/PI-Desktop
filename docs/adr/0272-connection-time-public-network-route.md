@@ -1,184 +1,153 @@
-# ADR 0272: Judge a public-network address on the route the request will dial
+# ADR 0272：按请求将拨号的路由来判定公共网络地址
 
 - Status: Accepted for implementation
 - Date: 2026-09-17
 - Deciders: PI-Desktop core
 - Related: ADR 0177, ADR 0243, ADR 0245, D413, D414, issue #419, PR #473
 
-## Context
+## 背景
 
-`createPublicHttpsClient` guards every credential-free public HTTPS fetch the
-skill market makes from Electron main (ADR 0243). Before each hop it classified
-the target host with **Node's local resolver** (`node:dns`) and refused any hop
-whose answers were not public.
+`createPublicHttpsClient` 守护 skill 市场从 Electron main 发起的每一次无
+凭据公共 HTTPS 获取（ADR 0243）。在每一跳之前，它用 **Node 的本地解析
+器**（`node:dns`）对目标主机分类，并拒绝答案非公共的任何一跳。
 
-The request itself never used that answer. `fetchImpl` is `net.fetch`, which
-dials through Chromium's proxy stack, and ADR 0177 points that stack at the
-configured proxy (System, or a Custom `http`/`https`/`socks` URL). Under an
-HTTP/HTTPS proxy the hostname travels in the `CONNECT` line and the *proxy*
-resolves it; nothing in this app resolves or dials the destination.
+请求本身从不使用那个答案。`fetchImpl` 是 `net.fetch`，它通过 Chromium
+的代理栈拨号，而 ADR 0177 把该栈指向配置的代理（System，或自定义的
+`http`/`https`/`socks` URL）。在 HTTP/HTTPS 代理下，主机名随 `CONNECT`
+行传输，由*代理*解析它；本应用中没有任何东西解析或拨号目的地。
 
-The pre-check therefore judged an address no request would ever use, and a whole
-class of working setups was refused for it. Clash, Mihomo and Surge answer DNS
-with a synthesized fake-IP (`198.18.0.0/15` by default) while their TUN device or
-proxy carries the real connection: `classifyIpLiteral` reads `198.18.0.1` as
-`benchmark`, which is not public, so every catalog source failed with "the
-catalog source was blocked by the app's address check" even though the in-app
-browser and the transport itself worked (issue #419, reported on 0.14.8).
+因此预检判定的是一个任何请求都不会使用的地址，而一整类可用的配置因
+此被拒绝。Clash、Mihomo 和 Surge 用合成的 fake-IP（默认
+`198.18.0.0/15`）应答 DNS，而它们的 TUN 设备或代理承载真实连接：
+`classifyIpLiteral` 把 `198.18.0.1` 读作 `benchmark`——它不是公共的，
+因此每个目录来源都以「目录来源被应用的地址检查阻止」失败，尽管应用
+内浏览器和传输本身都工作（issue #419，在 0.14.8 上报告）。
 
-PR #473 made that refusal legible — structured `reason`, `addressKind`,
-`NETWORK_RESOLVE_FAILED`, the market's `unresolved` kind — and left the boundary
-alone, because moving the classification out of the pre-check is a security
-boundary change. This ADR is that change.
+PR #473 让该拒绝可读——结构化的 `reason`、`addressKind`、
+`NETWORK_RESOLVE_FAILED`、市场的 `unresolved` 种类——并保持边界不变，
+因为把分类移出预检是安全边界变更。本 ADR 就是那个变更。
 
-## Decision
+## 决策
 
-1. **The address verdict follows the route the request will actually take.** For
-   every hop, immediately before that hop is dialed, the client asks the session
-   that carries `fetchImpl` for its own proxy decision on exactly that URL
-   (`Session.resolveProxy`, wired beside `net.fetch` in `skill-market-catalog.ts`).
-   The shared `classifyProxyRoute` reduces the answer to `proxied`, `direct`, or
-   `unknown`.
+1. **地址判定跟随请求实际将走的路由。** 对每一跳，在该跳被拨号之前立
+   即，客户端向携带 `fetchImpl` 的 session 询问它对恰好那个 URL 的代理
+   决定（`Session.resolveProxy`，在 `skill-market-catalog.ts` 中与
+   `net.fetch` 并排接线）。共享的 `classifyProxyRoute` 把答案归约为
+   `proxied`、`direct` 或 `unknown`。
 
-2. **A proxied route replaces the local address verdict; it does not remove it.**
-   On `proxied`, the shared `isAcceptableResolvedAddress` tolerates exactly one
-   class the old rule refused: `benchmark` — the RFC 2544 range a TUN fake-IP
-   resolver synthesizes, i.e. the resolver's own artifact rather than a target.
-   Every other non-public class (`private`, `loopback`, `link-local`, `cgnat`,
-   `multicast`, `reserved`, `documentation`, `ula`, `site-local`, `invalid`,
-   `unspecified`) still refuses, and an unanswered resolver still refuses as
-   `resolve-failed`. A local answer naming a real internal target stays evidence
-   of a split-horizon or hostile resolver, and this app cannot see what the proxy
-   would dial for it.
+2. **代理路由替换本地地址判定；它并不移除判定。** 在 `proxied` 下，共
+   享的 `isAcceptableResolvedAddress` 恰好容忍旧规则拒绝的一类：
+   `benchmark`——TUN fake-IP 解析器合成的 RFC 2544 范围，即解析器自己
+   的产物而不是目标。其他每个非公共类别（`private`、`loopback`、
+   `link-local`、`cgnat`、`multicast`、`reserved`、`documentation`、
+   `ula`、`site-local`、`invalid`、`unspecified`）仍然拒绝，无应答的解
+   析器仍以 `resolve-failed` 拒绝。命名真实内部目标的本地答案仍是分
+   裂地平线或敌对解析器的证据，而本应用看不到代理会为它拨号什么。
 
-3. **`direct` and `unknown` keep the pre-ADR rule byte for byte.** The app dials
-   the resolved address itself there, so only `public` passes. `unknown` covers no
-   route resolver wired at all, a resolver that throws, an empty or unparsable
-   answer, and a list that offers `DIRECT` anywhere — Chromium may fall back to a
-   direct connection, so an offered direct hop is never read as proxied. Fail
-   closed, exactly as before.
+3. **`direct` 和 `unknown` 逐字节保持 ADR 之前的规则。** 应用在那里自
+   己拨号解析出的地址，因此只有 `public` 通过。`unknown` 覆盖根本没接
+   线路由解析器、解析器抛错、空或不可解析的答案，以及在任何位置提供
+   `DIRECT` 的列表——Chromium 可能回退到直连，因此被提供的直连跳绝
+   不被读作代理。失败关闭，与以前完全一样。
 
-4. **The syntactic guard is untouched.** `isSafePublicHttpsUrl` still runs first
-   for every hop and still refuses non-HTTPS, credential-bearing, non-public
-   literal, and `localhost` / `.local` / `.internal` URLs. Redirects stay
-   `manual` with a five-hop cap, and **every hop** re-runs the whole check, route
-   included.
+4. **语法守卫不受影响。** `isSafePublicHttpsUrl` 仍对每一跳最先运行，
+   仍拒绝非 HTTPS、携带凭据、非公共字面量，以及 `localhost` / `.local`
+   / `.internal` URL。重定向保持 `manual`、五跳上限，且**每一跳**重新
+   运行整个检查，包括路由。
 
-5. **The route travels with the refusal.** `PublicNetworkRefusal` /
-   `PublicNetworkRefusalDetail` gain `route`, so the diagnostics line and the
-   market's `failureDetails` say which route the address was judged on. A
-   `benchmark` refusal on a `direct` route means "the transport sees no proxy for
-   this URL and the app would dial the synthesized address itself"; the same
-   refusal on `unknown` means no route could be read at all.
+5. **路由随拒绝旅行。** `PublicNetworkRefusal` /
+   `PublicNetworkRefusalDetail` 新增 `route`，因此诊断行和市场的
+   `failureDetails` 说明地址是在哪条路由上被判定的。`direct` 路由上的
+   `benchmark` 拒绝意味着「传输看不到此 URL 的代理，应用会自己拨号合
+   成的地址」；`unknown` 上的同一拒绝意味着根本读不到路由。
 
-## Threat model
+## 威胁模型
 
-What the guard stopped before this ADR:
+此 ADR 之前守卫所阻止的：
 
-- Non-HTTPS, credential-bearing, and non-public-literal URLs — unchanged.
-- A hop whose **local** resolver answers with a private, loopback, link-local,
-  CGNAT, ULA, site-local, multicast, reserved, or documentation address. On a
-  direct route that is the address the app dials, so this was real protection and
-  stays exactly as it was.
+- 非 HTTPS、携带凭据和非公共字面量的 URL——不变。
+- **本地**解析器以私有、loopback、链路本地、CGNAT、ULA、站点本地、多
+  播、保留或文档地址应答的一跳。在直连路由上那就是应用拨号的地址，
+  因此这是真实的保护，并完全保持原样。
 
-What changes:
+改变的内容：
 
-- **Still stopped:** everything above on `direct` / `unknown`, plus every address
-  class except `benchmark` on `proxied`.
-- **Weakened, precisely:** on a `proxied` route, a public hostname whose *local*
-  answer is inside `198.18.0.0/15` is no longer refused. Consequences:
-  - **SSRF to an internal service through the proxy.** If the proxy — or the TUN
-    capture behind a fake-IP answer — resolves that name to an internal address,
-    the app will have carried the request to it. The app cannot observe that hop:
-    the only peer it ever dialed is the proxy. Reaching internal targets is now
-    bounded by the proxy's own rule set (Clash's default rule set rejects LAN
-    targets; a permissive or corporate proxy will not).
-  - **Cloud metadata endpoints.** `169.254.169.254`, `fd00:ec2::254` and similar
-    are still refused whenever the *local* answer names them (link-local / ULA),
-    on both routes. The new hole is indirect: a name whose local answer is a
-    fake-IP address, which the proxy then resolves to a metadata endpoint, is no
-    longer judged.
-  - **`198.18.0.0/15` as an intranet range.** The range is reserved for
-    benchmarking and is not publicly allocated, but a lab or VPN could address
-    hosts there; a name answering from it is no longer refused on a proxied
-    route, and the TUN/proxy decides where it goes.
-  - **Chromium proxy fallback.** The route is read as the *resolved* proxy list.
-    Chromium may still retry a failed hop without the proxy, so `proxied` is a
-    property of the configured route, not a proof about the socket that was used.
-    A `DIRECT` entry anywhere in the list is therefore read as `unknown`.
-  - **Who controls the route.** The user does, through Settings → Network
-    (ADR 0177) or the OS/browser proxy configuration. Nothing in the renderer,
-    in a catalog entry, or in a plugin can influence it, and nothing in the
-    market path can write it.
+- **仍被阻止：** 以上一切在 `direct` / `unknown` 上，加上 `proxied` 上
+  除 `benchmark` 外的每个地址类别。
+- **被精确地放宽：** 在 `proxied` 路由上，*本地*答案位于
+  `198.18.0.0/15` 内的公共主机名不再被拒绝。后果：
+  - **通过代理到内部服务的 SSRF。** 如果代理——或 fake-IP 答案背后的
+    TUN 捕获——把该名称解析为内部地址，应用就已经把请求带给了它。应
+    用观察不到那一跳：它拨号过的唯一对端是代理。到达内部目标现在由
+    代理自己的规则集约束（Clash 的默认规则集拒绝 LAN 目标；宽松或企
+    业代理不会）。
+  - **云元数据端点。** `169.254.169.254`、`fd00:ec2::254` 及类似地址，
+    只要*本地*答案命名它们，在两条路由上都仍被拒绝（链路本地 /
+    ULA）。新洞是间接的：本地答案是 fake-IP 地址、而代理随后解析为元
+    数据端点的名称，不再被判定。
+  - **`198.18.0.0/15` 作为内网范围。** 该范围为基准测试保留，未被公共
+    分配，但实验室或 VPN 可能在那里编址主机；从它应答的名称在代理路
+    由上不再被拒绝，由 TUN/代理决定它去哪。
+  - **Chromium 代理回退。** 路由被读作*解析出的*代理列表。Chromium
+    仍可能不用代理重试失败的一跳，因此 `proxied` 是所配置路由的性质，
+    而不是关于实际所用 socket 的证明。因此列表中任何位置的 `DIRECT`
+    条目都被读作 `unknown`。
+  - **谁控制路由。** 用户，通过 Settings → Network（ADR 0177）或
+    OS/浏览器代理配置。渲染进程、目录条目或插件中没有任何东西能影响
+    它，市场路径中也没有任何东西能写它。
 
-Why that is acceptable:
+为什么这是可接受的：
 
-- The property the guard protects is "this app never dials an internal address by
-  itself". On a proxied route that property is *stronger* than before rather than
-  weaker: the app's only possible peer is the user-configured proxy, and the
-  destination is chosen by that proxy instead of by a name whose resolution an
-  attacker may control. What the pre-check actually enforced on a proxied route
-  was a claim about a resolver the request did not use — it produced the false
-  positive in #419 without ever inspecting the dialed peer.
-- The one class now tolerated is *by construction* the signature of local
-  interception rather than of an internal target: `198.18.0.0/15` is RFC 2544
-  benchmarking space and hosts no service.
-- Everything the guard can still verify in-process — URL shape, per-hop
-  re-validation, every real internal address class, an unanswered resolver — is
-  still verified, and the verdict is now made about the object the request will
-  actually use.
+- 守卫保护的性质是「本应用绝不自己拨号内部地址」。在代理路由上，该性
+  质比以前*更强*而不是更弱：应用唯一可能的对端是用户配置的代理，目的
+  地由该代理选择，而不是由一个攻击者可能控制其解析的名称选择。预检在
+  代理路由上实际强制的是关于请求并未使用的解析器的断言——它产生了
+  #419 的误报，却从未检查被拨号的对端。
+- 现在被容忍的这一类*按构造*是本地拦截的签名，而不是内部目标的签
+  名：`198.18.0.0/15` 是 RFC 2544 基准测试空间，不承载任何服务。
+- 守卫仍能在进程内验证的一切——URL 形态、逐跳重新校验、每个真实的
+  内部地址类别、无应答的解析器——仍被验证，而判定现在是针对请求实
+  际将使用的对象做出的。
 
-When to roll this back:
+何时回滚：
 
-- If Electron ever exposes the peer a request actually connected to, and it is
-  not the proxy, replace the route verdict with that peer check. The route
-  verdict exists only because the dialed peer is not observable.
-- If a report shows a proxied hop reaching a private or metadata target through a
-  fake-IP answer, or Chromium falling back to a direct connection the route list
-  did not advertise, restore the strict verdict for that case and keep the
-  fake-IP case behind an explicit user setting instead.
-- If `Session.resolveProxy` stops reporting the configured proxy, the route
-  collapses to `unknown` and the guard returns to the strict behavior by itself.
-  That failure direction — the pre-#419 false positive returns rather than a
-  private target being dialed — is the intended one.
+- 如果 Electron 暴露了请求实际连接的对端，且它不是代理，用该对端检查
+  替换路由判定。路由判定只因被拨号的对端不可观察而存在。
+- 如果报告显示代理跳通过 fake-IP 答案到达了私有或元数据目标，或
+  Chromium 回退到路由列表未广告的直连，对该情况恢复严格判定，并把
+  fake-IP 情况放到显式用户设置之后。
+- 如果 `Session.resolveProxy` 停止报告配置的代理，路由塌缩为
+  `unknown`，守卫自行回到严格行为。那个失败方向——#419 之前的误报回
+  归，而不是私有目标被拨号——是预期的方向。
 
-## Consequences
+## 后果
 
-- A proxied or fake-IP user's skill market works: no source is refused for an
-  address the request would never dial (issue #419).
-- A `direct`-route user keeps the old verdicts, so the change cannot be used to
-  reach an internal address by not being behind a proxy.
-- The MCP market is **not** covered by this change. It dials a pinned public
-  address with Node HTTPS (ADR 0245), so its guard already checks the address it
-  connects to, and it does not consult Chromium's proxy route; a fake-IP
-  environment still refuses MCP market sources. Fixing that means giving that
-  path a proxy-aware pinned dispatcher, which ADR 0245 already lists as open
-  work.
-- A TUN user who configured no proxy the app can see is still refused: the
-  transport reports `DIRECT` while the local resolver answers fake-IP. That case
-  is deliberately left strict (clause 3), and its remedy is to enable the system
-  proxy or set the app's Custom proxy, after which the route is proxied and the
-  market works.
-- The route is read once per hop, so the market pays one extra `resolveProxy`
-  round trip per hop — bounded by the same five-hop cap.
+- 代理或 fake-IP 用户的 skill 市场可用：没有来源因请求绝不会拨号的地
+  址被拒绝（issue #419）。
+- `direct` 路由用户保留旧判定，因此该变更不能被用来通过不处在代理之
+  后而到达内部地址。
+- MCP 市场**不**被此变更覆盖。它用 Node HTTPS 拨号钉住的公共地址
+  （ADR 0245），因此其守卫已经检查它连接的地址，且不咨询 Chromium 的
+  代理路由；fake-IP 环境仍拒绝 MCP 市场来源。修复它意味着给该路径一
+  个代理感知的钉住 dispatcher，ADR 0245 已经把它列为未完成工作。
+- 配置了应用看不到的代理的 TUN 用户仍被拒绝：传输报告 `DIRECT`，而
+  本地解析器应答 fake-IP。该情况被刻意保持严格（第 3 条），其补救是
+  启用系统代理或设置应用的 Custom 代理，之后路由是 proxied，市场可用。
+- 路由每跳读取一次，因此市场每跳多付一次 `resolveProxy` 往返——由同
+  一个五跳上限约束。
 
-## Alternatives
+## 替代方案
 
-- **Delete the DNS gate for every request.** Rejected: it removes the SSRF guard
-  for direct users too, and the guard would no longer stop a private answer from
-  being dialed by the app itself.
-- **Relax `198.18.0.0/15` unconditionally.** Rejected: it accepts an answer the
-  app cannot attribute to an interception layer, and it silently allows a
-  connection to a host addressed in that range on a direct route.
-- **Let the user allowlist a source.** Rejected: it moves a security decision to
-  a user who cannot see what the address would be used for, needs new settings
-  and UI for a case the app can decide, and would not have helped in #419, where
-  every source was refused at once.
-- **Check the peer after connecting.** Unavailable, and the honest reason this
-  ADR exists: Electron's `net.fetch` performs proxy resolution and dialing inside
-  the network service and exposes no peer address afterwards. The pre-ADR guard
-  could not do this either, which is why its proxied verdict was noise.
-- **Read the route from the app's own proxy settings only.** Rejected as
-  incomplete: it would miss PAC and OS-level proxy configuration, which is
-  exactly what a Clash-style "system proxy" setup uses. `Session.resolveProxy`
-  reports what the session will really use, PAC included.
+- **对每个请求删除 DNS 闸门。** 被拒绝：它也移除了直连用户的 SSRF 守
+  卫，守卫将不再阻止私有答案被应用自己拨号。
+- **无条件放宽 `198.18.0.0/15`。** 被拒绝：它接受一个应用无法归因于
+  拦截层的答案，并在直连路由上静默允许到该范围内编址主机的连接。
+- **让用户允许列出一个来源。** 被拒绝：它把安全决定移给一个看不到地
+  址将被用于什么的用户，为应用自己能决定的情况需要新的设置和 UI，而
+  且在 #419 中也帮不上忙——那里每个来源同时被拒绝。
+- **连接后检查对端。** 不可用，这正是本 ADR 存在的诚实原因：Electron
+  的 `net.fetch` 在网络服务内部执行代理解析和拨号，之后不暴露对端地
+  址。ADR 之前的守卫也做不到这一点，这正是其代理判定是噪音的原因。
+- **只从应用自己的代理设置读取路由。** 作为不完整被拒绝：它会错过
+  PAC 和 OS 级代理配置，而这正是 Clash 风格「系统代理」配置所用的。
+  `Session.resolveProxy` 报告 session 将真正使用什么，包括 PAC。

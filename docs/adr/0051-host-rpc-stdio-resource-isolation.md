@@ -1,72 +1,65 @@
-# ADR 0051: Isolate host RPC stdio from the Tokio blocking pool
+# ADR 0051: 把宿主 RPC stdio 与 Tokio 阻塞池隔离
 
-- Status: Accepted
-- Date: 2026-08-04
+- 状态： 已接受
+- 日期： 2026-08-04
 
-## Context
+## 背景
 
-The host already bounds RPC tasks, tool classes, shell processes, and queued
-work. A parallel Bash burst could nevertheless end the host with
-`Resource temporarily unavailable (os error 35)`. Electron correctly mapped
-that child exit to `HOST_UNAVAILABLE`, but the mapping hid the process-level
-failure from the session.
+宿主已经为 RPC 任务、工具类别、shell 进程和排队工作设界。但并发的 Bash 突
+发仍可能以 `Resource temporarily unavailable (os error 35)` 结束宿主。
+Electron 正确地把该子进程退出映射为 `HOST_UNAVAILABLE`，但该映射对会话隐藏
+了进程级失败。
 
-The remaining control-path risk was host-core's use of
-`tokio::io::stdin()` and `tokio::io::stdout()`. Tokio implements these adapters
-through its blocking pool. When the OS refuses another worker thread, the
-non-mandatory blocking spawn path panics instead of returning an ordinary I/O
-error. The host then exits while tool requests are in flight. The Unix login
-shell PATH probe had a second version of the same problem because an ordinary
-`std::thread::spawn` can panic when the OS cannot create a thread.
+剩余的控制路径风险是 host-core 对 `tokio::io::stdin()` 和
+`tokio::io::stdout()` 的使用。Tokio 通过其阻塞池实现这些适配器。当 OS 拒绝
+再创建一个 worker 线程时，非强制的阻塞 spawn 路径会 panic，而不是返回普通的
+I/O 错误。宿主随后在工具请求仍在途时退出。Unix 登录 shell PATH 探测存在同
+一问题的第二个版本，因为普通的 `std::thread::spawn` 在 OS 无法创建线程时也
+会 panic。
 
-## Decision
+## 决策
 
-1. Host-core's NDJSON stdin reader runs on one named thread created with
-   `std::thread::Builder`. Its stdout writer runs on a second named thread.
-   The async RPC dispatcher communicates with those threads through channels;
-   request and tool tasks never call Tokio stdio adapters.
-2. The control threads retry `EINTR` and transient `EAGAIN`/`EWOULDBLOCK`
-   (`errno` 11 or 35) with a short bounded delay. The reader preserves partial
-   input until a complete line arrives, and the writer tracks partial writes so
-   a retry cannot duplicate bytes.
-3. Failure to create a control thread is returned as a host startup error. A
-   closed or unrecoverable pipe ends the normal host lifecycle and remains
-   visible to Electron's generation-aware supervision; it is never converted
-   into an unhandled Rust thread-spawn panic.
-4. The login-shell PATH probe also uses `thread::Builder`; if that optional
-   helper cannot start, Bash falls back to the inherited host PATH. Existing
-   RPC and tool admission limits are unchanged.
+1. host-core 的 NDJSON stdin 读取器运行在一个用 `std::thread::Builder` 创
+   建的具名线程上。它的 stdout 写入器运行在第二个具名线程上。异步 RPC 调
+   度器通过 channel 与这些线程通信；请求与工具任务从不调用 Tokio stdio 适
+   配器。
+2. 控制线程以短促的有界延迟重试 `EINTR` 与瞬时的 `EAGAIN`/`EWOULDBLOCK`
+   （`errno` 11 或 35）。读取器保留部分输入直到完整一行到达，写入器跟踪部
+   分写入，使重试不会重复字节。
+3. 创建控制线程失败作为宿主启动错误返回。关闭或不可恢复的管道结束正常的
+   宿主生命周期，并对 Electron 的世代感知监督保持可见；它绝不会被转换为
+   未处理的 Rust 线程创建 panic。
+4. 登录 shell PATH 探测也使用 `thread::Builder`；如果该可选辅助器无法启
+   动，Bash 回退到继承的宿主 PATH。现有 RPC 与工具准入限制不变。
 
-## Consequences
+## 后果
 
-- Temporary OS thread pressure no longer reaches Tokio's panic-on-no-worker
-  stdio path, removing the observed host exit cause behind `HOST_UNAVAILABLE`.
-- The host has two long-lived control threads instead of creating a blocking
-  pool worker per stdio operation.
-- NDJSON framing, response ordering, request concurrency, and overload codes
-  remain unchanged.
-- A genuinely unavailable stdin/stdout pipe still ends the host and is
-  handled by the existing Electron restart/fatal-degradation policy.
+- 暂时的 OS 线程压力不再到达 Tokio 的"无 worker 即 panic"stdio 路径，移除
+  了 `HOST_UNAVAILABLE` 背后已观测到的宿主退出原因。
+- 宿主拥有两个长生命周期的控制线程，而不是为每次 stdio 操作创建一个阻塞
+  池 worker。
+- NDJSON 分帧、响应排序、请求并发与过载代码保持不变。
+- 真正不可用的 stdin/stdout 管道仍会结束宿主，并由现有的 Electron 重启/致
+  命降级策略处理。
 
-## Alternatives
+## 备选方案
 
-### Increase the Tokio blocking-pool limit
+### 提高 Tokio 阻塞池上限
 
-Rejected. It raises the number of threads competing for the same exhausted OS
-resource and leaves the panic-on-thread-creation path intact.
+已拒绝。它会增加争夺同一已耗尽 OS 资源的线程数量，并保留线程创建即
+panic 的路径。
 
-### Keep Tokio stdio and catch the panic
+### 保留 Tokio stdio 并捕获 panic
 
-Rejected. Catching a panic around the async runtime would be brittle and would
-not make partial NDJSON writes or shutdown ordering explicit.
+已拒绝。围绕异步运行时捕获 panic 会很脆弱，也无法让部分 NDJSON 写入或关
+闭顺序显式化。
 
-### Remove concurrency limits instead
+### 改为移除并发限制
 
-Rejected. Admission limits remain necessary for tools and subprocesses; they
-do not solve the independent control-pipe dependency on dynamic blocking-pool
-workers.
+已拒绝。准入限制对工具与子进程仍是必要的；它们解决不了控制管道对动态阻
+塞池 worker 的独立依赖。
 
-## References
+## 参考
 
 - `crates/host-core/src/rpc/mod.rs`
 - `crates/host-core/src/tools/shell.rs`
@@ -74,4 +67,4 @@ workers.
 - `docs/spec/03-runtime/06-host-rpc-protocol.md`
 - `docs/spec/03-runtime/07-process-model.md`
 - `docs/spec/06-delivery/04-e2e-test-plan.md`
-- Decision D187
+- 决定 D187

@@ -1,49 +1,46 @@
-# ADR 0176: Per-provider User-Agent override
+# ADR 0176: 按 provider 覆盖 User-Agent
 
-- Status: Accepted
-- Date: 2026-09-07
-- Deciders: PI-Desktop core
-- Amends ADR 0095 / ADR 0156
+- 状态：已接受
+- 日期：2026-09-07
+- 决策者：PI-Desktop 核心团队
+- 修订 ADR 0095 / ADR 0156
 
-## Context
+## 背景
 
-Some gateways and vendor subscriptions inspect `User-Agent`. pi-ai stamps
-`pi (<platform> …)`, Anthropic OAuth inference sends `claude-cli/<version>`,
-OpenCode Go sends `pi-desktop/<APP_VERSION>`, and Codex overwrites User-Agent
-after extra headers. Settings had no way to set a per-row value. The provider
-schema listed a `headers` map that was never implemented.
+一些网关和厂商订阅会检查 `User-Agent`。pi-ai 会标记 `pi (<platform> …)`，
+Anthropic OAuth 推理发送 `claude-cli/<version>`，OpenCode Go 发送
+`pi-desktop/<APP_VERSION>`，而 Codex 会在额外头之后覆盖 User-Agent。
+设置中没有办法按行设置该值。provider schema 列出了一个从未实现的
+`headers` map。
 
-## Decision
+## 决策
 
-Each provider row — API-key AI service and OAuth vendor account — may store
-an optional `userAgent` in `config_json.userAgent`.
+每个 provider 行——API 密钥 AI 服务和 OAuth 厂商账户——可以在
+`config_json.userAgent` 中存储可选的 `userAgent`。
 
-- Empty or omitted keeps today's adapter default.
-- A non-empty trimmed value is sent as `User-Agent` on that row's outbound
-  HTTP: session turns, builtin subagents, prompt enhancement, plugin
-  one-shots, `/models` discovery (including an unsaved form value), connection
-  tests, and OAuth token refresh.
-- A fetch wrapper is the last writer so Codex and the Anthropic SDK cannot
-  overwrite it. The same value is also placed on pi-ai stream-option headers
-  so OpenCode's caller-wins rule stays true.
-- Update with `""` clears the override. Max 256 bytes; CR/LF are rejected.
-- Not a secret. No SQLite or host-protocol version bump.
-- UI lives in Advanced on the AI-service dialog (named and custom) and the
-  vendor-account editor. First OAuth login does not collect a User-Agent; it
-  is edited after the account exists.
-- `AgentRuntime.matches()` includes `userAgent` so editing it rebuilds the
-  warm runtime.
-- The unused `headers` map stays unimplemented. If added later, `userAgent`
-  remains the UI alias and wins over `headers["User-Agent"]`.
-  **Superseded by ADR 0178:** `config_json.headers` is the supported override;
-  leftover `userAgent` migrates into `headers["User-Agent"]`.
+- 为空或省略时保持现今的适配器默认值。
+- 非空的修剪后值会作为 `User-Agent` 发送到该行的出站 HTTP：会话轮次、
+  内置子 agent、prompt 增强、插件一次性调用、`/models` 发现（包括未
+  保存的表单值）、连接测试和 OAuth 令牌刷新。
+- fetch 包装器是最后写入者，使 Codex 和 Anthropic SDK 无法覆盖它。同样
+  的值也会放在 pi-ai 的 stream-option 头上，使 OpenCode 的"调用方优先"
+  规则保持成立。
+- 用 `""` 更新会清除覆盖。最大 256 字节；拒绝 CR/LF。
+- 不是密钥。不提升 SQLite 或宿主协议版本。
+- UI 位于 AI 服务对话框（命名和自定义）以及厂商账户编辑器的高级区域。
+  首次 OAuth 登录不收集 User-Agent；它在账户创建之后编辑。
+- `AgentRuntime.matches()` 包含 `userAgent`，因此编辑它会重建预热运行时。
+- 未使用的 `headers` map 保持未实现。如果以后添加，`userAgent` 仍是 UI
+  别名，并优先于 `headers["User-Agent"]`。
+  **已被 ADR 0178 取代：** `config_json.headers` 是受支持的覆盖方式；
+  遗留的 `userAgent` 迁移到 `headers["User-Agent"]`。
 
-Overriding Anthropic OAuth's `claude-cli/…` User-Agent can make Claude
-Pro/Max reject the request. That is the user's choice.
+覆盖 Anthropic OAuth 的 `claude-cli/…` User-Agent 可能导致 Claude
+Pro/Max 拒绝请求。这是用户自己的选择。
 
-## Consequences
+## 后果
 
-- Users can impersonate another client per service or account without a
-  global User-Agent or a full custom-header editor.
-- OAuth login HTTP uses the row value only after it is saved; first-login
-  traffic keeps pi-ai defaults.
+- 用户可以按服务或账户伪装成另一个客户端，而无需全局 User-Agent 或
+  完整的自定义头编辑器。
+- OAuth 登录 HTTP 只在该行保存之后才使用行值；首次登录流量保持 pi-ai
+  默认值。

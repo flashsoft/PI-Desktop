@@ -1,50 +1,44 @@
-# ADR 0143: Make Session Titles User-Renamable
+# ADR 0143: 会话标题可由用户重命名
 
 - Status: Accepted
 - Date: 2026-09-01
 
-## Context
+## 背景
 
-Tasks are durable sessions, but their labels are currently controlled by the
-default title and first-prompt auto-title flow. Once a task has accumulated
-history, users need a stable label that is easier to recognize in the sidebar,
-Project archive, topbar, and search results. Issue #27 requests renaming a
-project task without changing the task itself.
+任务是持久的会话，但它们的标签目前由默认标题和首条提示词自动命名
+流程控制。一旦一个任务积累了历史，用户就需要一个稳定的标签，以便
+在侧边栏、项目归档、顶栏和搜索结果中更容易识别。Issue #27 请求在
+不改变任务本身的情况下重命名项目任务。
 
-## Decision
+## 决策
 
-Treat a task name as session metadata and expose one shared rename dialog. The
-dialog is available from the Sidebar session overflow/right-click menu and from
-the Project archive task row. It trims input, accepts 1–80 Unicode code points,
-and keeps the Save action unavailable for an empty value. The host validates the
-same rules so direct IPC callers cannot persist invalid titles.
+把任务名称视为会话元数据，并暴露一个共享的重命名对话框。该对话框
+可从侧边栏会话溢出/右键菜单和项目归档任务行进入。它修剪输入，接受
+1–80 个 Unicode 码点，并在值为空时保持 Save 操作不可用。宿主校验
+相同的规则，使直接 IPC 调用方无法持久化无效标题。
 
-Renaming updates only `sessions.title`. It does not modify the transcript,
-message count, project binding, empty-session predicate, or `updated_at` activity
-timestamp. A non-default title continues to opt out of first-prompt automatic
-title generation. Existing `session.rename` IPC and host RPC channels are used;
-no schema or protocol version change is required.
+重命名只更新 `sessions.title`。它不修改 transcript、消息计数、项目
+绑定、空会话谓词或 `updated_at` 活动时间戳。非默认标题继续退出首条
+提示词自动命名。使用既有的 `session.rename` IPC 和宿主 RPC 通道；
+不需要 schema 或协议版本变更。
 
-Historical notification title snapshots remain unchanged. Newly rendered
-surfaces read the current session summary, so the renamed title is shown in the
-Sidebar, topbar, Project archive, and search results after the local store
-update and across restart.
+历史通知标题快照保持不变。新渲染的界面读取当前会话摘要，因此重命名
+后的标题在本地 store 更新后、以及跨重启，都会显示在侧边栏、顶栏、
+项目归档和搜索结果中。
 
-## Consequences
+## 后果
 
-- Users can name a task from both primary task navigation and the project index.
-- Host-side validation provides one durable contract for renderer and future
-  clients.
-- Renaming cannot accidentally move a task in recent-activity order or alter
-  agent context.
-- The renderer owns modal focus, error presentation, and the immediate local
-  title update after the host confirms the session exists.
+- 用户可以从主要的任务导航和项目索引两处为任务命名。
+- 宿主侧校验为渲染进程和未来的客户端提供一份持久的契约。
+- 重命名不会意外地在最近活动顺序中移动任务或改变 agent 上下文。
+- 渲染进程持有模态焦点、错误呈现，以及在宿主确认会话存在后的即时
+  本地标题更新。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- Rename only from the topbar: rejected because the task can be discovered and
-  managed from the Sidebar or Project archive before opening it.
-- Rename the project folder or project record: rejected because the request is
-  about an individual task/session, not the workspace identity.
-- Add a command-palette command: deferred; the existing row actions are the
-  discoverable surface and no new global command is needed for this operation.
+- 只从顶栏重命名：否决，因为任务可以在打开之前从侧边栏或项目归档
+  被发现和管理。
+- 重命名项目文件夹或项目记录：否决，因为该请求针对的是单个任务/
+  会话，而不是工作区身份。
+- 新增命令面板命令：暂缓；既有的行操作就是可发现的界面，此操作不
+  需要新的全局命令。

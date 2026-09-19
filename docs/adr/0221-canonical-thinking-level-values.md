@@ -1,4 +1,4 @@
-# ADR 0221: Render Canonical Thinking-Level Values Without Translation
+# ADR 0221: 思考级别规范值不做翻译直接渲染
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -9,33 +9,28 @@
 
 ## Context
 
-Thinking levels are protocol values shared by provider bindings, session
-configuration, runtime results, and model metadata. The renderer translated
-the same values in the Composer, model configuration, and delegation cards,
-which made a stable technical value vary with the selected application locale.
+思考级别是 provider 绑定、会话配置、运行时结果和模型元数据共享的协
+议值。渲染进程此前在 Composer、模型配置和委托卡片中翻译这些相同的
+值，这使得一个稳定的技术值随所选应用语言而变化。
 
 ## Decision
 
-1. Composer, model-configuration, and delegation surfaces render the
-   canonical values `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
-   `max` as-is.
-2. The thinking-level values are not locale catalog entries. The existing
-   localized labels for these values are removed from every shipped catalog.
-3. `off` and `omit` remain omitted from delegation captions as specified by
-   ADR 0202. This amendment changes presentation only; effective metadata,
-   clamping, provider requests, protocol, and storage are unchanged.
+1. Composer、模型配置和委托界面按原样渲染规范值 `off`、`minimal`、
+   `low`、`medium`、`high`、`xhigh` 和 `max`。
+2. 思考级别值不是 locale 目录条目。这些值现有的本地化标签从每个已
+   交付的目录中移除。
+3. `off` 和 `omit` 按照 ADR 0202 的规定继续在委托说明中省略。本修
+   订只改变呈现；生效元数据、钳制、provider 请求、协议和存储不变。
 
 ## Consequences
 
-Users see the same unambiguous value in every locale, and provider/runtime
-terminology remains easy to compare with configuration and diagnostics. The
-values are intentionally lower-case because that is their canonical wire and
-storage representation.
+用户在每种语言下都看到同样无歧义的值，provider/运行时术语也保持易
+于与配置和诊断对照。这些值有意保持小写，因为那是它们在传输和存储
+中的规范表示。
 
 ## Verification
 
-`apps/desktop/test/thinking-ui.test.mjs` verifies that the renderer does not
-ask i18n for thinking-level labels and renders the values directly.
-`packages/i18n/test/catalogs.test.mjs` verifies that the removed thinking-level
-keys are absent from every shipped catalog. E2E-219 covers live, narrow-layout,
-and restored delegation presentation.
+`apps/desktop/test/thinking-ui.test.mjs` 验证渲染进程不向 i18n 请求思
+考级别标签，而是直接渲染这些值。`packages/i18n/test/catalogs.test.mjs`
+验证被移除的思考级别键在每个已交付的目录中都不存在。E2E-219 覆盖实
+时、窄布局和恢复的委托呈现。

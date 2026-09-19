@@ -1,66 +1,58 @@
-# ADR turn-process-and-thinking-display: Turn process and thinking presentation
+# ADR turn-process-and-thinking-display: 轮次过程与思考呈现
 
-- Status: Accepted
-- Date: 2026-09-17
-- Issues: #510, #461
-- Amends: D071, [ADR 0242](0242-delta-only-streaming-updates.md)
+- 状态：已接受
+- 日期：2026-09-17
+- Issues：#510、#461
+- 修订：D071、[ADR 0242](0242-delta-only-streaming-updates.md)
 
-## Context
+## 背景
 
-A model can alternate reasoning, tool calls and progress text many times before
-answering one user request. Separate activity groups leave those progress
-messages at the same visual level as the answer. Some readers also need a
-thinking indicator without rapidly changing reasoning text.
+一个模型在回答一个用户请求之前，可能在推理、工具调用和进度文本之间
+交替多次。独立的活动组把这些进度消息留在与回答相同的视觉层级上。
+一些读者也需要一个没有快速变化推理文本的思考指示器。
 
-## Decision
+## 决策
 
-The renderer projects each existing assistant-turn entry into one process
-area and its trailing answer. Thinking, tools and intermediate assistant text
-keep their original order inside the process. A trailing assistant text stays
-visible while streaming; if a later tool or thinking block follows, that text
-belongs to the process. There is no semantic final-answer marker in UiMessage,
-so the renderer does not guess intent from the wording. User/system messages
-and compaction dividers retain their existing turn boundaries.
+渲染进程把每个现有的 assistant 轮次条目投影为一个过程区域和它末尾的
+回答。思考、工具和中间的 assistant 文本在过程内保持原始顺序。流式期间
+末尾的 assistant 文本保持可见；如果之后跟着另一个工具或思考块，那段
+文本就属于过程。UiMessage 中没有语义上的最终回答标记，因此渲染进程
+不从措辞猜测意图。用户/系统消息和压缩分隔符保留其现有的轮次边界。
 
-Completed process areas start collapsed. Detailed mode opens the active
-process automatically and retains the existing thinking-row disclosures.
-Manual disclosure choices survive streaming and completion. Search navigation
-opens the containing process. Tool failures open an unclaimed active process so the
-invocation error stays visible; that does not mark the whole turn as failed.
-Assistant errors and stopped trailing partial answers stay outside the process.
-Tool/delegation detail controls, permission cards, and transcript actions retain
-their existing behavior.
+已完成的过程区域初始折叠。详细模式自动打开活跃过程，并保留现有的
+思考行披露。手动的披露选择在流式和完成后存活。搜索导航打开包含它的
+过程。工具失败会打开一个未被认领的活跃过程，使调用错误保持可见；这
+不会把整个轮次标记为失败。assistant 错误和已停止的末尾部分回答留在
+过程之外。工具/委派详情控件、权限卡和转录操作保留其现有行为。
 
-Settings → AI → Defaults includes `thinkingDisplayMode`, an optional
-`detailed | compact` AppSettings field. Absent or unrecognized values display
-as detailed. Compact mode renders no reasoning text or excerpt: while a
-thinking-only message streams it shows a status indicator, and when reasoning
-ends the thinking row disappears. Answer text ends that indicator even while
-the assistant message is still streaming. A completed thinking-only process
-leaves no empty header. Tool rows and progress text remain expandable.
-Changing the setting updates mounted history and nested thinking rows.
+设置 → AI → 默认值 包含 `thinkingDisplayMode`，一个可选的
+`detailed | compact` AppSettings 字段。缺失或无法识别的值按详细显示。
+紧凑模式不渲染任何推理文本或摘录：当一条只有思考的消息在流式时它
+显示一个状态指示器，推理结束时思考行消失。回答文本会结束该指示器，
+即使 assistant 消息仍在流式。一个已完成、只有思考的过程不留下空头部。
+工具行和进度文本保持可展开。修改该设置会更新已挂载的历史和嵌套的
+思考行。
 
-The field uses the existing host-owned settings JSON; no database migration or
-schema/protocol version change is required. It does not alter provider thinking
-levels, runtime/model context, stored reasoning, export, permissions, or copy
-payloads. Process durations use message/tool timestamps and recorded durations;
-a live UI clock adds no persisted fields. Step counts include rendered thinking,
-tool and intermediate-text items and omit hidden compact-mode thinking.
+该字段使用现有的 host 所有设置 JSON；不需要数据库迁移或 schema/协议
+版本变更。它不改变 provider 思考级别、运行时/模型上下文、已存推理、
+导出、权限或复制负载。过程时长使用消息/工具时间戳和已记录的时长；
+实时 UI 时钟不增加持久化字段。步数统计包含已渲染的思考、工具和中间
+文本条目，并省略被紧凑模式隐藏的思考。
 
-## Consequences
+## 后果
 
-- One completed turn has one process disclosure plus its visible answer.
-- Reasoning remains available by switching back to detailed mode.
-- Unchanged activity groups keep their memoized boundary during text deltas;
-  the process wrapper does not move execution or persistence into the renderer.
-- This groups loaded transcript entries; it does not reconstruct history that
-  has not been loaded or join turns across compaction boundaries.
+- 一个已完成的轮次有一个过程披露加上它可见的回答。
+- 切回详细模式后推理仍然可用。
+- 未变化的活动组在文本 delta 期间保留其 memoized 边界；过程包装器不会
+  把执行或持久化移入渲染进程。
+- 这只分组已加载的转录条目；它不重建尚未加载的历史，也不跨压缩边界
+  合并轮次。
 
-## Validation
+## 验证
 
-`turn-process.test.mjs` covers projection, timing, partial/error answers and
-legacy settings. `test:e2e:transcript` exercises real React/Chromium disclosure,
-streaming, search, mode selection, mounted-history updates and the existing
-100-group render boundary. `test:e2e:transcript-disclosure` retains the scroll
-anchor gate; `test:e2e:theme-surfaces` checks the surrounding theme controls.
-See E2E-CHAT-turn-process-and-thinking-display.
+`turn-process.test.mjs` 覆盖投影、计时、部分/错误回答和旧设置。
+`test:e2e:transcript` 在真实 React/Chromium 下覆盖披露、流式、搜索、
+模式选择、已挂载历史更新和现有的 100 组渲染边界。
+`test:e2e:transcript-disclosure` 保留滚动锚定闸门；
+`test:e2e:theme-surfaces` 检查周边的主题控件。见
+E2E-CHAT-turn-process-and-thinking-display。

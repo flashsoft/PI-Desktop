@@ -1,82 +1,73 @@
-# ADR 0164: Parent agents collaborate across conversations
+# ADR 0164: 父级 agent 跨会话协作
 
-- Status: Superseded by ADR 0165
-- Date: 2026-09-05
-- Deciders: PI-Desktop core
-- Related: D321, D318, ADR 0147, ADR 0162, ADR 0062,
-  `03-runtime/02-agent-runtime.md` §5f.2,
-  `03-runtime/06-host-rpc-protocol.md` §4, E2E-165d
-- Amends: ADR 0147 (parent must not call `A2A`) and ADR 0162 (no messaging
-  with the parent). Subagent sibling coordination is unchanged.
+- 状态：已被 ADR 0165 取代
+- 日期：2026-09-05
+- 决策者：PI-Desktop 核心团队
+- 相关：D321、D318、ADR 0147、ADR 0162、ADR 0062、
+  `03-runtime/02-agent-runtime.md` §5f.2、
+  `03-runtime/06-host-rpc-protocol.md` §4、E2E-165d
+- 修订：ADR 0147（父级不得调用 `A2A`）和 ADR 0162（不得与父级通信）。
+  子 agent 同级协调保持不变。
 
-## Context
+## 背景
 
-ADR 0147 kept the `A2A` tool out of the parent catalog so the parent could not
-open a second, weaker channel to its own delegates. ADR 0162 then let
-subagents address peers in other sessions, but still not the parent.
+ADR 0147 将 `A2A` 工具排除在父级目录之外，使父级无法为自己的委托打开
+第二条更弱的通道。ADR 0162 随后允许子 agent 寻址其他会话中的 peer，
+但仍不能寻址父级。
 
-That split does not match how users collaborate: they want two conversations
-in the sidebar to coordinate, not two nested workers. The parent is the
-session's only agent that already has the user's context. Asking the user to
-spawn a `discussant` in each chat just to pass a note is the wrong seam.
+这种划分不符合用户的协作方式：用户希望侧边栏中的两个会话进行协调，
+而不是两个嵌套的 worker。父级是会话中唯一已拥有用户上下文的 agent。
+仅仅为了传递一条便签就要求用户在每个聊天中生成一个 `discussant`，是
+错误的接缝。
 
-The broker is already process-global. Each session runtime already lives in
-the sidecar map after the first prompt. The missing piece is that the parent
-never registers as an A2A client.
+broker 已经是进程全局的。每个会话运行时在第一次 prompt 之后就已经
+位于 sidecar map 中。缺失的部分是父级从未注册为 A2A 客户端。
 
-The remaining hazard is the original one: if the parent can address its own
-subagents, `Task`'s brief and report boundary collapses.
+剩余的风险是最初的那个：如果父级可以寻址自己的子 agent，`Task` 的
+brief 与 report 边界就会崩塌。
 
-## Decision
+## 决策
 
-1. **Each Agent-mode session runtime registers a parent A2A agent** for its
-   lifetime (first prompt through dispose). The card uses `kind: "parent"`,
-   name `parent` (host-uniquified to `parent-2`, …), and a description that
-   carries the session title. Plan/Goal runtimes do not register.
-2. **`A2A` is a core Agent-mode parent tool**, present in the catalog from
-   runtime construction — not after broker register. The first call (or the
-   first prompt) mints the token. It stays out of Plan/Goal.
-3. **Kinds do not mix.** Agent cards carry `kind: "parent" | "subagent"`
-   (default `subagent`). `a2a.agents.list` and recipient resolution only
-   consider the caller's kind. A parent cannot send to a subagent; a
-   subagent cannot send to a parent. Same-session parent-to-delegate
-   backchannel is therefore impossible.
-4. **Inbound notes join the next parent turn.** Events addressed to the
-   parent queue on its peer id. A parent that called `A2A(wait)` wakes as
-   today. If the parent is idle, the next `prompt()` prepends a short A2A
-   inbox to the user text so the model sees the other conversation's note
-   without a separate auto-started turn.
-5. **Reachability is runtime-lifetime.** A conversation is discoverable after
-   it has an Agent runtime this process (after the first agent prompt) and
-   until that runtime is disposed. Sidebar rows with no live runtime are not
-   in the registry.
+1. **每个 Agent 模式的会话运行时在其生命周期内注册一个父级 A2A
+   agent**（从第一次 prompt 到 dispose）。卡片使用 `kind: "parent"`、
+   名字 `parent`（宿主唯一化为 `parent-2`……），描述中携带会话标题。
+   Plan/Goal 运行时不注册。
+2. **`A2A` 是 Agent 模式的核心父级工具**，从运行时构造起就存在于目录
+   中——而不是在 broker 注册之后。首次调用（或首次 prompt）铸造 token。
+   它仍然不进入 Plan/Goal。
+3. **kind 之间不互通。** Agent 卡片携带 `kind: "parent" | "subagent"`
+   （默认 `subagent`）。`a2a.agents.list` 和接收方解析只考虑调用方的
+   kind。父级不能向子 agent 发送；子 agent 不能向父级发送。因此同会话
+   的父级到委托后门通道是不可能的。
+4. **入站便签并入下一轮父级轮次。** 发送给父级的事件按其 peer id
+   排队。调用过 `A2A(wait)` 的父级如现今一样被唤醒。如果父级空闲，
+   下一次 `prompt()` 会在用户文本前附加一段简短的 A2A 收件箱，使模型
+   无需单独自动开启轮次即可看到另一个会话的便签。
+5. **可达性以运行时生命周期为准。** 会话在本进程中拥有 Agent 运行时
+   之后（即第一个 agent prompt 之后）可被发现，直到该运行时被 dispose。
+   没有存活运行时的侧边栏行不在注册表中。
 
-Unchanged: capability tokens, counterpart event routing,
-`recipientContextId` delivery, parent still uses `Task*` for its own
-delegates, no remote A2A, no nested delegation.
+不变项：capability token、对方事件路由、`recipientContextId` 投递、
+父级仍对其委托使用 `Task*`、无远程 A2A、无嵌套委托。
 
-## Consequences
+## 后果
 
-- Two Agent conversations on the same host can `discover` / `send` / `wait`
-  / `complete` with each other.
-- A parent that omits `to` addresses the unique other live parent, or
-  `A2A_NO_PEERS` when several exist — same rule ADR 0162 used for remote
-  subagents.
-- Subagent A2A no longer lists parent cards, so a roundtable cannot page
-  the user through A2A.
-- An idle conversation does not start a provider turn on inbound A2A; the
-  note waits for the user's next message in that session.
-- Not addressed: auto-waking an idle conversation, addressing a session
-  that has never run this process, and parent-to-foreign-subagent.
+- 同一宿主上的两个 Agent 会话可以互相 `discover` / `send` / `wait` /
+  `complete`。
+- 省略 `to` 的父级会寻址唯一存活的另一个父级，存在多个时返回
+  `A2A_NO_PEERS`——与 ADR 0162 对远程子 agent 使用的规则相同。
+- 子 agent A2A 不再列出父级卡片，因此圆桌无法通过 A2A 呼叫用户。
+- 空闲会话不会因入站 A2A 启动 provider 轮次；便签等待用户在该会话中
+  的下一条消息。
+- 未解决：自动唤醒空闲会话、寻址本进程从未运行过的会话，以及父级到
+  外部子 agent。
 
-## Alternatives considered
+## 已考虑的替代方案
 
-- **Keep parent A2A-less; users spawn discussants:** rejected. That is not
-  cross-conversation collaboration; it is nested worker coordination the
-  user did not ask for.
-- **Let parents address every live agent:** rejected. It reopens the
-  parent→own-delegate backchannel ADR 0147 closed.
-- **Auto-start a turn in the idle session:** rejected for this change.
-  It spends a provider request the user did not send and needs a durable
-  host turn the sidecar cannot mint. Inbox-on-next-prompt is enough to
-  collaborate once both conversations are in use.
+- **保持父级无 A2A；由用户生成 discussant：** 否决。这不是跨会话协作，
+  而是用户并未要求的嵌套 worker 协调。
+- **允许父级寻址所有存活 agent：** 否决。这会重新打开 ADR 0147 关闭
+  的父级→自有委托后门通道。
+- **在空闲会话中自动开启轮次：** 本次改动予以否决。这会花费用户并未
+  发送的 provider 请求，且需要一个 sidecar 无法铸造的持久宿主轮次。
+  当两个会话都在使用时，"下次 prompt 附带收件箱"已足以协作。

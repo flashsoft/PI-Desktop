@@ -1,62 +1,53 @@
-# ADR 0294: Project archive is a list + inspector workbench
+# ADR 0294: 项目归档是列表 + 检查器工作台
 
-- Status: Accepted
-- Date: 2026-09-20
-- Decision: D455
-- Amends: D267 / D168 (row anatomy and inline expansion)
-- Related: D133 (archive always visible), D257 (capability workbench),
-  [04-ux/06-settings-ia.md](../spec/04-ux/06-settings-ia.md),
+- 状态：已接受
+- 日期：2026-09-20
+- 决策：D455
+- 修订：D267 / D168（行结构与内联展开）
+- 相关：D133（归档始终可见）、D257（能力工作台）、
+  [04-ux/06-settings-ia.md](../spec/04-ux/06-settings-ia.md)、
   [06-delivery/04-e2e-test-plan.md](../spec/06-delivery/04-e2e-test-plan.md)
-  (E2E-038)
+  （E2E-038）
 
-## Context
+## 背景
 
-D267 collapsed Project archive to one workbench: a quiet intro, one toolbar,
-and one panel whose Pinned / All projects / Archived groups were in-panel
-strips. Each row still carried a disclosure control, two lines of metadata,
-state tags, a hover action pair, and an inline session list. Adding more
-projects made the destination hard to scan: expanding one row pushed the rest
-of the index, and clicking a name activated the project and left Settings.
+D267 把项目归档收拢为一个工作台：一段安静的引言、一条工具栏，以及一个
+面板，其中置顶 / 全部项目 / 已归档分组是面板内的条带。每行仍带一个展开
+控件、两行元数据、状态标签、一对悬停动作和一个内联会话列表。项目变多后，
+这个目的地难以扫读：展开一行会推挤索引的其余部分，而点击名称会激活项目
+并离开设置。
 
-The durable index is a management surface. Selecting a project to inspect it
-must not leave the page.
+持久索引是一个管理界面。选中一个项目来查看它，绝不能离开该页面。
 
-## Decision
+## 决策
 
-1. **Keep the intro and toolbar.** One description line, Recent/Name sort,
-   search with a live match count, and Add project. No hero, gradient, or
-   page-level counters (D267).
-2. **Replace the single expanding list with a list + inspector.** The index
-   keeps Pinned / All projects / Archived as labelled regions with per-section
-   counts. Compact rows show the color glyph (Star when pinned, Folder
-   otherwise), name, one status tag (Active / Open / Archived), session count,
-   and relative time. Empty groups are omitted.
-3. **Click selects; activation is explicit.** A click (or ArrowUp/ArrowDown)
-   selects the row and keeps Settings open. Double-click, Enter, or the
-   inspector Open action activates the project and returns to chat. Archive and
-   close still keep Project archive open.
-4. **The inspector owns management, in one column.** Folders, chats (latest
-   first, batches of eight), New task, and the existing menu (instructions,
-   memory, edit, pin, archive/restore, two-step delete, close) open under the
-   selected row at full content width. There is no side-by-side pane. Archived
-   records stay grouped and visible; there is still no visibility toggle (D133).
-5. **Search still matches session titles.** A session-title hit keeps the
-   owning project in the index, selects it, and lists the matching chats in
-   the inspector.
-6. **Presentation only.** No IPC, storage, host protocol, or activation
-   semantics change beyond the click-vs-activate split on this destination.
+1. **保留引言和工具栏。** 一行描述、最近/名称排序、带实时匹配计数的搜索，
+   以及添加项目。无 hero、渐变或页面级计数器（D267）。
+2. **用列表 + 检查器取代单一可展开列表。** 索引保留置顶 / 全部项目 /
+   已归档作为带标签的区域，各有分节计数。紧凑行显示颜色图标（置顶时为
+   Star，否则为 Folder）、名称、一个状态标签（活跃 / 打开 / 已归档）、
+   会话数和相对时间。空分组省略。
+3. **点击是选中；激活是显式动作。** 单击（或 ArrowUp/ArrowDown）选中该行
+   并保持设置打开。双击、Enter 或检查器中的打开动作激活项目并返回聊天。
+   归档和关闭仍保持项目归档打开。
+4. **检查器在单列中拥有管理功能。** 文件夹、聊天（最新在前，每批八个）、
+   新任务，以及现有菜单（指令、记忆、编辑、置顶、归档/恢复、两步删除、
+   关闭）在所选行下方以全内容宽度打开。没有并排窗格。已归档记录保持
+   分组且可见；仍然没有可见性开关（D133）。
+5. **搜索仍匹配会话标题。** 命中会话标题会把所属项目保留在索引中、选中
+   它，并在检查器中列出匹配的聊天。
+6. **仅呈现层改动。** 除该目的地上点击与激活的拆分之外，无 IPC、存储、
+   宿主协议或激活语义变更。
 
-## Consequences
+## 后果
 
-- Compact rows stay scannable; only the selected project opens its full-width detail.
-- A single click no longer leaves Settings, which is the management path; the
-  chat path is Open / double-click / Enter / opening a session.
-- Source-contract tests for the archive destination now cover the workbench
-  and the extracted `project-archive` helpers.
+- 紧凑行保持可扫读；只有选中的项目打开其全宽详情。
+- 单击不再离开设置——这是管理路径；聊天路径是打开 / 双击 / Enter /
+  打开一个会话。
+- 归档目的地的源码契约测试现在覆盖工作台和抽取出的 `project-archive`
+  辅助函数。
 
-## Alternatives
+## 替代方案
 
-- Keep inline expansion and add a density toggle. Rejected: the row still
-  dumps every action onto the index.
-- Hide archived records behind a filter. Rejected: D133 forbids a visibility
-  toggle on this destination.
+- 保留内联展开并增加密度切换。被拒绝：行仍然把所有动作都堆到索引上。
+- 把已归档记录藏在过滤器后面。被拒绝：D133 禁止该目的地出现可见性开关。

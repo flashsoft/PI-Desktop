@@ -1,4 +1,4 @@
-# ADR 0206: Extend provider retries and show bounded progress
+# ADR 0206: 扩展 provider 重试并显示有界进度
 
 - Status: Accepted
 - Date: 2026-09-10
@@ -7,65 +7,56 @@
 
 ## Context
 
-PI-Desktop already owns provider retries so request setup and mid-stream
-failures share one counter and pi-ai does not multiply attempts through a
-nested retry loop. The current budgets of five rate-limit retries and four
-other transient retries still surface short provider outages earlier than the
-product's target behavior. The active-turn row also shows only the retry
-number, so it does not tell the user how long the current wait is or where the
-retry sits in the budget.
+PI-Desktop 已经拥有 provider 重试，因此请求建立阶段和流中途的失败共享
+同一个计数器，pi-ai 不会通过嵌套重试循环放大尝试次数。当前五次速率
+限制重试和四次其他瞬时重试的预算，仍然会比产品目标行为更早地把短暂
+的 provider 故障暴露给用户。活动轮次行也只显示重试次数，因此无法告
+诉用户当前等待还有多久，或这次重试在预算中处于什么位置。
 
 ## Decision
 
-1. `PROVIDER_RATE_LIMITED` and the admitted non-429 transient provider errors
-   each receive a shared budget of ten retries after the initial provider
-   attempt. Setup and stream failures continue to draw from the same budget
-   within their class, for at most eleven provider attempts. The two classes
-   remain separate.
-2. `PROVIDER_RETRY_MAX_RETRIES` in `packages/shared` is the single budget
-   constant used by the runtime and renderer. The main session, builtin
-   subagents, and one-shot composer enhancement continue to use the same retry
-   budgets and classifications. pi-ai's nested retry remains disabled.
-3. Delay behavior is unchanged except that the non-429 schedule remains at its
-   8-second cap for retries after the first four waits. Provider headers, the
-   30-second 429 cap, abortability, failed-request-only replay, and terminal
-   diagnostics remain as defined by ADR 0091 and ADR 0128.
-4. The active-turn retry status uses the current `retryDelayMs` and `since` to
-   render a whole-second countdown and shows the shared budget, for example
-   `Retrying in 0s · attempt 9/10`. It remains a compact status row and does
-   not create intermediate transcript errors.
-5. Authentication, model-selection, malformed-request, context, mutation,
-   compaction, and other non-provider recovery policies are unchanged.
+1. `PROVIDER_RATE_LIMITED` 和被接纳的非 429 瞬时 provider 错误，各自
+   在首次 provider 尝试之后获得十次重试的共享预算。建立阶段和流失败
+   继续在各自类别内从同一预算中扣减，provider 尝试至多十一次。两个
+   类别保持分离。
+2. `packages/shared` 中的 `PROVIDER_RETRY_MAX_RETRIES` 是运行时和渲染
+   进程使用的唯一预算常量。主会话、内置 subagent 和一次性 composer
+   增强继续使用相同的重试预算和分类。pi-ai 的嵌套重试保持禁用。
+3. 延迟行为不变，除了非 429 的计划表在头四次等待之后的重试保持其
+   8 秒上限。provider 响应头、30 秒 429 上限、可中止性、仅失败请求
+   重放和终止诊断保持 ADR 0091 和 ADR 0128 所定义的行为。
+4. 活动轮次的重试状态使用当前的 `retryDelayMs` 和 `since` 渲染整秒
+   倒计时，并显示共享预算，例如 `Retrying in 0s · attempt 9/10`。它
+   仍然是紧凑的状态行，不会产生中间的 transcript 错误。
+5. 认证、模型选择、格式错误请求、上下文、变更、压缩和其他非
+   provider 的恢复策略不变。
 
 ## Consequences
 
-- Short provider outages can recover through a longer, still bounded same-turn
-  window without duplicating assistant messages or lifecycle errors.
-- Persistent provider failures take longer to surface, but remain abortable and
-  end with one structured terminal error after the retry budget is exhausted.
-- Users can see the active wait and the retry budget in the same status row,
-  including during the final retry.
-- No host protocol, storage schema, provider configuration, or nested SDK retry
-  behavior changes.
+- 短暂的 provider 故障可以在一个更长、仍有界的同轮次窗口内恢复，而
+  不会复制 assistant 消息或生命周期错误。
+- 持续性的 provider 故障需要更长时间才会浮出水面，但仍然可中止，并
+  在重试预算耗尽后以一条结构化的终止错误结束。
+- 用户可以在同一状态行中看到当前等待和重试预算，包括最后一次重试
+  期间。
+- 不改变宿主协议、存储 schema、provider 配置或嵌套 SDK 重试行为。
 
 ## Alternatives
 
-### Increase pi-ai's `maxRetries`
+### 增大 pi-ai 的 `maxRetries`
 
-Rejected because nested retries would multiply attempts, obscure phase sharing,
-and reintroduce provider-controlled sleeping outside the runtime's abortable
-policy.
+被拒绝，因为嵌套重试会放大尝试次数、模糊阶段共享，并重新引入运行
+时可中止策略之外由 provider 控制的休眠。
 
-### Use one budget for rate limits and other transient failures
+### 速率限制和其他瞬时失败共用一个预算
 
-Rejected because rate limits and upstream outages need different delay scales,
-and one class should not consume the other's recovery budget.
+被拒绝，因为速率限制和上游故障需要不同的延迟尺度，且一个类别不应
+消耗另一个类别的恢复预算。
 
-### Show only a fixed `/10` label
+### 只显示固定的 `/10` 标签
 
-Rejected because the status already carries the delay and start time needed for
-an accurate countdown; deriving the remaining seconds keeps the UI useful while
-waiting instead of showing stale information.
+被拒绝，因为状态已经携带了准确倒计时所需的延迟和开始时间；推导剩
+余秒数能让 UI 在等待期间保持有用，而不是显示过期信息。
 
 ## References
 

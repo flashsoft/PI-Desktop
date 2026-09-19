@@ -1,149 +1,127 @@
-# ADR 0030: Turn-boundary context checkpoint compaction
+# ADR 0030: turn 边界的上下文检查点压缩
 
-- Status: Accepted; soft-boundary, model-tool, and visibility clauses
-  superseded in part by ADR 0061, then partly restored by ADR 0064
-- Date: 2026-07-28
-- Last amended: 2026-08-06
-- Amended by: ADR 0049 (failure recovery), ADR 0061 (background compaction;
-  removes the soft-boundary nudge, the `CompactContext` tool, and the
-  visibility of compaction activity), ADR 0064 (Codex parity; compaction is
-  inline again, the model-facing tool and budget reminders return, and every
-  compaction is visible)
+- 状态: 已接受；软边界、模型工具和可见性条款部分被 ADR 0061 取代，
+  随后由 ADR 0064 部分恢复
+- 日期: 2026-07-28
+- 最近修订: 2026-08-06
+- 修订者: ADR 0049（失败恢复）、ADR 0061（后台压缩；移除软边界提醒、
+  `CompactContext` 工具和压缩活动的可见性）、ADR 0064（Codex 对齐；
+  压缩重新变为内联，面向模型的工具和预算提醒回归，每次压缩均可见）
 
-## Context
+## 背景
 
-A long pi agent run can contain many model/tool turns before `agent_end`.
-Compacting only between user prompts or after the run is already terminal does
-not protect the next provider request inside that loop. The observed Bedrock
-failure reached 1,077,172 tokens against a 1,000,000-token provider maximum,
-so the provider rejected the request before PI-Desktop had a recovery point.
+一个长 pi agent 运行在 `agent_end` 之前可能包含许多模型/工具 turn。
+只在用户提示之间或运行已经终止之后才做压缩，无法保护该循环内的下
+一次 provider 请求。观察到的 Bedrock 失败达到了 1,077,172 个 token，
+而 provider 上限是 1,000,000 个 token，因此 provider 在 PI-Desktop
+有恢复点之前就拒绝了请求。
 
-pi-agent-core already supplies session-context reconstruction, token
-estimation, cut-point selection, summary generation, retained-tail handling,
-and compaction records. It does not define PI-Desktop's renderer lifecycle,
-Rust-owned persistence, provider-headroom policy, or long-loop guard.
+pi-agent-core 已经提供会话上下文重建、token 估算、切点选择、摘要
+生成、保留尾部处理和压缩记录。它不定义 PI-Desktop 的渲染进程生命
+周期、Rust 拥有的持久化、provider 余量策略或长循环防护。
 
-OpenCode Dynamic Context Pruning (DCP), inspected at commit
-`85b6f5ceba144fee9e65eb28dc36cab1b960e418`, demonstrates useful behavioral
-patterns: evaluate context each turn, inject deduplicated guidance before the
-emergency boundary, and let the model request context management. It is an
-OpenCode plugin under AGPL-3.0, so directly linking or copying it would add an
-incompatible runtime and licensing boundary to PI-Desktop.
+在 commit `85b6f5ceba144fee9e65eb28dc36cab1b960e418` 处考察的
+OpenCode Dynamic Context Pruning (DCP) 展示了有用的行为模式：每个
+turn 评估上下文、在紧急边界之前注入去重后的指引、让模型请求上下文
+管理。它是 AGPL-3.0 下的 OpenCode 插件，因此直接链接或复制它会给
+PI-Desktop 引入不兼容的运行时和许可证边界。
 
-## Decision
+## 决策
 
-PI-Desktop uses pi-agent-core's public compaction primitives and independently
-implements the desktop-specific controller.
+PI-Desktop 使用 pi-agent-core 的公共压缩原语，并独立实现桌面端专属
+的控制器。
 
-- The controller runs after every `turn_end` and before pi starts another
-  provider request. `turn_end` is a model/tool-turn boundary; only `agent_end`
-  or `error` ends the overall desktop run.
-- Budgeting uses the pi-ai model context/output limits. Request headroom is at
-  least the configured reserve, the model output allowance capped at 25% of
-  context, or 5% of context. A configured reserve cannot consume more than
-  half the window. The retained-tail target cannot exceed half the remaining
-  hard budget, so small-window models remain compactable. *(ADR 0061 keeps
-  this headroom rule and derives the reserve and retention targets from the
-  model window instead of settings. ADR 0064 removes ADR 0061's background
-  limit and replaces the retained tail with recent user messages only, capped
-  at 20,000 tokens.)*
-- At the soft boundary, a transient system instruction asks the model to call
-  `CompactContext` with the active-task focus. It is eligible only after tool
-  turns and repeats at most once every three qualifying turns. The instruction
-  is not persisted and does not mutate the durable system prompt. *(Superseded
-  by ADR 0061: the soft boundary and this instruction are removed.)*
-- `CompactContext` bypasses the Rust tool/permission bridge because it changes
-  model context, not the workspace. Its call and result use normal tool events
-  and remain visible/durable as a tool activity row. The requested checkpoint
-  is generated only after that tool turn finishes, preserving provider-valid
-  call/result pairing. *(ADR 0061 removed the tool; ADR 0064 restores it as
-  `new_context` with these same semantics, and restores a transcript row —
-  a divider owned by the checkpoint rather than the tool's activity row.)*
-- At the hard boundary, the runtime generates a checkpoint deterministically.
-  The candidate context is re-estimated before persistence and again before
-  continuation. Automatic summary failure or an ineffective checkpoint first
-  attempts the retained-tail recovery defined by ADR 0049; if that recovery
-  cannot be prepared, durably appended, or brought below the safe budget, the
-  loop stops before another provider request with
-  `CONTEXT_COMPACTION_FAILED`. *(ADR 0061 keeps this path unchanged as the
-  safety net; under ADR 0064 it is again the only path.)*
-- A final tool-result batch is kept with its assistant tool-call carrier. If
-  that atomic batch exceeds the normal retained-tail target, the runtime lets
-  pi move the cut point to the carrier. If the batch itself reaches half the
-  hard budget, PI-Desktop creates a checkpoint-only bounded copy: each result
-  keeps its tool identity/error envelope and a fair share of head/tail text
-  with an explicit checkpoint-truncation marker, while duplicate diagnostic
-  details are omitted. The original durable messages and visible transcript
-  remain complete. The bounded copy is re-estimated before persistence and can
-  never authorize an oversized provider request.
-- An exact provider overflow is a final safety net. The failed assistant stays
-  visible for diagnosis but is removed from model context; the runtime creates
-  one checkpoint and retries the model request once. A second overflow is
-  terminal.
-- Automatic protection is enabled by default. Disabling it removes the model
-  tool and disables threshold and overflow recovery. Manual `/compact` remains
-  available for an idle session. *(ADR 0061 removes the user-facing switch:
-  protection is always on and persisted `enabled: false` values are ignored.)*
-- Protocol v6 adds a host-owned `session.appendCompaction` operation and
-  compaction lifecycle events. The host appends a typed checkpoint line to the
-  session JSONL file. Visible messages are never deleted, rewritten, or hidden
-  by context compaction.
-- Only the newest valid checkpoint rebuilds model context. Transcript rewrites
-  preserve it only while its boundary remains present. Forks copy and remap it
-  only when the fork includes that boundary.
+- 控制器在每个 `turn_end` 之后、pi 发起下一次 provider 请求之前
+  运行。`turn_end` 是模型/工具 turn 边界；只有 `agent_end` 或
+  `error` 结束整个桌面运行。
+- 预算使用 pi-ai 的模型上下文/输出上限。请求余量至少是配置的保留
+  量、上限为上下文 25% 的模型输出额度，或上下文的 5%。配置的保留
+  量不能消耗超过窗口的一半。保留尾部目标不能超过剩余硬预算的一半，
+  因此小窗口模型仍可压缩。*（ADR 0061 保留该余量规则，并从模型
+  窗口而非设置推导保留量和保留目标。ADR 0064 移除 ADR 0061 的后台
+  限制，并把保留尾部替换为仅最近的用户消息，上限 20,000 个
+  token。）*
+- 在软边界，一条瞬态系统指令要求模型以活跃任务焦点调用
+  `CompactContext`。它仅在工具 turn 之后才有资格，且每三个符合条件
+  的 turn 最多重复一次。该指令不持久化，也不改变持久的系统提示。
+  *（已被 ADR 0061 取代：软边界和该指令被移除。）*
+- `CompactContext` 绕过 Rust 工具/权限桥，因为它改变的是模型上下文
+  而不是 workspace。它的调用和结果使用正常的工具事件，并作为工具
+  活动行保持可见/持久。所请求的检查点只在该工具 turn 结束之后生成，
+  以保持 provider 合法的调用/结果配对。*（ADR 0061 移除了该工具；
+  ADR 0064 以 `new_context` 的名称按相同语义恢复它，并恢复一个
+  transcript 行——由检查点而非工具活动行拥有的分隔线。）*
+- 在硬边界，运行时确定性地生成检查点。候选上下文在持久化之前和
+  继续之前各重新估算一次。自动摘要失败或检查点无效时，首先尝试
+  ADR 0049 定义的保留尾部恢复；如果该恢复无法准备、无法持久追加
+  或无法降到安全预算以下，循环在下一次 provider 请求之前以
+  `CONTEXT_COMPACTION_FAILED` 停止。*（ADR 0061 保持该路径不变作为
+  安全网；在 ADR 0064 下它再次成为唯一路径。）*
+- 最后一批工具结果与其 assistant 工具调用载体一起保留。如果该
+  原子批次超过正常的保留尾部目标，运行时让 pi 把切点移到载体处。
+  如果该批次本身达到硬预算的一半，PI-Desktop 创建一个仅检查点的
+  有界副本：每个结果保留其工具身份/错误信封和公平份额的首尾文本，
+  并带显式的检查点截断标记，同时省略重复的诊断细节。原始持久消息
+  和可见 transcript 保持完整。有界副本在持久化前重新估算，永远不
+  会授权一个过大的 provider 请求。
+- 精确的 provider 溢出是最终安全网。失败的 assistant 保持可见以供
+  诊断，但从模型上下文中移除；运行时创建一个检查点并重试模型请求
+  一次。第二次溢出是终止性的。
+- 自动保护默认启用。禁用它将移除模型工具并禁用阈值和溢出恢复。
+  手动 `/compact` 在空闲会话中仍然可用。*（ADR 0061 移除了面向用户
+  的开关：保护始终开启，持久化的 `enabled: false` 值被忽略。）*
+- 协议 v6 新增宿主拥有的 `session.appendCompaction` 操作和压缩生命
+  周期事件。宿主向会话 JSONL 文件追加一条带类型的检查点行。可见
+  消息从不被上下文压缩删除、改写或隐藏。
+- 只有最新的有效检查点会重建模型上下文。Transcript 改写只在其
+  边界仍然存在时保留它。Fork 只在包含该边界时复制并重映射它。
 
-## Consequences
+## 后果
 
-- Long tool loops receive context checks at the only boundary that can protect
-  the next request without interrupting an active model or tool call.
-- The deterministic hard guard does not depend on the model obeying a reminder.
-- Restart and model changes retain compacted working context without changing
-  the human-readable conversation.
-- Compaction itself is one extra provider request and can fail. Automatic
-  failures have a deterministic, durable retained-tail recovery, while manual
-  compaction remains fail-fast; the lifecycle is explicit, abortable, and
-  surfaced through stable events/error codes.
-- A checkpoint may retain a shortened model-facing copy of an oversized atomic
-  tool-result batch. This is a loss of future model detail under pressure, but
-  it is explicit in context, preserves every call/result pair, and does not
-  alter the user-visible or diagnostic transcript.
-- Provider token accounting on retained assistant messages is cleared while
-  reconstructing a checkpoint, because that usage described the pre-compacted
-  request and would otherwise overcount the restored context.
-- OpenCode DCP updates do not flow into PI-Desktop automatically. Any future
-  behavioral adoption requires a fresh independent implementation review.
+- 长工具循环在唯一能保护下一次请求且不中断活跃模型或工具调用的
+  边界获得上下文检查。
+- 确定性的硬防护不依赖模型服从提醒。
+- 重启和模型变更保留压缩后的工作上下文，而不改变人类可读的会话。
+- 压缩本身是一次额外的 provider 请求，可能失败。自动失败有确定性、
+  持久的保留尾部恢复，而手动压缩保持快速失败；生命周期是显式的、
+  可中止的，并通过稳定的事件/错误码暴露。
+- 检查点可以保留一个超大原子工具结果批次的缩短的、面向模型的
+  副本。这是压力之下未来模型细节的损失，但它在上下文中是显式的，
+  保留每个调用/结果对，并且不改变用户可见或诊断用 transcript。
+- 重建检查点时，保留的 assistant 消息上的 provider token 计数被
+  清除，因为该用量描述的是压缩前的请求，否则会高估恢复后的上下文。
+- OpenCode DCP 的更新不会自动流入 PI-Desktop。任何未来的行为采纳
+  都需要重新进行独立的实现评审。
 
-## Alternatives
+## 备选方案
 
-### Integrate OpenCode DCP directly
+### 直接集成 OpenCode DCP
 
-Rejected because it targets OpenCode's plugin hooks and persistence model and
-is AGPL-3.0. PI-Desktop needs a Rust-host durability contract and pi-specific
-turn lifecycle, so an adapter would retain most of the implementation cost
-while adding license and upgrade coupling.
+否决，因为它面向 OpenCode 的插件钩子和持久化模型，并且是
+AGPL-3.0。PI-Desktop 需要 Rust 宿主的持久化契约和 pi 特定的 turn
+生命周期，因此适配器会保留大部分实现成本，同时增加许可证和升级
+耦合。
 
-### Use pi compaction only at `agent_end`
+### 只在 `agent_end` 使用 pi 压缩
 
-Rejected because no `agent_end` occurs between tool turns in one long run. The
-next provider request can already be oversized.
+否决，因为在一次长运行的工具 turn 之间不会发生 `agent_end`。下一
+次 provider 请求可能已经过大。
 
-### Rely only on a model reminder
+### 只依赖模型提醒
 
-Rejected because the model may ignore, postpone, or repeat the request. Soft
-guidance is useful for summary focus but cannot enforce the provider limit.
-*(ADR 0061 goes further and removes the reminder entirely: with pre-computed
-checkpoints its only remaining effect was a spent turn and a transcript row.
-ADR 0064 brings reminders back in a different shape — two budget notices tied
-to the remaining token count rather than a request to call a tool — and keeps
-the hard boundary as the enforcement point, exactly as this rejection
-requires.)*
+否决，因为模型可能忽略、推迟或重复该请求。软指引对摘要焦点有用，
+但无法强制执行 provider 上限。*（ADR 0061 更进一步，完全移除了
+提醒：有了预计算的检查点，它唯一剩下的效果就是一个浪费的 turn 和
+一行 transcript。ADR 0064 以不同的形态把提醒带回来——两条与剩余
+token 数挂钩的预算通知，而不是调用工具的请求——并保持硬边界作为
+执行点，正如本否决所要求的。）*
 
-### Delete older visible transcript messages
+### 删除较旧的可见 transcript 消息
 
-Rejected because context management must not destroy user history, revision
-families, fork inputs, searchability, or diagnostics.
+否决，因为上下文管理不得破坏用户历史、修订族、fork 输入、可搜索性
+或诊断。
 
-## References
+## 参考
 
 - `docs/spec/03-runtime/01-ipc-protocol.md`
 - `docs/spec/03-runtime/02-agent-runtime.md`

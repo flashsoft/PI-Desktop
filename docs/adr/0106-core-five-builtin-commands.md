@@ -1,57 +1,53 @@
-# ADR 0106: Keep only five core builtin commands
+# ADR 0106: 只保留五个核心内置命令
 
 - Status: Accepted
 - Date: 2026-08-19
 - Deciders: PI-Desktop core
 - Related: D250, ADR 0024, ADR 0034, `04-ux/04-builtin-commands.md`
 
-## Context
+## 背景
 
-The first-party command registry had grown to fifteen entries while the
-composer `/` menu and global-search Commands section exposed several actions
-that already had dedicated UI surfaces. It also retained dispatch-only aliases
-and specification-only IDs that were no longer registered. Keeping those
-entries made command discovery noisy and suggested contracts that the app did
-not consistently implement.
+第一方命令注册表已增长到十五个条目，而 Composer 的 `/` 菜单和全
+局搜索的命令区暴露了若干已经有专用 UI 表面的动作。它还保留了仅
+调度的别名和不再注册的仅规范 ID。保留这些条目使命令发现变得嘈
+杂，并暗示了应用并未一致实现的契约。
 
-## Decision
+## 决策
 
-1. Freeze the first-party registry at exactly these five IDs:
-   `builtin.session.new`, `builtin.agent.compact`, `builtin.mode.agent`,
-   `builtin.mode.plan`, and `builtin.mode.goal`.
-2. Keep the matching aliases `/new`, `/compact`, `/agent-mode`, `/plan-mode`,
-   and `/goal-mode`. Mode aliases retain the existing one-shot form with a
-   prompt body; they switch mode first and send the remaining text as the
-   visible user turn.
-3. Remove the session deletion, abort, project, settings, plugin, log,
-   session-rename, command-palette, reload-window, and DevTools entries from
-   the builtin registry and renderer dispatch. Remove the legacy `newChat`,
-   `openProject`, and `openSettings` dispatch aliases as well.
-4. Keep plugin command contributions and dedicated UI actions independent of
-   this registry. An old builtin ID is not a compatibility alias; it is no
-   longer a first-party command or composer builtin.
+1. 将第一方注册表冻结为恰好这五个 ID：
+   `builtin.session.new`、`builtin.agent.compact`、`builtin.mode.agent`、
+   `builtin.mode.plan` 和 `builtin.mode.goal`。
+2. 保留对应的别名 `/new`、`/compact`、`/agent-mode`、`/plan-mode`
+   和 `/goal-mode`。模式别名保留现有的一次性形式并带 prompt 正
+   文；它们先切换模式，再把剩余文本作为可见的用户轮次发送。
+3. 从内置注册表和渲染进程调度中移除会话删除、中止、项目、设置、
+   插件、日志、会话重命名、命令面板、重载窗口和 DevTools 条目。
+   同时移除遗留的 `newChat`、`openProject` 和 `openSettings` 调度
+   别名。
+4. 插件命令贡献和专用 UI 动作保持独立于该注册表。旧的内置 ID 不
+   是兼容别名；它不再是第一方命令或 Composer 内置命令。
 
-## Consequences
+## 后果
 
-- Global search and the composer `/` menu have a smaller, stable first-party
-  command surface.
-- New-task, compaction, and mode switching remain keyboard- and slash-first
-  workflows. The mode prompt-body contract is unchanged.
-- Abort, delete, project, settings, plugin, log, reload, and DevTools actions
-  remain available only through their dedicated controls or surfaces where
-  those workflows still exist; they are not discoverable as builtin commands.
-- Unknown former aliases fall through as ordinary slash text unless another
-  command source contributes the same name.
+- 全局搜索和 Composer 的 `/` 菜单拥有更小、更稳定的第一方命令
+  面。
+- 新建任务、压缩和模式切换保持键盘优先和斜杠优先的工作流。模式
+  prompt 正文契约不变。
+- 中止、删除、项目、设置、插件、日志、重载和 DevTools 动作仍只
+  能通过其专用控件或这些工作流仍然存在的表面使用；它们不再作为
+  内置命令可被发现。
+- 未知的旧别名按普通斜杠文本落空，除非另一个命令来源贡献了同
+  名命令。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-### Keep all app-navigation commands in the registry
+### 把所有应用导航命令保留在注册表中
 
-Rejected: project, settings, plugin, and diagnostic actions duplicate existing
-surfaces and compete with task-oriented commands in global search.
+被拒绝：项目、设置、插件和诊断动作与现有表面重复，并在全局搜索
+中与面向任务的命令竞争。
 
-### Preserve old IDs as hidden compatibility aliases
+### 把旧 ID 保留为隐藏的兼容别名
 
-Rejected: hidden aliases still expand the command contract and keep dead
-entries executable from stale UI or copied invocations. A removed command must
-not appear discoverable or be treated as a supported builtin.
+被拒绝：隐藏的别名仍会扩大命令契约，并让死条目可以从陈旧的 UI
+或复制的调用中执行。被移除的命令不得显得可被发现，也不得被视为
+受支持的内置命令。

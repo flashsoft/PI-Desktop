@@ -1,4 +1,4 @@
-# ADR 0129: The Subagent Idle Watchdog Bounds Silence, Not Slowness
+# ADR 0129: 子代理空闲看门狗约束的是静默，而不是缓慢
 
 - Status: Accepted for implementation (amended by ADR 0166: watchdogs no longer
   kill; the parent judges subagent lifetime)
@@ -7,72 +7,68 @@
 - Related: D260 (amends D254), ADR 0119 (event-driven subagent timeouts),
   ADR 0089 (background delegation)
 
-## Context
+## 背景
 
-ADR 0119 replaced the delegate turn cap with an idle watchdog whose timer was
-re-armed by an allow-list of five event types. The list was the problem, not the
-policy: it decided liveness by event *kind*, so any `AgentEvent` variant outside
-it — present or future — was silently dropped, and reading the code did not
-answer the question the watchdog is supposed to answer. Whether a delegate that
-streams slowly stays alive was an incidental consequence of which types happened
-to be listed rather than a stated contract.
+ADR 0119 用一个空闲看门狗替换了 delegate 轮次上限，该看门狗的计时器
+由一个包含五种事件类型的白名单重置。问题出在名单上，而不是策略上：
+它按事件*种类*判定存活性，因此名单之外的任何 `AgentEvent` 变体——
+现在的或未来的——都会被静默丢弃，而且阅读代码无法回答看门狗本应
+回答的问题。一个流式输出缓慢的 delegate 能否存活，只是恰好被列入
+名单的类型带来的偶然结果，而不是一条明示的契约。
 
-Session telemetry also showed the 600-second default was chosen without
-reference to what it measures. Because the timer is re-armed by streaming and
-paused across tool execution, the only interval it actually bounds is the wait
-between a delegate's last streamed token and its next response. In this project
-that wait measures 5.6s at p50, 13.4s at p90, 55s at p99, and 174s at p99.9 —
-an order of magnitude below 600s. Meanwhile 600s equals the `TaskWait` default,
-so a hung delegate could not settle inside a single wait, and the parent read an
-ordinary unfinished wait as if the delegation had failed.
+会话遥测还显示，600 秒的默认值在选择时并没有参考它实际度量的东西。
+由于计时器被流式输出重置、并在工具执行期间暂停，它实际约束的唯一
+区间是 delegate 的最后一个流式 token 与其下一次响应之间的等待。在
+本项目中，该等待的测量值为 p50 5.6s、p90 13.4s、p99 55s、p99.9
+174s——比 600s 低一个数量级。同时 600s 等于 `TaskWait` 的默认值，
+因此一个挂起的 delegate 无法在单次等待内落定，父级会把一次普通的
+未完成等待误读为委派已失败。
 
-Separately, the built-ins carried no turn backstop at all, so a delegate that
-looped without converging ran to the 6-hour duration ceiling.
+另外，内置代理没有任何轮次兜底，因此一个不收敛地循环的 delegate
+会一直运行到 6 小时的时长上限。
 
-## Decision
+## 决策
 
-1. Every `AgentEvent` re-arms the idle timer, a single streamed token arriving
-   as `message_update` included. The watchdog fires on total unresponsiveness
-   and nothing else. The pause between `tool_execution_start` and its matching
-   `tool_execution_end` is unchanged, as is the duration timer running through
-   tool execution.
-2. The default idle timeout is 300 seconds, sized from the measured 174-second
-   p99.9 pre-token wait plus margin for the delegate's own provider retry
-   backoff, which is silent by design. It must stay below the 600-second
-   `TaskWait` default so a genuinely stuck delegate settles as `timed_out`
-   inside one wait. The 21,600-second duration ceiling and the 10–21,600
-   override bounds are unchanged.
-3. `TaskWait` expiry reports "Still running after Ns" and states that this is
-   not a failure and the unfinished delegates keep working.
-4. The built-ins carry a turn backstop sized to their job: `explorer` 60,
-   `code-reviewer` 50, `test-runner` 40, `fixer` 80. A non-converging delegate
-   ends as `truncated` with its partial report instead of running to the
-   duration ceiling.
+1. 每个 `AgentEvent` 都会重置空闲计时器，包括一个以 `message_update`
+   形式到达的流式 token。看门狗只在完全无响应时触发，别无其他。
+   `tool_execution_start` 与匹配的 `tool_execution_end` 之间的暂停
+   不变，贯穿工具执行的时长计时器也不变。
+2. 默认空闲超时为 300 秒，依据测得的 174 秒 p99.9 token 前等待，
+   外加 delegate 自身 provider 重试退避的裕量——该退避在设计上就是
+   静默的。它必须保持在 600 秒的 `TaskWait` 默认值以下，使一个真正
+   卡住的 delegate 能在一次等待内以 `timed_out` 落定。21,600 秒的
+   时长上限和 10–21,600 的覆盖边界不变。
+3. `TaskWait` 到期时报告"Still running after Ns"，并说明这不是失败，
+   未完成的 delegate 仍在继续工作。
+4. 内置代理带有按其职责设定的轮次兜底：`explorer` 60、
+   `code-reviewer` 50、`test-runner` 40、`fixer` 80。一个不收敛的
+   delegate 会带着部分报告以 `truncated` 结束，而不是运行到时长
+   上限。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- **Keep the event allow-list and only lower the default:** rejected because it
-  leaves liveness defined by an enumeration that must be revisited whenever
-  `AgentEvent` grows a variant, and leaves the intended contract unstated.
-- **Emit synthetic activity across provider retry backoff:** rejected for now.
-  It is the more principled fix for the one interval the runtime itself chooses
-  to wait, but it makes the watchdog blind to a provider that fails and backs
-  off forever. Sizing the window above the retry envelope keeps one source of
-  truth for liveness. Revisit if retry budgets grow.
-- **Raise the idle default to 900s and lengthen `TaskWait`:** rejected because
-  it inverts the relationship that matters — the idle window must be shorter
-  than a wait, or a hang cannot surface inside one.
-- **Leave the built-ins unlimited:** rejected because the duration ceiling is a
-  6-hour backstop, not a convergence signal; a looping delegate should return
-  its partial work in minutes.
+- **保留事件白名单、只降低默认值：** 否决，因为这会让存活性由一个
+  每当 `AgentEvent` 增加变体就必须重新审视的枚举来定义，并且让预期
+  契约始终不被写明。
+- **在 provider 重试退避期间发出合成活动：** 暂时否决。对于运行时
+  自身选择等待的那一个区间来说，这是更符合原则的修复，但它会让
+  看门狗对一个永远失败并永远退避的 provider 失明。把窗口定在重试
+  包络之上可以为存活性保留单一事实来源。如果重试预算增长，再重新
+  考虑。
+- **把空闲默认值提高到 900s 并延长 `TaskWait`：** 否决，因为这颠倒
+  了真正重要的关系——空闲窗口必须短于一次等待，否则挂起无法在
+  一次等待内浮现。
+- **让内置代理保持无限制：** 否决，因为时长上限是 6 小时的兜底，
+  而不是收敛信号；一个循环的 delegate 应该在几分钟内返回其部分
+  工作成果。
 
-## Consequences
+## 后果
 
-- A delegate that keeps producing output is never idle-terminated, however slow
-  its turn is. Only silence expires it, and the reason is legible in the code.
-- Two previously-survivable classes now expire at 300s instead of 600s: extreme
-  provider latency outliers and a long chain of rate-limit backoff. Both return
-  `timed_out` with the latest partial report rather than being lost.
-- A hung delegate surfaces within a single `TaskWait` instead of holding the
-  parent for a full window and beyond.
-- Adding an `AgentEvent` variant no longer requires touching the watchdog.
+- 只要 delegate 持续产出输出，无论其轮次多慢都不会被空闲终止。
+  只有静默会让它过期，且原因在代码中清晰可读。
+- 两类此前可以存活的情况现在在 300s 而不是 600s 过期：极端的
+  provider 延迟离群值和一长串限流退避。两者都会带着最近的部分报告
+  返回 `timed_out`，而不是丢失。
+- 挂起的 delegate 会在单次 `TaskWait` 内浮现，而不是占住父级一个
+  完整窗口甚至更久。
+- 新增 `AgentEvent` 变体不再需要改动看门狗。

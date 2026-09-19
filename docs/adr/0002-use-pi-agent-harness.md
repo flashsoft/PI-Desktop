@@ -1,42 +1,42 @@
-# ADR 0002: Use the pi Agent Harness as the kernel
+# ADR 0002: 使用 pi Agent Harness 作为内核
 
-- Status: Accepted
-- Date: 2026-07-25
+- 状态: 已接受
+- 日期: 2026-07-25
 
-## Context
+## 背景
 
-We need an extensible multi-model agent loop, rather than implementing tool calling, streaming events, and provider adapters from scratch.
+我们需要一个可扩展的多模型 agent 循环，而不是从零实现工具调用、流式事件和 provider 适配器。
 
-## Decision
+## 决策
 
-Use the following packages as the kernel:
+使用以下包作为内核：
 
 - `@earendil-works/pi-ai`
 - `@earendil-works/pi-agent-core`
 
-Optionally adopt later:
+后续可选采用：
 
 - `@earendil-works/pi-coding-agent`
 - `@earendil-works/pi-storage-sqlite-node`
 
-## Rationale
+## 理由
 
-1. Unified LLM provider interface
-2. Clear agent event model, well suited to a desktop UI
-3. Provides extensibility across the tool calling / session / skills ecosystem
-4. Projects such as LiveAgent have already validated it as a viable kernel for desktop products
+1. 统一的 LLM provider 接口
+2. 清晰的 agent 事件模型，非常适合桌面 UI
+3. 在工具调用 / 会话 / skills 生态上提供可扩展性
+4. LiveAgent 等项目已经验证其可作为桌面产品的可行内核
 
-## Consequences
+## 后果
 
-### Positive
-- Avoids building an in-house agent framework
-- Can keep pace with upstream capability evolution
+### 正面
+- 避免自研 agent 框架
+- 可以跟随上游能力演进
 
-### Negative
-- Requires adapting to pi's events and version constraints (Node >= 22.19)
-- Some desktop product requirements must be filled in at the upper layer ourselves (permission UX, session product model)
+### 负面
+- 需要适配 pi 的事件和版本约束（Node >= 22.19）
+- 部分桌面产品需求需要我们在上层自行补齐（权限 UX、会话产品模型）
 
-## Alternatives
+## 备选方案
 
-- Build our own agent loop: high cost, no
-- Use another coding agent directly as the kernel: inconsistent with the "based on pi" goal
+- 自研 agent 循环：成本高，否决
+- 直接使用其他 coding agent 作为内核：与"基于 pi"的目标不一致

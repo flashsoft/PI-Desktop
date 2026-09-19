@@ -1,49 +1,49 @@
-# ADR 0005: User-installable plugin system
+# ADR 0005: 用户可安装的插件系统
 
-- Status: Accepted
-- Date: 2026-07-25
-- Updated: 2026-07-25
+- 状态: 已接受
+- 日期: 2026-07-25
+- 更新: 2026-07-25
 
-## Context
+## 背景
 
-Built-in features alone are not enough. Users need to install and develop plugins that extend:
+仅靠内置功能是不够的。用户需要安装和开发插件来扩展：
 
-- commands
-- panels
-- agent tools
+- 命令
+- 面板
+- agent 工具
 - skills
 
-## Decision
+## 决策
 
-Adopt a first-party **plugin system**:
+采用第一方**插件系统**：
 
-- directory-based plugin packages
-- `manifest.json` contribution + permission declarations
-- command palette integration
-- agent tool registration support
-- local install / enable / disable / uninstall
-- default-deny permissions with explicit grants
+- 基于目录的插件包
+- `manifest.json` 贡献声明 + 权限声明
+- 命令面板集成
+- agent 工具注册支持
+- 本地安装 / 启用 / 禁用 / 卸载
+- 默认拒绝权限，需显式授予
 
-## Rationale
+## 理由
 
-1. Enables user customization without forking the app
-2. Safer than arbitrary Electron main-script loading
-3. Serves both UI extension and agent extension
-4. Leaves room for a later marketplace protocol
+1. 无需 fork 应用即可实现用户定制
+2. 比任意加载 Electron 主进程脚本更安全
+3. 同时服务 UI 扩展和 agent 扩展
+4. 为后续 marketplace 协议留出空间
 
-## Consequences
+## 后果
 
-### Positive
-- Extensible product surface
-- Clear contribution model
-- Aligns with skills/tools ecosystems
+### 正面
+- 产品界面可扩展
+- 贡献模型清晰
+- 与 skills/tools 生态对齐
 
-### Negative
-- Extra architecture and security complexity
-- Needs management UI, validation, and auditing
+### 负面
+- 额外的架构和安全复杂度
+- 需要管理 UI、校验和审计
 
-## Scope control
+## 范围控制
 
-- MVP prioritizes local plugin loading, not marketplace
-- First contributions: commands / panel / agentTools / skills
-- Plugins are isolated and permissioned by default
+- MVP 优先做本地插件加载，不做 marketplace
+- 第一批贡献点：commands / panel / agentTools / skills
+- 插件默认隔离并按权限管控

@@ -1,74 +1,62 @@
-# ADR 0068: Add a keyboard entry point for the work panel
+# ADR 0068: 为工作面板添加键盘入口
 
-- Status: Accepted for implementation
-- Date: 2026-08-07
-- Deciders: PI-Desktop core
-- Amends: D128, D142
-- Amended by: [ADR 0085](0085-work-panel-shortcut-toggle.md) (the shortcut is a
-  toggle; the rejected toggle alternative below no longer holds);
-  [ADR 0195](0195-viewport-fixed-work-panel-toggle.md) (pointer equivalent of
-  the shortcut)
-- Amended in part by: [ADR 0108](0108-remove-built-in-interactive-terminal.md)
-- Related: [01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
+- 状态： 已接受实现
+- 日期： 2026-08-07
+- 决策者： PI-Desktop 核心
+- 修订： D128、D142
+- 被修订： [ADR 0085](0085-work-panel-shortcut-toggle.md)（快捷键是切换开关；
+  下文中被拒绝的切换备选方案不再成立）；
+  [ADR 0195](0195-viewport-fixed-work-panel-toggle.md)（快捷键的指针等价物）
+- 部分被修订： [ADR 0108](0108-remove-built-in-interactive-terminal.md)
+- 相关： [01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
   [08-component-spec §5](../spec/04-ux/08-component-spec.md) ·
   [09-interaction-patterns §1](../spec/04-ux/09-interaction-patterns.md) ·
   E2E-056
 
-## Context
+## 背景
 
-D128 made the work panel artifact-only and explicitly removed a global
-shortcut. That keeps startup quiet, but it leaves a user with no direct way to
-return to a session's retained panel after collapsing it or closing its last
-resource. The existing panel header already provides the resource chooser, so
-the missing capability is panel entry rather than a new resource protocol.
+D128 让工作面板仅由产物触发，并显式移除了全局快捷键。这让启动保持安静，
+但也让用户在折叠面板或关闭其最后一个资源后，没有直接的方式回到会话保留的
+面板。现有面板头部已经提供资源选择器，所以缺失的能力是面板入口，而不是新
+的资源协议。
 
-## Decision
+## 决策
 
-1. Add the shared `openWorkPanel` shortcut with a default `Cmd/Ctrl + J`
-   binding. The existing shortcut settings surface can override and reset it
-   using the same conflict and reserved-key validation as other shortcuts.
-2. When an active session exists, the shortcut sets that session's retained
-   panel context to open at its committed width without creating or activating a
-   resource tab. Existing tabs, active resource, and Browser resource remain
-   unchanged.
-3. The empty panel header remains the manual resource chooser for Browser
-   and in-scope plugin views. Artifact triggers continue to create and activate
-   resources atomically, and background-session artifacts cannot open the
-   visible panel.
-4. The shortcut is ignored while Settings is active and is a no-op without an
-   active session. No host protocol, IPC channel, or native application-menu
-   command is added.
+1. 添加共享的 `openWorkPanel` 快捷键，默认绑定 `Cmd/Ctrl + J`。现有快捷键
+   设置界面可以使用与其他快捷键相同的冲突与保留键校验来覆盖和重置它。
+2. 当存在活跃会话时，快捷键把该会话保留的面板上下文设置为以其承诺宽度打
+   开，不创建或激活资源标签。现有标签、活跃资源与 Browser 资源保持不变。
+3. 空面板头部仍是 Browser 与作用域内插件视图的手动资源选择器。产物触发器
+   继续原子地创建并激活资源，后台会话的产物无法打开可见面板。
+4. 快捷键在设置激活时被忽略，且在没有活跃会话时是空操作。不新增宿主协
+   议、IPC 通道或原生应用菜单命令。
 
-## Consequences
+## 后果
 
-- Users can reopen the work panel without waiting for another artifact.
-- Opening the panel no longer implies that a resource exists; the empty header
-  is an intentional chooser state.
-- The change remains renderer-local and preserves session-scoped ownership,
-  width reservation, and startup reset behavior.
-- macOS application menus remain unchanged; the shortcut is discoverable and
-  editable in Settings → Shortcuts.
+- 用户无需等待另一个产物即可重新打开工作面板。
+- 打开面板不再意味着资源存在；空头部是有意的选择器状态。
+- 变更保持渲染进程本地，并保留会话作用域所有权、宽度预留与启动重置行
+  为。
+- macOS 应用菜单不变；快捷键可在设置 → 快捷键中发现与编辑。
 
-## Alternatives considered
+## 已考虑的备选方案
 
-### Keep artifact-only entry
+### 保持仅产物入口
 
-Rejected. A collapsed or last-resource-closed panel could not be reopened
-directly even though its session context remained valid.
+已拒绝。已折叠或最后一个资源被关闭的面板无法直接重新打开，即使其会话上
+下文仍然有效。
 
-### Make `Cmd/Ctrl + J` a toggle
+### 让 `Cmd/Ctrl + J` 成为切换开关
 
-*(Amended by ADR 0085: the shortcut now toggles.)* Rejected at the time.
-Collapse already has a dedicated panel control, and an explicit open
-action avoids accidentally hiding the panel while the user is trying to reveal
-its tools.
+*（经 ADR 0085 修订：快捷键现在是切换。）* 当时被拒绝。折叠已有专用的面
+板控件，而显式的打开动作避免用户在试图展示面板工具时意外隐藏它。
 
-### Create Review on shortcut
+### 用快捷键创建 Review
 
-Rejected. A shortcut should reveal the work surface without fabricating a
-workspace change resource or imposing a default tool choice.
+已拒绝。快捷键应该展示工作界面，而不是虚构 workspace 变更资源或强加默认
+工具选择。
 
-## References
+## 参考
 
 - `docs/spec/04-ux/01-ui-ia.md`
 - `docs/spec/04-ux/08-component-spec.md`

@@ -1,4 +1,4 @@
-# ADR 0135: Retry unchanged edited prompts
+# ADR 0135: 重试未改动的已编辑提示词
 
 - Status: Accepted
 - Date: 2026-08-31
@@ -6,51 +6,44 @@
 - Related: D137, D274, E2E-073, issue #23
 - Amends: D137
 
-## Context
+## 背景
 
-The user-message editor is an edit-and-resend workflow, but its primary action
-was labeled Send and treated an unchanged prompt as a no-op. That made a
-confirmation with the original text appear broken even though the user had
-explicitly asked to replay the selected turn. It also made the inline action
-look like a new ordinary composer send rather than a retry of an existing
-prompt.
+用户消息编辑器是一个编辑并重发的工作流，但它的主要操作标注为
+Send，并把未改动的提示词视为空操作。这让一次使用原文的确认看起来
+像坏掉了，尽管用户明确要求重放所选轮次。这也让该内联操作看起来像
+一次普通的 Composer 新发送，而不是对既有提示词的重试。
 
-## Decision
+## 决策
 
-1. Confirming a valid user-prompt edit always dispatches the existing
-   `editUserMessage` / Regenerate path, whether or not the trimmed prompt text
-   differs from the original.
-2. The inline primary action is localized as Retry (`重试` in zh-CN); its
-   in-flight label is Retrying… (`重试中…`). The secondary action remains
-   localized as Cancel (`取消`). Escape keeps its existing cancel behavior,
-   and Cmd/Ctrl+Enter invokes Retry.
-3. Retry retains the existing attachment handling, slash-command expansion,
-   identity-based truncation, and D109 revision archive. No IPC, storage,
-   host-protocol, or runtime contract changes are introduced.
+1. 确认一个有效的用户提示词编辑时，无论去除空白后的提示词文本是否
+   与原文不同，都派发既有的 `editUserMessage` / Regenerate 路径。
+2. 内联主要操作本地化为 Retry（zh-CN 为 `重试`）；进行中的标注为
+   Retrying…（`重试中…`）。次要操作保持本地化为 Cancel（`取消`）。
+   Escape 保留其既有的取消行为，Cmd/Ctrl+Enter 触发 Retry。
+3. Retry 保留既有的附件处理、斜杠命令展开、基于身份的截断和 D109
+   修订归档。不引入 IPC、存储、宿主协议或运行时契约变更。
 
-## Consequences
+## 后果
 
-- Replaying an unchanged prompt creates a fresh assistant turn and archives
-  the replaced answer tail in the existing revision pager, matching the
-  action's resend semantics.
-- The inline labels distinguish retrying the selected turn from sending a new
-  composer prompt and from cancelling the edit.
-- A user can still abandon the edit without changing the transcript through
-  Escape or Cancel.
+- 重放未改动的提示词会创建一个新的 assistant 轮次，并把被替换的
+  回答尾部归档进既有的修订分页器，与该操作的重发语义一致。
+- 内联标注区分了重试所选轮次、发送新的 Composer 提示词和取消编辑
+  这三种操作。
+- 用户仍可通过 Escape 或 Cancel 放弃编辑而不改变 transcript。
 
-## Alternatives
+## 备选方案
 
-### Keep unchanged edits as a no-op
+### 保持未改动编辑为空操作
 
-Rejected. It is the behavior reported in issue #23 and makes an explicit
-resend confirmation appear inert.
+否决。这正是 issue #23 报告的行为，它让一次显式的重发确认看起来
+毫无反应。
 
-### Keep the primary label as Send
+### 保持主要标注为 Send
 
-Rejected. The action does not append a new ordinary prompt; it replays the
-selected prompt through the Regenerate path. Retry communicates that boundary.
+否决。该操作并不追加一条新的普通提示词；它通过 Regenerate 路径
+重放所选提示词。Retry 传达了这一边界。
 
-## References
+## 参考
 
 - `apps/desktop/src/components/ChatTranscript.tsx`
 - `packages/i18n/src/locales/en/index.ts`

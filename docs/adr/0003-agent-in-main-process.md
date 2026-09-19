@@ -1,38 +1,38 @@
-# ADR 0003: Hybrid runtime — Rust host core + Node pi agent sidecar
+# ADR 0003: 混合运行时 —— Rust 宿主核心 + Node pi agent sidecar
 
-- Status: Superseded in part by ADR 0010 / ADR 0011
-- Date: 2026-07-25
-- Updated: 2026-07-25
+- 状态: 部分被 ADR 0010 / ADR 0011 取代
+- 日期: 2026-07-25
+- 更新: 2026-07-25
 
-## Context
+## 背景
 
-The original MVP placed the full agent loop in Electron main process for simplicity.
+最初的 MVP 为简单起见，将完整的 agent 循环放在 Electron 主进程中。
 
-New product constraints:
+新的产品约束：
 
-1. Prefer a stronger systems backend
-2. Keep pi Agent Harness as the model/agent engine
-3. Improve long-term isolation and native capability quality
+1. 倾向于更强的系统化后端
+2. 保留 pi Agent Harness 作为模型/agent 引擎
+3. 提升长期隔离性和原生能力质量
 
-## Original Decision
+## 原始决策
 
-MVP agent loop in Electron main process.
+MVP 的 agent 循环放在 Electron 主进程中。
 
-## Revised Direction
+## 修订方向
 
-Adopt a hybrid model:
+采用混合模型：
 
-- **Rust backend host core** owns desktop host services, tools sandbox, plugin host boundary, persistence adapters, and privileged operations
-- **Node/TypeScript pi runtime** remains the agent loop engine (`pi-ai` + `pi-agent-core`) and runs as a controlled sidecar/utility process
-- **Electron main** becomes a thin orchestrator between renderer IPC and Rust/Node services
+- **Rust 后端宿主核心** 拥有桌面宿主服务、工具沙箱、插件宿主边界、持久化适配器和特权操作
+- **Node/TypeScript pi 运行时** 仍然是 agent 循环引擎（`pi-ai` + `pi-agent-core`），以受控的 sidecar/utility 进程运行
+- **Electron 主进程** 变为渲染进程 IPC 与 Rust/Node 服务之间的薄编排层
 
-## Consequences
+## 后果
 
-### Positive
-- Better native/host capability foundation
-- Clearer privilege boundary
-- Keeps pi ecosystem leverage
+### 正面
+- 更好的原生/宿主能力基础
+- 更清晰的权限边界
+- 保留 pi 生态的杠杆效应
 
-### Negative
-- Higher integration complexity than pure Node main
-- Requires stable local RPC between Electron/Rust/Node
+### 负面
+- 集成复杂度高于纯 Node 主进程方案
+- 需要 Electron/Rust/Node 之间稳定的本地 RPC

@@ -1,46 +1,46 @@
-# ADR 0011: Freeze host RPC, storage ownership, and mode defaults
+# ADR 0011: 冻结宿主 RPC、存储所有权和模式默认值
 
-- Status: Accepted; mode-profile clause superseded in part by ADR 0053
-- Date: 2026-07-25
+- 状态: 已接受；模式配置条款部分被 ADR 0053 取代
+- 日期: 2026-07-25
 
-## Context
+## 背景
 
-After baseline 0.3.0, implementation still depended on several high-impact defaults:
+基线 0.3.0 之后，实现仍依赖于若干高影响的默认值：
 
-- Electron ↔ Rust transport
-- SQLite ownership
-- default interaction mode
-- former restricted-profile tool split (superseded by ADR 0053)
-- permission timeout behavior
+- Electron ↔ Rust 传输方式
+- SQLite 所有权
+- 默认交互模式
+- 原受限配置档的工具划分（已被 ADR 0053 取代）
+- 权限超时行为
 
-## Decision
+## 决策
 
-Freeze the following defaults for implementation:
+为实现冻结以下默认值：
 
-1. Transport = **Rust sidecar + stdio JSON-RPC (NDJSON)**
-2. SQLite ownership = **Rust host-core only**
-3. Default mode = **Agent**
-4. The former restricted profile was read-only; this mode-profile clause is
-   superseded by ADR 0053, which supersedes the historical operating-state
-   decision in ADR 0052 and replaces it with the current Plan workflow
-5. Permission timeout = **120s deny**
-6. Session grants = **by toolName**
-7. First release platform = **macOS arm64 only**
+1. 传输 = **Rust sidecar + stdio JSON-RPC (NDJSON)**
+2. SQLite 所有权 = **仅 Rust host-core**
+3. 默认模式 = **Agent**
+4. 原受限配置档为只读；该模式配置条款被 ADR 0053 取代，
+   ADR 0053 取代了 ADR 0052 中的历史性运行状态决策，
+   并以当前的 Plan 工作流取而代之
+5. 权限超时 = **120 秒后拒绝**
+6. 会话级授权 = **按 toolName**
+7. 首发平台 = **仅 macOS arm64**
 8. TS schema = **typebox**
 9. i18n = **i18next**
 
-## Consequences
+## 后果
 
-### Positive
-- M1/M2 can proceed without re-litigating core choices
-- Clear process and data ownership
-- Explicit host-owned operating-state and permission policy
+### 正面
+- M1/M2 可以继续推进，无需重新争论核心选择
+- 进程和数据所有权清晰
+- 宿主拥有的运行状态和权限策略明确
 
-### Negative
-- JSON-RPC text protocol may later need binary upgrade
-- Exclusive Rust DB ownership requires mature host RPC coverage early
+### 负面
+- JSON-RPC 文本协议后续可能需要升级为二进制
+- Rust 独占数据库所有权要求宿主 RPC 尽早达到成熟的覆盖度
 
-## Related docs
+## 相关文档
 
 - `docs/spec/08-meta/decisions-log.md`
 - `docs/spec/03-runtime/06-host-rpc-protocol.md`

@@ -1,85 +1,76 @@
-# ADR 0289: Signed macOS GitHub Releases and in-app update delivery
+# ADR 0289: 签名的 macOS GitHub Release 与应用内更新投递
 
-- Status: Accepted
-- Date: 2026-09-18
-- Deciders: PI-Desktop core
-- Decision: D450
-- Amends: ADR 0022, ADR 0145, ADR 0191, ADR 0204, D078
-- Related: D120, D126, D164, D364, ADR 0197, ADR 0232, ADR 0257, ADR 0278, E2E-196a, E2E-196c, E2E-067A
+- 状态：已接受
+- 日期：2026-09-18
+- 决策者：PI-Desktop 核心
+- 决策：D450
+- 修订：ADR 0022、ADR 0145、ADR 0191、ADR 0204、D078
+- 相关：D120、D126、D164、D364、ADR 0197、ADR 0232、ADR 0257、ADR 0278、E2E-196a、E2E-196c、E2E-067A
 
-## Context
+## 背景
 
-Official GitHub tag releases already produce native macOS arm64 and Intel x64
-DMG/ZIP artifacts, merge `latest-mac.yml`, and ship `electron-updater`. The
-default CI lane still disabled identity discovery, skipped notarization, and
-kept packaged macOS on notify-and-link delivery because unsigned artifacts
-cannot provide a qualified in-app upgrade. Local packaging without a
-certificate must stay possible (D078). Contributors must not commit
-certificate material.
+官方 GitHub 标签发布已经产出原生 macOS arm64 和 Intel x64 的 DMG/ZIP 产物，
+合并 `latest-mac.yml`，并附带 `electron-updater`。默认 CI 通道仍然禁用身份
+发现、跳过公证，并让打包的 macOS 保持"通知加链接"的投递方式，因为未签名
+产物无法提供合格的应用内升级。没有证书的本地打包必须保持可行（D078）。
+贡献者不得提交证书材料。
 
-A Developer ID Application certificate for team `DUV63RKYTW` is now available
-for the official `vastsa/PI-Desktop` release lane.
+团队 `DUV63RKYTW` 的 Developer ID Application 证书现在可用于官方
+`vastsa/PI-Desktop` 发布通道。
 
-## Decision
+## 决策
 
-1. Every GitHub tag release (`vX.Y.Z`) Developer ID-signs the app through
-   electron-builder 26 and notarizes it with `xcrun notarytool`
-   (`-c.mac.notarize=true`). Because electron-builder notarizes only the app,
-   the final DMG is submitted separately (`xcrun notarytool submit --wait`) and
-   must return `status: Accepted` before `xcrun stapler staple` may run; the
-   run then verifies the app as `Notarized Developer ID` and both stapled
-   tickets before upload. Stapler retries are bounded and only allowed after
-   Apple accepts. Missing signing or notarization secrets fail the job;
-   unsigned macOS artifacts must not be published from a tag.
-2. The signing certificate is
-   `Developer ID Application: XingYu Liu (DUV63RKYTW)`; Apple team id
-   `DUV63RKYTW`. CI pins it with `CSC_NAME=XingYu Liu (DUV63RKYTW)`. The name
-   must be the bare common name: electron-builder 26 rejects an identity that
-   keeps the `Developer ID Application:` prefix, and the verification step
-   re-adds that prefix when it compares the `codesign` authority.
-3. Certificate material stays in GitHub Actions secrets:
-   `CSC_LINK` (p12, file path or base64), `CSC_KEY_PASSWORD`, `APPLE_ID`,
-   `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Nothing of that set is
-   committed, echoed, or written into electron-builder config.
-4. Local `pnpm dist:mac` / `pnpm package` remain unsigned when no identity is
-   configured. `scripts/release-macos.sh` remains the local signed lane.
-   `workflow_dispatch` may set `sign_macos: false` only to produce unsigned
-   debug artifacts; that path must not be used for a GitHub Release tag.
-5. Packaged macOS uses the existing in-app `electron-updater` lane (ZIP +
-   merged `latest-mac.yml` + `quitAndInstall`), same as Windows NSIS and
-   Linux AppImage. Linux deb/rpm and Windows portable stay notify-and-link.
-   Renderer IPC, feed ownership, `allowPrerelease = false`, and auto-check
-   timing are unchanged.
-6. Do not reintroduce `afterPack` / `afterSign` adhoc codesign (ADR 0278).
-   electron-builder's Developer ID pass signs the app, helpers, and the
-   `pi-desktop-host-core` sidecar.
-7. The unsigned first-launch note and ZIP helper remain for trusted local or
-   debug unsigned builds. Official GitHub Release DMGs are signed and
-   notarized and must not claim otherwise.
-8. Hardened runtime stays on. Entitlements stay the minimum required set:
-   V8 JIT, unsigned executable memory, library-validation disable (Electron
-   helpers and plugin-loaded native addons), and microphone input for the
-   existing plugin capture permission (ADR 0257), with
-   `NSMicrophoneUsageDescription` in Info.plist.
+1. 每个 GitHub 标签发布（`vX.Y.Z`）通过 electron-builder 26 对应用做
+   Developer ID 签名，并用 `xcrun notarytool` 公证
+   （`-c.mac.notarize=true`）。因为 electron-builder 只公证应用本体，最终
+   DMG 单独提交（`xcrun notarytool submit --wait`），且必须返回
+   `status: Accepted` 才能运行 `xcrun stapler staple`；随后该次运行校验
+   应用为 `Notarized Developer ID` 且两张 stapler 票据齐全，然后才上传。
+   stapler 重试有界，且只允许在 Apple 接受之后进行。缺失签名或公证密钥
+   使任务失败；未签名的 macOS 产物不得从标签发布。
+2. 签名证书是 `Developer ID Application: XingYu Liu (DUV63RKYTW)`；Apple
+   团队 id 为 `DUV63RKYTW`。CI 用 `CSC_NAME=XingYu Liu (DUV63RKYTW)` 钉住
+   它。名称必须是裸 common name：electron-builder 26 拒绝保留
+   `Developer ID Application:` 前缀的身份，而校验步骤在比较 `codesign`
+   授权时会重新加上该前缀。
+3. 证书材料留在 GitHub Actions secrets 中：`CSC_LINK`（p12，文件路径或
+   base64）、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`
+   和 `APPLE_TEAM_ID`。这组内容一律不提交、不回显、不写入 electron-builder
+   配置。
+4. 未配置身份时，本地 `pnpm dist:mac` / `pnpm package` 保持未签名。
+   `scripts/release-macos.sh` 仍是本地签名通道。`workflow_dispatch` 只允许
+   为产出未签名调试产物而设置 `sign_macos: false`；该路径不得用于
+   GitHub Release 标签。
+5. 打包的 macOS 使用现有的应用内 `electron-updater` 通道（ZIP + 合并的
+   `latest-mac.yml` + `quitAndInstall`），与 Windows NSIS 和 Linux AppImage
+   相同。Linux deb/rpm 和 Windows portable 保持"通知加链接"。渲染进程
+   IPC、feed 归属、`allowPrerelease = false` 和自动检查时机不变。
+6. 不重新引入 `afterPack` / `afterSign` adhoc codesign（ADR 0278）。
+   electron-builder 的 Developer ID 流程会签署应用、helper 和
+   `pi-desktop-host-core` sidecar。
+7. 未签名首次启动提示和 ZIP helper 保留给受信任的本地或调试未签名构建。
+   官方 GitHub Release DMG 已签名并公证，不得声称相反情况。
+8. Hardened runtime 保持开启。授权保持最小必需集合：V8 JIT、未签名可执行
+   内存、禁用 library-validation（Electron helper 和插件加载的原生扩展），
+   以及供现有插件采集权限（ADR 0257）使用的麦克风输入，并在 Info.plist 中
+   带 `NSMicrophoneUsageDescription`。
 
-## Consequences
+## 后果
 
-- Users who download a tagged DMG should open PI-Desktop without a
-  Gatekeeper “unidentified developer” or quarantine-damaged warning.
-- Packaged macOS installs can check GitHub Releases, download the arch ZIP,
-  and restart into the new version. Existing unsigned installs may still need
-  one manual signed DMG before in-app updates succeed.
-- Windows and Linux packaging, artifact names, and updater modes are
-  unchanged.
-- Operators must create the five Actions secrets before the next tag.
+- 下载带标签 DMG 的用户应当能打开 PI-Desktop 而不遇到 Gatekeeper"身份
+  不明的开发者"或隔离损坏警告。
+- 打包的 macOS 安装可以检查 GitHub Release、下载对应架构的 ZIP，并重启
+  进入新版本。现有的未签名安装可能仍需要先手动安装一次签名 DMG，应用内
+  更新才能成功。
+- Windows 和 Linux 打包、产物名称和更新模式不变。
+- 运维必须在下一个标签之前创建这五个 Actions secrets。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- Keep unsigned tag artifacts and opt-in signing: rejected; it leaves
-  production users on the Gatekeeper warning path.
-- Hard-code the identity in `apps/desktop/package.json`: rejected; local
-  packaging without the certificate must keep working (D078).
-- Apple API key (`APPLE_API_KEY`) instead of Apple ID + app-specific
-  password: deferred; the existing electron-builder 26 Apple ID path is
-  already wired.
-- Separate macOS updater implementation: rejected; reuse `electron-updater`.
+- 保持未签名标签产物、签名可选：被拒绝；这会让生产用户留在 Gatekeeper
+  警告路径上。
+- 在 `apps/desktop/package.json` 中硬编码身份：被拒绝；没有证书的本地打包
+  必须继续工作（D078）。
+- Apple API key（`APPLE_API_KEY`）代替 Apple ID + 应用专用密码：暂缓；
+  现有的 electron-builder 26 Apple ID 路径已经接好。
+- 单独的 macOS 更新器实现：被拒绝；复用 `electron-updater`。

@@ -1,57 +1,56 @@
-# ADR 0097: Place global defaults under the AI settings destination
+# ADR 0097: 将全局默认项放在 AI 设置目的地下
 
 - Status: Accepted
 - Date: 2026-08-18
 - Deciders: PI-Desktop core
 - Related: D166, D238, D239, ADR 0096
 
-## Context
+## 背景
 
-The flat Settings directory removed redundant navigation levels, but the
-Basics page still owned a Defaults card containing the default operating mode,
-command shell, and Enter-to-send preference. These controls change agent
-behavior rather than application appearance, so their location made the
-Basics page mix visual preferences with global AI behavior.
+扁平化的设置目录移除了冗余的导航层级，但基础页面仍拥有一张默认
+项卡片，包含默认操作模式、命令 shell 和回车发送偏好。这些控件改
+变的是 agent 行为而不是应用外观，因此它们的位置使基础页面把视
+觉偏好和全局 AI 行为混在了一起。
 
-## Decision
+## 决策
 
-Keep the eight-destination Settings directory unchanged. Basics owns the
-Appearance card and platform-supported close behavior. The **全局 AI / AI**
-destination owns the Permissions card and the Defaults card, whose rows are:
+保持八目的地设置目录不变。基础页面拥有外观卡片和平台支持的关闭
+行为。**全局 AI / AI** 目的地拥有权限卡片和默认项卡片，其行
+为：
 
-- default operating mode (Agent / Plan / Goal)
-- command shell selection and its host-backed fallback status
-- Enter-to-send
+- 默认操作模式（Agent / Plan / Goal）
+- 命令 shell 选择及其宿主支持的回退状态
+- 回车发送
 
-The Model configuration destination continues to own the default provider/model
-selector because it is coupled to provider readiness and model identity. This
-change only moves renderer content and Settings search ownership; persisted
-settings, host APIs, runtime semantics, and deep-link contracts do not change.
+模型配置目的地继续拥有默认 provider/模型选择器，因为它与
+provider 就绪状态和模型身份耦合。此改动只移动渲染进程内容和设
+置搜索所有权；持久化设置、宿主 API、运行时语义和深链契约不
+变。
 
-## Consequences
+## 后果
 
-- Basics has a focused visual and application-preference scope.
-- Global AI presents the behavior controls users expect to affect agent turns.
-- Settings search routes mode, command shell, and Enter-to-send queries to AI.
-- Existing persisted settings and runtime behavior remain unchanged.
+- 基础页面拥有聚焦的视觉和应用偏好范围。
+- 全局 AI 呈现用户期望影响 agent 轮次的行为控件。
+- 设置搜索将模式、命令 shell 和回车发送的查询路由到 AI。
+- 现有持久化设置和运行时行为保持不变。
 
-## Alternatives
+## 替代方案
 
-### Keep Defaults in Basics
+### 将默认项保留在基础页面
 
-Rejected because the card mixes appearance with agent execution behavior.
+被拒绝，因为该卡片把外观和 agent 执行行为混在了一起。
 
-### Add a separate Behavior destination
+### 新增一个独立的行为目的地
 
-Rejected because it would expand the flat directory for three closely related
-controls that already have a clear owner in AI.
+被拒绝，因为这会为三个密切相关、且在 AI 中已有明确归属的控件扩
+张扁平目录。
 
-### Move the controls to Model configuration
+### 将这些控件移到模型配置
 
-Rejected because operating mode, command shell, and Enter-to-send are global
-interaction behavior and do not depend on provider/model readiness.
+被拒绝，因为操作模式、命令 shell 和回车发送是全局交互行为，不
+依赖 provider/模型就绪状态。
 
-## References
+## 参考
 
 - `docs/spec/04-ux/06-settings-ia.md`
 - `docs/spec/04-ux/08-component-spec.md`

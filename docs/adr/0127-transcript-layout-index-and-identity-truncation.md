@@ -1,4 +1,4 @@
-# ADR 0127: Transcript Layout Index and Identity-Based Truncation
+# ADR 0127: Transcript 布局索引与基于身份的截断
 
 - Status: Accepted
 - Date: 2026-08-26
@@ -6,97 +6,88 @@
 - Related: ADR 0120, D119, D122, D139, `03-runtime/04-data-storage.md`,
   `03-runtime/06-host-rpc-protocol.md`, `03-runtime/01-ipc-protocol.md`
 
-## Context
+## 背景
 
-ADR 0120 bounded what a session open sends to the renderer, but explicitly kept
-"the sequential scan needed to locate the requested page". That residue is what
-users experience as the remaining problem: opening a session is still linear in
-the whole conversation, and it degrades as the conversation grows, because the
-newest 100 messages can only be found by parsing every line before them. The
-scan also deserialized a `type` discriminator per line, so a single large tool
-result was walked in full merely to be classified and skipped.
+ADR 0120 限制了打开会话时发送给渲染进程的数据量，但明确保留了
+"定位所请求页面所需的顺序扫描"。这个残留正是用户体验到的剩余
+问题：打开会话仍然与整个会话长度成线性关系，并随会话增长而退化，
+因为最新的 100 条消息只能通过解析它们之前的每一行来找到。该扫描
+还会为每一行反序列化一个 `type` 判别字段，因此一个巨大的工具结果
+仅仅为了被分类然后跳过就要被完整遍历。
 
-Two further defects were found in the same path, both coordinate-space
-confusions rather than performance issues:
+在同一路径中还发现了两个缺陷，两者都是坐标空间混淆而不是性能
+问题：
 
-- The window clamped `messageBefore` against `SessionSummary.message_count`,
-  which is `sessions.last_seq` — a deduplicated logical count. Transcript
-  positions are physical file lines. A message whose durable file append
-  succeeded while its index commit did not (a documented crash window) leaves
-  the counter permanently below the line count, and the tail window then cut off
-  the newest messages: they existed on disk and never reached the renderer.
-- Regenerate and edit-resend sent `truncateBefore` as
-  `sessionHistory[sessionId].messageStart + userIndex`, adding a physical file
-  offset to an index into the renderer's deduplicated, display-filtered array.
-  The sum only addresses the intended message when the renderer holds the entire
-  history, so regenerating from a paged-back transcript could truncate at the
-  wrong point and archive the wrong tail as a revision.
+- 窗口用 `SessionSummary.message_count` 来钳制 `messageBefore`，而
+  它是 `sessions.last_seq`——一个去重后的逻辑计数。transcript 位置
+  是物理文件行。一条其持久化文件追加成功而索引提交未成功的消息
+  （一个有文档记录的崩溃窗口）会让计数器永久低于行数，于是尾部
+  窗口会截掉最新的消息：它们在磁盘上存在，却从未到达渲染进程。
+- Regenerate 和 edit-resend 把 `truncateBefore` 作为
+  `sessionHistory[sessionId].messageStart + userIndex` 发送，把一个
+  物理文件偏移加到了渲染进程去重、经显示过滤的数组索引上。这个和
+  只有在渲染进程持有完整历史时才能指向预期的消息，因此从翻页过的
+  transcript 重新生成可能在错误的位置截断，并把错误的尾部归档为
+  修订。
 
-Separately, a session fork committed on the host could vanish from the UI: both
-fork actions returned early when their navigation intent (D139) was superseded,
-after `api.forkSession` had already created the child. The branch stayed on disk
-and was absent from the sidebar until a manual refresh.
+另外，在宿主上提交的会话 fork 可能从 UI 中消失：当两个 fork 操作
+的导航意图（D139）被取代时，它们都会提前返回，而此时
+`api.forkSession` 已经创建了子会话。该分支留在磁盘上，并在手动
+刷新之前从侧边栏中缺席。
 
-## Decision
+## 决策
 
-1. **Layout index.** host-core maintains a per-session *transcript layout*: the
-   byte offset of every message and compaction line plus the `file_len` those
-   offsets were recorded against. A bounded window seeks directly to its first
-   selected line, so serving it costs the window and not the history in front of
-   it. The layout is derived data cached in memory: `file_len` detects growth
-   (scan the tail only), shrink or replacement (rescan), and every rewrite and
-   delete path drops the entry because a rewrite can reproduce the same length.
-   A torn trailing line is excluded from both offsets and `file_len` so a later
-   refresh adopts it once the writer completes it.
-2. **Cheap classification.** Transcript lines are classified by one depth-aware
-   scan for the *top-level* `type` key, never by parsing the line into a value.
-   Depth matters: tool results and checkpoint details are open-ended JSON and can
-   nest an object whose own `type` names a line kind, which a positional or
-   first-match check misreads. `type` is written first on every new line so the
-   scan normally stops at the first key, while lines written under the previous
-   ordering carry it after their payload and are read by the same scan, so no
-   migration is required.
-3. **One coordinate space.** Read-window offsets are physical message-line
-   positions, clamped against the layout. `last_seq` is never used for this
-   purpose. The compaction chain is still returned whole with any window,
-   because the newest checkpoint drives model context.
-4. **Identity-based truncation.** `agent/prompt` accepts
-   `truncateFromMessageId`, and the host resolves that identity against its own
-   transcript; an unresolvable id is rejected with `NOT_FOUND` instead of
-   truncating at a guessed position. `truncateBefore` remains accepted for older
-   callers with its correctness condition stated.
-5. **Durable fork commit.** Recording a forked child (session list, cached
-   transcript, checkpoint marks) is unconditional, because it is already durable
-   on the host when the call returns. Only the visible switch — active session,
-   transcript, work panel, history entry — remains gated on the navigation
-   intent still being current.
+1. **布局索引。** host-core 为每个会话维护一份 *transcript 布局*：
+   每条消息和压缩行的字节偏移，以及记录这些偏移时对应的
+   `file_len`。有界窗口直接 seek 到其首个选中行，因此提供该窗口的
+   成本只与窗口本身有关，而与它之前的历史无关。布局是缓存在内存中
+   的派生数据：`file_len` 用于检测增长（只扫描尾部）、缩小或替换
+   （重新扫描），并且每条重写和删除路径都会丢弃该条目，因为一次重写
+   可能产生相同的长度。一个不完整的末尾行会从偏移和 `file_len` 中
+   排除，使之后的刷新在写入者完成该行后将其纳入。
+2. **廉价的分类。** transcript 行通过一次深度感知的扫描查找*顶层*
+   `type` 键来分类，绝不通过把行解析为值。深度很关键：工具结果和
+   检查点细节是开放式 JSON，可以嵌套一个自身 `type` 恰好命名为某种
+   行类型的对象，而位置式或首个匹配的检查会误读它。`type` 在每条
+   新行上都写在最前面，因此扫描通常在第一个键处停止；而按旧顺序
+   写入的行把 `type` 放在载荷之后，由同一扫描读取，因此不需要迁移。
+3. **一个坐标空间。** 读取窗口偏移是物理消息行位置，根据布局钳制。
+   `last_seq` 绝不用于此目的。压缩链仍随任何窗口整体返回，因为最新
+   的检查点驱动模型上下文。
+4. **基于身份的截断。** `agent/prompt` 接受
+   `truncateFromMessageId`，宿主根据它自己的 transcript 解析该身份；
+   无法解析的 id 以 `NOT_FOUND` 拒绝，而不是在猜测的位置截断。
+   `truncateBefore` 仍被旧调用方接受，并注明其正确性条件。
+5. **持久化的 fork 提交。** 记录 fork 出的子会话（会话列表、缓存的
+   transcript、检查点标记）是无条件的，因为调用返回时它在宿主上
+   已经是持久的。只有可见的切换——活动会话、transcript、工作面板、
+   历史条目——仍然以导航意图仍然有效为条件。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- **Persist the layout in SQLite:** rejected. It is cheap to rebuild, and a
-  durable copy adds a schema migration plus a second source of truth that can
-  disagree with the file after a crash.
-- **Fix the clamp by making `last_seq` authoritative for file positions:**
-  rejected. It is a deduplicated counter by design; making the file conform to
-  it would mean rewriting transcripts to repair a derived index.
-- **Keep index-based truncation and always rehydrate the full history first:**
-  rejected. It reintroduces exactly the full-history read this change removes,
-  on the most latency-sensitive action in the product.
-- **Refresh the session list after a superseded fork:** rejected as a remedy for
-  the lost branch. It relies on an extra round trip to repair state the renderer
-  already had in hand.
+- **把布局持久化到 SQLite：** 否决。它重建起来很便宜，而持久化拷贝
+  会增加一次 schema 迁移，并引入第二个事实来源，崩溃后可能与文件
+  不一致。
+- **通过让 `last_seq` 成为文件位置的权威来修复钳制：** 否决。它在
+  设计上就是去重计数器；让文件去迎合它意味着为了修复一个派生索引
+  而重写 transcript。
+- **保留基于索引的截断并总是先重新水合完整历史：** 否决。它会在
+  产品中对延迟最敏感的操作上重新引入本次改动所消除的完整历史
+  读取。
+- **在 fork 被取代后刷新会话列表：** 作为丢失分支的补救被否决。它
+  依赖一次额外的往返来修复渲染进程本已持有的状态。
 
-## Consequences
+## 后果
 
-- Opening a session, and each older page, costs the requested window rather than
-  the conversation length; a large tool result is no longer parsed to be skipped.
-  Measured on synthetic transcripts of 3,000 messages / 32 MB and 12,000 /
-  129 MB, a warm tail window stays around 0.7-0.8 ms while the previous
-  sequential read grew from 6 ms to 25 ms, so the cost stops tracking history
-  length. The first open of a session still pays one index scan.
-- The layout is a cache with an explicit validity token, so correctness after a
-  crash or rewrite does not depend on it being present or fresh.
-- The newest messages of a session with an unindexed file line are visible again,
-  and paging backwards reaches the true first message.
-- Regenerating from a paged-back transcript replaces the turn the user selected.
-- A branch created while the user navigates away is still listed and openable.
+- 打开会话以及每一页更旧历史的成本只与所请求的窗口有关，而与会话
+  长度无关；巨大的工具结果不再需要为了被跳过而被解析。在 3,000 条
+  消息 / 32 MB 和 12,000 条 / 129 MB 的合成 transcript 上测量，热
+  尾部窗口保持在约 0.7-0.8 ms，而之前的顺序读取从 6 ms 增长到
+  25 ms，因此成本不再跟随历史长度增长。会话的首次打开仍需支付一次
+  索引扫描。
+- 布局是带显式有效性令牌的缓存，因此崩溃或重写之后的正确性不依赖
+  于它是否存在或新鲜。
+- 文件行未被索引的会话的最新消息重新可见，并且向前翻页能到达真正
+  的第一条消息。
+- 从翻页过的 transcript 重新生成会替换用户选中的那个轮次。
+- 在用户导航离开期间创建的分支仍会被列出并可打开。

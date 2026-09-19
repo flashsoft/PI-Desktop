@@ -1,132 +1,109 @@
-# ADR 0282: Retry and right-size the compaction summary before retained-tail recovery
+# ADR 0282: 在保留尾部恢复之前，重试并正确估算压缩摘要的大小
 
-- Status: Accepted
-- Date: 2026-09-18
-- Deciders: PI-Desktop runtime maintainers
-- Amends: ADR 0049 (decision 1, the preflight guard; the "retry indefinitely"
-  rejection stands), D203 / ADR 0064 (the summary family only)
-- Related: issue #543 · PR #554 (superseded) ·
+- 状态：已接受
+- 日期：2026-09-18
+- 决策者：PI-Desktop 运行时维护者
+- 修订：ADR 0049（决策 1，预检护栏；"无限重试"的拒绝仍然成立）、D203 /
+  ADR 0064（仅摘要家族）
+- 相关：issue #543 · PR #554（已被取代）·
   [03-runtime/02-agent-runtime](../spec/03-runtime/02-agent-runtime.md) ·
   [03-runtime/01-ipc-protocol](../spec/03-runtime/01-ipc-protocol.md) ·
   E2E-084
 
-## Context
+## 背景
 
-ADR 0049 made an automatic compaction failure survivable: when the summary
-request fails, the runtime writes a retained-tail checkpoint (previous summary
-if any, a fixed recovery notice, and a bounded tail) and the run continues.
-Issue #543 reports that on real long sessions this fallback is the common
-outcome rather than the exception: six of ten checkpoints on the reporter's
-machine were the ~112-token recovery notice, and the transcript row labelled
-every one of them `summary ≈112 tokens`.
+ADR 0049 让自动压缩失败变得可以存活：当摘要请求失败时，运行时写入一个
+保留尾部的检查点（如有前次摘要则带上、一段固定的恢复提示，以及一个有界
+的尾部），运行继续。issue #543 报告说，在真实的长会话中，这种回退是常见
+结果而非例外：报告者机器上十个检查点中有六个是约 112 token 的恢复提示，
+而且转录行把每一个都标注为 `summary ≈112 tokens`。
 
-Three things in the summary path made a fallback far more likely than the
-provider's actual failure rate:
+摘要路径中有三件事让回退的概率远高于 provider 的实际失败率：
 
-1. **No retry on the summary request.** `compact()` was called with no
-   `RetryPolicy`, so pi-ai returned the first failed response as-is. The
-   main turn's provider requests already retry transient failures through the
-   `streamFn` wrapper (D186), but pi-agent-core's summary request goes through
-   `Models.completeSimple` and never reaches that wrapper. One dropped stream
-   or 503 discarded the whole summary.
-2. **The preflight guard measured the wrong thing.** It summed
-   `estimateTokens` over the raw messages, but pi-agent-core serializes the
-   conversation into one text prompt and caps every tool result at 2 000
-   characters while doing so. A tool-heavy session looked several times larger
-   than the prompt it would actually send, and the guard skipped the model for
-   summaries that would have fit. The reporter's `tokensBefore` values
-   (~200k–885k on a 200k window) are exactly this shape.
-3. **The UI could not tell a fallback from a summary.** `ContextCompactionMark`
-   only distinguishes the `fresh_window` rollover; a retained-tail checkpoint
-   rendered as a successful summary of N tokens.
+1. **摘要请求没有重试。** `compact()` 被调用时不带 `RetryPolicy`，所以
+   pi-ai 把第一个失败的响应原样返回。主轮次的 provider 请求已经通过
+   `streamFn` 包装器重试瞬时失败（D186），但 pi-agent-core 的摘要请求走
+   `Models.completeSimple`，从不经过那个包装器。一次断流或 503 就丢弃整
+   个摘要。
+2. **预检护栏测错了对象。** 它对原始消息做 `estimateTokens` 求和，但
+   pi-agent-core 会把对话序列化为一个文本 prompt，并在此过程中把每个工具
+   结果截到 2 000 字符。一个工具密集的会话看起来会比它实际发送的 prompt
+   大好几倍，护栏于是对本能放下的摘要跳过了模型。报告者的
+   `tokensBefore` 值（200k 窗口上的 ~200k–885k）正是这种形态。
+3. **UI 无法区分回退和摘要。** `ContextCompactionMark` 只区分
+   `fresh_window` 滚动；保留尾部的检查点被渲染成一次成功的 N token 摘要。
 
-PR #554 proposed an outer retry loop around `buildCheckpoint` and a shrink step
-that dropped the oldest messages from the summary input. The loop retried every
-`recoverable` failure including deterministic ones (quota, auth, "no new
-context"), and dropping messages silently narrowed what the checkpoint claimed
-to summarize. Its direction — retry, then reduce, then fall back — is kept
-here; those two mechanisms are not.
+PR #554 提出了一个围绕 `buildCheckpoint` 的外层重试循环，以及一个从摘要
+输入中丢弃最旧消息的缩减步骤。该循环重试每一个 `recoverable` 失败，包括
+确定性的（配额、鉴权、"没有新上下文"），而丢弃消息会静默缩窄检查点声称
+摘要的范围。它的方向——先重试，再缩减，再回退——在这里被保留；那两套
+机制不被保留。
 
-## Decision
+## 决策
 
-1. **The summary request retries transient failures, bounded.**
-   `generateCompaction` passes pi-ai a `RetryPolicy` of three retries with
-   2 s / 4 s / 8 s backoff (`COMPACTION_SUMMARY_RETRY_POLICY`). pi-ai's own
-   classifier decides what is transient: overload, 429/5xx, dropped streams,
-   timeouts, and connection resets retry; quota, billing, auth, and malformed
-   requests return on the first attempt. The backoff sleeps honour the
-   compaction abort signal, so Stop still cancels immediately. A flapping
-   provider costs at most ~14 s before the ADR 0049 fallback runs; ADR 0049's
-   rejection of unbounded retry stands.
-2. **The preflight guard sizes the prompt pi will send.**
-   `compactionSummaryWouldExceedBudget` serializes the input with pi's own
-   `convertToLlm` + `serializeConversation` (tool results already capped) and
-   applies the four-characters-per-token heuristic the rest of the runtime
-   uses. A split turn counts the larger of its two requests. The limit itself
-   (window − output allowance − safety margin) is unchanged.
-3. **One bounded reduction before giving up.** When the full prompt still
-   exceeds the limit, the runtime tries exactly one reduced input: every tool
-   result cut to a 500-character prefix with a visible marker, assistant
-   thinking dropped. User text, assistant text, and tool-call arguments are
-   never touched, and no message is removed, so the summary still covers every
-   message the checkpoint files behind its boundary. If the reduced prompt
-   still does not fit, or nothing was reducible, the ADR 0049 fallback runs as
-   before. The checkpoint's `messagesToSummarize` and `retainedTail` are the
-   originals; only the request payload is reduced.
-4. **The mark says when a checkpoint is a fallback.** `ContextCompactionMark`
-   gains an optional `fallback?: "retained_tail"`, derived from the persisted
-   `details.fallback` the same way `summarized` is derived from
-   `details.strategy`. The transcript row renders such a mark as
-   "summary generation failed · recent context retained" instead of
-   `summary ≈N tokens`; the inspector line is unchanged. The field is
-   additive: older marks without it render exactly as before, and no record
-   schema, protocol version, or host-core change is needed.
+1. **摘要请求对瞬时失败重试，有界。** `generateCompaction` 向 pi-ai 传入
+   `RetryPolicy`：三次重试，2 s / 4 s / 8 s 退避
+   （`COMPACTION_SUMMARY_RETRY_POLICY`）。什么是瞬时的由 pi-ai 自己的分类器
+   决定：过载、429/5xx、断流、超时和连接重置会重试；配额、计费、鉴权和
+   畸形请求在第一次尝试就返回。退避睡眠响应压缩的中止信号，因此停止仍然
+   立即取消。抖动的 provider 在 ADR 0049 回退运行之前最多多花约 14 s；
+   ADR 0049 对无界重试的拒绝仍然成立。
+2. **预检护栏按 pi 实际要发送的 prompt 估算大小。**
+   `compactionSummaryWouldExceedBudget` 用 pi 自己的 `convertToLlm` +
+   `serializeConversation` 序列化输入（工具结果已被截断），并应用运行时
+   其余部分使用的四字符一 token 启发式。拆分的轮次按两个请求中较大的计。
+   上限本身（窗口 − 输出余量 − 安全边距）不变。
+3. **放弃之前做一次有界缩减。** 当完整 prompt 仍然超过上限时，运行时恰好
+   尝试一次缩减后的输入：每个工具结果截为 500 字符前缀并带可见标记，
+   助手思考被丢弃。用户文本、助手文本和工具调用参数从不触碰，也不移除
+   任何消息，因此摘要仍然覆盖检查点归档在其边界之后的每一条消息。如果
+   缩减后的 prompt 仍放不下，或没有任何可缩减的内容，ADR 0049 的回退
+   照旧运行。检查点的 `messagesToSummarize` 和 `retainedTail` 是原始的；
+   只有请求载荷被缩减。
+4. **标记要说明检查点何时是回退。** `ContextCompactionMark` 增加可选的
+   `fallback?: "retained_tail"`，从持久化的 `details.fallback` 派生，方式与
+   `summarized` 从 `details.strategy` 派生相同。转录行把这种标记渲染为
+   "摘要生成失败 · 已保留近期上下文"，而不是 `summary ≈N tokens`；检查器
+   中的行不变。该字段是增量添加：没有它的旧标记渲染与之前完全一样，且
+   不需要记录 schema、协议版本或 host-core 变更。
 
-Manual `/compact` inherits the retry and sizing (it is the same request) and
-keeps its fail-fast, no-fallback semantics. The `fresh_window` family issues no
-summary request and is untouched.
+手动 `/compact` 继承重试和大小估算（是同一个请求），并保持其快速失败、
+无回退的语义。`fresh_window` 家族不发出摘要请求，不受影响。
 
-## Consequences
+## 后果
 
-- Sessions on a flapping provider keep a real model summary far more often;
-  the fallback is reserved for sustained failures and inputs that cannot be
-  reduced under the window.
-- Tool-heavy sessions no longer skip the summary because of a raw-size
-  estimate that pi's serialization would never have sent.
-- A compaction can now take up to ~14 s longer on a sustained outage before
-  the fallback lands. The compacting activity state already covers this; Stop
-  aborts the backoff immediately.
-- The reduced prompt can produce a thinner summary of tool output than the
-  full one would; it is still a model summary of the complete message range,
-  which is strictly better than the recovery notice it replaces.
-- The transcript row is honest about fallbacks. Users who saw
-  `summary ≈112 tokens` will now see the failure label on the same rows,
-  including historical ones, because the mark is derived from persisted
-  details on session open.
+- 在抖动 provider 上的会话远更经常地保留真实的模型摘要；回退只留给持续
+  性失败和无法在窗口内缩减的输入。
+- 工具密集的会话不再因为 pi 的序列化根本不会发送的原始大小估算而跳过
+  摘要。
+- 在持续性故障下，压缩现在可能多花最多约 14 s 才落到回退。压缩中的活动
+  状态已经覆盖这一点；停止会立即中止退避。
+- 缩减后的 prompt 产生的工具输出摘要可能比完整版单薄；但它仍是覆盖完整
+  消息范围的模型摘要，严格好于它所替代的恢复提示。
+- 转录行对回退是诚实的。见过 `summary ≈112 tokens` 的用户现在会在同样的
+  行上看到失败标签，包括历史行，因为标记是在会话打开时从持久化详情派生
+  的。
 
-## Alternatives
+## 替代方案
 
-### Outer retry loop around `buildCheckpoint` (PR #554)
+### 围绕 `buildCheckpoint` 的外层重试循环（PR #554）
 
-Rejected. It re-ran preparation and retried every recoverable failure
-including deterministic ones, and could not tell a transient provider error
-from "no new context to compact" without re-implementing pi-ai's classifier.
-The policy hook on `compact()` already exists for exactly this.
+被拒绝。它会重新执行准备工作，重试每一个可恢复失败（包括确定性的），而且
+不重新实现 pi-ai 的分类器就无法区分瞬时 provider 错误和"没有新上下文可
+压缩"。`compact()` 上的策略钩子正是为此而存在。
 
-### Shrink by dropping the oldest messages (PR #554)
+### 通过丢弃最旧消息来缩减（PR #554）
 
-Rejected. The checkpoint's `throughMessageId` still covered the dropped
-messages, so the summary silently claimed a range it had not seen. Reducing
-tool output keeps the range intact.
+被拒绝。检查点的 `throughMessageId` 仍然覆盖被丢弃的消息，因此摘要会静默
+声称一个它没见过的范围。缩减工具输出能保持范围完整。
 
-### Map-reduce summarization for oversized inputs
+### 对超大输入做 map-reduce 摘要
 
-Deferred. It is the right answer for inputs that do not fit even reduced, but
-it changes the summary prompt contract and needs its own budget model. The
-fallback remains for that case; #543's reported failures fit after reduction.
+暂缓。对缩减后仍放不下的输入这是正确答案，但它改变摘要 prompt 契约，需要
+自己的预算模型。回退仍为这种情况保留；#543 报告的失败在缩减后都能放下。
 
-### Retry inside the runtime with `provider-retry.ts`
+### 在运行时内用 `provider-retry.ts` 重试
 
-Rejected. That module wraps `streamFn` and classifies streamed events; the
-summary is a `completeSimple` call that pi-agent-core builds itself. Using
-pi-ai's policy keeps one retry implementation per request shape.
+被拒绝。该模块包装 `streamFn` 并对流式事件分类；摘要是 pi-agent-core 自己
+构建的 `completeSimple` 调用。使用 pi-ai 的策略让每种请求形态只有一个重试
+实现。

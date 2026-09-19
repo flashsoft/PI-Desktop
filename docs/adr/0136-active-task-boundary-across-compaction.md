@@ -1,46 +1,41 @@
-# ADR 0136: Preserve the active task boundary across context compaction
+# ADR 0136: 在上下文压缩中保留活动任务边界
 
 - Status: Accepted
 - Date: 2026-08-31
 - Deciders: PI-Desktop core
 - Amends: ADR 0064 / D203
 
-## Context
+## 背景
 
-Codex-shaped compaction kept several recent user prompts while dropping the
-assistant and tool messages that established whether those prompts were
-completed. After a completed task, the next prompt could therefore look like
-another bare user message and the model could resume an old task (issue #22).
+Codex 形态的压缩保留了几条最近的用户提示词，却丢弃了用来确定这些
+提示词是否已完成的 assistant 和工具消息。因此在一个已完成的任务
+之后，下一条提示词可能看起来像另一条孤立的用户消息，模型可能恢复
+一个旧任务（issue #22）。
 
-## Decision
+## 决策
 
-1. Checkpoints carry opaque `details.retainedTailMode`, either
-   `active_turn` or `completed_turn`.
-2. An active-turn checkpoint is used when the provider must continue after a
-   tool result, `toolUse`, or overflow recovery. It retains only the latest
-   user message, subject to the existing 20,000-token cap and truncation.
-3. A completed-turn checkpoint is used at a terminal turn boundary, before a
-   new prompt, and for manual compaction. Its retained tail is empty; the
-   summary is authoritative for completed work and the next user prompt is the
-   sole new task.
-4. The `fresh_window` family remains the ADR 0064 no-summary exception and
-   always carries an empty tail.
-5. Legacy checkpoints without this field are normalized to their latest user
-   message only. The visible transcript, durable checkpoint chain, host
-   ownership, and protocol shape do not change.
+1. 检查点携带不透明的 `details.retainedTailMode`，取值为
+   `active_turn` 或 `completed_turn`。
+2. 活动轮次检查点用于 provider 必须在工具结果、`toolUse` 或溢出
+   恢复之后继续的情况。它只保留最近一条用户消息，受既有的
+   20,000-token 上限和截断约束。
+3. 已完成轮次检查点用于终态轮次边界、新提示词之前，以及手动压缩。
+   其保留尾部为空；摘要是已完成工作的权威记录，下一条用户提示词是
+   唯一的新任务。
+4. `fresh_window` 家族保持 ADR 0064 的无摘要例外，始终携带空尾部。
+5. 没有该字段的旧检查点归一化为仅保留其最近一条用户消息。可见
+   transcript、持久检查点链、宿主归属和协议形态均不改变。
 
-## Consequences
+## 后果
 
-- Completed user requests cannot be replayed as naked historical context after
-  compaction or restart.
-- Active tool loops retain the one prompt needed to continue the current task,
-  while assistant/tool messages remain represented by the summary.
-- Existing checkpoints remain readable without a migration, with a
-  conservative latest-user fallback.
+- 已完成的用户请求在压缩或重启之后不会作为赤裸的历史上下文被重放。
+- 活动的工具循环保留继续当前任务所需的那一条提示词，而 assistant/
+  工具消息仍由摘要代表。
+- 既有检查点无需迁移即可读取，使用保守的"最近一条用户消息"回退。
 
-## Alternatives
+## 备选方案
 
-- Retaining multiple recent user messages preserves more literal prompt text,
-  but loses the task boundary when completion messages are compacted away.
-- Retaining assistant and tool messages would preserve more context but can
-  strand incomplete tool calls and violates the Codex-shaped checkpoint form.
+- 保留多条最近的用户消息能保留更多字面提示词文本，但当完成消息被
+  压缩掉时会丢失任务边界。
+- 保留 assistant 和工具消息能保留更多上下文，但可能遗留不完整的
+  工具调用，且违反 Codex 形态的检查点形式。

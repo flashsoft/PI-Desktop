@@ -1,71 +1,65 @@
-# ADR 0093: Keep a strict 46px plugin drag band with a minimal capsule
+# ADR 0093: 保持严格的 46px 插件拖拽带与最小化胶囊
 
 - Status: Accepted
 - Date: 2026-08-17
 - Deciders: PI-Desktop core
 - Related: D235, ADR 0092
 
-## Context
+## 背景
 
-The plugin-owned panel surface introduced a compact host capsule, but its
-layout contract must remain explicit. Frameless windows still need a reliable
-drag area, and the top band cannot receive plugin clicks. The host must not
-grow that band for a title, a platform-specific control row, or decorative
-chrome. Development authors also need a visible reminder of the constraint.
+插件拥有的面板表面引入了紧凑的宿主胶囊，但其布局契约必须保持显
+式。无边框窗口仍需要可靠的拖拽区域，且顶带不能接收插件点击。宿
+主不得为标题、特定平台的控件行或装饰性外框而扩大该带。开发中的
+作者也需要一个可见的约束提醒。
 
-## Decision
+## 决策
 
-1. Every plugin panel reserves exactly 46 CSS px for the transparent host drag
-   band. Normal-flow content is offset by that same value; fixed and sticky
-   plugin UI uses `--pi-plugin-titlebar-height: 46px`.
-2. The drag band uses `-webkit-app-region: drag` and blocks plugin pointer
-   interaction across those 46px. The host capsule opts out with
-   `-webkit-app-region: no-drag`, so its three buttons remain clickable.
-3. The host renders no panel title. Development panels show a localized,
-   non-interactive reminder that the top 46px is drag-only outside the capsule;
-   production panels do not show the reminder.
-4. The capsule stays fixed at the top-right inside the 46px band and remains a
-   minimal closed-Shadow-DOM surface: three controls, a subtle border and
-   page-adaptive background, with no heavy shadow or blur effect. Its private
-   sender-validated window-control channel, localized labels, focus behavior,
-   reduced-motion behavior, and `window.pluginBridge` remain unchanged.
+1. 每个插件面板为透明的宿主拖拽带保留恰好 46 CSS px。正常流内容
+   按同一数值偏移；fixed 和 sticky 插件 UI 使用
+   `--pi-plugin-titlebar-height: 46px`。
+2. 拖拽带使用 `-webkit-app-region: drag`，并在这 46px 范围内阻止
+   插件指针交互。宿主胶囊通过 `-webkit-app-region: no-drag` 退
+   出，因此它的三个按钮保持可点击。
+3. 宿主不渲染面板标题。开发面板显示一个本地化的、非交互的提
+   醒：顶部 46px 在胶囊之外仅供拖拽；生产面板不显示该提醒。
+4. 胶囊固定在 46px 带内的右上角，并保持为最小化的闭合 Shadow
+   DOM 表面：三个控件、细微边框和随页面自适应的背景，没有厚重
+   阴影或模糊效果。其私有的经发送者校验的窗口控制通道、本地化
+   标签、焦点行为、减弱动态效果行为以及 `window.pluginBridge`
+   保持不变。
 
-## Paint-through opt-in
+## 穿透绘制选择启用
 
-Panels that need a full-bleed surface may declare
-`<meta name="pi-plugin-chrome" content="v3">`. The host keeps the same 46px
-geometry and capsule, but replaces one full-width native drag rectangle with
-empty-space drag segments. Standard controls and elements marked with
-`data-pi-plugin-no-drag` create holes in that map, so the page can paint and
-receive pointer events wherever an element is present while blank space still
-drags the window. Existing `v2` panels retain the strict non-clickable band
-above for compatibility.
+需要全出血表面的面板可以声明
+`<meta name="pi-plugin-chrome" content="v3">`。宿主保持相同的
+46px 几何和胶囊，但用一个全宽原生拖拽矩形替换为空白区域拖拽
+段。标准控件和标记了 `data-pi-plugin-no-drag` 的元素会在该映射
+中打出空洞，因此页面可以在任何有元素的地方绘制并接收指针事
+件，而空白区域仍可拖拽窗口。现有的 `v2` 面板保留上述严格的不可
+点击带以保持兼容。
 
-## Consequences
+## 后果
 
-- Plugin authors get a stable 46px layout and interaction contract on every
-  desktop platform.
-- The top band is intentionally unavailable to plugin buttons except for the
-  host capsule; plugin toolbars should use the documented drag/no-drag rules.
-- Development authors see the constraint while production panels keep the
-  surface quiet.
-- The capsule has less visual weight and cannot extend beyond the drag band.
+- 插件作者在每个桌面平台上都获得稳定的 46px 布局和交互契约。
+- 除宿主胶囊外，顶带刻意不对插件按钮开放；插件工具栏应使用文档
+  化的 drag/no-drag 规则。
+- 开发作者能看到该约束，而生产面板保持界面安静。
+- 胶囊的视觉重量更小，且不能超出拖拽带。
 
-## Alternatives
+## 替代方案
 
-### Let the drag band grow with the capsule
+### 让拖拽带随胶囊增长
 
-Rejected because a variable host band would change plugin layout and make the
-same panel differ across platforms or future chrome revisions.
+被拒绝，因为可变的宿主带会改变插件布局，并使同一面板在不同平台
+或未来的外框版本间表现不同。
 
-### Let every plugin content receive clicks in the drag band by default
+### 默认让所有插件内容在拖拽带中接收点击
 
-Rejected for the default because frameless window dragging would become
-unreliable and authors could mistake the top strip for ordinary interactive
-content. The `v3` opt-in is intentionally explicit and keeps the original
-`v2` behavior unchanged.
+默认值被拒绝，因为无边框窗口拖拽会变得不可靠，且作者可能把顶部
+条误认为普通的交互内容。`v3` 选择启用是刻意显式的，并保持原有
+`v2` 行为不变。
 
-### Restore a host-rendered panel title
+### 恢复宿主渲染的面板标题
 
-Rejected because the plugin owns the visible panel hierarchy; the host only
-needs the three native window actions and the development constraint reminder.
+被拒绝，因为插件拥有可见的面板层级；宿主只需要三个原生窗口动作
+和开发约束提醒。

@@ -1,4 +1,4 @@
-# ADR 0120: Bounded Session History Windows
+# ADR 0120: 有界的会话历史窗口
 
 - Status: Accepted
 - Date: 2026-08-24
@@ -6,50 +6,46 @@
 - Related: D119, ADR 0041, `03-runtime/04-data-storage.md`,
   `03-runtime/06-host-rpc-protocol.md`
 
-## Context
+## 背景
 
-Opening a session previously read its complete JSONL transcript, projected
-every message, and sent the complete result through host-core, Electron, and
-the renderer. A single large pasted or tool-produced value could therefore
-make a 50 MB transcript allocation and block the desktop while a long session
-was being opened. Mount-time virtualization did not solve the problem because
-the full payload had already crossed the process boundary.
+此前打开一个会话会读取其完整的 JSONL transcript、投影每一条消息，
+并把完整结果通过 host-core、Electron 和渲染进程传输。因此，一个
+巨大的粘贴值或工具产生的值可能造成 50 MB 的 transcript 分配，并在
+打开长会话时阻塞桌面。挂载时虚拟化并不能解决问题，因为完整载荷
+已经越过了进程边界。
 
-## Decision
+## 决策
 
-1. Renderer-facing `session.get` supports an additive read window with
-   `messageBefore`, `messageLimit`, and `contentLimit`. The host returns
-   `messageStart` and `hasMoreBefore` so the renderer can page toward older
-   messages while preserving the newest view.
-2. Host-core reads JSONL with a buffered sequential parser and projects only
-   the requested page. `contentLimit` truncates only the derived display
-   projection, with an explicit marker; the lossless transcript on disk and
-   the uncapped sidecar/model path remain authoritative.
-3. The desktop opens sessions with the newest 100 messages and a 64 KiB
-   per-message display budget. Scrolling near the top fetches older pages and
-   preserves the viewport's scroll position. Deliberate full-history rewrites
-   first rehydrate the complete transcript before replacing it, so a partial
-   renderer window cannot delete older messages.
-4. The uncapped default remains available to non-renderer callers, so model
-   reconstruction and persistence semantics do not depend on UI pagination.
+1. 面向渲染进程的 `session.get` 支持一个附加的读取窗口，参数为
+   `messageBefore`、`messageLimit` 和 `contentLimit`。宿主返回
+   `messageStart` 和 `hasMoreBefore`，使渲染进程可以在保留最新视图
+   的同时向更旧的消息翻页。
+2. host-core 使用带缓冲的顺序解析器读取 JSONL，只投影所请求的页面。
+   `contentLimit` 只截断派生的显示投影，并带有明确的标记；磁盘上的
+   无损 transcript 和不受限的 sidecar/模型路径仍然是权威数据。
+3. 桌面以最新的 100 条消息和每条消息 64 KiB 的显示预算打开会话。
+   滚动接近顶部时获取更旧的页面，并保持视口的滚动位置。有意的全历史
+   重写会先重新水合完整 transcript 再替换它，因此部分渲染窗口无法
+   删除更旧的消息。
+4. 不受限的默认值仍对非渲染进程调用方可用，因此模型重建和持久化
+   语义不依赖于 UI 分页。
 
-## Alternatives considered
+## 考虑过的替代方案
 
-- **Only virtualize the message list:** rejected because the expensive full
-  parse and IPC payload would still happen before rendering.
-- **Store only a preview in the transcript:** rejected because it loses user
-  data and changes model context semantics.
-- **Use a database payload table for paging:** rejected for now; the JSONL
-  transcript remains the lossless source and a streaming window avoids a schema
-  migration while fixing the boundary that caused the stall.
+- **只虚拟化消息列表：** 否决，因为昂贵的完整解析和 IPC 载荷仍会
+  在渲染之前发生。
+- **只在 transcript 中存储预览：** 否决，因为这会丢失用户数据并
+  改变模型上下文语义。
+- **使用数据库载荷表来分页：** 暂时否决；JSONL transcript 仍然是
+  无损数据源，而流式窗口在修复导致卡顿的边界问题的同时避免了
+  schema 迁移。
 
-## Consequences
+## 后果
 
-- Session activation has bounded renderer memory and IPC work independent of
-  the total visible history, apart from the sequential scan needed to locate
-  the requested page.
-- Older history is available on demand, and display-only truncation is clear
-  to the user while the complete content remains available to the agent.
-- Full-history edit, delete, revision-switch, and abort operations may perform
-  a deliberate uncapped read before mutation; this preserves transcript data
-  rather than allowing a partial UI window to overwrite older messages.
+- 会话激活时的渲染进程内存和 IPC 工作量有界，与可见历史总量无关，
+  唯一的例外是定位所请求页面所需的顺序扫描。
+- 更旧的历史可按需获取，显示专用的截断对用户清晰可见，而完整内容
+  对 agent 仍然可用。
+- 全历史编辑、删除、修订切换和中止操作可能在变更前执行一次有意的
+  不受限读取；这保留了 transcript 数据，而不是允许部分 UI 窗口覆盖
+  更旧的消息。

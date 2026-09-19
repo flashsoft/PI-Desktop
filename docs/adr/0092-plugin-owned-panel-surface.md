@@ -1,65 +1,63 @@
-# ADR 0092: Use a plugin-owned surface with a host window-control capsule
+# ADR 0092: 使用插件拥有的表面加宿主窗口控制胶囊
 
 - Status: Accepted
 - Date: 2026-08-17
 - Deciders: PI-Desktop core
 - Related: D234, ADR 0081, ADR 0082
 
-## Context
+## 背景
 
-The first plugin-panel chrome revision made the host render a complete 46px
-titlebar. It still split behavior by platform: macOS retained native traffic
-lights, while Windows and Linux received a flat 112px control band. The host
-also rendered the manifest title and a development-only safe-area reminder.
+插件面板外框的第一个版本让宿主渲染一条完整的 46px 标题栏。它仍
+按平台分流行为：macOS 保留原生红绿灯按钮，而 Windows 和 Linux 得
+到一条扁平的 112px 控制带。宿主还渲染 manifest 标题和仅开发用的
+安全区提醒。
 
-That chrome consumes the visual top-level hierarchy of a plugin panel. Plugin
-authors cannot build their own toolbar without competing with a host title, and
-the platform split makes the same plugin feel different on each desktop.
+那种外框消耗了插件面板的视觉顶层层级。插件作者无法在不与宿主标
+题竞争的情况下构建自己的工具栏，而且平台分流使同一个插件在每个
+桌面上的观感都不同。
 
-## Decision
+## 决策
 
-1. Plugin panels use frameless `BrowserWindow` instances on macOS, Windows, and
-   Linux. Native traffic lights and native panel menus are not part of the
-   panel window surface.
-2. The sandboxed preload reserves a transparent 46px safe area and renders one
-   fixed capsule at the top-right. The capsule contains exactly three buttons:
-   minimize, maximize/restore, and close. The host renders no panel title and
-   no development reminder.
-3. The plugin owns its title, toolbar, background, content, and all other
-   visible panel UI. Normal-flow content is offset automatically; fixed or
-   sticky plugin UI uses `--pi-plugin-titlebar-height: 46px`. A plugin-owned
-   toolbar may opt into `-webkit-app-region: drag`, with interactive children
-   opting out through `no-drag`.
-4. The capsule remains in a closed preload-owned Shadow DOM. Its localized
-   accessible labels, theme-adaptive colors, keyboard focus, reduced-motion
-   behavior, and sender-validated private window-control channel remain
-   unchanged. `window.pluginBridge` does not gain window primitives.
+1. 插件面板在 macOS、Windows 和 Linux 上使用无边框
+   `BrowserWindow` 实例。原生红绿灯按钮和原生面板菜单不属于面板
+   窗口表面。
+2. 沙箱 preload 保留一个透明的 46px 安全区，并在右上角渲染一个
+   固定胶囊。胶囊恰好包含三个按钮：最小化、最大化/还原和关闭。
+   宿主不渲染面板标题，也不渲染开发提醒。
+3. 插件拥有自己的标题、工具栏、背景、内容和所有其他可见面板
+   UI。正常流内容自动偏移；fixed 或 sticky 的插件 UI 使用
+   `--pi-plugin-titlebar-height: 46px`。插件拥有的工具栏可以选择
+   启用 `-webkit-app-region: drag`，其中的交互子元素通过
+   `no-drag` 退出。
+4. 胶囊保留在 preload 拥有的闭合 Shadow DOM 中。其本地化的无障
+   碍标签、随主题自适应的颜色、键盘焦点、减弱动态效果行为以及经
+   发送者校验的私有窗口控制通道保持不变。`window.pluginBridge`
+   不新增窗口原语。
 
-## Consequences
+## 后果
 
-- A panel presents the same compact top-right control grammar on all supported
-  platforms while giving each plugin complete ownership of its visible header.
-- The 46px safe area remains a stable layout contract, so existing normal-flow
-  panels do not move behind the controls and fixed plugin toolbars have a
-  documented anchor.
-- The manifest title remains useful as native window identity and launcher
-  metadata, but it is no longer a host-rendered visual element.
-- Development panels no longer need a host-only reminder; the devkit and plugin
-  documentation must teach the safe-area variable and drag-region contract.
+- 面板在所有受支持平台上呈现相同的紧凑右上角控制语法，同时让每
+  个插件完全拥有自己的可见头部。
+- 46px 安全区保持为稳定的布局契约，因此现有的正常流面板不会移
+  到控件后面，fixed 插件工具栏也有文档化的锚点。
+- manifest 标题仍作为原生窗口标识和启动器元数据发挥作用，但不
+  再是宿主渲染的视觉元素。
+- 开发面板不再需要仅供宿主的提醒；devkit 和插件文档必须教授安
+  全区变量和拖拽区域契约。
 
-## Alternatives
+## 替代方案
 
-### Keep native macOS controls and a host titlebar
+### 保留原生 macOS 控件和宿主标题栏
 
-Rejected because it keeps the platform split and reserves the plugin's primary
-visual hierarchy for host chrome.
+被拒绝，因为它保留了平台分流，并把插件的主要视觉层级留给了宿主
+外框。
 
-### Expose window controls to the plugin bridge
+### 把窗口控件暴露给插件桥接
 
-Rejected because plugin JavaScript still does not need generic native-window
-authority; the preload-local, sender-validated channel is sufficient.
+被拒绝，因为插件 JavaScript 仍然不需要通用的原生窗口权限；
+preload 本地的、经发送者校验的通道已经足够。
 
-### Remove the safe area entirely
+### 完全移除安全区
 
-Rejected because a host control overlay still needs a stable hit and drag band,
-and existing fixed/sticky plugin layouts would collide with the capsule.
+被拒绝，因为宿主控件覆盖层仍需要一个稳定的命中和拖拽带，且现有
+的 fixed/sticky 插件布局会与胶囊冲突。
