@@ -1,235 +1,224 @@
-# Documentation and Code Alignment Audit (2026-07-30)
+# 文档与代码一致性审计（2026-07-30）
 
-## Scope and method
+## 范围与方法
 
-This audit covers every Markdown document under `docs/` at commit `5891920`
-(`main` before the audit branch was created): 111 documents in total.
+本次审计覆盖 commit `5891920`（审计分支创建之前的 `main`）下 `docs/`
+中的每一份 Markdown 文档：共 111 份。
 
-| Area | Documents | Review method |
+| 领域 | 文档数 | 审查方法 |
 |---|---:|---|
-| Root docs and project tracking | 3 | Links, metadata, delivery claims |
-| ADRs | 38 | Index coverage, supersession and implementation references |
-| Spec root | 7 | Baseline and navigation consistency |
-| Product | 4 | Scope and platform claims against package/release configuration |
-| Architecture | 4 | Process ownership and package boundaries against Electron/Rust code |
-| Runtime | 17 | Protocol, storage, runtime, security and provider contracts |
-| UX | 11 | Current component/interaction references and implementation-status claims |
-| Security | 2 | Renderer, plugin and update trust boundaries |
-| Delivery | 7 | Build, test, release and workflow contracts |
-| Plugins | 15 | Manifest, API, installation, isolation and marketplace contracts |
-| Meta | 3 | Decisions, baseline references and open-question state |
+| 根文档与项目跟踪 | 3 | 链接、元数据、交付声明 |
+| ADR | 38 | 索引覆盖、取代关系与实现引用 |
+| Spec 根 | 7 | 基线与导航一致性 |
+| 产品 | 4 | 对照打包 / 发布配置核实范围与平台声明 |
+| 架构 | 4 | 对照 Electron/Rust 代码核实进程所有权与包边界 |
+| 运行时 | 17 | 协议、存储、运行时、安全与 Provider 契约 |
+| UX | 11 | 当前组件 / 交互引用与实现状态声明 |
+| 安全 | 2 | 渲染进程、插件与更新的信任边界 |
+| 交付 | 7 | 构建、测试、发布与工作流契约 |
+| 插件 | 15 | Manifest、API、安装、隔离与市场契约 |
+| 元数据 | 3 | 决策、基线引用与待决问题状态 |
 
-The review combined a complete static pass (relative links, document indexes,
-referenced source paths, version references, and implementation-status
-markers) with source-level checks of the Electron main/preload, Rust host-core,
-agent runtime, shared protocol, package manifests, release workflow, and tests.
-It does not claim that static source-contract tests are equivalent to a rendered
-desktop end-to-end test.
+本次审查结合了完整的静态走查（相对链接、文档索引、引用的源码路径、
+版本引用和实现状态标记）与对 Electron main/preload、Rust host-core、
+agent 运行时、共享协议、包清单、发布工作流和测试的源码级核查。
+它不声称静态源码契约测试等同于渲染后的桌面端到端测试。
 
-## Verified alignment
+## 已核实的一致项
 
-- All 111 Markdown documents have valid relative Markdown links. No broken
-  internal target was found.
-- The implemented core topology remains the frozen architecture: a sandboxed
-  Electron renderer, Electron main/preload bridge, Rust host-core over NDJSON
-  JSON-RPC, and the Node pi sidecar. See
-  `docs/spec/02-architecture/01-architecture.md` and
-  `apps/desktop/electron/main/{host-process,agent-sidecar}.ts`.
-- SQLite ownership is Rust-only in the implementation: `Database::open_in_dir`
-  creates `<data_dir>/pi.sqlite`, while transcripts remain JSONL under
-  `<data_dir>/sessions/` (`crates/host-core/src/{db,transcripts}.rs`).
-- The current project-instruction chain, thinking-level flow, context
-  checkpoint compaction, provider catalog ownership, and session-scoped work
-  panel all have matching runtime code, ADRs, and E2E-plan entries.
-- The recent global-search, settings IA, OS-locale, and project-instruction
-  changes are covered by current specs/ADRs rather than only by source code.
+- 全部 111 份 Markdown 文档的相对 Markdown 链接均有效，未发现失效的
+  内部目标。
+- 已实现的核心拓扑仍是冻结架构：沙箱化的 Electron 渲染进程、
+  Electron main/preload 桥、基于 NDJSON JSON-RPC 的 Rust host-core，
+  以及 Node pi sidecar。见
+  `docs/spec/02-architecture/01-architecture.md` 和
+  `apps/desktop/electron/main/{host-process,agent-sidecar}.ts`。
+- 实现中 SQLite 所有权仅在 Rust：`Database::open_in_dir` 创建
+  `<data_dir>/pi.sqlite`，而 transcript 仍以 JSONL 形式存放在
+  `<data_dir>/sessions/`（`crates/host-core/src/{db,transcripts}.rs`）。
+- 当前的项目指令链、thinking 等级流转、上下文 checkpoint 压缩、
+  Provider 目录所有权和会话级工作面板，都有匹配的运行时代码、ADR
+  和 E2E 计划条目。
+- 最近的全局搜索、设置信息架构、OS 语言环境和项目指令改动，都有
+  当前的 spec/ADR 覆盖，而不只是停留在源码里。
 
-## Findings
+## 发现
 
-### P0 - Marketplace plugins are not capability-sandboxed
+### P0 - 市场插件没有能力沙箱
 
-The marketplace can download and enable plugins, while each plugin executes in
-an Electron `utilityProcess`. That process directly imports plugin code with
-Node's `createRequire`/dynamic `import`; therefore plugin code can use Node
-built-ins independently of the brokered `pi.*` API. The broker permission
-checks protect only calls made through `pi.*`, not direct `node:fs`,
-`node:child_process`, or network access.
+市场可以下载并启用插件，而每个插件在 Electron `utilityProcess` 中
+执行。该进程通过 Node 的 `createRequire` / 动态 `import` 直接导入
+插件代码；因此插件代码可以绕过代理的 `pi.*` API，独立使用 Node
+内建模块。代理层的权限检查只保护经由 `pi.*` 发起的调用，管不到
+直接的 `node:fs`、`node:child_process` 或网络访问。
 
-Evidence:
+证据：
 
-- `docs/spec/07-plugins/01-plugin-system.md:185-192` documents the separate
-  process and explicitly acknowledges that raw Node built-ins remain reachable.
-- `apps/desktop/electron/main/plugin-runtime.ts:159-178` starts the process via
-  `utilityProcess.fork` with a normal Node environment.
-- `apps/desktop/electron/main/plugin-host-process.mjs:17-20,174-196` imports
-  arbitrary plugin entry modules through Node module loaders.
-- `docs/spec/07-plugins/01-plugin-system.md:230-234` still describes the host
-  API boundary as if it prevents arbitrary child-process and filesystem access.
+- `docs/spec/07-plugins/01-plugin-system.md:185-192` 记录了独立进程，
+  并明确承认原始 Node 内建模块仍然可达。
+- `apps/desktop/electron/main/plugin-runtime.ts:159-178` 通过
+  `utilityProcess.fork` 以普通 Node 环境启动进程。
+- `apps/desktop/electron/main/plugin-host-process.mjs:17-20,174-196`
+  通过 Node 模块加载器导入任意的插件入口模块。
+- `docs/spec/07-plugins/01-plugin-system.md:230-234` 仍然把宿主 API
+  边界描述得好像它能阻止任意的子进程和文件系统访问。
 
-Impact: a marketplace package is effectively user-privileged native code, not
-a permission-scoped plugin. The current UI and permission matrix can create a
-false security expectation.
+影响：一个市场安装包实际上是拥有用户权限的原生代码，而不是权限
+受限的插件。当前的 UI 和权限矩阵可能造成虚假的安全预期。
 
-Required resolution before expanding marketplace distribution:
+在扩大市场分发之前必须完成的处置：
 
-1. Disable remote installation/automatic enablement, or present it explicitly
-   as unrestricted code execution until real isolation exists.
-2. Implement a capability sandbox with an allowlisted runtime and OS-level
-   resource/process restrictions, or move untrusted plugin execution into a
-   separately sandboxed process.
-3. Add adversarial tests proving direct Node filesystem, child-process, and
-   network access cannot bypass granted permissions.
-4. Record the selected security boundary in a new ADR and then update the
-   plugin, security, marketplace, and acceptance docs together.
+1. 禁用远程安装 / 自动启用，或者在真实隔离存在之前把它明确标注为
+   不受限的代码执行。
+2. 实现带允许清单运行时和操作系统级资源 / 进程限制的能力沙箱，或
+   把不受信任的插件执行移入独立沙箱进程。
+3. 增加对抗性测试，证明直接的 Node 文件系统、子进程和网络访问无法
+   绕过已授予的权限。
+4. 用一份新 ADR 记录选定的安全边界，然后一起更新插件、安全、市场
+   和验收文档。
 
-### P1 - The manifest specification is substantially stronger than enforcement
+### P1 - Manifest 规范远强于实际校验
 
-The documented manifest contract requires `schemaVersion: 1`, known
-permissions, safe relative paths, contribution dependencies, and existing
-skill/panel paths. The active validators only require a small subset of those
-fields and use unchecked `join` operations for manifest paths.
+文档化的 manifest 契约要求 `schemaVersion: 1`、已知权限、安全的
+相对路径、贡献点依赖和存在的 skill/panel 路径。而实际生效的校验器
+只要求其中一小部分字段，并且对 manifest 路径使用未检查的 `join`
+操作。
 
-Evidence:
+证据：
 
-- Required rules: `docs/spec/07-plugins/02-plugin-manifest-schema.md:119,
-  134-142`.
-- SDK validation only checks object/id/name/version/main/schemaVersion:
-  `packages/plugin-sdk/src/index.ts:141-165`.
-- Host validation only checks non-empty strings plus existence after
-  `path.join`: `crates/host-core/src/plugins.rs:330-357`.
-- Runtime loading repeats the unchecked entry join:
-  `apps/desktop/electron/main/plugin-runtime.ts:245-260` and
-  `plugin-host-process.mjs:188-196`.
+- 要求的规则：`docs/spec/07-plugins/02-plugin-manifest-schema.md:119,
+  134-142`。
+- SDK 校验只检查 object/id/name/version/main/schemaVersion：
+  `packages/plugin-sdk/src/index.ts:141-165`。
+- 宿主校验只检查非空字符串和 `path.join` 之后的存在性：
+  `crates/host-core/src/plugins.rs:330-357`。
+- 运行时加载重复了未检查的入口 join：
+  `apps/desktop/electron/main/plugin-runtime.ts:245-260` 和
+  `plugin-host-process.mjs:188-196`。
 
-Required resolution: make the validator authoritative (schema version equality,
-permission allowlist, semver/id syntax, no absolute or `..` paths, contribution
-dependency checks, and canonical containment), then add negative tests for each
-rejected field. Do not weaken the documented contract to match the incomplete
-validator.
+处置要求：让校验器成为权威（schema 版本相等、权限允许清单、
+semver/id 语法、拒绝绝对路径或 `..` 路径、贡献点依赖检查，以及
+规范化包含校验），然后为每个被拒绝的字段补负面测试。不要为了让
+文档契约迁就残缺的校验器而削弱契约。
 
-### P1 - The host-ownership decision and implementation have drifted
+### P1 - 宿主所有权决策与实现已经漂移
 
-The frozen baseline describes Electron main as a thin orchestrator and Rust as
-the owner of host/system capabilities. In practice Electron main owns a large
-privileged surface: PTY lifecycle, browser views, updater, plugin runtime,
-filesystem panels, importers, and sidecar supervision.
+冻结基线把 Electron main 描述为薄编排层、Rust 作为宿主 / 系统能力
+的所有者。实践中 Electron main 拥有一大片高权限界面：PTY 生命
+周期、浏览器视图、更新器、插件运行时、文件系统面板、导入器和
+sidecar 监督。
 
-Evidence:
+证据：
 
-- Frozen roles: `docs/spec/00-baseline.md:50-53` and
-  `docs/spec/02-architecture/01-architecture.md:31-37,61-73`.
-- Electron main imports these services directly:
-  `apps/desktop/electron/main/index.ts:51-70`.
+- 冻结的角色划分：`docs/spec/00-baseline.md:50-53` 和
+  `docs/spec/02-architecture/01-architecture.md:31-37,61-73`。
+- Electron main 直接导入这些服务：
+  `apps/desktop/electron/main/index.ts:51-70`。
 
-This is a maintainability and security-boundary risk rather than a claim that
-the current app is nonfunctional. Choose and document one coherent direction:
-move terminal/browser/plugin host services behind Rust host-core contracts, or
-explicitly revise the frozen boundary so Electron main is the privileged
-desktop-service owner while Rust owns only the listed durable services. The
-choice requires an ADR because it changes a frozen security/data boundary.
+这是可维护性和安全边界风险，而不是声称当前应用无法工作。选择并
+记录一个连贯的方向：把终端 / 浏览器 / 插件宿主服务移到 Rust
+host-core 契约之后，或者明确修订冻结边界，让 Electron main 成为
+高权限桌面服务的所有者，而 Rust 只拥有列出的持久服务。该选择需要
+一份 ADR，因为它改变了冻结的安全 / 数据边界。
 
-### P1 - Remote marketplace integrity is not provenance verification
+### P1 - 远程市场完整性不等于来源验证
 
-Marketplace packages are fetched from a remote catalog and checked against a
-SHA-256 value supplied by that same catalog. This detects transfer corruption
-but cannot establish publisher provenance after a catalog-source compromise.
-The current implementation intentionally has no mandatory signature check.
+市场安装包从远程目录拉取，并用同一个目录提供的 SHA-256 值校验。
+这能检测传输损坏，但在目录来源被攻陷之后无法确立发布者来源。
+当前实现刻意没有强制的签名校验。
 
-Evidence:
+证据：
 
-- Remote provider and `curl` fetch are documented in
-  `docs/spec/07-plugins/07-plugin-marketplace.md:27-40`.
-- The code fetches and installs marketplace packages in
-  `crates/host-core/src/plugins.rs:641-723,898-997`.
-- Signature verification remains planned in
-  `docs/spec/07-plugins/08-plugin-signing-updates.md:142-156`.
+- 远程 Provider 与 `curl` 拉取记录在
+  `docs/spec/07-plugins/07-plugin-marketplace.md:27-40`。
+- 拉取并安装市场安装包的代码在
+  `crates/host-core/src/plugins.rs:641-723,898-997`。
+- 签名验证仍是计划项，见
+  `docs/spec/07-plugins/08-plugin-signing-updates.md:142-156`。
 
-Resolution: keep the marketplace explicitly experimental until signed catalog
-and package provenance are enforced, or use a package source that supplies
-independently pinned trust material. This issue compounds the P0 execution
-boundary.
+处置：在签名的目录与安装包来源得到强制执行之前，保持市场明确处于
+实验状态，或者改用能提供独立固定信任材料的安装包来源。这个问题
+与 P0 的执行边界相互叠加。
 
-### P2 - Plugin API, lifecycle, storage, and IPC documents mix target and shipped contracts
+### P2 - 插件 API、生命周期、存储和 IPC 文档混杂目标契约与已交付契约
 
-Several plugin documents expose APIs or behaviors that do not exist, while
-some current behavior is not represented accurately.
+若干插件文档暴露了并不存在的 API 或行为，同时一些当前行为没有被
+准确表达。
 
-- `pi.events.on/off` are documented as MVP events, but are no-ops in
-  `plugin-host-process.mjs:166-170`.
-- The overview documents `pi.agent.invokeSkill` and
-  `pi.agent.appendSystemHint`, which are absent from the SDK and host process;
-  `packages/plugin-sdk/src/index.ts:95-118` is the implemented API surface.
-- Manifest fields such as themes, entrypoints, `resizable`, rich author data,
-  and per-tool timeout/permission metadata are described but ignored by the
-  Rust manifest representation (`crates/host-core/src/plugins.rs:81-99`).
-- Plugin settings are stored in per-plugin `settings.json` by Electron main
-  (`plugin-runtime.ts:650-671`), not in the host `kv` namespace described as
-  the recommended current mechanism in
-  `docs/spec/07-plugins/11-plugin-storage-isolation.md:61-73`.
-- The IPC list includes target endpoints such as reload, logs, and open data
-  directory without a corresponding shared IPC declaration. The shipped API
-  must be generated from or tested against `packages/shared/src/protocol.ts`.
+- `pi.events.on/off` 被记录为 MVP 事件，但在
+  `plugin-host-process.mjs:166-170` 中是 no-op。
+- 概览文档记录了 `pi.agent.invokeSkill` 和
+  `pi.agent.appendSystemHint`，但 SDK 和宿主进程中都不存在；
+  `packages/plugin-sdk/src/index.ts:95-118` 才是已实现的 API 面。
+- themes、entrypoints、`resizable`、富作者数据和逐工具的
+  timeout/permission 元数据等 manifest 字段被描述了，但 Rust 的
+  manifest 表示忽略了它们（`crates/host-core/src/plugins.rs:81-99`）。
+- 插件设置由 Electron main 存储到每个插件的 `settings.json`
+  （`plugin-runtime.ts:650-671`），而不是
+  `docs/spec/07-plugins/11-plugin-storage-isolation.md:61-73` 所描述
+  的、作为当前推荐机制的宿主 `kv` 命名空间。
+- IPC 清单包含 reload、logs、open data directory 等目标端点，但没有
+  对应的共享 IPC 声明。已发布的 API 必须从
+  `packages/shared/src/protocol.ts` 生成，或与之对照测试。
 
-Resolution: mark unimplemented fields/APIs as planned, generate public plugin
-types and validation from one schema, and add a contract test that compares
-manifest/API/IPC documentation examples with the shipped SDK and protocol.
+处置：把未实现的字段 / API 标记为计划项；从单一 schema 生成公开的
+插件类型与校验；并新增一个契约测试，把 manifest/API/IPC 文档示例与
+已交付的 SDK 和协议对照。
 
-### P2 - Product and release posture is stale in several places
+### P2 - 多处产品与发布姿态已经过时
 
-- `docs/spec/01-product/01-product-scope.md:42-60,95-103` still frames macOS
-  as the sole required platform and Windows/Linux as planned. The baseline and
-  electron-builder configuration publish macOS arm64, Windows x64, and Linux
-  x64 lanes.
-- `docs/spec/02-architecture/02-tech-stack.md:22-26` says pnpm 10.x and allows
-  SQLite through a Node adapter. Root `package.json` requires pnpm 11.18.0,
-  and Rust `rusqlite` owns storage.
-- `docs/spec/05-security/01-security.md:78-84` states that plugins are local
-  only, but the marketplace performs remote package installation.
+- `docs/spec/01-product/01-product-scope.md:42-60,95-103` 仍把 macOS
+  描述为唯一必需平台，把 Windows/Linux 列为计划项。而基线和
+  electron-builder 配置发布的是 macOS arm64、Windows x64 和 Linux
+  x64 三条线。
+- `docs/spec/02-architecture/02-tech-stack.md:22-26` 写的是 pnpm 10.x，
+  并允许通过 Node 适配器使用 SQLite。根 `package.json` 要求
+  pnpm 11.18.0，且存储由 Rust `rusqlite` 拥有。
+- `docs/spec/05-security/01-security.md:78-84` 声称插件仅限本地，
+  但市场会执行远程安装包安装。
 
-The unambiguous metadata and index corrections from this audit are applied in
-the accompanying documentation commit. The platform and security wording must
-continue to track the final trust-boundary decision above.
+本次审计中无歧义的元数据和索引修正已随附带的文档提交一并应用。
+平台与安全措辞必须继续跟踪上文最终的信任边界决策。
 
-### P3 - Metadata, navigation, and tracking drift
+### P3 - 元数据、导航与跟踪漂移
 
-- `docs/README.md`, `docs/spec/README.md`, and
-  `docs/spec/08-meta/open-questions.md` referenced older baseline versions
-  despite `00-baseline.md` being 0.4.12.
-- `docs/adr/README.md` omitted accepted ADR 0036 even though the ADR file is
-  present.
-- `docs/project/BOARD.md` is an explicitly dated historical snapshot and does
-  not reflect the 2026-07-30 delivery state. It should be either maintained as
-  a live board or clearly archived in favor of a single current tracker.
-- `docs/project/README.md` contained Simplified Chinese prose despite the
-  repository's English-first documentation rule.
+- 尽管 `00-baseline.md` 已是 0.4.12，`docs/README.md`、
+  `docs/spec/README.md` 和 `docs/spec/08-meta/open-questions.md`
+  仍引用更旧的基线版本。
+- `docs/adr/README.md` 漏掉了已接受的 ADR 0036，尽管该 ADR 文件
+  存在。
+- `docs/project/BOARD.md` 是明确标注日期的历史快照，并不反映
+  2026-07-30 的交付状态。它要么作为活看板维护，要么明确归档，
+  让位于单一的当前跟踪工具。
+- `docs/project/README.md` 含有简体中文段落，违反仓库的
+  English-first 文档规则。
 
-## Test and delivery-route assessment
+## 测试与交付路径评估
 
-The source-contract test suite is extensive, but the documented E2E plan is
-largely a specification with unit/source tests as partial evidence. The plan
-itself correctly marks many rendered journeys as Draft or manual. Before
-declaring M5 hardening complete, prioritize real packaged-app coverage for:
+源码契约测试套件规模可观，但文档化的 E2E 计划在很大程度上是一份
+以单元 / 源码测试作为部分证据的 specification。该计划本身正确地
+把许多渲染后的旅程标记为 Draft 或手动。在宣布 M5 加固完成之前，
+优先为以下内容补齐真实打包应用覆盖：
 
-1. renderer/preload permission boundaries;
-2. marketplace installation and disabled-plugin recovery;
-3. workspace escape/symlink behavior across all file entry points;
-4. updates on each published platform; and
-5. concurrent session/permission focus behavior.
+1. 渲染进程 / preload 权限边界；
+2. 市场安装与禁用插件恢复；
+3. 所有文件入口的工作区逃逸 / 符号链接行为；
+4. 每个已发布平台上的更新；以及
+5. 并发会话 / 权限焦点行为。
 
-No local E2E command was run for this audit because repository instructions
-prohibit manually triggering local E2E jobs without an explicit request.
+本次审计没有运行任何本地 E2E 命令，因为仓库规则禁止在没有明确
+要求的情况下手动触发本地 E2E 任务。
 
-## Immediate documentation corrections included with this audit
+## 随本次审计一并应用的即时文档修正
 
-- Updated stale baseline metadata to 0.4.12.
-- Added ADR 0036 to the ADR index.
-- Corrected the stated pnpm and SQLite ownership in the tech-stack document.
-- Corrected the product platform table and remote-plugin security statement.
-- Linked this report from project tracking and made that index English-first.
+- 把过时的基线元数据更新到 0.4.12。
+- 把 ADR 0036 加入 ADR 索引。
+- 更正技术栈文档中的 pnpm 版本与 SQLite 所有权表述。
+- 更正产品平台表与远程插件安全声明。
+- 从项目跟踪链接本报告，并让该索引保持 English-first。
 
-## Follow-up gate
+## 后续关卡
 
-Do not close P0/P1 findings by editing prose alone. The next implementation
-request must start with the plugin execution/trust decision, update the
-relevant ADR and specifications, implement the boundary, and add the targeted
-negative and packaged-app tests.
+不要只靠改文字来关闭 P0/P1 发现。下一个实现请求必须从插件执行 /
+信任决策开始，更新相关 ADR 与 specification，实现该边界，并补上
+针对性的负面测试和打包应用测试。

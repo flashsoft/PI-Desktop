@@ -129,7 +129,7 @@ const nav: DefaultTheme.NavItem[] = [
   { text: '规格', link: '/spec/README' },
   { text: 'ADR', link: '/adr/README' },
   { text: '插件开发', link: '/plugin-development' },
-  { text: '隐私政策（英文）', link: '/privacy-policy' },
+  { text: '隐私政策', link: '/privacy-policy' },
   { text: 'GitHub', link: 'https://github.com/vastsa/PI-Desktop' },
 ]
 

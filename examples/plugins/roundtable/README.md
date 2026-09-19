@@ -1,62 +1,60 @@
-# Roundtable Discussion Plugin
+# Roundtable 讨论插件
 
-A PI-Desktop plugin that helps the parent agent run a structured multi-agent
-roundtable. Each role is an independent `Task`; the parent collects reports
-and synthesizes them. Delegates do not message each other.
+一个 PI-Desktop 插件，帮助父 Agent 运行结构化的多 Agent 圆桌讨论。
+每个角色是一个独立的 `Task`；父 Agent 收集各角色的报告并进行综合。
+被委派的角色之间不会互相通信。
 
-## What it provides
+## 提供的能力
 
-- **Skill** (`local.roundtable/roundtable`): When to use a roundtable, how to
-  pick roles, and how to run sequential rounds through `Task` / `TaskWait`.
-- **Agent tool** (`roundtable_start`): Returns an orchestration plan the
-  parent follows using Task and TaskWait.
+- **Skill**（`local.roundtable/roundtable`）：何时使用圆桌讨论、如何
+  选择角色，以及如何通过 `Task` / `TaskWait` 运行顺序轮次。
+- **Agent 工具**（`roundtable_start`）：返回一份编排计划，父 Agent
+  使用 Task 和 TaskWait 按该计划执行。
 
-## Install (dev-load)
+## 安装（开发加载）
 
-1. Open PI-Desktop.
-2. Go to **Plugins**.
-3. Open the header overflow menu and choose **Load development plugin**.
-4. Select the `examples/plugins/roundtable` directory.
+1. 打开 PI-Desktop。
+2. 进入 **Plugins**。
+3. 打开头部溢出菜单，选择 **Load development plugin**。
+4. 选择 `examples/plugins/roundtable` 目录。
 
-The plugin activates on startup and the skill and tool are available
-immediately.
+插件在启动时激活，Skill 和工具立即可用。
 
-## Usage
+## 用法
 
-Ask the agent to run a roundtable. For example:
+让 Agent 运行一次圆桌讨论。例如：
 
 > Run a roundtable on whether we should use GraphQL or REST for the API.
 
-The agent will:
+Agent 将会：
 
-1. Call `roundtable_start` with the topic.
-2. Receive a step-by-step orchestration plan.
-3. Start one `Task` per role concurrently.
-4. Wait with TaskWait and collect independent reports.
-5. Optionally start a later round whose briefs include the first-round
-   reports.
-6. Synthesize a recommendation for the user.
+1. 携带主题调用 `roundtable_start`。
+2. 收到一份逐步的编排计划。
+3. 为每个角色并发启动一个 `Task`。
+4. 使用 TaskWait 等待并收集独立的报告。
+5. 可选地启动后续轮次，其简报中包含第一轮报告。
+6. 为用户综合出一份建议。
 
-### Custom roles and options
+### 自定义角色与选项
 
 > Run a roundtable on our authentication strategy with roles: security-engineer,
 > backend-developer, mobile-developer, devops-engineer. Use 4 rounds and
 > produce a concrete implementation plan.
 
-## Tool parameters
+## 工具参数
 
-| Parameter | Type     | Required | Description                                |
+| 参数 | 类型     | 必填 | 描述                                       |
 |-----------|----------|----------|--------------------------------------------|
-| `topic`   | string   | yes      | The discussion topic or question           |
-| `agents`  | string[] | no       | Roles to include (default: architect, security-reviewer, ux-designer) |
-| `rounds`  | integer  | no       | Number of rounds, 1–5 (default: 3)         |
-| `goal`    | string   | no       | What the discussion should produce         |
+| `topic`   | string   | 是      | 讨论主题或问题           |
+| `agents`  | string[] | 否       | 要包含的角色（默认：architect、security-reviewer、ux-designer） |
+| `rounds`  | integer  | 否       | 轮次数，1–5（默认：3）         |
+| `goal`    | string   | 否       | 讨论应当产出的结果         |
 
-## Permissions
+## 权限
 
-- `agent.prompt.inject` — injects the roundtable skill into the agent context.
-- `agent.tool.register` — registers the `roundtable_start` tool.
+- `agent.prompt.inject` — 将圆桌讨论 Skill 注入 Agent 上下文。
+- `agent.tool.register` — 注册 `roundtable_start` 工具。
 
-## License
+## 许可证
 
-Part of PI-Desktop examples. See the repository root for license terms.
+属于 PI-Desktop 示例的一部分。许可条款见仓库根目录。

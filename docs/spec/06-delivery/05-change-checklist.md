@@ -191,9 +191,8 @@ request 编号时，在重写该变更或开始后续工作之前完成这道门
       应用内说明。
 - [ ] `packages/shared/src/changelog.test.ts` 把新版本列在最前。
 - [ ] `pnpm --filter @pi-desktop/shared test` 通过目录对齐。
-- [ ] `README.md` 和 `README.zh-CN.md` 声明当前的
-      `<major>.<minor>.x` 发布线，且不包含该发布会使其失效的
-      工具链、命令、亮点或路线图声明。
+- [ ] `README.md` 声明当前的 `<major>.<minor>.x` 发布线，且不包含
+      该发布会使其失效的工具链、命令、亮点或路线图声明。
 - [ ] `node scripts/check-release-docs.mjs` 通过（版本表面、
       已交付 locale 目录、README 发布线）。
 - [ ] 文档提交在 `node scripts/release.mjs <version> --tag` /

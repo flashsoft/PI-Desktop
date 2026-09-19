@@ -1,8 +1,8 @@
 # Sample Project
 
-Fixture used by PI-Desktop e2e scenarios.
+供 PI-Desktop e2e 场景使用的测试夹具。
 
-## Structure
+## 结构
 
-- `src/main.js` — entrypoint
-- `src/util.js` — helper utilities
+- `src/main.js` — 入口文件
+- `src/util.js` — 辅助工具函数

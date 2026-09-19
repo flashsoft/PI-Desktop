@@ -1,42 +1,39 @@
 ---
-title: Documentation redesign visual verification
-description: Desktop and mobile rendering baselines for the bilingual VitePress documentation system.
+title: 文档改版视觉验证
+description: VitePress 文档系统的桌面端与移动端渲染基线。
 ---
 
-# Documentation redesign visual verification
+# 文档改版视觉验证
 
-These browser-rendered captures record the responsive baseline introduced by
-the August 2026 documentation redesign. They are evidence for E2E-125, not a
-replacement for rebuilding and checking the current site.
+这些浏览器渲染截图记录了 2026 年 8 月文档改版引入的响应式基线。
+它们是 E2E-125 的证据，而不是重新构建并检查当前站点的替代品。
 
-## Desktop landing page
+## 桌面端落地页
 
-The 1440×900 capture verifies the centered hero, compact navigation, system
-visual, feature row, and the beginning of the intent-based content map.
+1440×900 截图验证居中的 hero、紧凑导航、系统视觉图、特性行，以及
+基于意图的内容地图的开头部分。
 
-![PI-Desktop documentation landing page at 1440 by 900](/screenshots/docs-home-desktop.png)
+![PI-Desktop 文档落地页，1440×900](/screenshots/docs-home-desktop.png)
 
-## Mobile Chinese landing page
+## 移动端中文落地页
 
-The 390×844 capture verifies that the translated hero leads the reading order,
-the system visual follows the primary actions, and the page has no horizontal
-overflow.
+390×844 截图验证翻译后的 hero 位于阅读顺序最前、系统视觉图跟在主要
+操作之后，并且页面没有横向溢出。
 
-![PI-Desktop Chinese documentation landing page at 390 by 844](/screenshots/docs-home-mobile-zh.png)
+![PI-Desktop 中文文档落地页，390×844](/screenshots/docs-home-mobile-zh.png)
 
-## Chinese specification page
+## 中文 Specification 页面
 
-The desktop specification capture verifies the generated Chinese sidebar,
-bounded reading column, source notice, and deep outline for a long runtime
-contract.
+桌面端 specification 截图验证生成的中文侧边栏、有界的阅读栏宽、
+来源说明，以及一份长运行时契约的深度大纲。
 
-![PI-Desktop Chinese specification page at 1440 by 900](/screenshots/docs-spec-zh-desktop.png)
+![PI-Desktop 中文 specification 页面，1440×900](/screenshots/docs-spec-zh-desktop.png)
 
-## Verification contract
+## 验证契约
 
-- Viewports: 1440×900 desktop and 390×844 mobile.
-- Locales: English and Simplified Chinese.
-- Appearance: light and dark mode are checked during the browser run; the
-  committed captures use light mode for legibility in repository viewers.
-- Overflow: the document root must match the viewport width; wide tables and
-  code blocks may scroll only inside their own containers.
+- 视口：1440×900 桌面端与 390×844 移动端。
+- 语言：英文与简体中文。
+- 外观：浏览器运行期间检查亮色与暗色模式；入库的截图使用亮色模式，
+  便于在仓库查看器中阅读。
+- 溢出：文档根必须等于视口宽度；宽表格和代码块只能在自己的容器内
+  滚动。

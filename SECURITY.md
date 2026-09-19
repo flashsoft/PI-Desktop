@@ -1,64 +1,58 @@
-# Security Policy
+# 安全政策
 
-PI-Desktop is an early-preview, local-first desktop application. We take
-security reports seriously and appreciate responsible disclosure.
+PI-Desktop 是一个处于早期预览阶段、本地优先的桌面应用。我们认真对待
+安全报告，并感谢负责任的披露。
 
-## Supported Versions
+## 受支持的版本
 
-Security fixes are provided for the latest release published on the
-[GitHub Releases page](https://github.com/vastsa/PI-Desktop/releases). Older
-releases and development builds may not receive security fixes.
+安全修复面向 [GitHub Releases 页面](https://github.com/vastsa/PI-Desktop/releases)
+上发布的最新版本提供。更旧的版本和开发构建可能无法获得安全修复。
 
-## Reporting a Vulnerability
+## 报告漏洞
 
-**Please do not report security vulnerabilities through public GitHub issues,
-pull requests, or discussions.**
+**请不要通过公开的 GitHub issue、pull request 或 discussions 报告安全
+漏洞。**
 
-Send a private report to **hhxk666@gmail.com** with the subject:
+请发送私密报告至 **hhxk666@gmail.com**，邮件主题为：
 
 ```text
 [PI-Desktop Security] <short description>
 ```
 
-If private vulnerability reporting is enabled for this repository, you may
-also use GitHub's private security advisory form:
+如果本仓库启用了私密漏洞报告功能，你也可以使用 GitHub 的私密安全
+公告表单：
 
 <https://github.com/vastsa/PI-Desktop/security/advisories/new>
 
-Please include as much of the following information as you can:
+请尽量提供以下信息：
 
-- A clear description of the vulnerability and its security impact.
-- The affected PI-Desktop version, operating system, and installation type.
-- Reproduction steps or a minimal proof of concept.
-- The affected component, feature, configuration, or extension boundary.
-- Any relevant logs, screenshots, stack traces, or suggested remediation.
+- 对漏洞及其安全影响的清晰描述。
+- 受影响的 PI-Desktop 版本、操作系统和安装方式。
+- 复现步骤或最小化的概念验证（PoC）。
+- 受影响的组件、功能、配置或扩展边界。
+- 任何相关的日志、截图、堆栈跟踪或修复建议。
 
-Please remove API keys, access tokens, passwords, private source code, personal
-data, and other sensitive information before sending a report. Do not test
-against other users, access data that does not belong to you, or perform
-destructive actions. PI-Desktop does not currently operate a bug bounty
-program.
+发送报告前，请移除 API key、访问令牌、密码、私有源代码、个人数据和
+其他敏感信息。不要针对其他用户进行测试，不要访问不属于你的数据，
+不要执行破坏性操作。PI-Desktop 目前没有运营漏洞赏金计划。
 
-## Response and Disclosure
+## 响应与披露
 
-We aim to acknowledge a report within 7 calendar days and provide an initial
-assessment within 14 calendar days. We will keep the reporter informed about
-triage, remediation, and release plans when appropriate.
+我们的目标是在 7 个自然日内确认收到报告，并在 14 个自然日内给出
+初步评估。在适当的时候，我们会就分流、修复和发布计划与报告者保持
+沟通。
 
-Please allow us reasonable time to investigate and release a fix before making
-the vulnerability public. We will coordinate a disclosure date with the
-reporter whenever possible and will credit the reporter in release notes only
-with their permission.
+在漏洞公开之前，请给予我们合理的时间来调查并发布修复。我们会尽
+可能与报告者协调披露日期，并且只在获得许可的情况下在发布说明中
+署名致谢。
 
-## Scope
+## 范围
 
-Reports are generally in scope when they affect the PI-Desktop application,
-official release artifacts, Electron main or preload boundaries, the Rust host
-core, the agent runtime, or the handling of credentials, permissions, local
-files, plugins, MCP servers, or IPC/RPC messages.
+当报告影响 PI-Desktop 应用本身、官方发布产物、Electron 主进程或
+preload 边界、Rust host core、agent 运行时，或凭据、权限、本地文件、
+插件、MCP 服务器、IPC/RPC 消息的处理时，通常属于范围内。
 
-Issues that affect only a third-party provider, model service, operating
-system, dependency, or user-installed extension should also be reported to the
-relevant maintainer. They are still in scope for PI-Desktop if the application
-introduces an exploitable integration, permission, sandbox, or credential
-handling weakness.
+仅影响第三方 Provider、模型服务、操作系统、依赖或用户自行安装的
+扩展的问题，也应同时报告给对应的维护者。如果 PI-Desktop 应用引入了
+可被利用的集成、权限、沙箱或凭据处理缺陷，这些问题仍属于
+PI-Desktop 的范围。
