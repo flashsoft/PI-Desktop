@@ -66,6 +66,7 @@ const REQUIRED_ANCHORS = [
       "never develop on `main`",
       "never develop directly on `main`",
       "develop directly on `main`",
+      "直接在 `main` 上开发",
     ],
   },
   {
@@ -81,11 +82,17 @@ const REQUIRED_ANCHORS = [
       "sqlite is owned exclusively by rust host-core",
       "sqlite remains owned exclusively by rust `host-core`",
       "sqlite is owned exclusively by rust `host-core`",
+      "sqlite 由 rust host-core 独占拥有",
+      "sqlite 由 rust `host-core` 独占拥有",
     ],
   },
   {
     id: "main-thin-orchestrator",
-    anyOf: ["electron main must remain a thin orchestrator", "electron main stays a thin orchestrator"],
+    anyOf: [
+      "electron main must remain a thin orchestrator",
+      "electron main stays a thin orchestrator",
+      "保持为薄编排",
+    ],
   },
   {
     id: "no-local-main-before-e2e",
@@ -107,6 +114,7 @@ const REQUIRED_ANCHORS = [
     anyOf: [
       "unless the task explicitly requires",
       "unless the task explicitly requires behavior to change",
+      "除非任务明确要求",
     ],
   },
   {
@@ -116,6 +124,7 @@ const REQUIRED_ANCHORS = [
       "never “fix” a feature by weakening",
       'never "fix" a feature by weakening',
       "never fix a feature by weakening",
+      "通过削弱",
     ],
   },
   {
@@ -123,11 +132,15 @@ const REQUIRED_ANCHORS = [
     anyOf: [
       "changing a frozen architecture, public interface, data ownership model, or security boundary requires an adr",
       "requires an adr under `docs/adr/`",
+      "修改冻结的架构、公共接口、数据所有权模型或安全边界",
     ],
   },
   {
     id: "specs-stay-synchronized",
-    anyOf: ["observable behavior changes must update the relevant spec"],
+    anyOf: [
+      "observable behavior changes must update the relevant spec",
+      "可观察行为的改动必须更新相关 spec",
+    ],
   },
 ];
 
