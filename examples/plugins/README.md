@@ -1,12 +1,11 @@
-# Example Plugins
+# 示例插件
 
-Sample plugins for development, specification, and integration tests. Start
-with the [zero-to-one plugin development guide](../../docs/plugin-development.md)
-before using these as API references.
+用于开发、规格说明和集成测试的示例插件。在把这些示例当作 API 参考
+之前，先阅读[从零到一的插件开发指南](../../docs/plugin-development.md)。
 
 ## hello
 
-Reference example covering:
+覆盖以下内容的参考示例：
 
 - `commands`
 - `ui.panel`
@@ -14,11 +13,11 @@ Reference example covering:
 - `skills`
 - `settings`
 - `themes`
-- resident `services`
-- inter-plugin `bus`
+- 常驻 `services`
+- 插件间 `bus`
 - `permissions`
 
-Related specs:
+相关 spec：
 
 - `docs/spec/07-plugins/01-plugin-system.md`
 - `docs/spec/07-plugins/02-plugin-manifest-schema.md`
@@ -26,34 +25,34 @@ Related specs:
 - `docs/spec/07-plugins/05-plugin-lifecycle.md`
 - `docs/spec/07-plugins/09-plugin-command-palette.md`
 
-Panel chrome contract:
+面板外框（chrome）契约：
 
-- PI-Desktop owns exactly a transparent 46px drag band and the minimal
-  top-right three-button window-control capsule on every platform.
-- Normal-flow panel content is offset below that band automatically. Do not
-  add another 46px top padding.
-- If a panel adds fixed or sticky top UI, anchor it at
-  `top: var(--pi-plugin-titlebar-height, 46px)`. The plugin owns that UI and
-  should add `-webkit-app-region: no-drag` to its interactive controls.
+- 在每个平台上，PI-Desktop 只拥有一条透明的 46px 拖拽带，以及右上角
+  最小的三按钮窗口控制胶囊。
+- 普通文档流中的面板内容会自动偏移到该拖拽带下方。不要再添加额外的
+  46px 顶部 padding。
+- 如果面板添加了 fixed 或 sticky 的顶部 UI，将其锚定在
+  `top: var(--pi-plugin-titlebar-height, 46px)`。该 UI 归插件所有，
+  其交互控件应加上 `-webkit-app-region: no-drag`。
 
-## Planned examples
+## 计划中的示例
 
 - `panel-basic`
 - `agent-tool-basic`
 - `skill-pack`
 - `marketplace-mock-publisher`
 
-## Official marketplace repository
+## 官方插件市场仓库
 
-Published plugins live in [`vastsa/pi-desktop-plugins`](https://github.com/vastsa/pi-desktop-plugins).
+已发布的插件存放在 [`vastsa/pi-desktop-plugins`](https://github.com/vastsa/pi-desktop-plugins)。
 
-Local examples here remain useful for development loading (`Load dev plugin`).
-Marketplace installs should come from that repository's `catalog.json` + `packages/*.piplug`.
+此处的本地示例仍可用于开发加载（`Load dev plugin`）。
+插件市场安装应来自该仓库的 `catalog.json` + `packages/*.piplug`。
 
 
-## Practical template
+## 实用模板
 
-Prefer the official warehouse template:
+优先使用官方仓库模板：
 
 - https://github.com/vastsa/pi-desktop-plugins/tree/main/plugins/demo.workspace-summary
-- Contribution guide: https://github.com/vastsa/pi-desktop-plugins/blob/main/CONTRIBUTING.md
+- 贡献指南：https://github.com/vastsa/pi-desktop-plugins/blob/main/CONTRIBUTING.md

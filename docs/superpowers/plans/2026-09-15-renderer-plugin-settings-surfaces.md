@@ -1,43 +1,43 @@
-# Renderer Plugin Settings Surfaces Implementation Plan
+# 渲染进程插件设置界面实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给 Agent 工作者：**必需的子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实施本计划。步骤使用复选框（`- [ ]`）语法进行跟踪。
 
-**Goal:** Replace opaque native Settings extension views with renderer-composited, sandboxed plugin iframes so scenic backdrops remain visible throughout the Settings destination.
+**目标：**用渲染进程合成的、沙箱化的插件 iframe 替换不透明的原生 Settings 扩展视图，使风景背景在整个 Settings 目的地中保持可见。
 
-**Architecture:** A new host-owned `plugin-settings:` protocol serves only resources beneath a currently loaded, `ui.settings`-granted plugin package and adds CSP headers. Its synthetic bridge script exposes `window.pluginBridge` and uses `postMessage`. `PluginSettingsDestination` owns a sandboxed iframe and forwards only source-validated, destination-bound bridge requests through a new main IPC handler to the established `PluginRuntime.invokePanelBridge` authorization path. Native `PluginViewHost` remains for work-panel views only.
+**架构：**一个新的宿主拥有的 `plugin-settings:` 协议只服务当前已加载、拥有 `ui.settings` 授权的插件包内的资源，并附加 CSP 头。其合成桥接脚本暴露 `window.pluginBridge` 并使用 `postMessage`。`PluginSettingsDestination` 拥有一个沙箱化 iframe，只把经过来源校验、绑定目的地的桥接请求通过一个新的主进程 IPC 处理器，转发到既有的 `PluginRuntime.invokePanelBridge` 授权路径。原生 `PluginViewHost` 仅保留给工作面板视图。
 
-**Tech Stack:** Electron custom protocols and IPC, React/TypeScript, existing Plugin Runtime bridge, Node contract tests.
+**技术栈：**Electron 自定义协议与 IPC、React/TypeScript、既有 Plugin Runtime 桥接、Node 契约测试。
 
-**Spec:** `docs/superpowers/specs/2026-09-15-renderer-plugin-settings-surfaces-design.md`
+**Spec：** `docs/superpowers/specs/2026-09-15-renderer-plugin-settings-surfaces-design.md`
 
-## Global Constraints
+## 全局约束
 
-- Do not modify Nexus or alter the BrowserWindow transparency/native resize model.
-- The iframe must be `sandbox="allow-scripts"`; no same-origin, popup, top-navigation, form, download, Electron, Node, or host-DOM capability.
-- `plugin-settings:` may serve only a loaded plugin with `ui.settings`, only package-local static resources, with host-authored CSP and no network egress.
-- Settings destinations must not instantiate `WebContentsView`; native work-panel views keep their current implementation.
-- Retain existing `PluginRuntime.invokePanelBridge` channel validation, permissions, audit boundary, and plugin identity validation.
-- Update plugin architecture/security/settings specifications, an ADR, and the E2E plan. Do not run E2E unless requested.
+- 不修改 Nexus，也不改变 BrowserWindow 的透明 / 原生调整大小模型。
+- iframe 必须是 `sandbox="allow-scripts"`；没有 same-origin、弹窗、顶层导航、表单、下载、Electron、Node 或宿主 DOM 能力。
+- `plugin-settings:` 只服务拥有 `ui.settings` 的已加载插件，只服务包内静态资源，带宿主编写的 CSP，且无网络出口。
+- Settings 目的地不得实例化 `WebContentsView`；原生工作面板视图保持当前实现。
+- 保留既有 `PluginRuntime.invokePanelBridge` 的通道校验、权限、审计边界和插件身份校验。
+- 更新插件架构 / 安全 / 设置 specification、一份 ADR 和 E2E 计划。除非被要求，否则不运行 E2E。
 
 ---
 
-### Task 1: Define the Settings resource protocol and bridge contract
+### 任务 1：定义 Settings 资源协议与桥接契约
 
-**Files:**
-- Create: `apps/desktop/electron/main/plugin-settings-protocol.ts`
-- Modify: `apps/desktop/electron/main/bootstrap/startup.ts`
-- Modify: `apps/desktop/electron/main/services/plugin-services.ts`
-- Modify: `apps/desktop/electron/main/ipc/plugin-ui-ipc.ts`
-- Modify: `packages/shared/src/protocol.ts`
-- Test: `apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+**文件：**
+- 创建：`apps/desktop/electron/main/plugin-settings-protocol.ts`
+- 修改：`apps/desktop/electron/main/bootstrap/startup.ts`
+- 修改：`apps/desktop/electron/main/services/plugin-services.ts`
+- 修改：`apps/desktop/electron/main/ipc/plugin-ui-ipc.ts`
+- 修改：`packages/shared/src/protocol.ts`
+- 测试：`apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-**Interfaces:**
-- Produces `registerPluginSettingsScheme(): void` called before Electron readiness.
-- Produces `installPluginSettingsProtocol(resolve): void`, where `resolve(pluginId, path)` returns `{ absolutePath, isEntry } | null` only for active `ui.settings` destinations.
-- Produces `pluginSettingsUrl(pluginId, destinationId): string` used by renderer after host validation.
-- Produces IPC `pluginSettingsBridgeInvoke({ pluginId, destinationId, requestId, channel, payload })` that verifies active contribution and delegates to `PluginRuntime.invokePanelBridge`.
+**接口：**
+- 产出 `registerPluginSettingsScheme(): void`，在 Electron 就绪之前调用。
+- 产出 `installPluginSettingsProtocol(resolve): void`，其中 `resolve(pluginId, path)` 只对活动的 `ui.settings` 目的地返回 `{ absolutePath, isEntry } | null`。
+- 产出 `pluginSettingsUrl(pluginId, destinationId): string`，供渲染进程在宿主校验后使用。
+- 产出 IPC `pluginSettingsBridgeInvoke({ pluginId, destinationId, requestId, channel, payload })`，校验活动的贡献点并委托给 `PluginRuntime.invokePanelBridge`。
 
-- [ ] **Step 1: Write a failing contract test**
+- [ ] **步骤 1：写一个失败的契约测试**
 
 ```js
 test("Settings destinations use a host-owned sandbox resource protocol instead of a native view", () => {
@@ -53,13 +53,13 @@ test("Settings destinations use a host-owned sandbox resource protocol instead o
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **步骤 2：运行测试确认它失败**
 
-Run: `node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+运行：`node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-Expected: FAIL because the protocol and bridge IPC do not yet exist.
+预期：FAIL，因为协议和桥接 IPC 尚不存在。
 
-- [ ] **Step 3: Implement the protocol and validated bridge endpoint**
+- [ ] **步骤 3：实现协议和经过校验的桥接端点**
 
 ```ts
 export const PLUGIN_SETTINGS_SCHEME = "plugin-settings";
@@ -76,36 +76,36 @@ handle(IPC.invoke.pluginSettingsBridgeInvoke, async (payload) => {
 });
 ```
 
-The HTML response must reference the synthetic `/__pi_bridge__.js` file before
-plugin scripts. The bridge script may only use `window.parent.postMessage` and
-may not expose any Electron or Node object.
+HTML 响应必须在插件脚本之前引用合成的 `/__pi_bridge__.js` 文件。
+桥接脚本只允许使用 `window.parent.postMessage`，不得暴露任何
+Electron 或 Node 对象。
 
-- [ ] **Step 4: Run the contract test to verify it passes**
+- [ ] **步骤 4：运行契约测试确认它通过**
 
-Run: `node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+运行：`node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-Expected: PASS.
+预期：PASS。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add apps/desktop/electron/main/plugin-settings-protocol.ts apps/desktop/electron/main/bootstrap/startup.ts apps/desktop/electron/main/services/plugin-services.ts apps/desktop/electron/main/ipc/plugin-ui-ipc.ts packages/shared/src/protocol.ts apps/desktop/test/plugin-settings-renderer-surface.test.mjs
 git commit -m "feat(plugins): serve settings pages in renderer"
 ```
 
-### Task 2: Replace the native Settings placeholder with a sandboxed iframe
+### 任务 2：用沙箱化 iframe 替换原生 Settings 占位
 
-**Files:**
-- Modify: `apps/desktop/src/components/settings/PluginSettingsDestination.tsx`
-- Modify: `apps/desktop/src/lib/api.ts`
-- Modify: `apps/desktop/src/styles/settings.css`
-- Test: `apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+**文件：**
+- 修改：`apps/desktop/src/components/settings/PluginSettingsDestination.tsx`
+- 修改：`apps/desktop/src/lib/api.ts`
+- 修改：`apps/desktop/src/styles/settings.css`
+- 测试：`apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-**Interfaces:**
-- Consumes `api.pluginSettingsDestinationUrl(pluginId, destinationId)` and `api.pluginSettingsBridgeInvoke(...)`.
-- Produces an `<iframe sandbox="allow-scripts">` whose postMessage listener accepts only its `contentWindow` and a bounded bridge request envelope.
+**接口：**
+- 消费 `api.pluginSettingsDestinationUrl(pluginId, destinationId)` 和 `api.pluginSettingsBridgeInvoke(...)`。
+- 产出一个 `<iframe sandbox="allow-scripts">`，其 postMessage 监听器只接受来自它自己的 `contentWindow` 的、有界的桥接请求信封。
 
-- [ ] **Step 1: Extend the failing contract test**
+- [ ] **步骤 1：扩展失败的契约测试**
 
 ```js
 test("the renderer owns a Settings extension iframe and preserves native geometry", () => {
@@ -119,13 +119,13 @@ test("the renderer owns a Settings extension iframe and preserves native geometr
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **步骤 2：运行测试确认它失败**
 
-Run: `node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+运行：`node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-Expected: FAIL because the old component measures a native child view.
+预期：FAIL，因为旧组件度量的是一个原生子视图。
 
-- [ ] **Step 3: Implement the renderer-owned surface**
+- [ ] **步骤 3：实现渲染进程拥有的界面**
 
 ```tsx
 <iframe
@@ -137,37 +137,42 @@ Expected: FAIL because the old component measures a native child view.
 />
 ```
 
-On a bridge request, verify the message source equals `frameRef.current?.contentWindow`, verify the envelope is a finite request id plus string channel and object payload, call the host API with the immutable component `pluginId` / `destinationId`, then return the matching response only to that iframe. Render the existing recovery state on a failed URL or bridge setup. The CSS must make the iframe transparent at the host level, fill its Settings content area, and leave scroll/drag/control ownership with the existing Settings shell.
+收到桥接请求时，校验消息来源等于 `frameRef.current?.contentWindow`，
+校验信封是有限的请求 id 加字符串 channel 和对象 payload，用组件不可
+变的 `pluginId` / `destinationId` 调用宿主 API，然后把匹配的响应只
+返回给那个 iframe。URL 或桥接建立失败时渲染既有的恢复状态。CSS
+必须让 iframe 在宿主层面透明、填满它的 Settings 内容区域，并把滚动 /
+拖拽 / 控件所有权留给既有的 Settings 外壳。
 
-- [ ] **Step 4: Run the contract test to verify it passes**
+- [ ] **步骤 4：运行契约测试确认它通过**
 
-Run: `node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+运行：`node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-Expected: PASS.
+预期：PASS。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add apps/desktop/src/components/settings/PluginSettingsDestination.tsx apps/desktop/src/lib/api.ts apps/desktop/src/styles/settings.css apps/desktop/test/plugin-settings-renderer-surface.test.mjs
 git commit -m "feat(settings): compose plugin destinations in renderer"
 ```
 
-### Task 3: Remove Settings-native-view lifecycle plumbing and preserve bridge events
+### 任务 3：移除 Settings 原生视图的生命周期管线并保留桥接事件
 
-**Files:**
-- Modify: `apps/desktop/electron/main/services/plugin-services.ts`
-- Modify: `apps/desktop/electron/main/bootstrap/window.ts`
-- Modify: `apps/desktop/electron/main/bootstrap/shutdown.ts`
-- Modify: `apps/desktop/electron/main/bootstrap/app-lifecycle.ts`
-- Modify: `apps/desktop/electron/main/index.ts`
-- Modify: `apps/desktop/electron/main/ipc/plugin-ipc.ts`
-- Test: `apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+**文件：**
+- 修改：`apps/desktop/electron/main/services/plugin-services.ts`
+- 修改：`apps/desktop/electron/main/bootstrap/window.ts`
+- 修改：`apps/desktop/electron/main/bootstrap/shutdown.ts`
+- 修改：`apps/desktop/electron/main/bootstrap/app-lifecycle.ts`
+- 修改：`apps/desktop/electron/main/index.ts`
+- 修改：`apps/desktop/electron/main/ipc/plugin-ipc.ts`
+- 测试：`apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-**Interfaces:**
-- Removes `pluginSettingsViews` as a dependency and lifecycle surface.
-- Emits `pluginSettingsDestinationEvent` to the main renderer so the active iframe receives sanctioned appearance/workspace events.
+**接口：**
+- 移除作为依赖和生命周期界面的 `pluginSettingsViews`。
+- 向主渲染进程发出 `pluginSettingsDestinationEvent`，使活动的 iframe 收到经过批准的外观 / 工作区事件。
 
-- [ ] **Step 1: Extend the failing contract test**
+- [ ] **步骤 1：扩展失败的契约测试**
 
 ```js
 test("Settings extensions create no WebContentsView and clean up through renderer lifecycle", () => {
@@ -179,45 +184,49 @@ test("Settings extensions create no WebContentsView and clean up through rendere
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **步骤 2：运行测试确认它失败**
 
-Run: `node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+运行：`node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-Expected: FAIL because the native Settings host is still wired into service and lifecycle dependencies.
+预期：FAIL，因为原生 Settings 宿主仍连接在服务和生命周期依赖中。
 
-- [ ] **Step 3: Implement the lifecycle simplification**
+- [ ] **步骤 3：实现生命周期简化**
 
-Remove `pluginSettingsViews` construction, sender resolving, browser-window attachment, shutdown disposal, and close calls. Keep plugin load state as the authoritative lifecycle check in the renderer URL/bridge endpoint. Add a whitelisted renderer event carrying `{ pluginId, event, payload }`; `PluginSettingsDestination` ignores every event not for its immutable plugin id and forwards the rest through source-checked postMessage.
+移除 `pluginSettingsViews` 的构造、sender 解析、browser-window 挂载、
+关闭销毁和 close 调用。在渲染进程 URL/桥接端点中保留插件加载状态
+作为权威的生命周期检查。新增一个白名单渲染进程事件，携带
+`{ pluginId, event, payload }`；`PluginSettingsDestination` 忽略所有不是
+发给它不可变插件 id 的事件，其余的经过来源检查的 postMessage 转发。
 
-- [ ] **Step 4: Run the contract test to verify it passes**
+- [ ] **步骤 4：运行契约测试确认它通过**
 
-Run: `node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+运行：`node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-Expected: PASS.
+预期：PASS。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add apps/desktop/electron/main/services/plugin-services.ts apps/desktop/electron/main/bootstrap/window.ts apps/desktop/electron/main/bootstrap/shutdown.ts apps/desktop/electron/main/bootstrap/app-lifecycle.ts apps/desktop/electron/main/index.ts apps/desktop/electron/main/ipc/plugin-ipc.ts apps/desktop/test/plugin-settings-renderer-surface.test.mjs
 git commit -m "refactor(plugins): retire native settings views"
 ```
 
-### Task 4: Synchronize the public extension contract and delivery documents
+### 任务 4：同步公共扩展契约与交付文档
 
-**Files:**
-- Create: `docs/adr/0250-renderer-composited-plugin-settings-surfaces.md`
-- Modify: `docs/adr/README.md`
-- Modify: `docs/spec/07-plugins/02-plugin-manifest-schema.md`
-- Modify: `docs/spec/07-plugins/03-plugin-api.md`
-- Modify: `docs/spec/07-plugins/04-plugin-security.md`
-- Modify: `docs/spec/04-ux/06-settings-ia.md`
-- Modify: `docs/spec/06-delivery/04-e2e-test-plan.md`
-- Test: `apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+**文件：**
+- 创建：`docs/adr/0250-renderer-composited-plugin-settings-surfaces.md`
+- 修改：`docs/adr/README.md`
+- 修改：`docs/spec/07-plugins/02-plugin-manifest-schema.md`
+- 修改：`docs/spec/07-plugins/03-plugin-api.md`
+- 修改：`docs/spec/07-plugins/04-plugin-security.md`
+- 修改：`docs/spec/04-ux/06-settings-ia.md`
+- 修改：`docs/spec/06-delivery/04-e2e-test-plan.md`
+- 测试：`apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-**Interfaces:**
-- Documents `plugin-settings:` resource isolation, sandbox-only iframe, host message bridge, and Settings/native-control lifecycle.
+**接口：**
+- 记录 `plugin-settings:` 资源隔离、仅沙箱 iframe、宿主消息桥接，以及 Settings/原生控件生命周期。
 
-- [ ] **Step 1: Extend the failing contract test**
+- [ ] **步骤 1：扩展失败的契约测试**
 
 ```js
 test("the public contract records the sandbox and one-canvas architecture", () => {
@@ -227,37 +236,40 @@ test("the public contract records the sandbox and one-canvas architecture", () =
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **步骤 2：运行测试确认它失败**
 
-Run: `node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+运行：`node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-Expected: FAIL because the ADR/spec scenarios do not yet exist.
+预期：FAIL，因为 ADR/spec 场景尚不存在。
 
-- [ ] **Step 3: Write the ADR and update specifications**
+- [ ] **步骤 3：撰写 ADR 并更新 specification**
 
-Record that a Settings extension is renderer-composited while panels/work views remain native, enumerate the protocol’s asset and CSP policy, preserve the fixed bridge and permission boundary, and add manual E2E scenarios for scenic backdrops, core navigation, native title controls, reduced transparency, and plugin disable/uninstall.
+记录 Settings 扩展由渲染进程合成，而面板 / 工作视图保持原生；列举
+协议的资产与 CSP 策略；保持固定的桥接与权限边界；并为风景背景、
+核心导航、原生标题控件、降低透明度和插件禁用 / 卸载添加手动 E2E
+场景。
 
-- [ ] **Step 4: Run the contract test to verify it passes**
+- [ ] **步骤 4：运行契约测试确认它通过**
 
-Run: `node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
+运行：`node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs`
 
-Expected: PASS.
+预期：PASS。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add docs/adr docs/spec apps/desktop/test/plugin-settings-renderer-surface.test.mjs
 git commit -m "docs(plugins): specify renderer settings surfaces"
 ```
 
-### Task 5: Validate, refresh, merge, and clean up
+### 任务 5：验证、刷新、合并与清理
 
-**Files:**
-- No production changes expected.
+**文件：**
+- 预期无生产代码改动。
 
-- [ ] **Step 1: Run focused tests**
+- [ ] **步骤 1：运行聚焦测试**
 
-Run:
+运行：
 
 ```powershell
 node --test apps/desktop/test/plugin-settings-renderer-surface.test.mjs
@@ -268,13 +280,13 @@ pnpm run build:js
 pnpm --filter @pi-desktop/desktop exec tsc -p tsconfig.json --noEmit
 ```
 
-Expected: all commands succeed. E2E is intentionally not run without explicit user authorization.
+预期：全部命令成功。没有用户明确授权时，刻意不运行 E2E。
 
-- [ ] **Step 2: Manually verify in the fork build**
+- [ ] **步骤 2：在 fork 构建中手动验证**
 
-Run `pnpm --filter @pi-desktop/desktop dev`, open Settings → Extensions → Nexus Scenic Themes, switch among the four cards, then navigate to General and back. Confirm the backdrop is recognisable through the page, there is no black rectangle, title controls work, and no panel covers the rail or resize edge.
+运行 `pnpm --filter @pi-desktop/desktop dev`，打开 Settings → Extensions → Nexus Scenic Themes，在四张卡片之间切换，然后导航到 General 再返回。确认背景在页面下依稀可辨、没有黑色矩形、标题控件正常工作，且没有面板遮住边栏或调整大小的边缘。
 
-- [ ] **Step 3: Review, refresh, and integrate**
+- [ ] **步骤 3：评审、刷新并集成**
 
 ```bash
 git diff main...HEAD --check
@@ -282,4 +294,4 @@ git fetch
 git rebase main
 ```
 
-Resolve only conflicts in this request worktree. Then follow the repository’s local-main merge and cleanup procedure. Do not push unless the user explicitly asks.
+只解决本请求 worktree 中的冲突。然后遵循仓库的本地 main 合并与清理流程。除非用户明确要求，否则不推送。

@@ -57,7 +57,7 @@ PI-Desktop/
 ├── package.json              # 根脚本、pnpm 工作区
 ├── pnpm-workspace.yaml
 ├── Cargo.toml                # Rust 工作区
-└── README.md · README.zh-CN.md
+└── README.md                  # 中文主文档
 ```
 
 ## 2. 包职责

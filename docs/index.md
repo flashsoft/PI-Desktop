@@ -1,23 +1,23 @@
 ---
 layout: home
 title: PI-Desktop
-titleTemplate: Documentation for a local-first AI coding agent
+titleTemplate: 本地优先 AI 编程 Agent 的文档
 hero:
   name: PI-Desktop
-  text: Read the product as a system.
-  tagline: A calm, inspectable desktop workspace for building with AI. Follow the boundaries, understand the contracts, and make changes with context.
+  text: 把产品当作一个系统来阅读。
+  tagline: 一个冷静、可检视的 AI 开发桌面工作台。沿着边界阅读，理解契约，带着上下文做改动。
   actions:
     - theme: brand
-      text: Start with context
+      text: 从上下文开始
       link: /guide/
     - theme: alt
-      text: Open the spec map
+      text: 打开 Spec 地图
       link: /spec/README
 features:
-  - title: Locate the boundary
-    details: Start from product intent, then move through architecture, runtime, UX, security, delivery, and plugins.
-  - title: Read the contract
-    details: Follow the Rust host core, pi sidecar, NDJSON RPC, storage ownership, and provider model system.
-  - title: Change with evidence
-    details: Connect the relevant spec, ADR, implementation, E2E scenario, and release checklist.
+  - title: 定位边界
+    details: 从产品意图出发，依次穿过架构、运行时、UX、安全、交付与插件。
+  - title: 阅读契约
+    details: 沿着 Rust host core、pi sidecar、NDJSON RPC、存储所有权与 Provider 模型体系阅读。
+  - title: 带证据地改动
+    details: 把相关的 spec、ADR、实现、E2E 场景和发布检查清单串连起来。
 ---
