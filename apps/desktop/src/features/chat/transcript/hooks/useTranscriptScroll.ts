@@ -333,6 +333,13 @@ export function useTranscriptScroll({
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    // Sample the offset of every laid-out scroll event, not only programmatic
+    // corrections: the hide transition restores this value, so a position the
+    // user wheeled to must be recorded here or a revisit resurrects the stale
+    // programmatic offset instead of where they were reading.
+    if (paneVisibleRef.current && transcriptHasLayout(el)) {
+      lastLaidOutScrollTopRef.current = el.scrollTop;
+    }
     // A real gesture is never stale noise: the reader's own input took the
     // scroller to the near-top band, and this event is the last one that
     // position produces. Suppressing history continuation here would strand an

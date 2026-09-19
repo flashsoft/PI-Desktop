@@ -208,6 +208,23 @@ test("a revealed pane restores its own scroll position in the layout phase", () 
   assert.match(revealEffect, /lastScrollTopRef\.current = retained/);
 });
 
+test("user scroll positions feed the offset a hidden pane restores", () => {
+  // The hide transition restores `lastLaidOutScrollTopRef`, so it must track
+  // every laid-out scroll event — including the user's own gestures — not only
+  // programmatic corrections. When only `scrollToBottom` and the prepend
+  // anchor sampled it, a pane the user had wheeled away from was revealed at a
+  // stale programmatic offset (often the top) instead of the reading position.
+  const handleScroll = transcript.match(
+    /const handleScroll = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[cancelFollowScroll, reachTop, readingWindow, scheduleFollowScroll\]\);/,
+  )?.[1];
+  assert.ok(handleScroll, "the transcript scroll handler must exist");
+  assert.match(
+    handleScroll,
+    /if \(paneVisibleRef\.current && transcriptHasLayout\(el\)\) \{\s*lastLaidOutScrollTopRef\.current = el\.scrollTop;/,
+    "handleScroll must sample the laid-out offset into lastLaidOutScrollTopRef",
+  );
+});
+
 test("a pane bounds its own first commit instead of rebuilding it", () => {
   // Progressive hydration must decide during render. Setting the gate from a
   // layout effect (`useState(true)` + `setHydrated(false)`) meant a switch
