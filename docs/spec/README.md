@@ -30,6 +30,7 @@ is v16 (see `00-baseline.md`).
 | [04-ux/07-ui-design-system.md](04-ux/07-ui-design-system.md) | Design system (tokens, motion, density) |
 | [04-ux/01-ui-ia.md](04-ux/01-ui-ia.md) | Shipped shell and destination map |
 | [../project/plan-mode-implementation-plan.md](../project/plan-mode-implementation-plan.md) | Plan operating-state implementation plan |
+| [../project/turn-scoped-review-plan.md](../project/turn-scoped-review-plan.md) | Turn-scoped review grouping, rollback, and agent notice plan |
 | [07-plugins/01-plugin-system.md](07-plugins/01-plugin-system.md) | Plugin system |
 | [06-delivery/03-ai-development-workflow.md](06-delivery/03-ai-development-workflow.md) | AI dev workflow rules |
 | [06-delivery/04-e2e-test-plan.md](06-delivery/04-e2e-test-plan.md) | E2E test plan & scenarios |
