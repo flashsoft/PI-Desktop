@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
@@ -194,11 +195,19 @@ export function HomeProjectSwitcher({
     }
   }, [busy, close, newSession, openProject, reportError]);
 
+  // Re-anchor the highlight only when the menu opens or the active project
+  // changes — not when `visible` gets a new reference because the lazy git
+  // context landed, which would yank the highlight away mid keyboard
+  // navigation.
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   useEffect(() => {
     if (!open) return;
-    const current = visible.findIndex((project) => project.key === activeKey);
+    const current = visibleRef.current.findIndex(
+      (project) => project.key === activeKey,
+    );
     setHighlight(current >= 0 ? current : 0);
-  }, [activeKey, open, visible]);
+  }, [activeKey, open]);
 
   useEffect(() => {
     if (!open || view !== "list") return;
