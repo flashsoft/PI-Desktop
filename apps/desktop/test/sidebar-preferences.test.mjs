@@ -505,6 +505,35 @@ test("home switcher lists retained sidebar projects and the active workspace", (
   );
 });
 
+test("home switcher carries git context from the active workspace and records", () => {
+  const projects = listSwitcherProjects({
+    openProjectPaths: ["/Users/lan/PI-Desktop", "/Users/lan/PI-Desktop-wt"],
+    openProjects: [
+      { path: "/Users/lan/PI-Desktop", name: "PI-Desktop" },
+      {
+        path: "/Users/lan/PI-Desktop-wt",
+        name: "PI-Desktop-wt",
+        branch: "feat/x",
+        worktreeOf: "/Users/lan/PI-Desktop",
+      },
+    ],
+    workspace: {
+      path: "/Users/lan/PI-Desktop",
+      name: "PI-Desktop",
+      branch: "main",
+    },
+    projectMeta: {},
+    projectSort: "name",
+  });
+
+  const main = projects.find((project) => project.path === "/Users/lan/PI-Desktop");
+  const wt = projects.find((project) => project.path === "/Users/lan/PI-Desktop-wt");
+  assert.equal(main?.branch, "main");
+  assert.equal(main?.worktreeOf, undefined);
+  assert.equal(wt?.branch, "feat/x");
+  assert.equal(wt?.worktreeOf, "/Users/lan/PI-Desktop");
+});
+
 test("home switcher hides archived projects and prefers renamed labels", () => {
   const projects = listSwitcherProjects({
     openProjectPaths: ["/tmp/alpha", "/tmp/beta"],

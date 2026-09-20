@@ -12,6 +12,7 @@ import {
   listSwitcherProjects,
   normalizeProjectPath,
 } from "../lib/sidebar-preferences";
+import { api } from "../lib/api";
 import { useAppStore } from "../stores/app-store";
 import {
   IconBranch,
@@ -49,6 +50,12 @@ export function HomeProjectSwitcher({
   const [cloneUrl, setCloneUrl] = useState("");
   const [highlight, setHighlight] = useState(0);
   const [busy, setBusy] = useState(false);
+  // Lazily-resolved git context keyed by project key. The active workspace
+  // already carries its context; the rest resolve on open so the switcher can
+  // mark every worktree, not just the current one.
+  const [gitByKey, setGitByKey] = useState<
+    Record<string, { branch?: string; worktreeOf?: string }>
+  >({});
 
   const projects = useMemo(
     () =>
@@ -58,8 +65,16 @@ export function HomeProjectSwitcher({
         workspace,
         projectMeta,
         projectSort,
+      }).map((project) => {
+        const git = gitByKey[project.key];
+        if (!git) return project;
+        return {
+          ...project,
+          branch: project.branch ?? git.branch,
+          worktreeOf: project.worktreeOf ?? git.worktreeOf,
+        };
       }),
-    [openProjectPaths, openProjects, workspace, projectMeta, projectSort],
+    [openProjectPaths, openProjects, workspace, projectMeta, projectSort, gitByKey],
   );
   const visible = useMemo(
     () => filterSwitcherProjects(projects, query),
@@ -83,6 +98,41 @@ export function HomeProjectSwitcher({
     },
     [showToast],
   );
+
+  // Resolve git context for the listed projects when the menu opens. Skips
+  // projects the store already describes (the active workspace carries its
+  // own context) and caches per key so reopening does not refetch.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const pending = projects.filter(
+      (project) => !project.branch && gitByKey[project.key] === undefined,
+    );
+    if (pending.length === 0) return;
+    void Promise.all(
+      pending.map(async (project) => {
+        try {
+          const context = await api.getProjectGitContext(project.path);
+          return [
+            project.key,
+            {
+              branch: context.branch ?? undefined,
+              worktreeOf: context.worktreeOf ?? undefined,
+            },
+          ] as const;
+        } catch {
+          return [project.key, {}] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setGitByKey((current) => ({ ...current, ...Object.fromEntries(entries) }));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // projects/gitByKey change as results land; only re-scan on open/content.
+  }, [open, projects]);
 
   const selectProject = useCallback(
     async (nextPath: string) => {
@@ -325,6 +375,18 @@ export function HomeProjectSwitcher({
                     <span className="home-project-switcher-item-name">
                       {project.name}
                     </span>
+                    {project.worktreeOf ? (
+                      <span
+                        className="home-project-switcher-worktree"
+                        title={t("topbar.worktreeOf", {
+                          name:
+                            project.worktreeOf.split(/[/\\]/).filter(Boolean).pop() ??
+                            project.worktreeOf,
+                        })}
+                      >
+                        {t("topbar.worktreeTag")}
+                      </span>
+                    ) : null}
                     {current ? (
                       <IconCheck
                         size={14}

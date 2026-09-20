@@ -889,6 +889,18 @@
   white-space: nowrap;
 }
 
+.home-project-switcher-worktree {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--ds-bg-active);
+  color: var(--ds-text-secondary);
+  font-size: 10px;
+  line-height: 15px;
+  letter-spacing: 0.01em;
+}
+
 .home-project-switcher-check {
   color: var(--ds-accent);
 }

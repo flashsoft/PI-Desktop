@@ -304,6 +304,9 @@ export type SwitcherProject = {
   name: string;
   pinned: boolean;
   openedAt?: number;
+  /** Git context when the source record carried it (active workspace). */
+  branch?: string;
+  worktreeOf?: string;
 };
 
 export function switcherProjectName(
@@ -321,8 +324,18 @@ export function switcherProjectName(
  */
 export function listSwitcherProjects(input: {
   openProjectPaths: readonly string[];
-  openProjects: readonly { path: string; name?: string }[];
-  workspace?: { path?: string | null; name?: string | null } | null;
+  openProjects: readonly {
+    path: string;
+    name?: string;
+    branch?: string;
+    worktreeOf?: string;
+  }[];
+  workspace?: {
+    path?: string | null;
+    name?: string | null;
+    branch?: string | null;
+    worktreeOf?: string | null;
+  } | null;
   projectMeta: Record<string, ProjectMeta>;
   projectSort: ProjectSort;
 }): SwitcherProject[] {
@@ -331,6 +344,7 @@ export function listSwitcherProjects(input: {
     rawPath: string | null | undefined,
     name?: string | null,
     openedAt?: number,
+    git?: { branch?: string | null; worktreeOf?: string | null },
   ) => {
     const trimmed = rawPath?.trim();
     const key = normalizeProjectPath(trimmed);
@@ -348,6 +362,8 @@ export function listSwitcherProjects(input: {
       if (typeof openedAt === "number") {
         existing.openedAt = Math.max(existing.openedAt ?? 0, openedAt);
       }
+      if (git?.branch) existing.branch = git.branch;
+      if (git?.worktreeOf) existing.worktreeOf = git.worktreeOf;
       return;
     }
     byKey.set(key, {
@@ -356,6 +372,8 @@ export function listSwitcherProjects(input: {
       name: display,
       pinned: projectIsPinned(trimmed, input.projectMeta),
       openedAt,
+      ...(git?.branch ? { branch: git.branch } : {}),
+      ...(git?.worktreeOf ? { worktreeOf: git.worktreeOf } : {}),
     });
   };
 
@@ -363,16 +381,16 @@ export function listSwitcherProjects(input: {
     const record = input.openProjects.find(
       (project) => normalizeProjectPath(project.path) === normalizeProjectPath(path),
     );
-    add(path, record?.name, index + 1);
+    add(path, record?.name, index + 1, record);
   }
   if (input.workspace?.path) {
     add(
       input.workspace.path,
       input.workspace.name,
       input.openProjectPaths.length + 1,
+      input.workspace,
     );
   }
-
   return sortProjects([...byKey.values()], input.projectMeta, input.projectSort);
 }
 

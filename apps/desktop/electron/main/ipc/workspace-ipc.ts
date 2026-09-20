@@ -27,6 +27,7 @@ import {
 } from "../composer-picker";
 import { collectWorkspaceDiff } from "@pi-desktop/host-runtime";
 import { parseAllowedExternalUrl } from "../safe-open-external";
+import { readWorkspaceGitContext } from "../git-context";
 import {
   isAttachmentBlobRef,
   listDir,
@@ -179,6 +180,19 @@ export function registerWorkspaceIpc({
   handle(IPC.invoke.projectList, async () => {
     if (!host) throw new Error("host unavailable");
     return host.call("projects.list");
+  });
+  // Resolve git context for an arbitrary project path without switching the
+  // active workspace. Powers the new-session target switcher's worktree
+  // badges, which must mark every listed project, not only the active one.
+  handle(IPC.invoke.projectGitContext, async (path: string) => {
+    const trimmed = typeof path === "string" ? path.trim() : "";
+    if (!trimmed) return { branch: null, baseCommit: null, worktreeOf: null };
+    const context = await readWorkspaceGitContext(trimmed);
+    return {
+      branch: context?.branch ?? null,
+      baseCommit: context?.baseCommit ?? null,
+      worktreeOf: context?.worktreeOf ?? null,
+    };
   });
   handle(IPC.invoke.projectGroupList, async () => {
     if (!host) throw new Error("host unavailable");

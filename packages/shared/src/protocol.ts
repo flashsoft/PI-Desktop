@@ -133,6 +133,7 @@ export const IPC = {
     projectCloneCheckout: "pi-desktop/project/cloneCheckout",
     projectGet: "pi-desktop/project/get",
     projectList: "pi-desktop/project/list",
+    projectGitContext: "pi-desktop/project/gitContext",
     projectSet: "pi-desktop/project/set",
     projectClear: "pi-desktop/project/clear",
     projectRemove: "pi-desktop/project/remove",

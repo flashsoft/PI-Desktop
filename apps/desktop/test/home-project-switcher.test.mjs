@@ -37,6 +37,18 @@ test("home project switcher lists sidebar projects and can clone a git repo", ()
   assert.match(switcher, /initialFocus="input"/);
 });
 
+test("home project switcher lazily resolves git context and marks worktrees", () => {
+  // Resolves per-project git context over IPC when the menu opens.
+  assert.match(switcher, /api\.getProjectGitContext/);
+  // Merges the lazily-resolved context into the listed projects.
+  assert.match(switcher, /gitByKey/);
+  // Renders a worktree badge reusing the topbar worktree copy.
+  assert.match(switcher, /project\.worktreeOf/);
+  assert.match(switcher, /home-project-switcher-worktree/);
+  assert.match(switcher, /topbar\.worktreeTag/);
+  assert.match(switcher, /topbar\.worktreeOf/);
+});
+
 test("home project switcher is a fixed portaled menu that stays inline in the hero", () => {
   assert.match(
     styles,

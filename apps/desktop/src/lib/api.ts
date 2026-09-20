@@ -674,6 +674,11 @@ export const api = {
     invoke<{ ok: boolean }>(IPC.invoke.openLocation, { sessionId, appId }),
   getProject: () =>
     invoke<{ workspace: ProjectWorkspace | null }>(IPC.invoke.projectGet),
+  getProjectGitContext: (path: string) =>
+    invoke<{ branch: string | null; baseCommit: string | null; worktreeOf: string | null }>(
+      IPC.invoke.projectGitContext,
+      path,
+    ),
   listProjects: () =>
     invoke<{ projects: ProjectRecord[] }>(IPC.invoke.projectList),
   listProjectGroups: () =>
