@@ -165,6 +165,7 @@ export function SessionContextBadges() {
           type="button"
           className="sc-badge sc-badge-branch"
           tooltip={branchTooltip}
+          tooltipClassName={git.worktreeOf || git.baseCommit ? "ui-tooltip-multiline" : undefined}
           ariaLabel={t("topbar.copyBranch", { branch })}
           onClick={() => {
             void copyText(branch).then(markBranchCopied);

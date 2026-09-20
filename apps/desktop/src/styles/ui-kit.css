@@ -28,6 +28,14 @@
   overflow-wrap: anywhere;
   white-space: normal;
 }
+.ui-tooltip-multiline {
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  text-align: left;
+  /* Honor explicit newlines so one tooltip can stack context lines. */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
 .panel-card {
   border-radius: var(--radius-lg);
   background: var(--ds-tile);

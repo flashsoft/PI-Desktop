@@ -66,6 +66,21 @@ function mainCheckoutRoot(commonGitDir: string): string | null {
   return name === ".git" ? dirname(commonGitDir) : null;
 }
 
+/** Look up a fully-qualified ref in a gitdir's packed-refs; undefined when absent. */
+async function readPackedRef(gitDir: string, ref: string): Promise<string | undefined> {
+  const packed = await readText(join(gitDir, "packed-refs"));
+  if (!packed) return undefined;
+  for (const line of packed.split("\n")) {
+    // Lines are `<sha> <ref>`; `#` comments and `^` peeled lines are skipped.
+    if (!line || line.startsWith("#") || line.startsWith("^")) continue;
+    const space = line.indexOf(" ");
+    if (space > 0 && line.slice(space + 1).trim() === ref) {
+      return line.slice(0, space).trim().slice(0, 7) || undefined;
+    }
+  }
+  return undefined;
+}
+
 export async function readWorkspaceGitContext(
   root: string,
 ): Promise<WorkspaceGitContext | null> {
@@ -77,20 +92,31 @@ export async function readWorkspaceGitContext(
   const refMatch = head.match(/ref:\s*refs\/heads\/(.+)$/m);
   const branch = refMatch?.[1].trim() || "detached";
 
+  // A commondir that differs from the gitdir marks a linked worktree; the
+  // common dir is the main checkout's `.git`, so its parent is the main root.
+  // Resolve it before the ref lookup: a worktree's branch refs live in the
+  // common dir, not in its private gitdir.
+  const commonGitDir = await resolveCommonDir(gitDir);
+  const isWorktree = Boolean(commonGitDir && commonGitDir !== gitDir);
+
   let baseCommit: string | undefined;
   if (refMatch) {
-    const refFile = await readText(join(gitDir, "refs", "heads", refMatch[1].trim()));
-    baseCommit = refFile?.trim().slice(0, 7) || undefined;
+    const name = refMatch[1].trim();
+    // Loose ref first: the branch file sits in the common dir for a linked
+    // worktree and in the gitdir itself for a plain checkout. Then fall back
+    // to packed-refs, where refs land after clone or `git gc`.
+    const loose = (await readText(join(commonGitDir ?? gitDir, "refs", "heads", name)))
+      ?? (await readText(join(gitDir, "refs", "heads", name)));
+    baseCommit = loose?.trim().slice(0, 7)
+      || (await readPackedRef(commonGitDir ?? gitDir, `refs/heads/${name}`))
+      || (isWorktree ? await readPackedRef(gitDir, `refs/heads/${name}`) : undefined);
   } else {
     baseCommit = head.trim().slice(0, 7) || undefined;
   }
 
   const context: WorkspaceGitContext = { branch, baseCommit };
 
-  // A commondir that differs from the gitdir marks a linked worktree; the
-  // common dir is the main checkout's `.git`, so its parent is the main root.
-  const commonGitDir = await resolveCommonDir(gitDir);
-  if (commonGitDir && commonGitDir !== gitDir) {
+  if (isWorktree && commonGitDir) {
     const mainRoot = mainCheckoutRoot(commonGitDir);
     if (mainRoot && mainRoot !== root) context.worktreeOf = mainRoot;
   }
