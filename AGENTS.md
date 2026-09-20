@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Policy-Sync: 2026-02-16.2
+Policy-Sync: 2026-09-19.1
 
 Mandatory rules for AI coding agents working in PI-Desktop.
 
@@ -662,6 +662,22 @@ the user just because the change is UI-shaped.
 ## 13. Specs Stay Synchronized
 
 Observable behavior changes must update the relevant spec.
+
+### Fork-local documentation uses the `local-` prefix
+
+This repository is a fork of `vastsa/PI-Desktop` and tracks upstream
+continuously. To keep merges clean, fork-only documentation must never be
+written into upstream's number-sequenced files (for example
+`docs/spec/0X-*/NN-name.md` or `docs/adr/NNNN-name.md`). Instead:
+
+* Fork-only spec notes live beside the spec they extend as
+  `local-NNN-short-name.md` (e.g. `docs/spec/03-runtime/local-001-turn-review-rpc.md`).
+* Fork-only ADRs live in `docs/adr/` as `local-NNN-short-name.md`, using
+  their own `local-` sequence (e.g. `docs/adr/local-001-pack-script-rename.md`),
+  never the upstream numeric sequence.
+* The only permitted change to an upstream doc file is a single index line
+  pointing at the `local-` document; do not insert fork paragraphs into
+  upstream spec/ADR bodies.
 
 Changes to architecture, public interfaces, data ownership, security
 boundaries, or frozen decisions require an ADR when appropriate.
