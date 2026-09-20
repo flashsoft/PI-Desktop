@@ -9,6 +9,8 @@ const chineseRoot = path.join(docsRoot, 'zh-CN/spec')
 function markdownFiles(directory) {
   return fs.readdirSync(directory, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    // Fork-local docs use the `local-` prefix and have no upstream/Chinese mirror.
+    .filter((entry) => !entry.name.startsWith('local-'))
     .map((entry) => path.relative(directory, path.join(entry.parentPath, entry.name)))
     .sort()
 }

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Policy-Sync: 2026-02-16.2
+Policy-Sync: 2026-09-19.1
 
 Instructions for Claude Code CLI and Claude Cowork on PI-Desktop.
 
@@ -216,6 +216,8 @@ Also useful:
 Use **English** for code, identifiers, comments, commits, specs, ADRs, and repository docs. GitHub issue/PR discussion may match the original author's language.
 
 Observable behavior changes must update the relevant spec. User-visible or protocol-visible changes must update the corresponding E2E scenario docs. New E2E scenario IDs are semantic, e.g. `E2E-SESSION-switch-does-not-show-stale-transcript`.
+
+Fork-only documentation uses the `local-` prefix: never write fork content into upstream's number-sequenced spec/ADR files. Fork spec notes sit beside the spec they extend as `local-NNN-name.md`, and fork ADRs use their own `local-NNN` sequence under `docs/adr/`; the only permitted edit to an upstream doc file is a single index line pointing at the `local-` document.
 
 ---
 

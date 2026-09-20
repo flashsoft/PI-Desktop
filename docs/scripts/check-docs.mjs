@@ -162,6 +162,9 @@ export function verifyPageStructure(relativePaths, root = docsRoot) {
 }
 
 export function adrIdFromFileName(fileName) {
+  // Fork-local ADRs use their own `local-NNN` sequence, never the upstream numbers.
+  const forkLocal = new RegExp(`^(local-\\d{3})-[a-z0-9]+(?:-[a-z0-9]+)*\\.md$`).exec(fileName)
+  if (forkLocal) return forkLocal[1]
   const numbered = new RegExp(`^(${NUMBERED_ID})-[a-z0-9]+(?:-[a-z0-9]+)*\\.md$`).exec(fileName)
   if (numbered) return numbered[1]
   const slug = new RegExp(`^(${SLUG_ID})\\.md$`).exec(fileName)
@@ -396,6 +399,8 @@ export function verifySpecIndex(localeRoot, root = docsRoot) {
 
   for (const relativePath of markdownFiles(specRoot)) {
     if (relativePath === 'NAV.md') continue
+    // Fork-local pages use the `local-` prefix and are intentionally absent from NAV.
+    if (relativePath.split('/').pop().startsWith('local-')) continue
     if (!listed.has(relativePath)) failures.push(`docs/${localeRoot}/NAV.md: does not list ${relativePath}`)
   }
 

@@ -129,6 +129,13 @@ const REQUIRED_ANCHORS = [
     id: "specs-stay-synchronized",
     anyOf: ["observable behavior changes must update the relevant spec"],
   },
+  {
+    id: "fork-local-docs-prefix",
+    anyOf: [
+      "fork-only documentation uses the `local-` prefix",
+      "fork-local documentation uses the `local-` prefix",
+    ],
+  },
 ];
 
 function requireContains(label, haystack, needle, message) {
