@@ -212,6 +212,10 @@ export const en = {
   },
   topbar: {
     copyBranch: 'Copy branch "{{branch}}"',
+    worktreeTag: "worktree",
+    worktreeOf: "Worktree of {{name}}",
+    worktreeDirectory: "Directory: {{path}}",
+    worktreeBase: "Base: {{commit}}",
     copied: "Copied",
     openLocation: "Open location",
     openWith: "Open with {{name}}",

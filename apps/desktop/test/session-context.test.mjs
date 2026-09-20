@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   effectiveSessionBranch,
+  effectiveSessionGitContext,
   effectiveSessionPath,
   elidePathHead,
 } from "../src/lib/session-context.ts";
@@ -30,6 +31,37 @@ test("branch shows only when the session works in the workspace root", () => {
   assert.equal(effectiveSessionBranch({ projectPath: "/other" }, workspace), null);
   // No branch resolved at all.
   assert.equal(effectiveSessionBranch(null, { path: "/repo" }), null);
+});
+
+test("git context follows the same workspace-root trust rule as the branch", () => {
+  const workspace = {
+    path: "/repo-wt",
+    branch: "feat/x",
+    baseCommit: "9f8e7d6",
+    worktreeOf: "/repo",
+  };
+  // A session working in the worktree root inherits all of it.
+  assert.deepEqual(effectiveSessionGitContext(null, workspace), {
+    branch: "feat/x",
+    baseCommit: "9f8e7d6",
+    worktreeOf: "/repo",
+  });
+  assert.deepEqual(effectiveSessionGitContext({ projectPath: "/repo-wt/" }, workspace), {
+    branch: "feat/x",
+    baseCommit: "9f8e7d6",
+    worktreeOf: "/repo",
+  });
+  // A session elsewhere must not borrow the worktree identity.
+  assert.deepEqual(effectiveSessionGitContext({ projectPath: "/other" }, workspace), {
+    branch: null,
+    baseCommit: null,
+    worktreeOf: null,
+  });
+  // A plain checkout simply has no worktreeOf.
+  assert.deepEqual(
+    effectiveSessionGitContext(null, { path: "/repo", branch: "main" }),
+    { branch: "main", baseCommit: null, worktreeOf: null },
+  );
 });
 
 test("elidePathHead keeps short paths intact and elides the head of long ones", () => {

@@ -22,8 +22,12 @@ export type NotificationListResult = {
 export type ProjectWorkspace = {
   path: string;
   name: string;
-  /** Best-effort git branch from .git/HEAD when available. */
+  /** Best-effort git branch from HEAD when available. */
   branch?: string;
+  /** Short commit HEAD points at, when resolvable without spawning git. */
+  baseCommit?: string;
+  /** Main checkout root when this workspace is a linked git worktree. */
+  worktreeOf?: string;
 };
 
 export type ProjectRecord = {

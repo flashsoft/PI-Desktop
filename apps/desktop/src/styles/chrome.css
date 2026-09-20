@@ -613,6 +613,18 @@
   white-space: nowrap;
 }
 
+.conversation-topbar .sc-badge-worktree {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--ds-bg-active);
+  color: var(--ds-text-secondary);
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.01em;
+}
+
 .conversation-topbar .sc-split {
   position: relative;
   display: inline-flex;

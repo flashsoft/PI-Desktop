@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { OpenLocationApp } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import {
-  effectiveSessionBranch,
+  effectiveSessionGitContext,
   effectiveSessionPath,
 } from "../lib/session-context";
 import { useAppStore } from "../stores/app-store";
@@ -87,7 +87,8 @@ export function SessionContextBadges() {
 
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const path = effectiveSessionPath(activeSession, workspace);
-  const branch = effectiveSessionBranch(activeSession, workspace);
+  const git = effectiveSessionGitContext(activeSession, workspace);
+  const branch = git.branch;
 
   const [apps, setApps] = useState<OpenLocationApp[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -142,13 +143,28 @@ export function SessionContextBadges() {
     });
   };
 
+  const worktreeName = git.worktreeOf?.split(/[/\\]/).filter(Boolean).pop() ?? null;
+  // Multi-line tooltip: branch identity first, then the worktree facts a
+  // glance should not have to carry (main checkout, physical directory,
+  // base commit). Plain checkouts keep the single-line copy hint.
+  const branchTooltip = branchCopied
+    ? t("topbar.copied")
+    : [
+        t("topbar.copyBranch", { branch }),
+        ...(git.worktreeOf
+          ? [t("topbar.worktreeOf", { name: worktreeName ?? git.worktreeOf })]
+          : []),
+        ...(git.worktreeOf && path ? [t("topbar.worktreeDirectory", { path })] : []),
+        ...(git.baseCommit ? [t("topbar.worktreeBase", { commit: git.baseCommit })] : []),
+      ].join("\n");
+
   return (
     <div className="sc-badges">
       {branch ? (
         <TooltipButton
           type="button"
           className="sc-badge sc-badge-branch"
-          tooltip={branchCopied ? t("topbar.copied") : t("topbar.copyBranch", { branch })}
+          tooltip={branchTooltip}
           ariaLabel={t("topbar.copyBranch", { branch })}
           onClick={() => {
             void copyText(branch).then(markBranchCopied);
@@ -156,6 +172,9 @@ export function SessionContextBadges() {
         >
           {branchCopied ? <IconCheck size={12} /> : <IconBranch size={12} />}
           <span className="sc-badge-label">{branch}</span>
+          {git.worktreeOf ? (
+            <span className="sc-badge-worktree">{t("topbar.worktreeTag")}</span>
+          ) : null}
         </TooltipButton>
       ) : null}
 

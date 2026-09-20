@@ -12,6 +12,8 @@ export type SessionContextSource = {
 export type WorkspaceContextSource = {
   path?: string | null;
   branch?: string | null;
+  baseCommit?: string | null;
+  worktreeOf?: string | null;
 };
 
 function nonEmpty(value?: string | null): string | null {
@@ -53,6 +55,39 @@ export function effectiveSessionBranch(
     return null;
   }
   return branch;
+}
+
+/** True when the session actually works in the workspace root, so the
+ *  workspace-derived git context is trustworthy for its badge. */
+function sessionMatchesWorkspace(
+  session?: SessionContextSource | null,
+  workspace?: WorkspaceContextSource | null,
+): boolean {
+  const workspacePath = nonEmpty(workspace?.path);
+  if (!workspacePath) return false;
+  const sessionPath = nonEmpty(session?.projectPath);
+  return !sessionPath || normalizePath(sessionPath) === normalizePath(workspacePath);
+}
+
+/**
+ * Git context for the badge cluster, following the same trust rule as the
+ * branch: the workspace fields describe the workspace root, so they only
+ * apply to a session that works there. Returns null when the session works
+ * elsewhere, so a foreign session never borrows the workspace's worktree
+ * identity.
+ */
+export function effectiveSessionGitContext(
+  session?: SessionContextSource | null,
+  workspace?: WorkspaceContextSource | null,
+): { branch: string | null; baseCommit: string | null; worktreeOf: string | null } {
+  if (!sessionMatchesWorkspace(session, workspace)) {
+    return { branch: null, baseCommit: null, worktreeOf: null };
+  }
+  return {
+    branch: nonEmpty(workspace?.branch),
+    baseCommit: nonEmpty(workspace?.baseCommit),
+    worktreeOf: nonEmpty(workspace?.worktreeOf),
+  };
 }
 
 /** Leading-elided display form: "…/workspaces/PI-Desktop" keeps the tail visible. */

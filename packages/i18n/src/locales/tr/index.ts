@@ -214,6 +214,10 @@ export const tr = {
   },
   topbar: {
     copyBranch: '"{{branch}}" dalını kopyala',
+    worktreeTag: "worktree",
+    worktreeOf: "{{name}} worktree\'u",
+    worktreeDirectory: "Dizin: {{path}}",
+    worktreeBase: "Temel: {{commit}}",
     copied: "Kopyalandı",
     openLocation: "Konumu aç",
     openWith: "{{name}} ile aç",

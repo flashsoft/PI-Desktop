@@ -12,6 +12,7 @@ import {
   currentNetworkProxy,
   testNetworkProxy,
 } from "./network-proxy";
+import { readWorkspaceGitContext } from "./git-context";
 import {
   APP_ID,
   APP_NAME,
@@ -1064,18 +1065,14 @@ async function withGitBranch<T extends { path?: string; name?: string } | null |
   workspace: T,
 ): Promise<T> {
   if (!workspace || !workspace.path) return workspace;
-  try {
-    const { readFile } = await import("node:fs/promises");
-    const { join } = await import("node:path");
-    const head = await readFile(join(workspace.path, ".git/HEAD"), "utf8");
-    const match = head.match(/ref:\s*refs\/heads\/(.+)$/m);
-    return {
-      ...workspace,
-      branch: match?.[1]?.trim() || "detached",
-    };
-  } catch {
-    return { ...workspace, branch: undefined };
-  }
+  const context = await readWorkspaceGitContext(workspace.path);
+  if (!context) return { ...workspace, branch: undefined };
+  return {
+    ...workspace,
+    branch: context.branch,
+    ...(context.baseCommit ? { baseCommit: context.baseCommit } : {}),
+    ...(context.worktreeOf ? { worktreeOf: context.worktreeOf } : {}),
+  };
 }
 
 /**

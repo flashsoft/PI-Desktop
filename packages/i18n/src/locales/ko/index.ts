@@ -214,6 +214,10 @@ export const ko = {
   },
   topbar: {
     copyBranch: '브랜치 "{{branch}}" 복사',
+    worktreeTag: "worktree",
+    worktreeOf: "{{name}}의 worktree",
+    worktreeDirectory: "디렉터리: {{path}}",
+    worktreeBase: "베이스: {{commit}}",
     copied: "복사됨",
     openLocation: "위치 열기",
     openWith: "{{name}}(으)로 열기",

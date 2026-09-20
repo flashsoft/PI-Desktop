@@ -207,6 +207,10 @@ export const zhTW = {
   },
   topbar: {
     copyBranch: "複製分支「{{branch}}」",
+    worktreeTag: "worktree",
+    worktreeOf: "{{name}} 的 worktree",
+    worktreeDirectory: "目錄：{{path}}",
+    worktreeBase: "基點：{{commit}}",
     copied: "已複製",
     openLocation: "打開位置",
     openWith: "用 {{name}} 打開",
