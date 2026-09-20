@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Policy-Sync: 2026-09-19.1
+Policy-Sync: 2026-09-20.1
 
 Instructions for Claude Code CLI and Claude Cowork on PI-Desktop.
 
@@ -300,6 +300,19 @@ docs(spec): clarify plan checkpoint wording
 6. Report exactly what ran, what did not, and residual risk.
 
 Do not push, open a PR, or merge unless the user explicitly asks.
+
+---
+
+## Installing a development build
+
+When the user says "install" (安装下), build a side-by-side dev install
+from the task worktree: `pnpm package`, copy
+`apps/desktop/release/mac-arm64/PI-Desktop.app` to
+`/Applications/PI-Desktop-Dev.app` (replace any prior dev install), set
+`LSEnvironment:PI_DESKTOP_DEV=1` in its `Info.plist`, and clear its
+quarantine flag. The dev install owns `PI-Desktop Dev` userData and
+`~/.pi-desktop-dev`; never overwrite `/Applications/PI-Desktop.app` or
+reuse the shipped `~/.pi-desktop`. Details: AGENTS.md §17.
 
 ---
 

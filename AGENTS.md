@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Policy-Sync: 2026-09-19.1
+Policy-Sync: 2026-09-20.1
 
 Mandatory rules for AI coding agents working in PI-Desktop.
 
@@ -841,7 +841,34 @@ integration candidate defined above.
 
 ---
 
-## 17. Git Hygiene and Commit Messages
+## 17. Installing a Development Build (PI-Desktop-Dev)
+
+When the user asks to "install" (安装下) the current work, produce a
+side-by-side development installation instead of touching the shipped
+app:
+
+1. Build inside the task worktree (not the main checkout):
+   `pnpm package` (electron-builder `--dir`; unsigned is fine for local
+   use).
+2. Copy the unpacked app over any previous dev install:
+   `cp -R apps/desktop/release/mac-arm64/PI-Desktop.app /Applications/PI-Desktop-Dev.app`
+   (remove `/Applications/PI-Desktop-Dev.app` first if it exists).
+3. Mark it as a development installation so it boots in the isolated
+   profile (own `PI-Desktop Dev` userData and `~/.pi-desktop-dev` data
+   dir, per `electron/main/data-paths.ts`):
+   `/usr/libexec/PlistBuddy -c "Add :LSEnvironment:PI_DESKTOP_DEV string 1" /Applications/PI-Desktop-Dev.app/Contents/Info.plist`
+   (create the `LSEnvironment` dict first when absent).
+4. Clear the quarantine flag on the unsigned copy:
+   `xattr -dr com.apple.quarantine /Applications/PI-Desktop-Dev.app`.
+
+Never overwrite `/Applications/PI-Desktop.app` (the shipped install) and
+never point a dev install at the shipped `~/.pi-desktop` data dir —
+single-writer SQLite and the single-instance lock depend on the split
+(D236, ADR 0094). Verify after launch that `~/.pi-desktop-dev` and
+`Library/Application Support/PI-Desktop Dev` are the directories the
+dev install created.
+
+## 18. Git Hygiene and Commit Messages
 
 The workspace may hold changes from the user or other agents. Do not
 overwrite, revert, move, or delete anything that is not from this task.
@@ -881,7 +908,7 @@ command.
 
 ---
 
-## 18. Delivery Report
+## 19. Delivery Report
 
 At the end of a task, state briefly:
 
@@ -896,7 +923,7 @@ not actually executed.
 
 ---
 
-## 19. Maintaining This File
+## 20. Maintaining This File
 
 * Only add rules that are repo-wide, durable, not trivially inferable
   from code, and prevent a real class of mistake.
