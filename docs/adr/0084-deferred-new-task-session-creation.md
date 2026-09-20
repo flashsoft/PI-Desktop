@@ -1,47 +1,50 @@
-# ADR 0084: 将新建任务的会话创建推迟到首条消息
+# ADR 0084: Defer new-task session creation until the first message
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
 - **Related:** D220 · D088 · D093 · E2E-011b · E2E-011d
 
-## 背景
+## Context
 
-点击"新建任务"会立即创建一个会话，因此即使用户从未输入任何消
-息，侧边栏历史中也会出现一个默认标题为 `新建任务` / "New task"
-的行。复用规则（D088/D093）保证每个项目或临时作用域至多保留一
-个空草稿，但第一个空行仍会出现，并一直可见，直到用户发送一条会
-重命名它的 prompt。空草稿会话还会在宿主数据库中留下磁盘行。
+Clicking New Task created a session immediately, so the sidebar history gained
+a default-titled `新建任务` / "New task" row even when the user never typed a
+message. A reuse rule (D088/D093) kept at most one empty draft per project or
+temporary scope, but the first empty row still appeared and remained visible
+until the user sent a prompt that renamed it. Empty draft sessions also left
+rows on disk in the host database.
 
-## 决策
+## Decision
 
-新建任务打开一个未持久化的草稿，而不是创建会话：
+New Task opens an unpersisted draft instead of creating a session:
 
-- `newSession()` 将渲染进程重置为主页空状态（保留请求的项目作用
-  域），不再调用 `session.create`，也不再复用遗留的空草稿。
-  `activeSessionId` 保持未设置，渲染进程已支持该状态作为其初始
-  状态和项目切换状态。
-- 首条消息（`sendPrompt`）或粘贴的文件（必须附加到会话上）通过
-  共享的 `materializeDraftSession` 助手将草稿实体化：创建会话、
-  应用保留的工具栏配置，并提交与即时创建路径相同的导航/运行状
-  态。
-- 在草稿上对 Composer 和顶栏模型工具栏所做的选择被保留在一个新
-  的 `draftConfiguration` store 切片中，并在实体化时应用，而不是
-  因一次纯工具栏交互就实体化一个会话。
-- 侧边栏历史过滤器现在会丢弃标题仍为默认未命名值的会话，作为纵
-  深防御，隐藏遗留空草稿和任何意外为空的会话。
+- `newSession()` resets the renderer to the home empty state (keeping the
+  requested project scope) and no longer calls `session.create` nor reuses a
+  legacy empty draft. `activeSessionId` stays unset, which the renderer
+  already supports as its initial and project-switching state.
+- The first message (`sendPrompt`) or pasted files (which must attach to a
+  session) materialize the draft through a shared `materializeDraftSession`
+  helper that creates the session, applies any retained toolbar configuration,
+  and commits the same navigation/run state the eager path used.
+- Composer and top-bar model toolbar choices made on the draft are retained in
+  a new `draftConfiguration` store slice and applied at materialization time
+  instead of materializing a session on a toolbar-only interaction.
+- The sidebar history filter now drops sessions whose title is still a default
+  untitled value, hiding legacy empty drafts and any accidentally empty
+  session as a defense in depth.
 
-## 后果
+## Consequences
 
-- 侧边栏历史只记录真正带有输入的任务；被放弃的新建任务草稿不留
-  下行，也不留下持久化会话。
-- 宿主数据库中不再累积新的空会话；遗留空草稿仍在磁盘上，但在历
-  史中被隐藏。
-- 渲染进程 store、Composer 和 Sidebar 发生变化；协议 v9、宿主
-  RPC 和存储 schema v11 不受影响，因此旧渲染进程保持兼容。
+- The sidebar history only records tasks that actually carry input; abandoned
+  New Task drafts leave no row and no persisted session.
+- No new empty sessions accumulate in the host database; legacy empty drafts
+  remain on disk but are hidden from history.
+- The renderer store, Composer, and Sidebar change; protocol v9, host RPC, and
+  storage schema v11 are untouched, so older renderers remain compatible.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- 保留即时创建，只在侧边栏中隐藏空草稿：改动更小，但会在磁盘上
-  留下不可见的会话，并为用户永远不应看到的行保留复用机制。
-- 在草稿第一次击键时创建会话：仍会为从未发送的消息创建行，而这
-  正是需求要求避免的。
+- Keep eager creation and only hide empty drafts in the sidebar: smaller
+  change, but leaves invisible sessions on disk and keeps the reuse machinery
+  alive for rows the user should never see.
+- Create the session on the first draft keystroke: would still create rows for
+  messages that are never sent, which is what the request asks to avoid.

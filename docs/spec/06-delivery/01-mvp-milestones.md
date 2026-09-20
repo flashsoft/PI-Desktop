@@ -1,190 +1,192 @@
-# 01. MVP 里程碑
+# 01. MVP Milestones
 
-## 版本切片
+## Version slices
 
-### M0 — 规格冻结
-- [x] 产品定位
-- [x] Electron 路线
-- [x] Rust 主机核心路由
-- [x] 英语优先的全球化路线
-- [x] 插件系统架构
-- [x] 私有 GitHub 存储库已初始化
+### M0 — Spec Freeze
+- [x] Product positioning
+- [x] Electron route
+- [x] Rust host core route
+- [x] English-first globalization route
+- [x] Plugin system architecture
+- [x] Private GitHub repository initialized
 
-### M1 — 应用程序骨架
-状态：**已实施 (MVP)**
+### M1 — App Skeleton
+Status: **Implemented (MVP)**
 
-Goal：具有双后端骨架的可启动桌面 shell。
+Goal: bootable desktop shell with dual backend skeletons.
 
-可交付成果：
+Deliverables:
 - pnpm monorepo
-- Electron 应用程序 (main/preload/renderer)
-- 英文语言环境源包
-- Rust `host-core` 板条箱骨架 + 健康检查
-- Node 代理运行时包骨架
-- IPC 端到端健康检查
-- 预留PluginManager/CommandPalette接口
+- Electron app (main/preload/renderer)
+- English locale source pack
+- Rust `host-core` crate skeleton + healthcheck
+- Node agent-runtime package skeleton
+- IPC healthcheck end-to-end
+- reserved PluginManager/CommandPalette interfaces
 
-退出标准：
-- `pnpm dev` 以英语打开窗口
-- Electron 可以调用 Rust 主机健康检查
-- protocol/version 握手在日志中可见
+Exit criteria:
+- `pnpm dev` opens window in English
+- Electron can call Rust host healthcheck
+- protocol/version handshake visible in logs
 
-### M2 — Pi 聊天运行时
-状态：**已实施 (MVP)**
+### M2 — Pi Chat Runtime
+Status: **Implemented (MVP)**
 
-Goal：真正的流媒体聊天。
+Goal: real streaming chat.
 
-可交付成果：
-- pi 运行时集成
-- provider/model 设置
-- 密钥存储
+Deliverables:
+- pi runtime integration
+- provider/model settings
+- secret storage
 - prompt/abort
-- 流事件用户界面
-- 会话持久性基线
+- stream event UI
+- session persistence baseline
 
-退出标准：
-- 配置密钥并成功聊天
-- 流式令牌可见
-- 历史在重启后依然存在
+Exit criteria:
+- configure key and chat successfully
+- streamed tokens visible
+- history survives restart
 
-### M3 — 工作区工具
-状态：**已实施 (MVP)**
+### M3 — Workspace Tools
+Status: **Implemented (MVP)**
 
-Goal：受控的当地机构。
+Goal: controlled local agency.
 
-可交付成果：
-- 项目开放
-- Read/Glob/Grep/Write/Edit/Bash 通过 Rust 主机
-- 许可卡
-- 工具痕迹
+Deliverables:
+- project open
+- Read/Glob/Grep/Write/Edit/Bash via Rust host
+- permission cards
+- tool traces
 
-退出标准：
-- 对实际项目完成一项经批准的本地修改
-- 拒绝权限路径正确
+Exit criteria:
+- complete one approved local modification on a real project
+- denied permission path is correct
 
-### M4 — 插件基础
-状态：**已实施 (MVP)**
+### M4 — Plugin Foundation
+Status: **Implemented (MVP)**
 
-Goal：用户可安装的本地扩展系统。
+Goal: user-installable local extension system.
 
-可交付成果：
-- 插件管理器
-- 清单验证
-- local/dev 插件加载
-- 命令面板插件命令
-- 示例插件 e2e
-- 权限声明UI
+Deliverables:
+- PluginManager
+- manifest validation
+- local/dev plugin load
+- command palette plugin commands
+- sample plugin e2e
+- permission declaration UI
 
-退出标准：
-- 加载示例插件
-- 运行插件命令
-- 注册低风险代理工具
-- 禁用删除贡献
+Exit criteria:
+- load example plugin
+- run plugin command
+- register low-risk agent tool
+- disable removes contributions
 
-### M5 — 桌面强化
-状态：**除 macOS 工件的发布资格验证外已完成**
+### M5 — Desktop Hardening
+Status: **Complete except a release-qualification run for macOS artifacts**
 
-Goal：日常可用的包。
+Goal: daily-usable package.
 
-可交付成果：
-- 包装（macOS arm64、Intel x64、Windows x64 和 Linux x64 标签工件；D126/D285）
-- 设置抛光
-- logging/error 边界
-- 会话管理基础知识
-- 隔离验证
+Deliverables:
+- packaging (macOS arm64 and Intel x64, Windows x64, and Linux x64 tag artifacts; D126/D285)
+- settings polish
+- logging/error boundaries
+- session management basics
+- isolation verification
 
-进展：
-- [x] 包装脚手架（电子构建器 macOS arm64 `--dir`、host/sidecar 资源）
-- [x] 对主要内容进行大量 settings/session/UI 打磨
-- [x] 代码签名和公证发布通道（所需 CI 密钥、DMG 装订和上传前验证）
-- [x] 自定义应用程序图标（生成 pi 标记 → `build/icon.icns`，D079）
-- [x] isolation/logging 强化（渲染器沙箱 D081、NDJSON 日志
-  通道 D082、碰撞监控 D080、窗口状态 D083)
-- [x] 打包的 macOS 更新发现、修复的发布链接、键入的更新状态、
-  和标签工作流源资产（手动交付，D120 / ADR 0022）
-- [x] 已配置 CI 密钥、DMG 装订和上传前验证的签名及公证 macOS 发布通道
+Progress:
+- [x] packaging scaffold (electron-builder macOS arm64 `--dir`, host/sidecar resources)
+- [x] substantial settings/session/UI polish on main
+- [x] signed and notarized macOS release lane with required CI secrets, DMG
+  stapling, and pre-upload verification
+- [x] custom app icon (generated pi mark → `build/icon.icns`, D079)
+- [x] isolation/logging hardening (renderer sandbox D081, NDJSON log
+  channels D082, crash supervision D080, window state D083)
+- [x] packaged macOS update discovery, fixed release link, typed update state,
+  and tag-workflow feed assets (manual delivery, D120 / ADR 0022)
+- [x] full DMG signing and notarization with pre-upload verification
 
-### M6 — Plan 操作状态
-状态：**完成（2026-08-05）**
+### M6 — Plan Operating State
+Status: **Complete (2026-08-05)**
 
-Goal：用主机权威 Plan 替换以前的聊天操作配置文件
-和 Goal 合约在同一 pi Agent 上注明，包括单独的批准
-边界。
+Goal: replace the former Chat operating profile with host-authoritative Plan
+and Goal contract states on the same pi Agent, including a separate approval
+boundary.
 
-可交付成果：
-- Agent | Plan | Goal 选择器，默认为 Agent
-- 持久的 session/settings/scheduled `chat` → `plan` 迁移
-- 协议 v9 和模式 v11 具有不可变的主机编写的 `.pi/plan/*.md` 和
-  `.pi/goal/*.md` 工件、结构化 title/question 字段以及
-`plan_approvals` artifact/execution 字段
-- Rust 拥有的模式解析、Plan 工具策略、可选择的 shell 目录
-  后备和固定身份，
-  流式 Bash 输出、有限超时和进程树取消
-- 单代理 `EnterPlanMode` / `SubmitPlan` 和 `EnterGoalMode` / `SubmitGoal`
-  具有 approve/reject-only 解决方案和故障关闭恢复的生命周期
-- Plan 工件批准 IPC/RPC/events，当前生命周期渲染器投影，
-  仅待处理的重新加载水合、外壳选择、批准 UX 和 EN/zh-CN 副本
-- 插件拒绝、预定合同拒绝、可选择的 shell 执行、
-  重点验证 unit/integration，以及当前的 extension/subagent
-  E2E 计划中记录的流程
+Deliverables:
+- Agent | Plan | Goal selector with Agent as the default
+- persisted session/settings/scheduled `chat` → `plan` migration
+- protocol v10 and schema v12 with immutable host-written `.pi/plan/*.md` and
+  `.pi/goal/*.md` artifacts, structured title/question fields, and
+  `plan_approvals` artifact/execution fields
+- Rust-owned mode resolution, Plan tool policy, selectable shell catalog with
+  fallback and turn-pinned identity,
+  streamed Bash output, bounded timeout, and process-tree cancellation
+- one-Agent `EnterPlanMode` / `SubmitPlan` and `EnterGoalMode` / `SubmitGoal`
+  lifecycles with approve/reject-only resolution and fail-closed recovery
+- Plan artifact approval IPC/RPC/events, current-lifetime renderer projection,
+  pending-only reload hydration, shell selection, approval UX, and EN/zh-CN copy
+- plugin denial, scheduled contract rejection, selectable shell execution,
+  focused unit/integration verification, and the current extension/subagent
+  flows documented in the E2E plan
 
-退出标准：
-- 在规划之前、期间和之后仅使用一个 pi Agent
-- Plan 拒绝 Write/Edit/plugin 工具，但在选定的情况下公开 Bash
-  权限模式，包括 Auto 的显式突变权衡
-- 批准与通用工具权限分开，自动选择
-  Agent 权限模式，默认 UI 选择为 Ask
-- 拒绝并到期离开 Plan 中的会话；主机重启中断
-  pending/queued/running 无需重放即可工作，而已经批准的
-  中断执行离开会话 Agent
-- 渲染器仅在其当前生命周期内保留最新的 Plan 快照；
-  `plans.pending` 仅恢复仍待处理的行和截止日期后
-  相同主机重新加载，而终端卡未重新水化
-- 每个提交的 Markdown 快照都逐字节保存在唯一的
-`.pi/plan/*.md` 工件包含记录的 path/hash/size，并经批准后打开它
-- Host/storage 恢复、待水合、同寿命终端控制、
-  同一主机渲染器重新加载后，rejected/approved 终端卡缺失
-  已证明。本地 E2E 执行在显式外部保持选择加入
-  请求验收运行
+Exit criteria:
+- only one pi Agent is used before, during, and after planning
+- Plan denies Write/Edit/plugin tools but exposes Bash under the selected
+  permission mode, including Auto's explicit mutation tradeoff
+- approval is separate from generic tool permission, atomically selects the
+  Agent permission mode, and defaults the UI selection to Ask
+- reject and expiry leave the session in Plan; a host restart interrupts
+  pending/queued/running work without replay, while an already-approved
+  interrupted execution leaves the session Agent
+- renderer retains the latest Plan snapshot only for its current lifetime;
+  `plans.pending` restores only a still-pending row and deadline after a
+  same-Host reload, while terminal cards are not rehydrated
+- each submitted Markdown snapshot is preserved byte-for-byte in a unique
+  `.pi/plan/*.md` artifact with recorded path/hash/size, and approval opens it
+- Host/storage recovery, pending hydration, same-lifetime terminal controls,
+  and rejected/approved terminal-card absence after same-Host renderer reload
+  are evidenced. Local E2E execution remains opt-in outside an explicitly
+  requested acceptance run
 
-验收证据：host-core migration/policy/recovery 测试，
-`test:e2e:plan`、`test:e2e:plan-ui`、desktop/runtime/shared/i18n 套件，完整
-JavaScript build/typecheck/lint 和 Electron boot/supervision 探针。的
-同一主机 UI 运行涵盖待恢复、实时终端控制、稳定
-Electron/Host 身份，渲染器重新加载后终端卡缺失；
-E2E-108/E2E-109 覆盖主机重启中断且无重播。
+Acceptance evidence: host-core migration/policy/recovery tests,
+`test:e2e:plan`, `test:e2e:plan-ui`, desktop/runtime/shared/i18n suites, full
+JavaScript build/typecheck/lint, and Electron boot/supervision probes. The
+same-Host UI run covers pending restore, live terminal controls, stable
+Electron/Host identity, and terminal-card absence after renderer reload;
+E2E-108/E2E-109 cover Host restart interruption and no replay.
 
-### M6+（当前产品增量）
-在 M6 Plan 检查点之后实现：
+### M6+ (Current product increment)
+Implemented after the M6 Plan checkpoint:
 
-- Goal 合同和自主批准后执行
-- 设置 > 智能体中的技能和 MCP 管理，使用全局/项目 `.agents` 根目录、项目优先
-  遮蔽、单文件物理导入和本地启用状态
-- 设置 > 智能体中的全局子代理管理，来源为 `~/.agents/subagents`
-- 插件市场 installation/update 审查和全局插件启动器
-- 会话导入、计划任务记录、通知、剪贴板文件粘贴、
-  斜杠命令、`@` 文件引用和下一回合 Composer 配置
+- Goal contracts and autonomous post-approval execution
+- Settings > Agent Skills and MCP management with global/project `.agents` roots,
+  project-over-global shadowing, single-file physical import, and local enablement
+- Settings > Agent global-only Subagent management from `~/.agents/subagents`
+- plugin marketplace installation/update review and global plugin launcher
+- session import, scheduled task records, notifications, clipboard file paste,
+  slash commands, `@` file references, and next-turn composer configuration
 
-剩余工作将作为产品强化而不是未启动的 MVP 范围进行跟踪：
+Remaining work is tracked as product hardening rather than unstarted MVP scope:
 
-- 更强大的插件运行时沙箱和发布者签名
-- 已标记 macOS 发布构建的资格验证和原生 Windows/Linux 资格
-- 完整的 Playwright/UI-driven E2E 覆盖
-- 附带的 zh-CN 目录之外的其他语言环境
+- stronger plugin runtime sandboxing and publisher signatures
+- qualification of a tagged macOS release build and native Windows/Linux qualification
+- full Playwright/UI-driven E2E coverage
+- additional locales beyond the shipped zh-CN catalog
 
-## 释放约束
+## Release constraint
 
-标签版本发布 **macOS arm64、Intel x64、Windows x64 和 Linux x64** 工件
-（D126 解除了原始 D010 仅限 macOS 的限制；D285 增加了本机 Intel 通道）。
+Tag releases publish **macOS arm64 and Intel x64, Windows x64, and Linux x64**
+artifacts (D126 lifts the original D010 macOS-only constraint; D285 adds the
+native Intel lane).
 
-## 粗暴的努力（独奏）
+## Rough effort (solo)
 
-| 里程碑 | 估计 |
+| Milestone | Estimate |
 |---|---|
-| 莫0 | 完成 |
-| M1 | 1-2天 |
-| M2 | 2-4天 |
-| M3 | 3-5天 |
-| M4 | 3-5天 |
-| M5 | 2-4天 |
-| M6 | 完成 |
+| M0 | done |
+| M1 | 1-2 days |
+| M2 | 2-4 days |
+| M3 | 3-5 days |
+| M4 | 3-5 days |
+| M5 | 2-4 days |
+| M6 | done |

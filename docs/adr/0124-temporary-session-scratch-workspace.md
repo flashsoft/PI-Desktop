@@ -1,46 +1,50 @@
-# ADR 0124: 将临时会话绑定到其专属的 scratch 工作区
+# ADR 0124: Bind Temporary Sessions to Their Own Scratch Workspace
 
 - Status: Accepted
 - Date: 2026-08-26
 - Related: Issue #16, ADR 0059, ADR 0118
 
-## 背景
+## Context
 
-临时会话有意保持 `projectPath` 为空，使其不继承也不修改当前可见的
-项目。然而这让它们的原生工具失去了根目录，尽管每个会话已经拥有
-一个确定性的 `<data_dir>/scratch/<sessionId>` 目录。空主页对临时
-聊天和没有活动会话这两种情况也使用了相同的主视觉文案。
+Temporary sessions intentionally keep `projectPath` empty so they do not
+inherit or mutate the currently visible project. That left their native tools
+without a root, however, even though each session already owns a deterministic
+`<data_dir>/scratch/<sessionId>` directory. The empty home also used the same
+hero copy for a temporary chat and for having no active session.
 
-## 决策
+## Decision
 
-1. host-core 将持久化的无路径会话的工具工作区解析为其专属的
-   `<data_dir>/scratch/<sessionId>` 目录，并在首次解析绑定时创建该
-   目录。会话 schema 保持不变，`projectPath` 仍然缺省。
-2. Read、Glob、Grep、Write、Edit 和 Bash 使用该 scratch 目录作为
-   临时会话的工作区根。根目录绝不取自可变的全局工作区，既有的
-   边界限制和权限检查仍然适用。缺失会话的兼容性调用可以保留旧的
-   全局工作区回退。
-3. Plan 和 Goal 的工作区校验继续要求持久化的项目绑定，因此 scratch
-   工作区不会扩大契约模式执行的范围。
-4. 渲染进程从所选会话推导空主页的主视觉状态：项目会话保留带项目
-   下划线的欢迎语，临时会话显示专用的临时聊天文案且不带项目操作，
-   没有活动会话时显示通用欢迎语。
+1. Host-core resolves a persisted path-less session's tool workspace to its own
+   `<data_dir>/scratch/<sessionId>` directory and creates that directory when
+   the binding is first resolved. The session schema remains unchanged and
+   `projectPath` stays absent.
+2. Read, Glob, Grep, Write, Edit, and Bash use that scratch directory as the
+   temporary session's workspace root. The root is never taken from the
+   mutable global workspace, and the existing containment and permission
+   checks still apply. A missing-session compatibility call may retain the
+   legacy global-workspace fallback.
+3. Plan and Goal workspace validation continues to require a persisted project
+   binding, so a scratch workspace does not broaden contract-mode execution.
+4. The renderer derives the empty-home hero state from the selected session:
+   project sessions retain the project-underlined welcome, temporary sessions
+   show dedicated temporary-chat copy without a project action, and no active
+   session shows the generic welcome.
 
-## 后果
+## Consequences
 
-- 临时聊天可以安全地使用原生工具，而不触碰项目或继承最近活跃的
-  项目。
-- 临时聊天中的相对工具路径立即可用；scratch 数据保持临时性，并
-  遵循既有的会话删除/启动清扫机制。
-- 临时会话在可见层面和结构层面都与项目会话保持区分，且不引入新的
-  会话类型或持久化迁移。
-- Plan 和 Goal 保留其既有的项目根边界。
+- Temporary chats can safely use native tools without touching a project or
+  inheriting the most recently active project.
+- Relative tool paths in temporary chats are useful immediately; scratch data
+  remains ephemeral and follows the existing session deletion/startup sweep.
+- Temporary sessions remain visibly and structurally distinct from project
+  sessions without introducing a new session type or persistence migration.
+- Plan and Goal keep their existing project-root boundary.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- **继承可见项目：** 否决，因为这违反临时会话的隔离不变量，并可能
-  修改无关的项目文件。
-- **新增持久化会话类型：** 否决，因为既有的无路径会话模型已经提供
-  了正确的生命周期和分组。
-- **让工具不可用：** 否决，因为这会让临时聊天无法执行本来可以隔离
-  进行的检查和 scratch 工作。
+- **Inherit the visible project:** rejected because it violates the temporary
+  session isolation invariant and can mutate unrelated project files.
+- **Add a new persisted session type:** rejected because the existing
+  path-less session model already provides the correct lifecycle and grouping.
+- **Leave tools unavailable:** rejected because it makes temporary chats
+  unable to perform otherwise isolated inspection and scratch work.

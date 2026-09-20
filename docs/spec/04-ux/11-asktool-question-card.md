@@ -1,39 +1,72 @@
-# 11. asktool问题卡
+# 11. asktool Question Card
 
-Asktool 卡是内联输入框批准表面，而不是许可
-对话框。它与 Plan 和 Goal 批准卡安装在同一停靠区域，
-紧邻输入框输入的上方，因此暂停的问题仍然可用
-主动决策点，而不是进入成绩单历史。
+The asktool card is an inline composer approval surface, not a permission
+dialog. It is mounted in the same dock area as the Plan and Goal approval card,
+immediately above the composer input, so a paused question stays available at
+the active decision point instead of moving into transcript history.
 
-它乘坐 composer 板 —— 与 Plan/Goal 批准条相同的 `--ds-bg-composer` 填充与
-`--ds-shadow-composer` 阴影 —— 而不是流动层的 `--ds-tile` 洗色；它的选项行与
-自定义输入是该板上的内嵌 `--ds-tile-deep` 填充（D297、D435）。消息宽度、字体
-与按钮令牌仍取自对话，暂停的问题因此仍是对话的一部分。问题文本使用紧凑卡体
-字号（`--text-md`，13 px）与中等字重，因此它读起来是卡片的主要焦点，
-同时不与周围的成绩单争抢字号。
+It rides the composer plate — `--ds-bg-composer` with `--ds-shadow-composer`,
+like the Plan and Goal approval bar — rather than the in-flow `--ds-tile` wash,
+and its option rows and custom input are inlaid `--ds-tile-deep` fills on that
+plate (D297, D435). The message width, typography, and button tokens still come
+from the conversation so a paused question remains part of it. The card shell
+stays slim — 14 px × 16 px padding, matching the permission card's compact
+footprint, with no accent rail (D297). The question text uses the compact card
+body size (`--text-md`, 13 px) at medium weight — the same scale as the
+permission card's title and prompt in the same dock area — so it reads as the
+card's primary focal point without competing with the surrounding transcript.
+Options and the custom input use the same compact size, keeping the card's
+content in one coordinated tier.
 
-标题标识提示并显示进度。可点击的小指示器
-编码已应答、未应答、跳过和当前状态，而不与
-问题文本。选择控件使用单选语义来进行单选和
-多选的复选框语义。每个问题都包含一个可见的自定义
-输入选择。操作行包含 Skip 和 Next/Submit，其中 Decline 全部为
-标题中安静的次要动作。
+The header identifies the prompt and shows progress. Small clickable indicators
+encode answered, unanswered, skipped, and current state without competing with
+the question text. Choice controls use radio semantics for single-select and
+checkbox semantics for multi-select. Every question includes a visible custom
+input choice. The action row contains Skip and Next/Submit, with Decline all as
+a quiet secondary action in the header.
 
-该卡没有倒计时或到期副本。在窄屏幕上，选项仍然存在
-全角和动作可以共享行；问题文本和自定义输入可能
-自然包裹，无需剪裁。
+The card has no countdown or expiration copy. On narrow screens options remain
+full-width and actions may share the row; question text and custom input may
+wrap naturally without clipping.
 
-## 版式层级
+## Typography hierarchy
 
-该卡使用清晰的四级字号阶梯，以避免过多相近尺寸带来的视觉噪音：
+The card uses a compact two-tier type scale — quiet labels, then content at
+the card body size — so the question and options stay coordinated:
 
-| 元素 | 标记 | 尺寸 | 字重 | 备注 |
+| Element              | Token              | Size    | Weight     | Notes                       |
 |----------------------|--------------------|---------|------------|-----------------------------|
-| 卡片标题 | `--text-xs` | 11 px | medium | 全大写，宽字距 |
-| 问题编号 | `--text-xs` | 11 px | medium | 宽字距，眉标角色 |
-| 进度 | `--text-2xs` | 10.5 px | — | 淡色，最不显眼 |
-| 问题文本 | `--text-base-plus` | 15 px | medium | 主要焦点 |
-| 选项文本 | `--text-sm-plus` | 12.5 px | — | 比问题低一档 |
-| 选项标记 | `--text-xs-plus` | 11.5 px | — | 与选项文本成比例 |
-| 自定义输入文本 | `--text-sm-plus` | 12.5 px | — | 与选项文本一致 |
-| 拒绝按钮 | `--text-xs` | 11 px | — | 安静的次要动作 |
+| Card title           | `--text-xs`        | 11 px   | medium     | Uppercase, wide tracking    |
+| Question number      | `--text-xs`        | 11 px   | medium     | Wide tracking, eyebrow role |
+| Progress             | `--text-2xs`       | 10.5 px | —          | Faint, most subtle          |
+| Question text        | `--text-md`        | 13 px   | medium     | Primary focal point, compact|
+| Option text          | `--text-md`        | 13 px   | —          | Matches question scale      |
+| Option mark          | `--text-xs`        | 11 px   | —          | 15 px box, proportional     |
+| Custom input text    | `--text-md`        | 13 px   | —          | Matches option text         |
+| Decline button       | `--text-xs`        | 11 px   | —          | Quiet secondary action      |
+
+## Control density
+
+The card shell is a slim rail: 14 px × 16 px padding with a 2 px accent rail,
+the same footprint family as the permission and turn-outcome cards.
+
+The internal rhythm stays airy rather than packed: the status indicators keep
+12 px above and 14 px below breathing room, the question renders at
+`--leading-normal` (1.4) with 8 px under the eyebrow label, and each content
+section (indicators → question → options → custom input → actions) is
+separated by 12 px.
+
+The option rows follow the app's global menu-row density instead of card-scale
+blocks: 30 px min-height, 4 px × 8 px padding, 8 px row gaps, and the same
+15 px radio/checkbox mark used by the sidebar checkboxes. The Skip / Next /
+Submit buttons use the app's compact button size (4 px × 10 px padding,
+12 px text); Decline remains a quiet text link in the header.
+
+When a question has enough options to exceed the available dock height, the
+option list becomes the scroll container instead of allowing the composer dock
+to grow beyond the viewport. The list uses a dynamic viewport cap of
+`min(320px, 36dvh)` (with a `vh` fallback), keeps a stable scrollbar gutter,
+contains scroll chaining, and preserves keyboard scroll padding. The question
+header, question text, custom-answer input, and Skip / Next / Submit actions
+remain visible while the user scrolls through the options. This behavior also
+applies on narrow screens; the card does not rely on page-level scrolling.

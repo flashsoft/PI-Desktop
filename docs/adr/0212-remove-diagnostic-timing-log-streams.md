@@ -1,4 +1,4 @@
-# ADR 0212: 移除诊断性计时日志流
+# ADR 0212: Remove diagnostic timing log streams
 
 - Status: Accepted
 - Date: 2026-09-10
@@ -7,27 +7,28 @@
 
 ## Context
 
-D137/D183 添加了按工具、按模型、启动阶段和更新器的计时输出，以帮助
-诊断一次缓慢的运行。该调查已完成，而这些记录现在在正常使用期间给本
-地日志目录制造了噪音。
+D137/D183 added per-tool, per-model, boot-phase, and updater timing output to
+help diagnose a slow run. The investigation is complete, and those records now
+create noise in local log directories during normal use.
 
 ## Decision
 
-1. 停止发出 sidecar 的 `[timing]` 行、宿主的 `tool timing` 行、启动
-   阶段计时记录、更新器计时记录，以及渲染进程引导计时输出。
-2. 移除专用的 `timing` 日志类别和 `PI_DESKTOP_TIMING` 抑制环境变量。
-   更新器的功能性超时保留。
-3. 保留关键的生命周期、状态变化、权限、工具、插件、provider、持久
-   化、更新器和错误记录。保留被产品功能或安全取证消费的结构化审计
-   字段和 UI/协议时长元数据。
-4. 不删除或迁移用户本地数据目录中已存在的计时文件。它们是历史记
-   录。
+1. Stop emitting sidecar `[timing]` lines, host `tool timing` lines, boot-phase
+   timing records, updater timing records, and renderer bootstrap timing output.
+2. Remove the dedicated `timing` log category and the `PI_DESKTOP_TIMING`
+   suppression environment variable. The updater's functional timeout remains.
+3. Keep key lifecycle, state-change, permission, tool, plugin, provider,
+   persistence, updater, and error records. Keep structured audit fields and
+   UI/protocol duration metadata that are consumed by product features or
+   security forensics.
+4. Do not delete or migrate timing files already present in a user's local data
+   directory. They are historical records.
 
 ## Consequences
 
-- 正常的启动、轮次、重试和工具调用产生更少的日志记录，且不再创建
-  专用的计时文件。
-- 故障仍然可以通过稳定的生命周期记录、错误代码、工具/权限审计行和
-  可见的 transcript 进行诊断。
-- 计时专属的故障排查场景和文档被退役。
-- 现有的本地计时文件可能保留，直到用户自行移除。
+- Normal launches, turns, retries, and tool calls produce fewer log records and
+  no longer create dedicated timing files.
+- Failures remain diagnosable through stable lifecycle records, error codes,
+  tool/permission audit rows, and the visible transcript.
+- Timing-specific troubleshooting scenarios and documentation are retired.
+- Existing local timing files may remain until the user removes them.

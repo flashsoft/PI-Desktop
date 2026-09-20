@@ -1,61 +1,67 @@
-# ADR 0073: 暂存下一轮 composer 配置并保留停止时的吞吐
+# ADR 0073: Stage next-turn composer configuration and preserve stopped throughput
 
-- 状态： 已接受实现
-- 日期： 2026-08-11
-- 决策者： PI-Desktop 核心
-- 修订： D189
-- 相关： D212 · [Agent runtime](../spec/03-runtime/02-agent-runtime.md) ·
-  [组件规范](../spec/04-ux/08-component-spec.md) · E2E-120
+- Status: Accepted for implementation
+- Date: 2026-08-11
+- Deciders: PI-Desktop core
+- Amends: D189
+- Related: D212 · [Agent runtime](../spec/03-runtime/02-agent-runtime.md) ·
+  [Component spec](../spec/04-ux/08-component-spec.md) · E2E-120
 
-## 背景
+## Context
 
-composer 此前在整个 agent 运行期间把草稿、模式、思考与权限控件设为只读。
-这阻止了在保持正确安全规则的同时准备下一个 prompt 与下一轮配置：host-core
-不得修改在途轮次已固定的配置。
+The composer previously made its draft, mode, thinking, and permission controls
+read-only for an entire agent run. That prevented preparing the next prompt and
+next-turn configuration while preserving the correct safety rule: host-core
+must not mutate the configuration pinned by an in-flight turn.
 
-用户发起的停止也可能在 provider 的最终用量记录之前到达。部分 assistant 回
-答被保留，但其流时长与输出计数缺失于持久 transcript 元数据，因此会话统计
-无法显示生成吞吐。
+A user-initiated Stop could also arrive before the provider's final usage
+record. The partial assistant answer was retained, but its stream duration and
+output count were absent from durable transcript metadata, so conversation
+statistics could not show generation throughput.
 
-## 决策
+## Decision
 
-1. 在活跃轮次期间，composer 草稿与模式、思考、权限选择器保持可编辑。只有
-   发送保持禁用，停止操作保持可用。待决的 Plan/Goal 审批继续阻止草稿与配
-   置控件，因为它持有会话决策边界。
-2. 渲染进程按运行中的会话存储最新的完整会话配置并乐观投影。在
-   `agent_end`、`error` 或手动压缩完成时，它通过现有的仅空闲
-   `session/configure` API 提交该配置。新选择替换较旧的排队选择；它们绝不
-   修改正在运行的 runtime。
-3. Runtime 终结消息保留 `responseDurationMs`。如果被中止的响应没有正的
-   provider 报告输出用量，runtime 与渲染进程对账按每 token 四个 Unicode 码
-   位估算可见的思考加回答文本，并附上可选的 `responseOutputTokens`。
-4. Rust transcript 转换把两个可选字段持久化在消息元数据中。精确的
-   provider 用量优先于估算；估算在会话元数据中被标记为估算。缺少两个字段
-   的旧记录仍然有效。
+1. During an active turn, the composer draft and mode, thinking, and permission
+   selectors remain editable. Send alone remains disabled and the Stop action
+   remains available. A pending Plan/Goal approval continues to block the draft
+   and configuration controls because it owns the session decision boundary.
+2. The renderer stores the latest full session configuration per running
+   session and projects it optimistically. On `agent_end`, `error`, or manual
+   compaction completion it submits that configuration through the existing
+   idle-only `session/configure` API. New selections replace older queued ones;
+   they never modify the running runtime.
+3. Runtime terminal messages preserve `responseDurationMs`. If an aborted
+   response has no positive provider-reported output usage, runtime and renderer
+   reconciliation estimate visible thinking plus answer text at four Unicode
+   code points per token and attach optional `responseOutputTokens`.
+4. Rust transcript conversion persists both optional fields in message metadata.
+   Exact provider usage wins over the estimate; an estimate is labeled as such
+   in conversation metadata. Older records without either field remain valid.
 
-## 后果
+## Consequences
 
-- 用户无需等待当前回答即可准备下一个请求并调整其运行配置，但不能发送并
-  发 prompt。
-- 宿主仅空闲准入、每会话一轮、Plan/Goal 审批与权限执行保持不变。
-- 停止的部分回答显示稳定的近似每秒 token 值，并在重载后保留；完整回答继
-  续使用精确的 provider 用量。
-- `responseOutputTokens` 是加法式的共享字段，存储在现有消息元数据内，因
-  此协议 v9 与存储 schema v11 都不变。
+- Users can prepare the next request and adjust its operating profile without
+  waiting for the current answer, but cannot send a concurrent prompt.
+- Host idle-only admission, one-turn-per-session, Plan/Goal approval, and
+  permission enforcement remain unchanged.
+- Stopped partial answers show a stable approximate tokens-per-second value and
+  retain it after reload; complete answers continue to use exact provider usage.
+- `responseOutputTokens` is an additive shared field stored inside existing
+  message metadata, so neither protocol v9 nor storage schema v11 changes.
 
-## 已考虑的备选方案
+## Alternatives considered
 
-### 运行期间立即配置宿主
+### Configure the host immediately while running
 
-已拒绝。它要么违反仅空闲准入，要么冒着改变已为活跃轮次固定的权限/工具/
-模型配置的风险。
+Rejected. It would either violate idle-only admission or risk changing the
+permission/tool/model configuration already pinned for the active turn.
 
-### 保持控件禁用，只允许草稿输入
+### Keep controls disabled but allow only draft typing
 
-已拒绝。模式、思考与权限是准备下一个 prompt 的一部分；只让文本可编辑会让
-工作流不必要地串行化。
+Rejected. Mode, thinking, and permission are part of preparing the next prompt;
+making only text editable leaves the workflow unnecessarily serialized.
 
-### 最终用量缺失时隐藏吞吐
+### Hide throughput when final usage is missing
 
-已拒绝。可见的部分输出与实测的流间隔提供了有用的估算，且 UI 可以把它与
-provider 报告的用量区分开。
+Rejected. The visible partial output and measured stream interval provide a
+useful estimate, and the UI can distinguish it from provider-reported usage.

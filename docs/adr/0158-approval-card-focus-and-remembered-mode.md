@@ -1,51 +1,58 @@
-# ADR 0158: 保持审批卡片聚焦并记住所选模式
+# ADR 0158: Keep approval cards focused and remember the selected mode
 
-- 状态：已接受，进入实现阶段
-- 日期：2026-08-12
-- 决策者：PI-Desktop 核心团队
-- 修订：D189 · ADR 0053
-- 相关：D215 · E2E-106
+- Status: Accepted for implementation
+- Date: 2026-08-12
+- Deciders: PI-Desktop core
+- Amends: D189 · ADR 0053
+- Related: D215 · E2E-106
 
-## 背景
+## Context
 
-Plan/Goal 审批卡片与制品打开入口并列，重复展示了已提交的问题、状态和
-截止时间。审批模式在每次提案时也会重置为 Ask，即使用户刚刚选择了其他
-模式。
+The Plan/Goal approval card duplicated the submitted question, status, and
+deadline alongside the artifact opener. The approval mode also reset to Ask for
+every proposal, even when the user had just chosen a different mode.
 
-Plan 制品文件名在 ASCII 标题下由标题派生，但对非 ASCII 标题会回退到
-通用的 `plan`/`goal` 词干，使得本地化工作区更难以扫视。
+Plan artifact filenames were title-derived for ASCII titles but fell back to a
+generic `plan`/`goal` stem for non-ASCII titles, making localized workspaces
+harder to scan.
 
-## 决策
+## Decision
 
-1. 待审批卡片仅渲染提案标题、宿主创建的制品路径/打开操作、Reject，以及
-   Approve 分割按钮。问题或描述文本、状态、有效期/截止时间以及内联安全
-   警告均不属于卡片内容。
-2. 选择 Ask、Accept edits 或 Auto 会将该选择存入渲染进程本地的设备偏好。
-   后续每次审批以存储的选择作为默认值；当存储不可用或无效时，回退为
-   Ask。
-3. 宿主生成的制品文件名保留标题中的字母数字 Unicode 字符，将分隔符
-   规范化为连字符，并保留时间戳和冲突后缀。路径校验继续只接受
-   `.pi/<kind>/` 下生成的安全文件名形态。
-4. 现有的宿主审批截止时间继续作为内部兼容性和 fail-closed 边界存在；
-   不再作为审批卡片概念对外暴露。
+1. The pending approval card renders only the proposal title, the host-created
+   artifact path/open action, Reject, and the Approve split-button. Question or
+   description text, status, validity/deadline, and inline safety warning are
+   not card content.
+2. Selecting Ask, Accept edits, or Auto stores that choice in renderer-local
+   device preferences. Each later approval uses the stored choice as its
+   default; Ask remains the fallback when storage is unavailable or invalid.
+3. Host-generated artifact filenames preserve alphanumeric Unicode title
+   characters, normalize separators to hyphens, and retain the timestamp and
+   collision suffix. Path validation continues to accept only the generated
+   safe filename shape under `.pi/<kind>/`.
+4. The existing host approval deadline remains an internal compatibility and
+   fail-closed boundary; it is no longer exposed as an approval-card concept.
 
-## 后果
+## Consequences
 
-- 卡片保持紧凑，注意力集中在决策和可审查的制品上。
-- 经常使用 Auto 或 Accept edits 审批的用户，无需在同一设备上对每次
-  提案重复该选择。
-- 本地化标题能生成可识别的制品名称，同时保持宿主拥有的唯一、不可变
-  文件。
-- 传输/存储契约保持兼容；旧的截止时间数据不再由渲染进程展示。
+- The card is compact and keeps attention on the decision and the reviewable
+  artifact.
+- Users who routinely approve with Auto or Accept edits do not repeat that
+  selection for every proposal on the same device.
+- Localized titles produce recognizable artifact names while preserving unique,
+  host-owned immutable files.
+- The wire/storage contract remains compatible; legacy deadline data is not
+  presented by the renderer.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-### 将该选择持久化到宿主设置表
+### Persist the choice in the host settings table
 
-本次改动予以否决。该选择是渲染进程的 UI 偏好，将其加入宿主设置会扩大
-协议和设置所有权边界，却不会带来额外的审批安全性。
+Rejected for this change. The choice is a renderer UI preference, and adding it
+to host settings would expand the protocol and settings ownership boundary for
+no additional approval safety.
 
-### 在折叠的卡片区域中保留问题和截止时间
+### Keep the question and deadline in a collapsed card section
 
-否决。所要求的审批界面有意仅限于标题、制品审查和两个决策；完整的
-Markdown 仍可通过打开宿主创建的文件查看。
+Rejected. The requested approval surface is intentionally limited to title,
+artifact review, and the two decisions; the full Markdown remains available by
+opening the host-created file.

@@ -1,39 +1,43 @@
-# 03. 权限用户体验
+# 03. Permission UX
 
 ## 1. Goal
 
-使高风险的本地行动可见、可中断且可预测。
+Make high-risk local actions visible, interruptible, and predictable.
 
-## 2. 模式矩阵
+## 2. Mode matrix
 
-| 模式 | Read/Glob/Grep | BrowserPreview | Write/Edit | 重击 | 插件 |
+| Mode | Read/Glob/Grep | BrowserPreview | Write/Edit | Bash | Plugins |
 |---|---|---|---|---|---|
-| Agent | 允许 | 允许 | 许可政策 | 许可政策 | 注册风险政策 |
-| Plan | 允许 | 允许 | 否认 | Read/Glob/Grep/BrowserPreview：确认； `auto`：允许 | 否认 |
-| Goal | 允许 | 允许 | 否认 | Read/Glob/Grep/BrowserPreview：确认； `auto`：允许 | 否认 |
+| Agent | allow | allow | permission policy | permission policy | registered risk policy |
+| Plan | allow | allow | deny | `ask`/`accept-edits`: confirm; `auto`: allow | deny |
+| Goal | allow | allow | deny | `ask`/`accept-edits`: confirm; `auto`: allow | deny |
 
-Read/Glob/Grep `allow` 单元格应用于会话工作空间内的路径
-并抓根。两个根之外的显式路径是一个例外：
-`auto` 允许这样做，而 `ask` 和 `accept-edits` 显示与以下相同的内联卡
-其他权限控制工具。该卡的参数预览包括
-请求的路径，并且外部结果在记录中保持绝对。
+The Read/Glob/Grep `allow` cells apply to paths inside the session workspace
+and scratch roots. An explicit path outside both roots is an exception:
+`auto` allows it, while `ask` and `accept-edits` show the same inline card as
+other permission-gated tools. The card's argument preview includes the
+requested path, and the external result remains absolute in the transcript.
 
-决策来源：**D003/D189/D190/D195 (ADR 0057)**。
+Decision source: **D003/D189/D190/D195 (ADR 0057)**.
 
-Plan 和 Goal 使该权限模式控件保持可见。他们是契约者
-意图，而不是严格的只读安全配置文件：Bash 命令可能会发生变化
-当用户选择“自动”时，工作区或暂存状态。 Write/Edit/plugin 工具
-在权限卡之前被主机拒绝，无论是授予还是自动。
+Plan and Goal keep this permission-mode control visible. Plan exposes the
+effective permission choice; Goal shows the same chip geometry with a fixed
+Auto label in the Composer and does not open a menu. Goal's approval card is
+the separate place to choose the execution permission for the approved run.
+They are contract intents, not strict read-only security profiles: a Bash
+command can mutate workspace or scratch state under Auto. Write/Edit/plugin
+tools are denied by the host before a permission card, regardless of grants or
+Auto.
 
-## 3. 决策类型
+## 3. Decision types
 
 - `allow-once`
-- `allow-session`（范围按工具名称，**D006**）
+- `allow-session` (scoped by toolName, **D006**)
 - `deny`
 
-MVP 中没有 `allow-always`。
+No `allow-always` in MVP.
 
-## 4. 许可卡状态
+## 4. Permission card states
 
 ```text
 pending → allowed_once
@@ -42,153 +46,154 @@ pending → denied
 pending → timeout_denied
 ```
 
-- 请求由 `sessionId` 和 `requestId` 键入。
-- 没有子代理的会话最多有一个待处理的请求，因为它的
-  代理循环已暂停。并行代表 (§6a) 可以放入多个代表
-  飞行；不同的会议仍在等待独立的批准。
-- 替换或解决一个请求永远不会删除另一个会话的请求
-  或同一会话中的新请求。
+- A request is keyed by both `sessionId` and `requestId`.
+- A session without subagents has at most one pending request, because its
+  agent loop is paused. Parallel delegates (§6a) can put more than one in
+  flight; different sessions still wait for independent approvals.
+- Replacing or resolving one request never removes another session's request
+  or a newer request in the same session.
 
-## 5. 超时
+## 5. Timeout
 
-- 默认超时：**120 秒**
-- 超时：自动 `deny`
-- UI 明确显示超时状态
-- Agent 收到工具错误结果：用户拒绝/超时
+- Default timeout: **120 seconds**
+- On timeout: auto `deny`
+- UI shows timeout state explicitly
+- Agent receives tool error result: user denied / timed out
 
-## 6. 卡片内容要求
+## 6. Card content requirements
 
-必须显示：
+Must show:
 
-1.工具名称
-2、风险等级
-3.简短的理由
-4.args预览（如果需要则进行编辑）
-5. 工作空间环境
-6. 操作：允许一次/允许会话/拒绝
+1. tool name
+2. risk level
+3. short reason
+4. args preview (redacted if needed)
+5. workspace context
+6. actions: Allow once / Allow for session / Deny
 
-该卡仅在其原始会话的记录中内联呈现。
-后台请求保持挂起状态，无需打开覆盖层，更改
-活动 page/project/session，或移动键盘焦点。打开该会话
-亮出其卡牌，上面有原来的绝对倒计时期限。
+The card is rendered inline only in its originating session's transcript.
+Background requests remain pending without opening an overlay, changing the
+active page/project/session, or moving keyboard focus. Opening that session
+reveals its card with the original absolute countdown deadline.
 
-解决请求永远不会启动导航。任何生成的工具工件都是
-记录在同一会话保留的工作面板上下文中。如果该会话是
-在完成之前背景化，工件不得打开或调整大小
-可见面板；显式返回会话会恢复其保留的面板
-打开状态、选项卡、活动选项卡和浏览器资源，无需临时面板
-open/close 循环介入对话。
+Resolving a request never initiates navigation. Any resulting tool artifact is
+recorded in the same session's retained work-panel context. If that session is
+backgrounded before completion, the artifact must not open or resize the
+visible panel; explicitly returning to the session restores its retained panel
+open state, tabs, active tab, and Browser resource without a transient panel
+open/close cycle in the intervening conversation.
 
-## 6a。来自并行委托的排队请求（D201、ADR 0062）
+## 6a. Queued requests from parallel delegates (D201, ADR 0062)
 
-并行子代理可以同时停止在门控工具上，因此
-会话保存一个待处理请求的**队列**，最早的在前，而不是单个槽。
-另一种选择——一叠用户无法区分的通话卡片——不是
-有责任的。
+Parallel subagents can each stop on a gated tool at the same moment, so a
+session holds a **queue** of pending requests, oldest first, not a single slot.
+The alternative — a stack of cards for calls the user cannot tell apart — is not
+answerable.
 
-- 只有队列的头部被渲染并负责。剩下的等等
-  无形地；他们的代表仍然受阻，这是预期的背压。
-- 答案按 `requestId` 匹配，而不是按位置匹配，因此迟到的答案可以
-  只能清除它所回答的请求，而永远无法解决后继者。
-- 主机自行关闭的请求（过期、取消的工具调用）被删除
-  `toolCallId` 来自队列中的任何位置，因此一张从未显示过的卡片仍然存在
-  叶子。 120 秒的截止时间 (§5) 从每个请求到达时算起，无论是排队的还是
-  not — 因此，请求可能会在等待期间过期，并且主机自己会拒绝
-  是代表所看到的。
-- 中止拒绝**整个**队列，而不仅仅是可见的卡：排队的委托
-  否则将在用户已经请求的停止之后保持其工具调用处于活动状态
-  为.
-- 没有任何待处理的会话根本没有队列，因此“此会话是否需要
-  注意”仍然是存在检查，侧边栏指示器保持不变。
+- Only the head of the queue is rendered and answerable. The rest wait
+  invisibly; their delegates stay blocked, which is the intended back-pressure.
+- Answers are matched by `requestId`, never by position, so a late answer can
+  only clear the request it answered and can never resolve a successor.
+- A request the host closed itself (expiry, cancelled tool call) is removed by
+  `toolCallId` from anywhere in the queue, so a card that was never shown still
+  leaves. The 120s deadline (§5) runs from arrival for every request, queued or
+  not — a request can therefore expire while waiting, and the host's own denial
+  is what the delegate sees.
+- Abort denies the **whole** queue, not just the visible card: a queued delegate
+  would otherwise keep its tool call alive behind a stop the user already asked
+  for.
+- A session with nothing pending has no queue at all, so "does this session need
+  attention" stays a presence check and the sidebar indicator is unchanged.
 
-该卡在适用时在第 6 条之上添加了两条出处线：
+The card adds two lines of provenance when they apply, on top of §6:
 
-- 谁提出了要求 — “由 `<agent>` 子代理提出要求” — 仅代表代表出席
-  请求，所以父母自己的请求看起来和今天一模一样；
-- 有多少个等待 - “N 个请求正在等待” - 所以回答确实如此
-看起来它还没有完成会议的问题。
+- who asked — "Asked by the `<agent>` subagent" — present only for a delegate's
+  request, so a parent's own request looks exactly as it does today;
+- how many wait behind it — "N more request(s) are waiting" — so answering does
+  not look like it finished the session's questions.
 
-会话授权未更改，并且仍按每个会话的 `toolName`：代表的
-“允许会议”还涵盖家长和其他代表
-（`03-runtime/03-tools-and-permissions.md` §10.2）。
+Session grants are unchanged and still per `toolName` per session: a delegate's
+"Allow for session" also covers the parent and the other delegates
+(`03-runtime/03-tools-and-permissions.md` §10.2).
 
-## 7. 等待期间的 Composer 交互
+## 7. Composer interaction while pending
 
-- 用户可以继续编辑文本
-- 发送另一个提示或更改活动会话 mode/provider/model/permission
-  当 `pending` Plan 或 Goal 批准存在时被阻止
-- 特别是对于待决的 Plan 或 Goal 提案，现有草案将被保留并
-  提示符变为只读。输入框模式、思维、许可、模式、
-  发送控件被禁用；批准界面的批准和拒绝操作
-  保持启用状态。
-- 当输入左侧的 Composer Agent/Plan/Goal 芯片和 Composer 模型 × 推理选择器重新启用时
-  主机因拒绝、过期或中断而关闭批准；终端
-  提案快照不是门
-- Abort并发取消回合并显式拒绝匹配的主机
-  许可请求；后期清理无法清除更换请求
-- 另一个会话保持独立 editable/runnable 和它自己的挂起
-  请求不受影响
+- user may continue editing text
+- sending another prompt or changing active-session mode/provider/model/permission
+  is blocked while a `pending` Plan or Goal approval exists
+- For a pending Plan or Goal proposal specifically, the existing draft is preserved and
+  the prompt becomes read-only. Composer mode, thinking, permission, model, and
+  send controls are disabled; the approval surface's Approve and Reject actions
+  remain enabled.
+- the left-of-input Composer Agent/Plan/Goal chip and Composer model × reasoning
+  picker re-enable when the
+  host closes the approval as rejected, expired, or interrupted; terminal
+  proposal snapshots are not gates
+- Abort concurrently cancels the turn and explicitly denies the matching host
+  permission request; late cleanup cannot clear a replacement request
+- another session remains independently editable/runnable and its own pending
+  request is unaffected
 
-## 8. 会话授予表面
+## 8. Session grants surface
 
-活动会话授权（toolName、grantAt、clear action）仍由运行时拥有。
-持久的赠款管理表面被推迟到主机支持的设置为止
-模式存在；设置不得呈现无法持久或影响的控件
-权限运行时。
+Active session grants (toolName, grantedAt, clear action) remain runtime-owned.
+A durable grants-management surface is deferred until a host-backed settings
+schema exists; Settings must not render a control that cannot persist or affect
+the permission runtime.
 
-## 9. Plan 和 Goal 合同审批卡
+## 9. Plan and Goal contract approval card
 
-Plan 和 Goal 批准不是通用工具许可卡。它们被渲染
-在 `SubmitPlan(...)` 或 `SubmitGoal(...)` 之后的原始会话中内联
-导致 host-core 在新的不可变中保留确切的 Markdown 字节
-`.pi/plan/*.md` 或 `.pi/goal/*.md` 工件。卡片位于透明的
-Composer 停靠栏上，因此使用 `--ds-bg-composer` 加 `--ds-shadow-composer`，
-而不是正文流里的 `--ds-tile` 薄洗。
+Plan and Goal approval are not generic tool permission cards. They are rendered
+inline in the originating session after `SubmitPlan(...)` or `SubmitGoal(...)`
+causes host-core to preserve the exact Markdown bytes in a new immutable
+`.pi/plan/*.md` or `.pi/goal/*.md` artifact. The card sits in the transparent
+composer dock, so it paints `--ds-bg-composer` with `--ds-shadow-composer`
+rather than the in-flow `--ds-tile` wash.
 
-该卡片仅显示结构化标题和确切工件的开场白
-路径。它不会呈现提交的 question/description、状态或
-批准 validity/deadline。它仅提供：
+The card shows only the structured title and an opener for the exact artifact
+path. It does not render the submitted question/description, status, or
+approval validity/deadline. It offers only:
 
-- **以明确的目标权限模式批准**（`Ask`、`Accept edits`、
-  或 `Auto`；该设备会记住最后选择的模式，并且是
-  默认为下次审批）
-- **拒绝**，停止运行并使合约状态保持活动状态；稍后
-  轮流必须提交新的完整 snapshot/artifact
+- **Approve** with an explicit target permission mode (`Ask`, `Accept edits`,
+  or `Auto`; the last selected mode is remembered on this device and is the
+  default for the next approval)
+- **Reject**, which stops the run and leaves the contract state active; a later
+  turn must submit a new complete snapshot/artifact
 
-该卡有不同的 `pending`、`resolving`、`approved`、`queued`、`running`、
-`rejected`、`expired` 和 `interrupted` 状态。批准仅适用于
-匹配实时 proposal/session/turn/tool-call/version 请求和截止日期
-距创建正好 30 分钟。 Renderer状态保留最新的
-每个会话的 proposal/execution 快照仅适用于当前渲染器生命周期，
-由现场主办方活动驱动；只有 `pending` 是可操作的或 Composer 门。
-Renderer 重新加载可能会恢复仍待处理的行，而无需重置其截止日期
-虽然同一主机仍然活着，但不重新水化被拒绝，过期，
-approved/completed，或中断的终端卡。这样的卡可能会保留
-仅在重新加载之前可见且不可操作。启动中断标记待处理
-和 queued/running 工作中断
-在 RPC 服务之前，不提供过时的操作，并且从不重放它。过期使用
-`PLAN_APPROVAL_TIMEOUT`。已批准的中断运行将保留会话
-在 Agent 中； UI 不需要显示其中断的终端快照
-完全重新启动 Host/app 后。
+The card has distinct `pending`, `resolving`, `approved`, `queued`, `running`,
+`rejected`, `expired`, and `interrupted` states. Approval is enabled only for a
+matching live proposal/session/turn/tool-call/version request and the deadline
+is exactly 30 minutes from creation. Renderer state retains the latest
+proposal/execution snapshot per session only for the current renderer lifetime,
+driven by live Host events; only `pending` is actionable or a Composer gate.
+Renderer reload may restore a still-pending row without resetting its deadline
+while the same Host remains alive, but does not rehydrate rejected, expired,
+approved/completed, or interrupted terminal cards. Such a card may remain
+visible and non-actionable only until reload. Startup interruption marks pending
+and queued/running work interrupted
+before RPC service, offers no stale action, and never replays it. Expiry uses
+`PLAN_APPROVAL_TIMEOUT`. An already-approved interrupted run keeps the session
+in Agent; the UI is not required to present its interrupted terminal snapshot
+after a full Host/app restart.
 
-## 10. 验收
+## 10. Acceptance
 
-1. Plan 和 Goal 在每种权限模式下均拒绝 Write/Edit/plugins
-2.“Ask”和“Accept”编辑下的 Plan 和 Goal Bash 提示，无需确认即可运行
-   在自动下，突变权衡可见
-3、Agent模式使用普通高危权限策略
-4. UI + 工具结果中的超时变为拒绝
-5.allow-session 仅抑制相同 toolName 的重复提示
-6.并发会话请求保持隔离，永远不会接管可见的
-   对话或其工作小组；批准后工件仍分配给
-   请求的发起会话
-7. Plan/Goal 批准仅显示标题和工件开启器，记住
-   在此设备上选择下次批准的权限模式，并将其发送
-   仅批准模式；没有 question/description、validity/deadline、状态、
-   呈现内联 Markdown/hash/byte-size 或 revision/feedback 操作
-8. 拒绝、过期、中止、崩溃、陈旧响应和持久性失败关闭
-   待处理的 Plan/Goal 在其合约状态下工作，没有执行能力；一个
-   稍后提示可能会修改并提交新的不可变工件
-9. 主机重启中断pending/queued/running工作，无重放或陈旧
-   操作并在 Agent 中保留已批准的中断会话；没有终端
-   重启后需要卡恢复
+1. Plan and Goal deny Write/Edit/plugins in every permission mode
+2. Plan and Goal Bash prompt under Ask and Accept edits and run without confirmation
+   under Auto, with the mutation tradeoff visible
+3. Agent mode uses the normal high-risk permission policy
+4. timeout becomes deny in UI + tool result
+5. allow-session suppresses repeat prompts for same toolName only
+6. concurrent session requests remain isolated and never take over the visible
+   conversation or its work panel; post-approval artifacts remain assigned to
+   the request's originating session
+7. Plan/Goal approval displays only the title and artifact opener, remembers the
+   selected permission mode for the next approval on this device, and sends that
+   mode only on approval; no question/description, validity/deadline, status,
+   inline Markdown/hash/byte-size, or revision/feedback action is rendered
+8. reject, expiry, abort, crash, stale response, and persistence failure close
+   pending Plan/Goal work in its contract state with no execution capability; a
+   later prompt may revise and submit a new immutable artifact
+9. host restart interrupts pending/queued/running work without replay or stale
+   action and keeps already-approved interrupted sessions in Agent; no terminal
+   card restoration is required after restart

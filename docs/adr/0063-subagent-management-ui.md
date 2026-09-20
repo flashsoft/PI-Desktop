@@ -1,56 +1,64 @@
-# ADR 0063: 全局 Subagent 定义的管理界面
+# ADR 0063: A Managed Surface for Global Subagent Definitions
 
-- 状态： 已接受（经 ADR 0112 修订）
-- 日期： 2026-08-06
-- 决策者： PI-Desktop 核心
-- 相关： D202、ADR 0062（有界 subagent）、ADR 0112
+- Status: Accepted (amended by ADR 0112)
+- Date: 2026-08-06
+- Deciders: PI-Desktop core
+- Related: D202, ADR 0062 (bounded subagents), ADR 0112
 
-## 背景
+## Context
 
-ADR 0062 发布 subagent 时没有渲染进程界面。用户只能把 Markdown 文档放到一
-个实现相关的位置来创建个人委派，且发布的目录在设置中不可见。管理界面不得
-写入被跟踪的项目文件，也不得静默引入与 runtime 契约不一致的项目级来源。
+ADR 0062 shipped subagents without a renderer surface. A user could create a
+personal delegate only by placing a Markdown document in an implementation-
+specific location, and the shipped catalog was not visible in Settings. The
+management surface must not write tracked project files or silently introduce a
+project-level source that differs from the runtime contract.
 
-## 决策
+## Decision
 
-### 1. 全局文档是唯一的用户管理 subagent 来源
+### 1. Global documents are the only user-managed subagent source
 
-用户持有的定义是以下位置的 Markdown 文件：
+User-owned definitions are Markdown files in:
 
 ```text
 ~/.agents/subagents/<id>.md
 ```
 
-没有项目级 subagent 目录。应用不为能力管理扫描或写入 `.pi/agents`。
-`id == name` 仍是模型的 `Task` 句柄，重复名称被拒绝，runtime 的全局用户目
-录与内置合并，没有项目能力层。
+There is no project-level subagent directory. The application does not scan or
+write `.pi/agents` for capability management. `id == name` remains the model's
+`Task` handle, duplicate names are rejected, and the runtime's global user
+catalog is combined with the builtins without a project capability layer.
 
-### 2. 激活是应用本地的
+### 2. Activation is app-local
 
-文档持有 prompt 元数据（`name`、`description`、`tools`、`model`、
-`thinkingLevel` 与 `maxTurns`），但绝不持有 `enabled`。启用状态存储在
-`<data>/agent-capabilities/subagents.json`。扫描全局文件夹会移除已删除文档
-的状态，因此缺失的文件绝不会留下可见的待决行或孤儿覆盖。
+The document owns prompt metadata (`name`, `description`, `tools`, `model`,
+`thinkingLevel`, and `maxTurns`) but never owns `enabled`. The enabled state is
+stored in `<data>/agent-capabilities/subagents.json`. Scanning the global
+folder removes state for deleted documents, so a missing file never leaves a
+visible pending row or an orphaned override.
 
-### 3. 设置页仅全局
+### 3. The Settings page is global-only
 
-设置 > Agent > Subagents 是一个固定高度的全局列表。此界面没有项目选择器、
-项目列或添加/导入操作。每行显示 frontmatter 摘要与本地启用开关；切换只写
-入应用本地状态文件，并在下一次 runtime 目录加载时生效。
+Settings > Agent > Subagents is one fixed-height global list. It has no project
+picker, project column, or add/import action in this surface. Each row shows the
+frontmatter summary and a local enable switch; toggling it writes only the
+app-local state file and takes effect on the next runtime catalog load.
 
-Skills 与 MCP 有独立的设置目的地，不是 Extensions 内的标签。Extensions 本
-身只包含已安装与市场。
+Skills and MCP have separate Settings destinations and are not tabs inside
+Extensions. Extensions itself contains only Installed and Marketplace.
 
-### 4. runtime 仍是事实来源
+### 4. The runtime remains the source of truth
 
-Electron 在下一个 prompt 向 `loadSubagentDefinitions` 提供全局用户文档。渲
-染进程不重新实现目录优先级，也不虚构项目来源。内置与格式错误的文档由
-runtime 加载器处理；管理列表就是扫描到的全局用户文档列表。
+Electron supplies the global user documents to `loadSubagentDefinitions` on the
+next prompt. The renderer does not reimplement catalog precedence or invent a
+project source. Builtins and malformed documents are handled by the runtime
+loader; the management list is the scanned global user-document list.
 
-## 后果
+## Consequences
 
-- 个人委派跨项目跟随用户，不修改仓库。
-- 需要仓库特定 prompt 的团队必须使用项目的正常指令机制；`.pi/agents` 不
-  是能力来源。
-- UI 可以显示并持久化本地启用状态，而不修改 Markdown 文件。
-- 没有项目作用域的 subagent 开关，因此项目优先级只适用于 Skills 与 MCP。
+- Personal delegates follow the user across projects without modifying a
+  repository.
+- Teams that need a repository-specific prompt must use the project's normal
+  instruction mechanism; `.pi/agents` is not a capability source.
+- The UI can show and persist local enablement without changing Markdown files.
+- There is no project-scoped subagent toggle, so project precedence applies to
+  Skills and MCP only.

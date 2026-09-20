@@ -1,62 +1,67 @@
-# ADR 0195: 视口固定的工作面板开关
+# ADR 0195: Viewport-fixed work panel toggle
 
-- 状态：已接受
-- 日期：2026-09-09
-- 决策者：PI-Desktop 核心团队
-- 修订：ADR 0068、ADR 0085、D128、D207、D221
-- 相关：[01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
+- Status: Accepted
+- Date: 2026-09-09
+- Deciders: PI-Desktop core
+- Amends: ADR 0068, ADR 0085, D128, D207, D221
+- Related: [01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
   [08-component-spec](../spec/04-ux/08-component-spec.md) ·
   [09-interaction-patterns](../spec/04-ux/09-interaction-patterns.md) ·
-  E2E-056、E2E-070、US-UI-57
+  E2E-056, E2E-070, US-UI-57
 
-## 背景
+## Context
 
-ADR 0068 恢复了 `Cmd/Ctrl + J`，作为渲染进程本地的方式，在不创建标签
-页的情况下展现会话保留的工作面板上下文。ADR 0085 让该组合键成为开关。
-但指针用户仍然没有等价物：面板只能从制品或快捷键打开，收起则位于面板
-头部。这让该界面对任何本就不知道这个组合键的人来说都无法被发现。
+ADR 0068 restored `Cmd/Ctrl + J` as a renderer-local way to reveal a session's
+retained work-panel context without creating a tab. ADR 0085 made that chord a
+toggle. Pointer users still had no equivalent: the panel opened from an
+artifact or the shortcut, and collapse lived in the panel header. That left
+the surface undiscoverable for anyone who does not already know the chord.
 
-D128 剩余的"不要标题栏/菜单命令"条款针对的是 D097 的空固定标签启动
-器，而不是一个不创建任何资源的 Cmd/Ctrl+J 等价物。
+D128's remaining "no titlebar/menu command" clause was aimed at D097's empty
+fixed-tab launcher, not at a Cmd/Ctrl+J equivalent that creates no resource.
 
-## 决策
+## Decision
 
-1. AppShell 在每个非设置路由的右上角拥有一个视口固定的开关。它是
-   `openWorkPanel` 的指针等价物：在不创建标签页的情况下展现活动会话
-   保留的上下文，并在不删除标签页的情况下收起可见面板。没有活动会话
-   时它被禁用。设置页仍然没有面板，也没有开关。
-2. 按钮优先采用可见的呈现状态（包括子 agent 停靠），而非短暂过期的
-   store 投影。退出动画期间的点击会重新打开。`aria-pressed` 同时跟随
-   store 状态和已呈现的面板。
-3. 该开关是唯一的面板级收起控件。工作面板头部保留资源关闭，不再有
-   第二个 chevron。
-4. Windows/Linux 窗口控件保持视口固定在窗口右缘，使其在停靠动画期间
-   不随 MainPane 滑动。面板打开时，面板头部保留该控件带加上开关的位置；
-   会话标题栏不在分隔线处遗留 120px 空隙。不新增宿主协议、IPC 通道或
-   原生应用菜单命令。
+1. AppShell owns one viewport-fixed toggle in the top-right corner of every
+   non-Settings route. It is the pointer equivalent of `openWorkPanel`: it
+   reveals the active session's retained context without creating a tab, and
+   collapses a visible panel without deleting tabs. With no active session it
+   is disabled. Settings still has no panel and no toggle.
+2. The button prefers the visible presentation, including a subagent dock,
+   over a briefly stale store projection. A click during the exit animation
+   reopens. `aria-pressed` follows both store state and the presented panel.
+3. The toggle is the sole panel-level collapse control. The work-panel header
+   keeps resource close, not a second chevron.
+4. Windows/Linux window controls stay viewport-fixed at the window's right
+   edge so they do not slide with MainPane during the dock animation. While
+   the panel is open, the panel header reserves that control band plus the
+   toggle; the conversation titlebar does not keep a leftover 120px gap at
+   the divider. No host protocol, IPC channel, or native application-menu
+   command is added.
 
-## 后果
+## Consequences
 
-- 指针用户无需快捷键即可找到并收起工作面板。
-- 制品驱动的标签创建、会话作用域上下文和 D128 / D142 的启动时关闭
-  行为保持不变。
-- 面板打开时，面板头部在 Windows/Linux 上不再是全宽动作行；关闭标签
-  位于保留覆盖区的左侧。
+- Pointer users can find and put away the work panel without a shortcut.
+- Artifact-driven tab creation, session-scoped contexts, and startup-closed
+  behavior from D128 / D142 remain unchanged.
+- The panel header is no longer a full-width action row on Windows/Linux
+  while the panel is open; close-tab sits left of the reserved overlay.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-### 保留头部 chevron 并增加关闭状态的标题栏按钮
+### Keep the header chevron and add a closed-state titlebar button
 
-否决。一旦开关以视口固定方式覆盖在打开的面板之上，两个收起控件会占据
-同一个角落。
+Rejected. Two collapse controls occupy the same corner once the toggle is
+viewport-fixed over the open panel.
 
-### 让窗口控件留在 MainPane 流内
+### Leave window controls in-flow in MainPane
 
-本外壳予以否决。绝对定位的窗格内控件会随收缩的会话列移动，而开关留在
-视口上，因此原生最小化/最大化/关闭按钮组与开关会在动画期间分离。
+Rejected for this chrome. Absolute in-pane controls travel with the shrinking
+conversation column while the toggle stays on the viewport, so the native
+min/max/close cluster and the toggle split during the animation.
 
-## 参考
+## References
 
 - `docs/adr/0068-work-panel-keyboard-entry.md`
 - `docs/adr/0085-work-panel-shortcut-toggle.md`
-- `docs/spec/08-meta/decisions-log.md`（D128、D207、D221、D357）
+- `docs/spec/08-meta/decisions-log.md` (D128, D207, D221, D357)

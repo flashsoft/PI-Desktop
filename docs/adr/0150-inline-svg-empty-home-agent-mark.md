@@ -1,36 +1,38 @@
-# ADR 0150: 空主页的内联 SVG agent 标识
+# ADR 0150: Inline SVG empty-home agent mark
 
 - Status: Superseded by ADR 0152
 - Date: 2026-09-04
 - Deciders: PI-Desktop core
 - Related: D291, E2E-046, E2E-099, US-UI-17
 
-## 背景
+## Context
 
-空主页主视觉使用了一个带随机姿态组、离散帧切换和悬停加速播放的
-位图精灵图集。结果是在中央会话区域视觉上过于喧闹，并为一个装饰性
-标识增加了资源、定时器和减少动效状态。
+The empty-home hero used a raster sprite atlas with randomized pose groups,
+discrete frame changes, and a hover shortcut that accelerated playback. The
+result was visually loud in the central conversation area and added asset,
+timer, and reduced-motion state to a decorative mark.
 
-## 决策
+## Decision
 
-用一个 100px 的内联 SVG agent 标识替换精灵图。一条细轨道和信号点
-围绕一个紧凑的核心缓慢旋转；核心轻轻呼吸，眼睛偶尔眨动。动画是
-确定性的，指针悬停不改变其节奏，`prefers-reduced-motion: reduce`
-会冻结该标识。SVG 保持装饰性，带 `aria-hidden="true"`，并保留既有
-的 100px 布局槽位。
+Replace the sprite with a 100px inline SVG agent mark. A thin orbit and signal
+point rotate slowly around a compact core; the core breathes gently and the
+eyes blink occasionally. The animation is deterministic, pointer hover does
+not change its cadence, and `prefers-reduced-motion: reduce` freezes the mark.
+The SVG remains decorative with `aria-hidden="true"` and preserves the existing
+100px layout slot.
 
-## 后果
+## Consequences
 
-- 空主页品牌呈现更安静，并通过语义颜色令牌在浅色和深色主题下保持
-  可读。
-- 组件没有位图图集、随机选择、定时器或悬停状态。
-- CSS 持有动效，并可在不改变渲染 SVG 的情况下禁用它。
-- 旧的精灵图资源可以保留作为历史源码上下文，但不再属于渲染进程
-  路径。
+- Empty-home branding is quieter and remains readable across light and dark
+  themes through semantic color tokens.
+- The component has no raster atlas, random selection, timers, or hover state.
+- CSS owns the motion and can disable it without changing the rendered SVG.
+- The old sprite asset can remain available for historical source context but
+  is no longer part of the renderer path.
 
-## 被否决的替代方案
+## Alternatives rejected
 
-- 保留既有图集并调整暂停时长：这会保留视觉嘈杂的像素画处理和
-  交互专属的定时器状态。
-- 生成另一个位图吉祥物：这会增加资源维护，同时保留相同的主题和
-  减少动效限制。
+- Keep the existing atlas and tune pause durations: this would retain the
+  visually noisy pixel-art treatment and interaction-specific timer state.
+- Generate another raster mascot: this would add asset maintenance while
+  preserving the same theme and reduced-motion limitations.

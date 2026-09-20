@@ -1,70 +1,75 @@
-# ADR 0026: 把 Projects 索引移入 Settings 作为归档
+# ADR 0026: Move the Projects Index into Settings as an Archive
 
-- 状态: 部分被 ADR 0036 取代（目标页数量/顺序）
-- 日期: 2026-07-27
-- 决策者: PI-Desktop 核心团队
-- 相关: D066, D090, D093, D133, ADR 0013, ADR 0016
+- Status: Superseded in part by ADR 0036 (destination count/order)
+- Date: 2026-07-27
+- Deciders: PI-Desktop core
+- Related: D066, D090, D093, D133, ADR 0013, ADR 0016
 
-## 背景
+## Context
 
-home 侧边栏目前同时暴露独立的 Projects 目标页和保留的项目组。活跃
-工作通过保留的项目组进行，而 Projects 目标页主要作为持久目录，用于
-发现、归档、恢复、重新打开和关闭历史项目记录。
+The home sidebar currently exposes both an independent Projects destination and
+retained project groups. Active work happens through the retained groups, while
+the Projects destination primarily acts as a durable directory for discovering,
+archiving, restoring, reopening, and closing historical project records.
 
-在主导航中同时保留两个界面复制了项目概念，并让归档管理与任务创建
-和 Plugins 获得同等的显著性。ADR 0013 冻结的四目标页 Settings 目录
-没有这个项目管理层面的位置，所以移动它会改变设置信息架构，需要
-基线修订。
+Keeping both surfaces in primary navigation duplicates the project concept and
+gives archival management the same prominence as task creation and Plugins. The
+frozen four-destination Settings directory from ADR 0013 has no place for this
+project-management surface, so moving it changes the settings information
+architecture and requires a baseline revision.
 
-## 决策
+## Decision
 
-1. 从 home 侧边栏、应用页面状态和全局页面搜索结果中移除独立的
-   Projects 目标页。
-2. 在 Settings 中 Import 之后、Info 之前添加 **Project archive**
-   （`项目归档`）。Settings 现在有五个目标页：Basics、Model
-   configuration、Import、Project archive 和 Info。
-3. 在归档中复用持久的 Projects 索引。它保留搜索、添加、激活、
-   项目会话展开、固定、归档/恢复和关闭操作。
-4. Settings 归档始终包含已归档的项目记录。已归档的项目行保留其
-   弱化呈现，并可以从现有操作菜单恢复。展开的项目详情不应用侧边栏
-   的已归档会话可见性过滤。
-5. 激活一个项目或项目会话会离开 Settings 并返回聊天。归档或关闭
-   一个项目时保持 Project archive 目标页可见，包括必须选择回退
-   workspace 的情况。
-6. Home 侧边栏保留保留的项目组和持久的新建项目操作。项目存储、
-   渲染进程展示元数据和单一可见 workspace 激活模型保持不变。
-7. Settings 和全局设置搜索索引 Project archive 及其归档、恢复、
-   项目标题和项目搜索词条。
+1. Remove the standalone Projects destination from the home sidebar, app page
+   state, and global page-search results.
+2. Add **Project archive** (`项目归档`) to Settings after Import and before Info.
+   Settings now has five destinations: Basics, Model configuration, Import,
+   Project archive, and Info.
+3. Reuse the durable Projects index in the archive. It keeps search, add,
+   activate, project-session expansion, pin, archive/restore, and close actions.
+4. The Settings archive always includes archived project records. Archived
+   project rows retain their muted presentation and can be restored from their
+   existing action menu. Expanded project details do not apply the sidebar's
+   archived-session visibility filter.
+5. Activating a project or project session leaves Settings and returns to chat.
+   Archiving or closing a project keeps the Project archive destination visible,
+   including when a fallback workspace must be selected.
+6. The home sidebar keeps retained project groups and the persistent new-project
+   action. Project storage, renderer presentation metadata, and the one-visible-
+   workspace activation model remain unchanged.
+7. Settings and global settings search index Project archive and its archive,
+   restore, project-title, and project-search terms.
 
-## 后果
+## Consequences
 
-- Home 侧边栏少了一个主导航目标页，给活跃项目和会话工作更多视觉
-  优先级。
-- 历史和已关闭项目仍可通过 Settings 恢复，包括未作为侧边栏标签页
-  保留的导入路径。
-- Settings 从四个增长到五个目标页，仅在目标页数量和顺序上取代
-  ADR 0013。
-- 没有 IPC、宿主 RPC、数据库、安全或项目激活契约的变更。
-- 现有持久化的项目/会话归档元数据保持兼容。
+- The home sidebar has one fewer primary destination and gives more visual
+  priority to active project and session work.
+- Historical and closed projects remain recoverable through Settings, including
+  imported paths that are not retained as sidebar tabs.
+- Settings grows from four to five destinations, superseding ADR 0013 only for
+  the destination count and ordering.
+- No IPC, host RPC, database, security, or project-activation contract changes.
+- Existing persisted project/session archive metadata remains compatible.
 
-## 备选方案
+## Alternatives
 
-### 在 home 侧边栏和 Settings 中都保留 Projects
+### Keep Projects in both the home sidebar and Settings
 
-否决，因为重复导航使所有权不清，且不能减少 home 侧边栏的主菜单。
+Rejected because duplicate navigation leaves ownership unclear and does not
+reduce the home sidebar's primary menu.
 
-### 只显示已归档的行
+### Show only archived rows
 
-否决，因为已关闭但未归档的持久项目会失去其唯一的基于索引的恢复
-路径。归档是一个完整的历史目录，始终包含已归档行，而不是仅归档
-过滤器。
+Rejected because closed but unarchived durable projects would lose their only
+index-based recovery path. The archive is a complete historical directory, with
+archived rows always included rather than an archived-only filter.
 
-### 把项目管理放进 Basics
+### Put project management inside Basics
 
-否决，因为完整的可搜索项目索引是目标页规模的工具，而不是应用
-默认值行或紧凑设置卡片。
+Rejected because a full searchable project index is a destination-scale tool,
+not an application-default row or compact settings card.
 
-## 参考
+## References
 
 - `docs/spec/00-baseline.md`
 - `docs/spec/03-runtime/04-data-storage.md`

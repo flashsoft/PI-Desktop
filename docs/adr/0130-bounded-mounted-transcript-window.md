@@ -1,4 +1,4 @@
-# ADR 0130: 有界的已挂载 Transcript 窗口
+# ADR 0130: Bounded Mounted Transcript Window
 
 - Status: Accepted
 - Date: 2026-08-27
@@ -7,100 +7,114 @@
   `04-ux/08-component-spec.md`
 - Amended by: D269 (history continuation and boundary-driven escalation)
 
-## 背景
+## Context
 
-ADR 0120 限制了跨越 IPC 边界的 transcript 载荷，ADR 0127 / D258
-限制了在 JSONL 文件内定位一页的成本。两者都解决会话*激活*问题，
-但都没有限制渲染进程在此之后保持挂载的内容。
+ADR 0120 bounded the transcript payload that crosses the IPC boundary, and
+ADR 0127 / D258 bounded the cost of locating a page inside the JSONL file. Both
+addressed session *activation*. Neither bounded what the renderer keeps mounted
+afterwards.
 
-渲染进程会挂载它翻页进来的每一行历史，并在会话的整个生命周期内
-保持挂载。因此在长会话中向上滚动会无上限地累积：
+The renderer mounted every history row it had paged in and kept it mounted for
+the life of the session. Scrolling up through a long conversation therefore
+accumulated, without any ceiling:
 
-- 每一行的 React 元素树，
-- 每个已落定块的解析后 Markdown AST，
-- 每个代码围栏的 Shiki `LineCache` token 数组，
-- DOM 节点本身。
+- React element trees for every row,
+- a parsed Markdown AST per settled block,
+- Shiki `LineCache` token arrays per code fence,
+- the DOM nodes themselves.
 
-`.message-row` 和 `.tool-activity-group` 已经带有
-`content-visibility: auto`，它会跳过远离视口行的布局和绘制。这是
-一个 CPU 优化，并且明确不是内存优化：保留的 JavaScript 和 DOM 仍然
-存活。在低内存 Windows 机器上——有报告称聊天区域随会话增长而
-越来越不响应——保留内存及其背后的 GC 压力是约束瓶颈。
+`.message-row` and `.tool-activity-group` already carry
+`content-visibility: auto`, which skips layout and paint for far-offscreen rows.
+That is a CPU optimization and explicitly not a memory one: the retained
+JavaScript and DOM stay live. On a low-memory Windows machine — where the chat
+area was reported as getting progressively less responsive as a session grew —
+retained memory and the GC pressure behind it are the binding constraint.
 
-第二个成本是逐帧的。`TranscriptHistory` 的 memo 比较器在其 props
-数组不是引用相等时会遍历每个已挂载的条目、部分和活动项，而这在
-每个流式 token 上都会运行。
+A second cost was per-frame. `TranscriptHistory`'s memo comparator walks every
+mounted entry, part, and activity item whenever its props array is not
+reference-equal, and that runs on every streamed token.
 
-## 决策
+## Decision
 
-1. 已挂载历史是已加载历史之上的一个**尾部窗口**，而不是全部。
-   `reduceTranscriptWindow` 为单次渲染解析切片：会话切换后的首次
-   提交为 `TRANSCRIPT_INITIAL_MOUNT`（15）行，稳态为
-   `TRANSCRIPT_WINDOW_MIN`（60）。
-2. 到达顶部时**分两阶段升级**。`growTranscriptWindow` 在窗口未覆盖
-   全部已加载历史时增加 `TRANSCRIPT_WINDOW_STEP`（40）行；只有当
-   窗口覆盖全部已加载历史后，transcript 才调用 `loadOlder` 获取更旧
-   的一页。挂载已加载的内容严格地比一次 IPC 往返便宜，因此它先
-   发生。
-3. 窗口增长和获取到的一页采用**相同的绘制前滚动锚点**。两者都在
-   阅读位置上方增加高度，因此对两者都捕获 `prependHeightRef` 并在
-   同一个 layout effect 中修正。
-4. 窗口**随会话重置**并被钳制到已加载历史，因此从上一个会话继承
-   的已增长预算在一个帧内不会过度挂载。
-5. 水合占位空间保持**限定在首次提交**。它存在的意义是让有界的底部
-   可达；如果保留到稳态窗口下，它会在用户和增长触发器之间放一个
-   空白视口。
-6. 会话 minimap 的**消息刻度**从**已挂载条目**
-   （`transcriptEntryMessages`）构建。它通过在滚动容器内查找标记的
-   `data-minimap-id` 节点来解析点击，因此被 withhold 行的消息标记
-   会渲染出点击后跳不到任何地方的刻度。
-6a. **由 D269 修订。** 被 withhold 的历史被显式表示而不是静默处理：
-   当已加载行位于窗口上方（`hiddenAbove > 0`）或宿主报告存在更旧
-   页面（`hasMoreBefore`）时，轨道保持挂载并显示一条点状的更早历史
-   延续标记，即使已挂载尾部的消息标记少于两个或不超出一个视口。
-   该延续标记执行与第 2 条相同的两阶段升级，因此始终可操作；一旦
-   没有更早的历史，D108 的两标记加溢出规则恢复生效。
-6b. **由 D269 修订。** 升级除了由近顶滚动检查驱动外，还由 transcript
-   顶部加载边界的可见性驱动，两者共用一个阈值。一个未填满的尾部
-   页、一个所有行都落在已挂载窗口之外的已获取页，以及一次窗口转换，
-   都可能让 `scrollTop` 保持不变；没有可观察的边界时，这些状态会让
-   向上移动停滞并让 outline 保持隐藏。
-7. 条目投影数组基于 `entries` 记忆化，因此没有改变任何消息的重新
-   渲染会递给 `TranscriptHistory` 一个引用相等的数组，其比较器按
-   身份直接退出，而不是深度遍历已挂载行。
+1. The mounted history is a **trailing window** over the loaded history, not all
+   of it. `reduceTranscriptWindow` resolves the slice for one render:
+   `TRANSCRIPT_INITIAL_MOUNT` (15) rows for the first commit after a session
+   switch, `TRANSCRIPT_WINDOW_MIN` (60) in steady state.
+2. Reaching the top **escalates in two stages**. `growTranscriptWindow` adds
+   `TRANSCRIPT_WINDOW_STEP` (40) rows while the window is partial; only once the
+   window covers all loaded history does the transcript call `loadOlder` and
+   fetch an older page. Mounting what is already loaded is strictly cheaper than
+   an IPC round trip, so it goes first.
+3. Window growth and a fetched page take the **same pre-paint scroll anchor**.
+   Both add height above the reading position, so `prependHeightRef` is captured
+   for both and corrected in the same layout effect.
+4. The window **resets per session** and is clamped to the loaded history, so a
+   grown budget inherited from the previous session for one frame cannot
+   over-mount.
+5. The hydration spacer stays **scoped to the first commit**. It exists to make
+   the bounded bottom reachable; kept under the steady-state window it would put
+   a blank viewport between the user and the growth trigger.
+6. The conversation minimap's **message dashes** are built from the **mounted
+   entries** (`transcriptEntryMessages`). It resolves a click by finding the
+   marker's `data-minimap-id` node inside the scroller, so message markers for
+   withheld rows would render dashes that jump nowhere.
+6a. **Amended by D269.** Withheld history is represented explicitly instead of
+   silently: while loaded rows sit above the window (`hiddenAbove > 0`) or the
+   host reports an older page (`hasMoreBefore`), the rail stays mounted and shows
+   one dotted earlier-history continuation, even when the mounted tail has fewer
+   than two message markers or does not overflow one viewport. The continuation
+   runs the same two-stage escalation as clause 2, so it is always actionable;
+   D108's two-marker-plus-overflow rule resumes once no earlier history remains.
+6b. **Amended by D269.** Escalation is driven by the visibility of the
+   transcript's top loading boundary as well as by the near-top scroll check,
+   using one shared threshold. An underfilled tail page, a fetched page whose rows
+   all fall outside the mounted window, and a window transition can each leave
+   `scrollTop` unchanged; without an observed boundary those states stalled
+   upward travel and left the outline hidden.
+7. The entry projection arrays are memoized on `entries`, so a re-render that
+   changed no message hands `TranscriptHistory` a reference-equal array and its
+   comparator bails on identity instead of deep-walking the mounted rows.
 
-没有 IPC、存储、宿主协议或分页变更。`SESSION_TRANSCRIPT_PAGE_SIZE`
-和 `session.get` 窗口契约不受影响。
+No IPC, storage, host protocol, or pagination change. `SESSION_TRANSCRIPT_PAGE_SIZE`
+and the `session.get` window contract are untouched.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- **只依赖 `content-visibility`：** 否决。它已经就位，并且正是它让
-  *无界*的情况尚可存活，但它保留每一行的 React 树、Markdown AST 和
-  token 数组。它无法约束低内存报告所针对的资源。
-- **带测量行偏移的完整虚拟化：** 暂时否决。transcript 行的高度高度
-  可变、依赖内容，并在挂载后变化（流式输出、折叠开关、懒加载
-  Mermaid），因此测量偏移的虚拟化器需要高度缓存和对所有这些的失效
-  处理。尾部窗口以小得多的活动部件达到相同的内存上限，且既有的
-  钉底跟随和前插锚点逻辑保持不变地继续工作。
-- **按与视口的距离在两个方向上卸载：** 否决。transcript 从底部阅读
-  并在底部流式输出；withhold 视口*下方*的行会无谓地与钉底跟随
-  冲突。
-- **改为限制已加载历史、从 store 丢弃更旧的页面：** 否决。这会让
-  翻页非单调，并重新获取用户刚刚滚过的行，而且 store 的 transcript
-  还被结果卡片和全历史重写路径读取。
-- **通过让投影引用稳定来降低逐帧比较器成本：** 只保留其廉价形式
-  （记忆化数组）。跨重建协调每轮对象身份被否决，因为窗口有界后这种
-  复杂性已无必要——比较器现在最多遍历窗口，而不是历史。
+- **Rely on `content-visibility` alone:** rejected. It was already in place and
+  is what makes the *unbounded* case survivable at all, but it retains every
+  row's React tree, Markdown AST, and token arrays. It cannot bound the resource
+  the low-memory report is about.
+- **Full virtualization with measured row offsets:** rejected for now. Transcript
+  rows have highly variable, content-dependent heights that change after mount
+  (streaming, disclosure toggles, lazy Mermaid), so a measured-offset virtualizer
+  needs a height cache and invalidation for all of it. The trailing window gets
+  the same memory ceiling with a fraction of the moving parts, and the existing
+  pinned-follow and prepend-anchor logic keeps working unchanged.
+- **Unmount by distance from the viewport in both directions:** rejected. The
+  transcript is read from the bottom and streams at the bottom; withholding rows
+  *below* the viewport would fight pinned-follow for no benefit.
+- **Cap the loaded history instead, discarding older pages from the store:**
+  rejected. It would make paging non-monotonic and re-fetch rows the user just
+  scrolled past, and the store's transcript is also read by the outcome card and
+  full-history rewrite paths.
+- **Reduce the per-frame comparator cost by making projections referentially
+  stable:** kept only in its cheap form (memoizing the arrays). Reconciling
+  per-turn object identity across rebuilds was rejected as complexity that the
+  bounded window already makes unnecessary — the comparator now walks at most the
+  window, not the history.
 
-## 后果
+## Consequences
 
-- 一个 transcript 的渲染进程保留内存由窗口而不是用户回滚的距离
-  决定，流式输出期间的逐帧协调也随之有界。
-- 在长会话中向上移动在分页恢复之前，每个增长步骤成本为一帧。每个
-  步骤都是挂载已加载的行，因此不增加 IPC。
-- 浏览器原生页内查找只能到达已挂载行。这是对一项附带能力的真实
-  收窄；应用内对完整 transcript 的搜索不受影响，因为它不依赖已挂载
-  DOM。
-- 新挂载的行在真实尺寸已知之前短暂使用 `contain-intrinsic-size`
-  回退高度，因此滚动条滑块会在它们进入视野时逐步稳定。这是既有的
-  `content-visibility` 行为，窗口化并未改变其性质。
+- Retained renderer memory for a transcript is bounded by the window rather than
+  by how far back the user has scrolled, and per-frame reconciliation during
+  streaming is bounded with it.
+- Upward travel through a long session costs one frame per growth step before
+  pagination resumes. Each step is a mount of already-loaded rows, so it does not
+  add IPC.
+- The browser's native find-in-page reaches only mounted rows. This is a real
+  narrowing of an incidental capability; in-app search over the full transcript is
+  unaffected because it does not depend on mounted DOM.
+- Newly mounted rows briefly use the `contain-intrinsic-size` fallback height
+  before their real size is known, so the scrollbar thumb settles as they enter
+  view. This is the pre-existing `content-visibility` behavior, unchanged in kind
+  by windowing.

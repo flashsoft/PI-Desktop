@@ -1,34 +1,34 @@
-# ADR 0010: 使用 Rust 作为后端宿主核心
+# ADR 0010: Use Rust as backend host core
 
-- 状态: 已接受
-- 日期: 2026-07-25
+- Status: Accepted
+- Date: 2026-07-25
 
-## 背景
+## Context
 
-PI-Desktop 需要一个健壮的本地后端来承担：
+PI-Desktop needs a robust local backend for:
 
-- 文件系统工具
-- 进程/命令执行
-- 插件隔离边界
-- 安全存储适配器
-- 长期运行的宿主服务
+- filesystem tools
+- process/command execution
+- plugin isolation boundary
+- secure storage adapters
+- long-running host services
 
-纯 Electron 主进程 TypeScript 后端也可行，但在系统化工作和隔离方面较弱。
+A pure Electron main TypeScript backend is workable, but weaker for systems work and isolation.
 
-## 决策
+## Decision
 
-使用 **Rust 作为后端宿主核心**。
+Use **Rust as the backend host core**.
 
-### 职责划分
+### Responsibility split
 
-| 层 | 技术 | 负责 |
+| Layer | Tech | Owns |
 |---|---|---|
-| UI | React + TypeScript | 渲染、UX 状态 |
-| Electron 外壳 | TypeScript | 窗口、preload 桥接、应用生命周期 |
-| 宿主核心 | **Rust** | 工具、权限网关、插件宿主服务、持久化适配器、特权操作 |
-| Agent 引擎 | Node/TypeScript (pi) | 模型 provider、agent 循环、工具调用编排 |
+| UI | React + TypeScript | rendering, UX state |
+| Electron shell | TypeScript | windows, preload bridge, app lifecycle |
+| Host core | **Rust** | tools, permissions gateway, plugin host services, persistence adapters, privileged ops |
+| Agent engine | Node/TypeScript (pi) | model providers, agent loop, tool-calling orchestration |
 
-### 通信
+### Communication
 
 ```text
 Renderer
@@ -37,26 +37,26 @@ Renderer
  ↔ Node pi agent runtime (sidecar)
 ```
 
-Electron↔Rust 传输的实现选择可以是：
+Implementation choice for Electron↔Rust transport may be:
 
-1. Rust sidecar 进程，走 stdio/JSON-RPC 或 protobuf，或
-2. 原生 Node/Electron addon 绑定
+1. Rust sidecar process over stdio/JSON-RPC or protobuf, or
+2. native Node/Electron addon bindings
 
-MVP 目标：**Rust sidecar + 本地 RPC**，以获得更清晰的隔离。
+MVP target: **Rust sidecar + local RPC** for clearer isolation.
 
-## 非目标
+## Non-goals
 
-- 用 Rust 重写 pi 本身
-- 在 MVP 中替换 pi agent 循环
-- 将 UI 移入 Rust
+- Rewrite pi itself in Rust
+- Replace pi agent loop in MVP
+- Move UI into Rust
 
-## 后果
+## Consequences
 
-### 正面
-- 强大的系统化后端
-- 更好的隔离和性能余量
-- 工具/插件的安全边界更清晰
+### Positive
+- Strong systems backend
+- Better isolation and performance headroom
+- Cleaner security boundary for tools/plugins
 
-### 负面
-- 比纯 TS 主进程有更多活动部件
-- 需要将 Rust 二进制随 Electron 应用一起打包
+### Negative
+- More moving parts than pure TS main
+- Requires packaging Rust binary with Electron app

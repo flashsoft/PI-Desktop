@@ -1,71 +1,77 @@
-# ADR 0096: 扁平化设置目录并将市场来源配置就近放置
+# ADR 0096: Flatten the Settings directory and colocate marketplace source configuration
 
 - Status: Accepted
 - Date: 2026-08-18
 - Deciders: PI-Desktop core
 - Related: D166, D168, D238, ADR 0036, ADR 0058
 
-## 背景
+## Context
 
-已实现的设置侧栏已增长到九个条目，其中包括一个仅为两个市场来源
-控件而设的独立 `Extensions` 目的地。侧栏还把目的地包进
-`Personal`、`Integrations` 和一个隐式的系统分组。这些分组标题重
-复了目的地标签已经表达的信息，而 `Extensions` 与拥有插件管理的
-应用外壳目的地同名。
+The implemented Settings rail had grown to nine entries, including a separate
+`Extensions` destination for two marketplace-source controls. The rail also
+wrapped destinations in `Personal`, `Integrations`, and an implicit system
+section. Those headings repeated information already expressed by the
+destination labels, while `Extensions` had the same visible name as the
+app-shell destination that owns plugin management.
 
-设置 IA 已经定义了八个有用的目的地。插件市场来源选择是市场层面
-的关注点，属于它所控制的目录旁边，而不是外观、provider 或项目设
-置旁边。
+The settings IA already defines eight useful destinations. Plugin marketplace
+source selection is a marketplace concern and belongs beside the catalog it
+controls, not beside appearance, providers, or project settings.
 
-## 决策
+## Decision
 
-保留整页设置外壳，并按以下确切顺序渲染一个扁平、可搜索的目录：
+Keep the full-page Settings shell and render one flat, searchable directory in
+this exact order:
 
-1. 基础
+1. Basics
 2. AI
-3. 快捷键
-4. 指令
-5. 模型配置
-6. 导入
-7. 项目归档
-8. 关于
+3. Shortcuts
+4. Instructions
+5. Model configuration
+6. Import
+7. Project archive
+8. Info
 
-移除导航分组标题和设置中的 `Extensions` 目的地。将官方/镜像/自
-定义市场来源选择器（包括自定义目录 URL 字段和当前来源状态）移入
-应用外壳的 `Extensions → Marketplace` 界面。共享的设置搜索索引只
-包含八个设置目的地；插件市场搜索和控件仍由扩展页面拥有。
+Remove navigation group headings and the Settings `Extensions` destination.
+Move the official/mirror/custom marketplace source selector, including the
+custom catalog URL field and active-source status, into the app-shell
+`Extensions → Marketplace` surface. The shared Settings search index contains
+only the eight Settings destinations; plugin marketplace search and controls
+remain owned by the Extensions page.
 
-无 IPC、宿主协议、存储、provider、插件权限或项目所有权契约变
-化。
+No IPC, host protocol, storage, provider, plugin permission, or project
+ownership contract changes.
 
-## 后果
+## Consequences
 
-- 设置只有一个视觉层级，相互竞争的标签更少。
-- 侧栏与冻结的八目的地 IA 一致，且不再与扩展页面重名。
-- 市场来源更改保留在用户浏览和安装包的上下文中可用，持久化和刷
-  新行为不变。
-- 设置搜索不再深链市场来源行；扩展页面是该界面的所有者。
-- 截图捕获场景和市场 E2E 步骤必须从 Extensions → Marketplace 打
-  开来源选择器。
+- Settings has one visual hierarchy and fewer competing labels.
+- The rail matches the frozen eight-destination IA and no longer duplicates
+  the Extensions page name.
+- Marketplace source changes remain available in the context where users browse
+  and install packages, with the same persistence and refresh behavior.
+- Settings search no longer deep-links marketplace-source rows; the Extensions
+  page is the owner of that surface.
+- Screenshot capture scenes and marketplace E2E steps must open the source
+  selector from Extensions → Marketplace.
 
-## 替代方案
+## Alternatives
 
-### 保留三个分组标题
+### Keep the three group headings
 
-被拒绝，因为分组没有增加第二个有用的导航层级；它们让侧栏更高，
-并重复目的地标签的含义。
+Rejected because the groups do not add a second useful navigation level; they
+make the rail taller and repeat the meaning of the destination labels.
 
-### 将设置中的 `Extensions` 重命名为 `Marketplace`
+### Rename Settings `Extensions` to `Marketplace`
 
-被拒绝，因为它会保留一个只有一张卡片的设置目的地，且仍把市场浏
-览与市场配置分开。
+Rejected because it would preserve a one-card Settings destination and still
+split marketplace browsing from marketplace configuration.
 
-### 移除市场来源配置
+### Remove marketplace source configuration
 
-被拒绝，因为对于无法访问官方来源的网络以及开发/私有目录，镜像
-和自定义目录来源是必需的。
+Rejected because mirror and custom catalog sources are required for networks
+that cannot reach the official source and for development/private catalogs.
 
-## 参考
+## References
 
 - `docs/spec/04-ux/06-settings-ia.md`
 - `docs/spec/06-delivery/04-e2e-test-plan.md`

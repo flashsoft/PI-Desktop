@@ -1,41 +1,47 @@
-# ADR 0186: 用主进程拥有的一次性调用汇总首轮会话标题
+# ADR 0186: Summarize First-Turn Session Titles with a Main-Owned One-Shot
 
-- 状态：已接受
-- 日期：2026-09-08
+- Status: Accepted
+- Date: 2026-09-08
 
-## 背景
+## Context
 
-第一条 prompt 当前需要一个即时的侧边栏标签，但原始截断的 prompt 很嘈
-杂，可能掩盖任务的主题。标题汇总必须使用与会话相同的 provider/model，
-同时不把模型执行移进渲染进程，也不改变宿主拥有的会话存储。
+A first prompt currently needs an immediate sidebar label, but a raw truncated
+prompt is noisy and can obscure the task's topic. The title summary must use the
+same provider/model as the session without moving model execution into the
+renderer or changing host-owned session storage.
 
-## 决策
+## Decision
 
-从渲染进程的角度看，规范化的首 prompt 回退保持同步。初始轮次发出
-`agent_end` 之后，渲染进程调用允许列表内的 `session/summarizeTitle`
-IPC。Electron 校验会话和 prompt，解析会话的有效 provider/model，并以
-禁用思考的方式调用 agent-runtime 的 `summarizeSessionTitle` 一次性调用。
-运行时对响应做净化处理；空的或失败的补全保持回退不变。渲染进程通过
-现有的 `session.rename` 路径持久化有效结果。
+Keep the normalized first-prompt fallback synchronous from the renderer's point
+of view. After the initial turn emits `agent_end`, the renderer calls the
+allowlisted `session/summarizeTitle` IPC. Electron validates the session and
+prompt, resolves the session's effective provider/model, and invokes the
+agent-runtime `summarizeSessionTitle` one-shot with thinking disabled. The
+runtime sanitizes the response and an empty or failed completion leaves the
+fallback unchanged. The renderer persists a valid result through the existing
+`session.rename` path.
 
-渲染进程本地的会话元数据持久化 `manualTitle`。自动路径还会拒绝为既非
-已识别默认值、也非确定性首 prompt 回退的持久化标题运行。这保护了在该
-标记存在之前创建的手动标题，并防止已完成的汇总在后续渲染进程重启时被
-替换。不改变宿主 RPC 或存储 schema 版本。
+Renderer-local session metadata persists `manualTitle`. The automatic path also
+refuses to run for a persisted title that is neither a recognized default nor
+the deterministic first-prompt fallback. This protects manual titles made
+before the marker existed and prevents a completed summary from being replaced
+on a later renderer restart. No host RPC or storage schema version changes.
 
-## 后果
+## Consequences
 
-- 新会话获得即时、可读的回退标签，并在配置的 provider 成功时得到简洁
-  的后台汇总。
-- 手动标题在渲染进程重启后仍然权威。
-- provider 失败无法阻塞或使会话轮次失败。
-- 标题汇总 IPC 由主进程拥有，无法向渲染进程暴露 provider 凭据或模型
-  执行。
+- New sessions get immediate, readable fallback labels and a concise background
+  summary when the configured provider succeeds.
+- Manual titles remain authoritative across renderer restart.
+- Provider failures cannot block or fail the conversation turn.
+- The title-summary IPC is main-owned and cannot expose provider credentials or
+  model execution to the renderer.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-- 在渲染进程中运行一次性调用：否决，因为 provider 解析和凭据属于
-  Electron 主进程和 sidecar。
-- 等待汇总完成后再提交 prompt：否决，因为它会给每个首轮增加可见延迟。
-- 为标题来源添加宿主 schema 列：暂缓；持久化的渲染进程元数据加上
-  标题/回退守卫，无需存储迁移即可覆盖现有和新会话。
+- Run the one-shot in the renderer: rejected because provider resolution and
+  credentials belong to Electron main and the sidecar.
+- Wait for the summary before submitting the prompt: rejected because it adds
+  visible latency to every first turn.
+- Add a host schema column for title origin: deferred; persisted renderer
+  metadata plus the title/fallback guard covers existing and new sessions
+  without a storage migration.

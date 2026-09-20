@@ -1,16 +1,16 @@
-# 01. UI 信息架构
+# 01. UI Information Architecture
 
-> 语言：English（按 ADR 0009）。本文描述已交付的 Codex 对齐外壳
-> （D034+）。组件细节：[08-component-spec](08-component-spec.md)；
-> 视觉 token：[07-ui-design-system](07-ui-design-system.md)；行为：
-> [09-interaction-patterns](09-interaction-patterns.md)。
+> Language: English (per ADR 0009). This describes the shipped Codex-aligned
+> shell (D034+). Component detail: [08-component-spec](08-component-spec.md);
+> visual tokens: [07-ui-design-system](07-ui-design-system.md); behavior:
+> [09-interaction-patterns](09-interaction-patterns.md).
 
-## 1. 目标
+## 1. Goal
 
-一个清晰、克制、开发者优先的工作台：一个窗口、一个活跃目的地、
-以聊天为首页表面、工具与权限内联。
+A clear, restrained, developer-first workbench: one window, one active
+destination, chat as the home surface, tools and permissions inline.
 
-## 2. 外壳区域
+## 2. Shell regions
 
 ```text
 +----------------------------------------------------------------------+
@@ -29,310 +29,391 @@
 +------------------+--------------------------------+------------------+
 ```
 
-- **侧边栏**：主导航 —— 紧凑的 **Sessions** 分区下是无路径会话，
-  带新建会话与排序操作；随后的 **Projects** 分区是保留的已打开项目
-  组，带持久的新建项目操作；以及受 WorkBuddy 启发的 footer。footer
-  保留紧凑的设置、扩展和通知图标操作；Pull requests 和 Scheduled
-  有意从首页侧边栏省略。每个保留的项目是一个按路径键控的标签/组，
-  可以独立折叠。项目和会话行暴露非破坏性的置顶/归档操作、独立的
-  会话分叉命令，以及可排序视图。未保留在侧边栏中的项目仍可通过
-  设置 → 项目归档发现。可折叠为图标栏（Cmd/Ctrl+B）。其展开列
-  可由用户在 240px 到 520px 之间调整（默认 275px）；拖到 160px
-  以下即折叠。
-- **产品标识**：运行时外壳文案使用 `PI-Desktop`；首页 hero 和
-  侧边栏复用派生的 `src/assets/brand/logo-*.png` 标记，而 Composer
-  提示行没有前导品牌图标，会话创建控件使用专用的 message-plus
-  图标。在 Windows/Linux 上，展开的侧边栏以键盘可达的 Home 品牌
-  开头，右侧是 Collapse sidebar；激活品牌会把主面板带回聊天。
-  macOS 展开的侧边栏省略 logo/标题品牌，只在红绿灯行右侧放置
-  Collapse sidebar。`Codex` 仍只是一个外部导入来源或设计参考术语。
-- **主面板**：同一时间恰好一个目的地；目的地替换面板（它们是
-  页面，不是模态）。一旦选中设置或扩展，引导完成和后台刷新都不得
-  把该目的地替换回聊天首页；只有显式的导航操作才可以。侧边栏折叠
-  时外面板保持流式。居中的聊天内容带默认 760px，且可由用户调整
-  （D439）；它按 `min(available pane, preferred)` 压缩，而不是收紧到
-  640px 上限。
-- **标题栏**：平台原生的桌面边框（D118）。macOS 使用
-  `hiddenInset` 红绿灯和系统应用菜单。展开的侧边栏把 Collapse
-  sidebar 保持在同一个 46px 行中，右对齐于红绿灯安全区之外；那里
-  不渲染 logo/标题，包括全屏时。工作面板打开时，原生窗口控件保持
-  视口固定在窗口右缘，面板头部保留该带区加上工作面板开关。面板
-  头部是一个可横向滚动的标签条，后跟一个固定的 `+` 添加触发器；
-  标签关闭操作留在标签内，因此 Windows 原生关闭控件不会被第二个
-  头部 `×` 在视觉上重复。Windows/Linux 使用无菜单的无边框 46px
-  行，左侧是侧边栏操作，当面板关闭时，对话面板右缘是可访问的
-  最小化 / 最大化或还原 / 关闭控件（D129）。工作面板打开时，这些
-  控件保持视口固定在面板头部上方，而不随 MainPane 移动。目的地
-  历史以快捷键为先（`Cmd/Ctrl+[` 和 `Cmd/Ctrl+]`），没有专用的
-  后退/前进边框；扩展处于活跃时，footer 的 Plugins 按钮执行一次
-  后退，作为唯一的指针入口。主标题栏没有通知操作；持久本地收件箱
-  改从侧边栏 footer 铃铛打开（D130/D117）。在工作面板预览模式下，
-  MainChat 被卸载，一个窗口级 46px 边框行保持 New Task、侧边栏和
-  原生窗口控件可用，而不在面板上拥有拖动或不拖动矩形。预览面板中
-  只有面板头部拥有拖动；其实际边框盒在每个平台上都从外壳操作车道
-  加 8px 间隙之后开始，包括展开侧边栏的 New Task 按钮。左内缩为
-  8px，折叠侧边栏窗口化 macOS 时为 88px。其右侧原生控件排除区
-  不变。头部绘制填满被排除的车道，不用不透明覆盖层遮住标签或面板
-  操作。macOS 内缩使用共享的 `--ds-window-lead-inset` token ——
-  该簇 76px 右缘（来自 `@pi-desktop/shared`）加 12px 间隙 ——
-  主进程按同一份共享几何放置按钮。
-- **工作面板**：停靠的右列（不是覆盖层），由工件、视口固定开关或
-  `Cmd/Ctrl + J` 打开。文件、URL、浏览器预览和成功的工作区编辑
-  工件原子地创建它们的资源。46px 内容头部暴露一个 tablist 和一个
-  固定的 `+` 触发器。其 token 化的 44px 右侧安全车道（28px 控件、
-  其 12px 视口内缩和头部的 4px 控件间隙）让 `+`、最大化和视口固定
-  的工作面板开关成为一个按钮组，按同一间隙排列，而触发器保持独立
-  的命中目标。点击 `+` 创建并激活一个唯一的 New 启动器标签；其主体
-  把同样的数据驱动 Review 和插件视图行呈现为按钮，因此用户在页面
-  中选择目的地，而不是打开下拉菜单。选择一行会用该目的地替换该
-  启动器标签，或激活已有的单例。文件路径保持区分，而插件视图按
-  视图引用去重。视口固定开关和 `Cmd/Ctrl + J` 都切换活跃会话保留
-  的面板上下文 —— 显示它而不创建资源标签，折叠它而不丢弃任何
-  标签；面板关闭时创建触发器不可用。关闭最后一个标签时面板保持
-  打开并显示 New 启动器。没有 agent 或工具结果会打开、激活或调整
-  面板：Review 只能通过显式用户操作到达，因此一次成功的工作区
-  Write/Edit 让面板完全保持用户离开时的样子，并把证据显示为一张
-  转录卡片。内部分隔条通过共享的三列预算调整面板大小；向左移动
-  会占用空间直到 MainChat 达到 450px，此时展开的侧边栏立即让位，
-  向右移动则归还空间。手动重新打开侧边栏先花费工作面板宽度，否则
-  目标是 460px 的 MainChat 宽度。唯一的面板级控件是视口固定开关；
-  每个会话在渲染器内存中保留自己的运行时打开状态、标签集、活跃
-  标签和 Browser 资源。选择另一个会话会交换可见的面板上下文，而不
-  删除任一会话的状态；选择一个没有活跃会话的工作区会隐藏面板，
-  而不是重新解释相对资源。后台工件只更新其来源会话保留的面板
-  上下文，从不打开、激活或调整可见面板。启动时为关闭状态且没有
-  保留的会话上下文，只有首选面板宽度跨启动持久。
-  工作面板保持为现有客户区内 MainChat 旁边的定宽在流列
-  （ADR 0033 / ADR 0151）。MainChat 保持 450px 硬最小值；工作面板
-  的有效最大值是展开侧边栏和该下限之后剩余的客户宽度
-  （ADR 0238）。预算耗尽时侧边栏通过其既有动画立即折叠（当
-  `sidebar-out` 占用 flex 空间时预算仍把它计入），并在面板关闭时
-  返回。打开和折叠只改变外壳内部的 flex 分配，从不扩大或缩小原生
-  窗口边界；没有面板操作请求正的原生预留。面板头部的预览开关
-  临时卸载 MainChat 并把面板扩展到侧边栏旁边的整个客户区；离开
-  预览会恢复先前的面板宽度和侧边栏状态，而不改变原生边界。渲染器
-  测量的面板矩形继续用于定位原生 Browser 视图。原生窗口边缘只
-  调整应用窗口大小；不改变面板目标。外窗口保持从所有 OS 边缘和
-  角落原生可调整大小，最小支持尺寸为 1040×700。取代了先前的
-  上下文面板覆盖层；工作区/模型/状态信息改放在 Composer chip 和
-  设置中。
-- **Composer**：与工作区无关的浮动胶囊，锚定到会话目的地 ——
-  空首页时居中的内容位于底部预留的 Composer 之上
-  （D111/D204/D206），在转录中则停靠在底部，没有项目 / Local /
-  分支栏（D095）。其输入左侧的运行模式 chip 是活跃会话唯一的
-  **Agent**、**Plan** 和 **Goal** 控件。Plan 显示同一个 Agent 的
-  规划状态；Goal 显示针对结果契约的同一批准边界。两者都保留权限
-  模式 chip，并在提交后暴露其宿主写入的不可变 `.pi/plan/*.md` 或
-  `.pi/goal/*.md` 工件打开器。会话顶栏只保留任务标题和窗口操作；
-  Composer 拥有模型与推理选择以及模式控制。
-- **后端状态胶囊**：后端重启或严重降级时出现在标题栏下方
-  （D080），带一个打开日志操作。
+- **Sidebar**: primary navigation — path-less conversations under a compact
+  **Sessions** section with new-session and sort actions, retained open-project
+  groups under a following **Projects** section with a persistent new-project
+  action, and the WorkBuddy-inspired footer. The footer keeps compact Settings,
+  Extensions, and notification icon actions; Pull requests and Scheduled
+  are intentionally omitted from the home sidebar. Each retained project is a
+  path-keyed tab/group that can be
+  collapsed independently. Project and conversation rows expose
+  non-destructive pin/archive actions, an independent conversation-branch
+  command, and sortable views. Projects not retained in the sidebar remain
+  discoverable through Settings → Project archive.
+  Collapsible to an icon rail (Cmd/Ctrl+B). Its expanded column is user-resizable
+  from 240px to 520px (default 275px); dragging below 160px collapses it.
+- **Product identity**: runtime shell copy uses `PI-Desktop`; the home hero and
+  sidebar reuse the derived `src/assets/brand/logo-*.png` marks, while composer prompt
+  rows have no leading brand icon and session-creation controls use a dedicated
+  message-plus icon. On
+  Windows/Linux, the expanded sidebar begins with a keyboard-accessible Home
+  brand and Collapse sidebar at the right; activating the
+  brand returns the main pane to chat. The macOS expanded sidebar omits the
+  logo/title brand and places only Collapse sidebar at the right of
+  the traffic-light row. `Codex` remains only an external import source or a
+  design-reference term.
+- **Main pane**: exactly one destination at a time; destinations replace the
+  pane (they are pages, not modals). Once Settings or Extensions is selected,
+  bootstrap completion and background refreshes must not replace that
+  destination with the chat home; only an explicit navigation action may do so.
+  The outer pane stays fluid while the sidebar is collapsed. The centered chat
+  content band defaults to 760px and is user-resizable (D439); it compresses
+  with `min(available pane, preferred)` instead of tightening to a 640px ceiling.
+- **Titlebar**: platform-native desktop chrome (D118). macOS uses
+  `hiddenInset` traffic lights and the system application menu. The expanded
+  sidebar keeps Collapse sidebar in the same 46px row, aligned to
+  the right outside the traffic-light safety area; no logo/title is rendered
+  there, including in fullscreen. When the work panel is open, native window
+  controls stay viewport-fixed at the window's right edge and the panel header
+  reserves that band plus the work-panel toggle. The panel header is a
+  horizontally scrollable tab strip followed by a fixed `+` add trigger; tab
+  close actions stay in the tabs, so the Windows native close control is not
+  visually duplicated by a second header `×`.
+  Windows/Linux use a menu-free frameless 46px row with sidebar actions on the
+  left and accessible minimize / maximize-or-restore / close controls at the
+  right edge of the conversation pane when the panel is closed (D129). When
+  the work panel is open, those controls stay viewport-fixed over the panel
+  header rather than travelling with MainPane. One window-level control band
+  stays outside pane stacking contexts across panel open, preview, restore,
+  and Settings transitions. Its background follows the adjacent titlebar surface
+  (dock header when open, conversation surface when closed) in both themes.
+  Boot splash, search, and toasts stay above that band.
+  Preview navigation must also remain above the panel;
+  macOS keeps native traffic lights and its existing fullscreen insets.
+  Destination history is
+  shortcut-first (`Cmd/Ctrl+[` and `Cmd/Ctrl+]`) with no dedicated back/forward
+  chrome; while Extensions is active, the footer Plugins button performs one
+  Back step as the only pointer affordance. The main titlebar has no
+  notification action; the durable local inbox opens from the sidebar footer
+  bell instead (D130/D117). In work-panel preview mode, MainChat is unmounted
+  and a window-level 46px chrome row keeps New Task, sidebar, and native window
+  controls available without owning a drag or no-drag rectangle across the
+  panel. The panel header alone owns dragging in the preview pane; its actual
+  border box starts after the shell action lane plus an 8px gap, including the
+  expanded-sidebar New Task button, on every platform. The left inset is 8px,
+  or 88px for collapsed-sidebar windowed macOS. Its right native-control
+  exclusion is unchanged. Header paint fills the excluded lane without an
+  opaque overlay hiding tabs or panel actions. The macOS inset uses the shared
+  `--ds-window-lead-inset` token — the cluster's 76px right edge (from
+  `@pi-desktop/shared`) plus a 12px gap — and the main process positions the
+  buttons from that same shared geometry.
+- **Work panel**: docked right column (not an overlay) opened by an artifact,
+  the viewport-fixed toggle, or `Cmd/Ctrl + J`. File, URL, browser-preview, and
+  successful workspace-edit artifacts create their resources atomically. The
+  46px content header exposes a tablist and a fixed `+` trigger. Its tokenized
+  44px right-side safe lane (the 28px control, its 12px viewport inset, and the
+  header's 4px control gap) keeps the `+`, maximize, and viewport-fixed
+  work-panel toggle one button group, spaced by that same gap, while the trigger
+  keeps a distinct hit target. Clicking `+` creates and activates
+  a unique New launcher tab; its body presents the same data-driven Review and
+  plugin-view rows as buttons, so the user chooses a destination in the page
+  instead of opening a dropdown. Selecting a row replaces that launcher tab with
+  the destination or activates an existing singleton. File paths stay distinct
+  while plugin views deduplicate by view reference. The viewport-fixed toggle
+  and `Cmd/Ctrl + J` both toggle the active session's retained panel context —
+  revealing it without creating a resource tab and collapsing it without
+  discarding one; the create trigger remains unavailable while the panel is
+  closed. Closing the final tab keeps the panel open and shows the New launcher.
+  No agent or tool result opens, activates, or resizes the panel: Review is
+  reached only through an explicit user action, so a successful workspace
+  Write/Edit leaves the panel exactly as the user left it and shows its
+  evidence as a transcript card instead. The inner
+  divider resizes the panel through the shared three-column budget; moving it
+  left takes space until MainChat reaches 450px, at which point the expanded
+  sidebar yields immediately, and moving it right gives space back. A manual
+  sidebar reopen spends work-panel width first and otherwise targets a 460px
+  MainChat width. The sole
+  panel-level control is the viewport-fixed toggle; each session retains its own runtime
+  open state, tab set, active tab, and Browser resource in renderer memory.
+  Selecting another session swaps the visible panel context without deleting
+  either session's state; selecting a workspace without an active conversation
+  hides the panel rather than reinterpreting relative resources. Background
+  artifacts update only their originating session's retained panel context and
+  never open, activate, or resize the visible panel. Startup is closed with no
+  retained session contexts, and only the preferred panel width persists across
+  launches.
+  The work panel remains a fixed-width in-flow column beside MainChat inside
+  the existing client area (ADR 0033 / ADR 0151). MainChat keeps a hard 450px
+  minimum; the work panel's effective maximum is the remaining client width
+  after the expanded sidebar and that floor (ADR 0238). When the budget is
+  exhausted the sidebar collapses immediately through its existing animation
+  (the budget still counts it while `sidebar-out` occupies flex space) and
+  returns when the panel closes. Opening and collapsing change only the
+  shell's internal flex allocation and never expand or shrink native window
+  bounds; no panel action requests a positive native reservation. The
+  panel-header preview toggle temporarily unmounts MainChat and expands the
+  panel across the client area beside the sidebar; leaving preview restores the
+  prior panel width and sidebar state without changing native bounds. The
+  renderer-measured panel
+  rectangle continues to position the native Browser view. Native window edges
+  resize the app window only; they do not change the panel target. The outer
+  window remains natively resizable from all OS edges and corners, with a
+  minimum supported size of 1040×700. Replaces
+  the former context-panel overlay; workspace/model/status info lives in the
+  composer chips and Settings instead.
+- **Composer**: workspace-agnostic floating pill anchored to the conversation
+  destination — centered empty-home content above a bottom-reserved composer
+  (D111/D204/D206), bottom-docked in a transcript, with no project / Local / branch
+  rail (D095).
+  Its left-of-input operating-mode chip is the sole active-session control for
+  **Agent**, **Plan**, and **Goal**. Plan shows the same Agent's planning state;
+  Goal shows the same approval boundary for an outcome contract. Both keep the
+  permission-mode chip and expose their host-written immutable `.pi/plan/*.md`
+  or `.pi/goal/*.md` artifact opener after submission. The conversation top bar
+  retains only the task title and window actions; the Composer owns model and
+  reasoning selection as well as mode control.
+- **Backend status capsule**: appears under the titlebar while the backend
+  restarts or is fatally degraded (D080), with an Open-logs action.
 
-## 3. 目的地
+## 3. Destinations
 
-### 3.1 聊天首页（默认）
-- 空状态：克制的 hero 标题（“What can I help you build?” —— 绑定
-  项目的会话会把项目名变成点状下划线切换器，列出侧边栏中已打开的
-  项目，可搜索它们，可从语法上公开的远程克隆 git 仓库
-  （ADR 0247 / D416），并可打开另一个本地文件夹）、可选的首次运行
-  清单，以及底部预留的 Composer。任务输入直接在 Composer 中开始；
-  不渲染冗余的支撑段落、开发者入门卡片或上下文快捷操作行
-  （D204/D206）。
-- 有转录时：消息流 + 工具披露行（D071），紧跟每次成功工作区
-  Write/Edit 行之后的消息作用域上下文审阅卡片，停靠的 Composer，
-  以及内联的会话作用域权限卡片。卡片读取消息的持久审阅快照而不是
-  当前 Git diff，因此提交后仍然可见。它显示文件状态和增删计数，
-  原地展开该消息的确切 hunk，并提供受守护的回滚；它不是全局转录
-  条目。后台会话的消息、工具和权限事件从不替换或覆盖可见会话。
+### 3.1 Chat home (default)
+- Empty state: a restrained hero title ("What can I help you build?" — a
+  project-bound session turns the project name into a dotted-underline
+  switcher that lists the sidebar's open projects, can search them, can
+  clone a git repository from a syntactically public remote (ADR 0247 / D416), and can open another local folder), an optional first-run
+  checklist, and a bottom-reserved composer. Task entry starts directly in the composer; no
+  redundant supporting paragraph, developer starter cards, or contextual
+  quick-action row is rendered (D204/D206).
+- With transcript: message stream + tool disclosure rows (D071), a contextual
+  message-scoped review card immediately after each successful workspace
+  Write/Edit row, docked composer, and a session-scoped permission card inline.
+  The card reads the message's durable review snapshot rather than the current
+  Git diff, so it stays visible after commit. It shows the file status and
+  addition/deletion counts, expands the exact message hunks in place, and
+  offers guarded rollback; it is not a global transcript entry. A background
+  session's message, tool, and permission events never replace or cover the
+  visible conversation.
 
-### 3.2 侧边栏项目组
+### 3.2 Sidebar project groups
 
-- **分区**：紧凑的 `Sessions` 标题位于 `Projects` 之前，拥有无路径
-  会话创建以及现有的排序/归档视图菜单。其工具栏把排序放在新建会话
-  之前。两个标题都保持安静的图标操作，也接受在标题或空列表边框上
-  的右键创建菜单，因此分区创建保持可发现而不增加额外边框。其列表
-  最多显示五行紧凑行（146px），之后内部滚动，因此独立工作保持可见
-  而不挤占项目导航。随后的 `Projects` 标题暴露文件夹选择操作；保留
-  的项目组使用剩余高度并独立滚动。
-- **标识**：每个项目组以宿主拥有的逻辑组 id 键控；每个根路径保持
-  规范化，从不从有歧义的文件夹基名推断。旧的单文件夹项目是兼容组。
-- **头部**：项目名、当前工作区圆点、展开/折叠、新建任务操作和溢出
-  菜单。工作区上下文不是导航选择：项目头部没有持久的选中背景，
-  包括未选中任何会话时。只有聊天页上的当前会话获得选中行绘制。
-  项目和会话行共享整行悬停反馈；项目标题本身保持透明。目录标题是
-  一个整行展开/折叠目标；折叠/展开只影响子项可见性，相邻组构成一
-  棵稠密的树而不是分离的卡片。悬停或聚焦项目标题显示完整项目路径。
-  按下标题并移动 8px 可重排该组。
-- **项目操作**：open folder 显示主项目目录；Edit project 更改宿主
-  拥有的逻辑组名并调整符合条件的非主根（保持渲染器元数据同步）；
-  置顶/取消置顶改变呈现优先级；归档/恢复在默认视图中隐藏或恢复该
-  组；关闭移除保留的主标签，而不删除或归档组根、会话或记忆。展开
-  的项目归档详情列出每个组根。
-- **会话操作**：重命名、置顶/取消置顶、归档/恢复、分叉和删除保持
-  为独立操作。重命名只编辑任务标签；归档从不移除转录。open folder
-  是项目操作，不是会话操作。
-- **排序**：面向用户的模式为 Recently updated、Created date、Oldest
-  first 和 Name。置顶行排在非置顶行之前。项目组通过拖动标题或在
-  该标题上使用 ArrowUp/ArrowDown 切换为 `manual`。会话的 `manual`
-  仍是兼容性值。
-- **会话列表**：每个组默认按活跃排序显示最近十个会话；其余折叠在
-  一个 **Load N more…** 行之后，点击展开完整的按时间分组列表。
-  置顶行排在非置顶行之前，且从不被推入折叠之后；展开状态不持久。
-- **独立会话**：无路径会话保留在单独的 Sessions 分区，从不继承最近
-  活跃项目的工作区。
-- **并发**：外壳一次选择一个可见项目，而 agent 运行状态仍按会话
-  键控。切换项目标签不会取消后台回合。后台事件只更新其来源会话，
-  从不改变活跃会话、页面、项目或键盘焦点。
+- **Sections**: the compact `Sessions` heading precedes `Projects` and owns
+  path-less conversation creation plus the existing sort/archive-view menu. Its
+  toolbar places sorting before new-session creation. Both headings keep quiet
+  glyph actions and also accept a right-click create menu on the heading or empty
+  list chrome so section creation stays discoverable
+  without extra chrome. Its list shows at most five compact rows (146px) before
+  scrolling internally, so standalone work stays visible without displacing
+  project navigation. The following `Projects` heading exposes the
+  folder-picker action; retained project groups use the remaining height and
+  scroll independently.
+- **Identity**: each project group is keyed by a host-owned logical group id;
+  each root path remains canonical and is never inferred from an ambiguous
+  folder basename. Legacy single-folder projects are compatibility groups.
+- **Header**: project name, current-workspace dot, disclosure, new-task action,
+  and an overflow menu. Workspace context is not navigation selection: project
+  headers have no persistent selected background, including when no conversation
+  is selected. Only the current conversation on the chat page receives selected
+  row paint. Project and conversation rows share full-row hover feedback; the
+  project title itself stays transparent. The directory title is one full-row disclosure target;
+  collapse/expand affects only child visibility, and adjacent groups form one
+  dense tree rather than detached cards. Hovering or focusing the project title
+  reveals the full project path. Pressing the title and moving 8px reorders
+  the group.
+- **Project actions**: open folder reveals the primary project directory; Edit
+  project changes the host-owned logical group name and adjusts eligible
+  non-primary roots (keeping renderer metadata in sync); pin/unpin changes
+  presentation priority; archive/restore hides or restores the group in the
+  default view; close removes the retained primary tab without deleting or
+  archiving group roots, sessions, or memory. Expanded Project archive details
+  list every group root.
+- **Conversation actions**: rename, pin/unpin, archive/restore, fork, and
+  delete remain separate actions. Rename edits the task label only; archive
+  never removes the transcript. Open folder is a project action, not a
+  conversation action.
+- **Sort**: user-facing modes are Recently updated, Created date, Oldest
+  first, and Name. Pinned rows precede unpinned rows. Project groups switch
+  to `manual` by dragging a title or using ArrowUp/ArrowDown on that
+  title. Session `manual` remains a compatibility value.
+- **Conversation list**: each group shows the ten most-recent sessions in the
+  active sort order by default; the remainder folds behind a **Load N more…**
+  row that expands the full time-grouped list on click. Pinned rows precede
+  unpinned rows and are never pushed behind the fold; the expansion state is
+  not persisted.
+- **Standalone sessions**: path-less sessions remain in the separate Sessions
+  section and never inherit the last active project's workspace.
+- **Concurrency**: the shell selects one visible project at a time, while
+  agent run state remains keyed by session. Switching project tabs does not
+  cancel a background turn. Background events update only their originating
+  session and never change the active session, page, project, or keyboard
+  focus.
 
 ### 3.3 Pull requests
-分段 Open/Draft/All 过滤，带计数；行携带图标底板、编号、标题、
-状态徽章、分支元信息、外部链接，以及 “Review with agent”（创建
-一个聊天回合）。需要活跃工作区和 `gh`。
+Segmented Open/Draft/All filters with counts; rows carry icon plate, number,
+title, status badge, branch meta, external link, and "Review with agent"
+(creates a chat turn). Requires an active workspace and `gh`.
 
 ### 3.4 Scheduled
-创建卡片 + 任务行（节奏/启用徽章、prompt 预览、上次运行、
-Run now / 开关 / Delete）。Run now 打开一个以该 prompt 预填的
-会话。新任务默认为 Agent。迁移而来的 Plan 或 Goal 任务允许保持
-存储，但无人值守运行在 provider、工件或排队工作之前被显式拒绝，
-错误码为 `PLAN_REQUIRES_INTERACTIVE_SESSION`；它不能显示或自动批准
-契约。用户必须先把它显式切换为 Agent，才能启用无人值守执行。
+Create card + task rows (cadence/enabled badges, prompt preview, last run,
+Run now / toggle / Delete). Run now opens a session seeded with the prompt.
+New tasks default to Agent. A migrated Plan or Goal task is allowed to remain
+stored, but an unattended run is explicitly rejected before provider, artifact,
+or queue work with `PLAN_REQUIRES_INTERACTIVE_SESSION`; it cannot display or
+auto-approve a contract.
+The user must explicitly switch it to Agent before enabling unattended
+execution.
 
 ### 3.5 Extensions
 
-Extensions 目的地是一个聚焦的插件表面，带紧凑头部，只有两个标签：
-**Installed** 和 **Marketplace**。Installed 按状态分组插件行 ——
-Needs attention / Updates available / Active / Turned off —— 以软
-磁贴形式堆叠在组标签之下（D296）。Marketplace 保持浏览/安装卡片
-网格。页面不绘制分隔线：头部、工具栏、行、来源设置、卡片和详情
-面板的各节靠色调和间距区分，细线保留给浮层（菜单、面板、对话框）。
-市场来源设置显示来源选择器，没有冗余的 provider 解释或活跃来源
-状态行。MCP、Skills 和 Subagents 不是 Extensions 的标签或分区。
+The Extensions destination is a focused plugin surface with a compact header and
+only two tabs: **Installed** and **Marketplace**. Installed groups plugin rows
+by state — Needs attention / Updates available / Active / Turned off — as soft
+tiles stacked under a group label (D296). Marketplace remains the browse/install
+card grid. The page draws no dividers: header, toolbar, rows, source settings,
+cards and the detail sheet's sections are set apart by tone and spacing, and
+hairlines are reserved for floating layers (menus, sheet, dialogs). The
+marketplace source settings show the source selector without a redundant
+provider explanation or active-source status line. MCP, Skills, and Subagents
+are not tabs or sections of Extensions.
 
-### 3.6 Settings（整页接管）
-Settings 替换整个外壳（D063）：返回应用 + 搜索 + 一个分组的设置
-栏，带简洁、平行的目的地标签。Agent 组包含独立的 Skills、MCP 和
-Subagents 目的地，与 Instructions 和 Model configuration 并列；选择
-其中一个是改变页面目的地，而不是共享能力面板内的标签。外观位于
-General 内；全局 AI 行为（权限与上下文管理）位于 全局 AI 内；
-键盘快捷键和全局/项目指令有自己的目的地；provider 管理位于
-Model configuration 内。Import 扫描受支持的本地 agent 存储中的
-会话，并独立扫描模型配置，把候选呈现在可折叠的组中。项目路径是
-会话在默认来源分组之外的另一种分组方式，每次扫描或分组变更都以
-全部组折叠开始。模型配置导入复制已存储的 API key 并跳过订阅登录。
-项目归档拥有持久的 D086 项目索引（搜索、添加、展开、置顶、
-归档/恢复、关闭和重新打开），且始终包含已归档记录。打开或切换
-项目会保留一个侧边栏标签，把该项目选为活跃工作区，并返回聊天。
-其他保留的标签保持打开。扩展管理仍只在 §3.5 描述的应用外壳独立
-Extensions 目的地。Settings > Agent 有以下共享能力契约：
+### 3.6 Settings (full-page takeover)
+### 3.6 Settings (full-page takeover)
+Settings replaces the whole shell (D063): back-to-app + search + a grouped
+settings rail with concise, parallel destination labels. The Agent group
+contains independent Skills, MCP, and Subagents destinations alongside
+Instructions and Model configuration; selecting one
+changes the page destination rather than a tab inside a shared capability panel.
+Appearance lives inside General; global AI behavior (permissions and context
+management) lives inside 全局 AI; keyboard shortcuts and global/project
+instructions have their own destinations; provider management lives inside
+Model configuration. Import scans supported local agent stores for sessions
+and, independently, for model configuration, and presents candidates in
+collapsible groups. Project path is an alternate grouping for sessions
+alongside the default source grouping, and every scan or grouping change starts
+with all groups collapsed. Model-configuration import copies stored API keys
+and skips subscription logins. Project archive owns the durable D086 Projects index
+(search, add, expand, pin, archive/restore, close, and reopen) and always includes
+archived records. Opening or switching a project retains a sidebar tab, selects
+that project as the active workspace, and returns to chat. Other retained tabs
+stay open. Extension management remains solely on the app shell's independent
+Extensions destination described in §3.5. Settings > Agent has the following
+shared capability contract:
 
-- 每个能力目的地以安静的本地化描述和范围说明开头，然后使用与其他
-  目的地相同的中性抬升设置表面；没有任何能力页面有装饰性 hero、
-  彩色顶栏或独立视觉主题。
-- Skills 和 MCP 在一列中使用堆叠的 全局/项目 卡片区块。每个区块
-  有一行安静的标题行，含范围标题、范围描述、解析后的 `.agents`
-  路径、本地化计数和其操作；项目区块显示最近项目选择器。项目记录
-  优先于全局记录。
-- Skills 在每个表面上有一个原生 **Import** 操作。它恰好接受一个
-  文件，并把它物理复制到选定的 `.agents/skills` 目录。
-- MCP 在每个表面上有一个 **Add** 操作。Add 和 Edit 以模态覆盖层
-  打开现有的 `McpEditorSheet`，带 stdio/HTTP 分支、验证、重复检查、
-  锁定的编辑 id、范围文本和 Test connection 反馈。
-- Subagents 使用 `~/.agents/subagents` 下的一个全宽全局表面；没有
-  项目选择器、项目表面或项目级开关。创建或编辑 subagent 时从已配置
-  的 provider 模型中选择固定模型，或继承会话模型；不需要输入
-  `provider/model` id。
-- 三个列表都按自然页面高度排布，在面板内渲染安静的居中空状态，
-  弱化禁用行，并把启用状态存储在应用本地状态而不是能力文件中。
-  加载和项目变更渲染相同结构的骨架行，并在宿主刷新完成前禁用
-  相互竞争的控件。
+- Each capability destination starts with a quiet localized description and
+  scope note, then uses the same neutral elevated Settings surface as the other
+  destinations; no capability page has a decorative hero, colored top bar, or
+  separate visual theme.
+- Skills and MCP use stacked global/project card blocks in one column. Each
+  block has a quiet heading row with a scope title, scope description,
+  resolved `.agents` path, localized count, and its actions; the project
+  block shows a recent-project picker. Project records take precedence over
+  global records.
+- Skills have one native **Import** action per surface. It accepts exactly one
+  file and physically copies it into the selected `.agents/skills` directory.
+- MCP has one **Add** action per surface. Add and Edit open the existing
+  `McpEditorSheet` as a modal overlay with stdio/HTTP branches, validation,
+  duplicate checks, locked edit ids, scope text, and Test connection feedback.
+- Subagents use one full-width global surface under `~/.agents/subagents`; they
+  have no project picker, project surface, or project-level toggle. Creating or
+  editing a subagent picks the pinned model from configured provider models, or
+  inherits the session model; it does not require typing a `provider/model` id.
+- All three lists flow at natural page height, render a quiet centered empty
+  state inside the panel, dim disabled rows, and store enablement in app-local
+  state rather than capability files. Loading and project changes render
+  skeleton rows with the same anatomy and disable competing controls until the
+  host refresh completes.
 
-## 4. 浮层
+## 4. Overlays
 
-| 浮层 | 触发 | 备注 |
+| Overlay | Trigger | Notes |
 |---|---|---|
-| 命令面板 | Cmd/Ctrl+K（也支持 Cmd/Ctrl+Shift+P，按 D014） | 内置 + 插件命令 |
-| 模型菜单 | Composer 右侧 模型 × 推理 chip | 已配置的 provider/模型选择 + 设置入口（D091） |
-| 个人菜单 | 侧边栏 footer | Settings / Logs / 主题循环（D041） |
-| 通知收件箱 | 侧边栏 footer 铃铛 | 全部/未读视图，仅任务失败行（成功完成被隐藏，D295），全部标读与清空操作（D130/D117） |
-| Toasts | 事件（插件 toast、后端恢复、复制） | 顶部居中；默认 4s，错误 8s |
-| 项目切换器 | 空首页的下划线项目名 | 侧边栏已打开项目 + 搜索 + 克隆 git 项目 + 打开项目 |
+| Command palette | Cmd/Ctrl+K (also Cmd/Ctrl+Shift+P per D014) | builtin + plugin commands |
+| Model menu | Composer-right model × reasoning chip | configured provider/model choices + settings entry (D091) |
+| Profile menu | sidebar footer | Settings / Logs / Theme cycle (D041) |
+| Notification inbox | sidebar footer bell | All/Unread views, task failure rows only (successful completions are hidden, D295), mark-all-read and clear actions (D130/D117) |
+| Toasts | events (plugin toast, backend restored, copy) | top-center; 4s default, 8s for errors |
+| Project switcher | empty-home underlined project name | sidebar open projects + search + clone git project + open project |
 
-## 5. 导航模型
+## 5. Navigation model
 
-- `page` 状态：`chat | pulls | scheduled | plugins | settings`；
-  `chat` 是会话表面路由，不是一种运行模式。项目归档是 `projects`
-  设置标签页，而不是独立页面。
-- 目的地历史是线性的；`Cmd/Ctrl+[` 和 `Cmd/Ctrl+]` 遍历它，没有
-  持久的后退/前进边框。扩展活跃时，footer 的 Plugins 按钮复用一次
-  后退（§2 外壳区域）；不增加单独的后退或前进控件。
-- 选择项目标签时，若其路径与所选宿主工作区不同，则复用
-  `project.set`，并保持其他标签保留。
-- 选择项目作用域的线程会先激活其项目，再切换到 `chat`。选择临时
-  线程会在加载前清除可见的活跃工作区。
-- 空首页有三种显式会话状态：绑定项目的会话显示带项目下划线的
-  欢迎语；点击名字打开侧边栏已打开项目的可搜索切换器，而不是
-  文件夹选择器。临时会话显示专门的临时聊天文案，没有项目下划线
-  或切换器；没有活跃会话时保持通用欢迎标题。
-- New task 按当前项目或临时组的最近会话解析：如果该会话
-  `messageCount = 0`，则选中并复用它；否则立即创建一个持久的空
-  会话并出现在侧边栏中。因此重复点击会让每个可见组保持一个空位；
-  空位在用户删除或归档之前保持持久。
+- `page` state: `chat | pulls | scheduled | plugins | settings`; `chat` is the
+  conversation-surface route, not an operating mode. The project
+  archive is the `projects` settings tab rather than a standalone page.
+- Destination history is linear; `Cmd/Ctrl+[` and `Cmd/Ctrl+]` traverse it
+  without persistent back/forward chrome. While Extensions is active, the
+  footer Plugins button reuses one Back step (§2 shell regions); no separate
+  back or forward control is added.
+- Selecting a project tab reuses `project.set` when its path differs from the
+  selected host workspace and keeps the other tabs retained.
+- Selecting a project-scoped thread activates its project before switching to
+  `chat`. Selecting a temporary thread clears the visible active workspace
+  before loading it.
+- Empty home has three explicit session states: a project-bound session shows
+  the project-underlined welcome; clicking the name opens a searchable
+  switcher of the sidebar's open projects instead of the folder picker. A
+  temporary session shows dedicated temporary-chat copy with no project
+  underline or switcher; and no active session keeps the generic welcome
+  title.
+- New task resolves the current project or temporary group by its most recent
+  session: if that session has `messageCount = 0`, it is selected and reused;
+  otherwise a durable empty session is created immediately and appears in the
+  sidebar. Repeated clicks therefore keep one empty slot per visible group;
+  an empty slot remains persisted until the user deletes or archives it.
 
-## 6. 键盘映射（IA 层）
+## 6. Keyboard map (IA level)
 
-| 按键 | 操作 |
+| Keys | Action |
 |---|---|
-| Cmd/Ctrl+K, Cmd/Ctrl+Shift+P | 命令面板 |
-| Cmd/Ctrl+B | 切换侧边栏 |
-| Cmd/Ctrl+[ | 上一个目的地 |
-| Cmd/Ctrl+] | 下一个目的地 |
-| Cmd/Ctrl+N | 新建任务 |
-| Cmd/Ctrl+O | 打开项目 |
-| Cmd/Ctrl+, | 设置 |
-| Cmd/Ctrl+. | 中止当前运行 |
-| Enter / Shift+Enter / Cmd/Ctrl+Enter | 发送 / 换行（Enter 发送；关闭时 Cmd/Ctrl+Enter 发送） |
-| Esc | 关闭浮层/菜单 |
+| Cmd/Ctrl+K, Cmd/Ctrl+Shift+P | command palette |
+| Cmd/Ctrl+B | toggle sidebar |
+| Cmd/Ctrl+[ | previous destination |
+| Cmd/Ctrl+] | next destination |
+| Cmd/Ctrl+N | new task |
+| Cmd/Ctrl+O | open project |
+| Cmd/Ctrl+, | settings |
+| Cmd/Ctrl+. | abort current run |
+| Enter / Shift+Enter / Cmd/Ctrl+Enter | send / newline (Enter-to-send; when off, Cmd/Ctrl+Enter sends) |
+| Esc | dismiss overlay/menu |
 
-## 7. 随状态变化的外壳
+## 7. State-dependent chrome
 
-- 未配置 provider → 首次运行前用阻塞式引导指向设置
-  （`MODEL_NOT_CONFIGURED`）。
-- 无工作区 → 首页 hero 不带项目下划线；Pull requests 显示需要
-  工作区的空状态。Composer 从不渲染工作区栏。
-- 后台项目会话 → 来源项目行保留其 运行中/错误 指示器。选中的外壳
-  状态可以独立移动，而会话工具根仍绑定到其持久项目；其工件保留在
-  该会话的工作面板上下文中，不会在当前选中项目之上打开或激活
-  标签。消息、工具事件、权限请求和面板资源保持限定在该会话。显式
-  打开该会话会恢复其保留的面板上下文，并按原始截止时间显示任何
-  待处理权限卡片。
-- 尚未可见的 completed/failed 回合 → host-core 追加一行持久收件箱
-  记录。已在可见且聚焦的当前聊天中显示的结果和每个 `aborted`
-  回合都不追加。后台会话和任何在窗口未聚焦时完成的回合仍会追加。
-  侧边栏 footer 铃铛只列出 `task.failed` 行，其徽章只统计未读
-  失败；成功完成保留在持久记录中用于侧边栏结果徽章和原生通知，
-  但从不出现在收件箱（D295）。选择一行会标记已读并激活其绑定的
-  项目/会话。Electron 另外只在应用窗口未聚焦时呈现原生任务通知，
-  点击它先聚焦窗口再激活同一会话（D117）。交互式
-  ask/permission/plan 提示使用单独的原生路径，可对聚焦的后台会话
-  发出提醒。收到持久或原生通知事件都从不自行导航；只有显式激活
-  才会。
-- 后端降级 → 状态胶囊（重启中）或带打开日志的致命横幅（D080）；
-  后端宕机期间 Composer 提交会以可读错误被拒绝。
-  - Plan/Goal 检查点 → 来源会话只显示结构化标题和其不可变
-    `.pi/plan/*.md` 工件的打开器。渲染器仅在当前渲染器生命周期内
-    按会话保留最新的 proposal/execution 快照，由实时 Host 事件更新；
-    只有实时的 `pending` 行构成批准门。同一 Host 仍存活时通过
-    `plans.pending` 重载会按原始截止时间恢复仍待处理的行。被拒绝、
-    过期、已批准/已完成和已中断的终态卡片不会再水化；终态卡片只可
-    保持可见但不可操作，直到渲染器重载。拒绝、过期或中断会清除批准
-    门，让会话保持其契约状态且可编辑，并要求后续回合创建新工件。
-    待处理期间草稿保持可见但只读，只启用 Approve 或 Reject 操作。
-    宿主/应用重启会在 RPC 之前中断先前工作，不重放也不执行过期
-    操作；待处理未批准的工作保持 Plan，已批准的中断执行保持
-    Agent。重启后 UI 不需要呈现那个已中断的终态快照。
+- No provider configured → blocking guidance toward Settings before first run
+  (`MODEL_NOT_CONFIGURED`).
+- No workspace → home hero without project underline; Pull requests shows a
+  workspace-required empty state. The composer never renders a workspace rail.
+- Background project session → the originating project row retains its
+  running/error indicator. Selected shell state can move independently while
+  the session tool root remains bound to its durable project; its artifacts are
+  retained in that session's work-panel context without opening or activating
+  tabs over the currently selected project. Messages, tool events, permission
+  requests, and panel resources remain scoped to that session. Explicitly
+  opening the conversation restores its retained panel context and reveals any
+  pending permission card with its original deadline.
+- Completed/failed turn not already visible → host-core appends one durable
+  inbox row. A result shown in the visible, focused current chat and every
+  `aborted` turn append none. Background sessions and any turn finishing while
+  the window is unfocused still append. The sidebar footer bell lists only
+  `task.failed` rows and its badge counts only unread failures; successful
+  completions stay in the durable record for the sidebar outcome badge and
+  native notification but never appear in the inbox (D295). Selecting a row
+  marks it read and activates its bound project/session.
+  Electron additionally presents a native task notification only when the
+  app window is unfocused, and clicking it focuses the window before activating
+  the same session (D117). Interactive ask/permission/plan prompts use their
+  separate native path and may alert for a focused background session. Receiving
+  either durable or native notification events never navigates by itself; only
+  explicit activation does.
+- Backend degraded → status capsule (restarting) or fatal banner with Open
+  logs (D080); composer submits are rejected with readable errors while down.
+  - Plan/Goal checkpoint → the originating session shows only the structured title
+  and an opener for its immutable `.pi/plan/*.md` artifact. The renderer retains the latest
+  proposal/execution snapshot per session only for the current renderer
+  lifetime, updated by live Host events; only a live `pending` row forms the
+  approval gate. Reload through `plans.pending` while the same Host remains
+  alive restores a still-pending row with its original deadline. Rejected,
+  expired, approved/completed, and interrupted terminal cards are not
+  rehydrated; a terminal card may remain visible and non-actionable only until
+  renderer reload. Reject, expiry, or interruption clears the approval gate,
+  leaves the session in its contract state and editable, and requires a later turn to
+  create a new artifact. While pending, the draft remains visible but
+  read-only and only Approve or Reject actions are enabled. Host/app restart
+  interrupts prior work before RPC with no replay or stale action; pending
+  unapproved work remains Plan, while already-approved interrupted execution
+  remains Agent. The UI is not required to present that interrupted terminal
+  snapshot after restart.
 
 ## 8. i18n
 
-英语是源 locale。已交付的翻译（zh-CN、zh-TW、Turkish、German、
-Spanish、French 和 Korean）覆盖外壳边框；标签由 US-UI e2e 场景
-断言。文案规则见 [02-i18n-english-first](02-i18n-english-first.md)。
+English is the source locale. Shipped translations (zh-CN, zh-TW, Turkish, German, Spanish, French, and
+Korean) cover shell chrome; labels are asserted by US-UI e2e scenarios.
+Copy rules live in [02-i18n-english-first](02-i18n-english-first.md).

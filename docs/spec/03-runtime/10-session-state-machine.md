@@ -1,14 +1,14 @@
-# 10. 会话、Plan 和 Goal 状态机
+# 10. Session, Plan, and Goal State Machine
 
-## 0. 持久运行模式与实时规划状态
+## 0. Durable operating mode versus live planning state
 
-每个会话仅保留一种操作模式：`agent | plan | goal`。那里
-是一
-pi Agent。实时计划状态和执行状态是 host/runtime 投影。
-Plan 和 Goal 是**合约模式**：两者在执行之前协商提案
-并共享一项预测、一项批准行和一项硬否认 (**D198**)。 `kind`
-(`plan | goal`) 是区分它们的地方，下图读起来是一样的
-将 Goal/Plan 替换为 Plan/Goal：
+Each session persists exactly one operating mode: `agent | plan | goal`. There
+is one
+pi Agent. Live planning state and execution status are host/runtime projections.
+Plan and Goal are **contract modes**: both negotiate a proposal before executing
+and share one projection, one approval row, and one hard deny (**D198**). `kind`
+(`plan | goal`) is what distinguishes them, and the diagram below reads the same
+with Goal/`SubmitGoal` substituted for Plan/`SubmitPlan`:
 
 ```text
 Agent / inactive
@@ -26,26 +26,26 @@ Agent / running
   -- complete | fail | abort --> Agent / inactive
 ```
 
-两种合约模式都保留了权限模式选择器。他们的 `Bash` 政策是
-`ask` 或
-`accept-edits` = 确认，`auto` = 不确认，所以是合约模式
-表达协商意图，但不是严格的只读安全配置文件。
-Write/Edit 和
-在每个 Plan 或 Goal 权限模式下，插件工具仍被主机策略拒绝。
+Both contract modes retain the permission-mode selector. Their `Bash` policy is
+`ask` or
+`accept-edits` = confirmation and `auto` = no confirmation, so a contract mode
+expresses negotiating intent but is not a strict read-only security profile.
+Write/Edit and
+plugin tools remain denied by host policy in every Plan or Goal permission mode.
 
-这些类型的区别仅在于合同内容和排队执行内容
-指令要求：Plan 建议执行有序步骤，而 Goal
-提出目标陈述、验收标准和界限，及其
-执行持续进行——选择自己的方法——直到每次接受
-标准被验证或边界阻止它。
+The kinds differ only in what the contract says and what the queued execution
+instruction asks for: Plan proposes ordered steps to carry out, while Goal
+proposes a goal statement, acceptance criteria, and boundaries, and its
+execution keeps working — choosing its own approach — until every acceptance
+criterion is verified or a boundary blocks it.
 
-仅允许通过 UI/session API 进行模式和配置更改
-空闲时。批准不是通用工具权限：它是单独的
-主机拥有的状态转换。主机重启会中断每个待批准的任务
-和 queued/running 执行字段，无重放；一个已经批准的
-中断将持久会话保留在 Agent 中。
+Mode and configuration changes through the UI/session API are allowed only
+while idle. Approval is not a generic tool permission: it is a separate
+host-owned state transition. A host restart interrupts every pending approval
+and queued/running execution field without replay; an already-approved
+interruption keeps the durable session in Agent.
 
-## 1. 会话状态
+## 1. Session status
 
 ```text
 idle <-> running <-> waiting_permission
@@ -53,15 +53,15 @@ idle <-> running <-> waiting_permission
            \/ error
 ```
 
-| 状态 | 意义 |
+| status | meaning |
 |---|---|
-| `idle` | 无主动回合 |
-| `running` | model/tool 激活 |
-| `waiting_permission` | 因用户权限决定而被阻止 |
-| `aborted` | 当前轮次的终端（然后返回空闲） |
-| `error` | 当前轮次的终端（然后返回空闲） |
+| `idle` | no active turn |
+| `running` | model/tool turn active |
+| `waiting_permission` | blocked on user permission decision |
+| `aborted` | terminal for current turn (then returns idle) |
+| `error` | terminal for current turn (then returns idle) |
 
-## 2. 转向生命周期
+## 2. Turn lifecycle
 
 ```text
 accept_prompt
@@ -73,144 +73,173 @@ accept_prompt
  -> turn_end
 ```
 
-回合会到达三种终止原因之一 —— `completed`、`aborted` 或 `error` —— 与
-第 1 节状态表中 `aborted` / `error` 两行一致。终止原因只决定一次：
-中止会在取消请求发出之前记录其决定，因此之后的 `agent_end` 无法把已中止的
-回合改述为已完成。终止事件按回合身份归属，而不是按会话：某个终止事件
-所属的回合若已不再拥有该会话，它既不改变当前回合的状态，也不释放其资源，
-迟到的消息行和工具行仍作为历史记录。宿主在每次已开始的回合中通过
-`session:turnEnded` 插件事件宣告一次终止状态（见 ADR 0252，
-`docs/adr/0252-plugin-host-turn-end-event.md`）。
+A turn reaches one of three terminal reasons — `completed`, `aborted`, or
+`error` — matching the `aborted` / `error` rows in section 1. The terminal
+reason is decided once: an abort records its decision before the cancel request
+is issued, so a later `agent_end` cannot restate an aborted turn as completed.
+Terminal events are attributed by turn identity, not by session: a terminal
+event whose turn no longer owns the session changes neither the current turn's
+state nor its resources, and late message and tool rows are still recorded as
+history. The host announces the terminal state once per started turn through
+the `session:turnEnded` plugin event (see ADR 0252,
+`docs/adr/0252-plugin-host-turn-end-event.md`).
 
-转向输入按同一身份判定：命名了一个已取消、已开始收尾或已不再拥有该会话的回合的输入，
-会以「回合已结束」被拒绝。
+A steering input is judged by the same identity: one that names a turn which was
+cancelled, has started finalizing, or no longer owns the session is refused as a
+turn that has ended.
 
-## 3. 转换规则
+## 3. Transition rules
 
-1. 每个会话只有一个有效回合
-2. 新提示被 `AGENT_BUSY` 拒绝，而 running/waiting_permission 期间 renderer 的
-   运行中发送路径经 `agent/queue/push` 把下一条 prompt 推入 Host 拥有的回合队列
-   （架构 v15，D375 / D386 / ADR 0213），并从 `agent/event/queueChanged` 镜像持久
-   条目；Agent Host 模块在 `agent_end` 之后释放一条，恢复的队列挂起到 owner 接入，
-   `agent/queue/prioritize` 把条目移到队列头部，因此正常的用户发送不会看到
-   `AGENT_BUSY`。
-3. 允许中止运行或 waiting_permission。 Renderer 智能停止
-   删除未应答的 root 用户行并恢复其 session/turn-scoped
-   预序列化输入框快照；曾经助理文字、思考或任何
-   工具行开始，中止保留部分转录本并恢复不
-   草稿。
-4. 权限超时变为工具被拒绝，然后代理可以根据运行时处理继续或结束
-5. 终端回合状态持久后，会话状态返回空闲状态。父级终态错误会中止残留委托，因此“继续”不会变成 `AGENT_BUSY`（D352）
-6. 更改渲染器的活动 project/session 不会转换或中止
-   任何后台会话
-7. 工具转换保留原始会话的持久项目根；
-   它从不采用新活动项目的根
-8. `session.endTurn` 仅将 `running` 转至终端。在那个同
-   事务，未见的 `completed` 插入 `task.completed`，未见的 `error`
-   插入 `task.failed`，并且结果已在焦点当前中可见
-   聊天或任何 `aborted` 回合不会插入任何通知 (D117)。重复终端
-   调用是无操作的。
-9. 仅当源空闲时才允许分叉。孩子开始无所事事
-   没有回合或等待许可状态。 Electron 返回 `AGENT_BUSY` 的
-主动运行时保护并规范主机的持续运行轮流
-   `CONFLICT` 回退到相同的 IPC 错误。两条路径均不产生部分
-   孩子。
-10. 提供 `throughMessageId` 仅更改快照边界。助理
-    Fork/Edit 仍然创建一个新的空闲会话 ID，没有共享轮次，
-    权限等待、运行时或提供商缓存状态 (D134)。
-11. `EnterPlanMode`、`EnterGoalMode`、`SubmitPlan` 和 `SubmitGoal` 必须是
-    他们中唯一的工具调用
-    助理批次。提交工具在新的文件中保留精确的 Markdown 字节
-    主机拥有的 `.pi/<kind>/*.md` 工件并创建一个待处理的
-    `plan_approvals` 行及其 `kind` 加上结构化的 title/question 和
-    神器领域。针对另一种模式调用的提交工具失败
-    与 `PLAN_KIND_MISMATCH` 并且什么也不写。
-12. 只有匹配的 `plans.resolve` 才能解决待处理的提案。批准
-    以原子方式将持久模式更改为 Agent，存储选定的显式
-    权限模式，分配执行ID，并更改行的
-    `execution_state` 至 `queued`。
-13. 批准和拒绝是唯一的解决方案操作。拒绝和到期
-    关闭挂起的行，然后将活动状态返回到可编辑状态
-    同合同模式规划状态
-    并且不授予任何执行工具。待处理的中断也会执行相同的操作；一个
-    批准后 queued/running 中断仍保持 Agent。
-14. 第二次提示，Plan 或 Goal 提交、配置更改或执行
-    是
-在会话处于活动状态、等待批准时被拒绝，或者
-    queued/running 执行。仅当空闲时才接受配置。
-15. 同一合同模式的后续转变可能会修改
-    rejected/expired/interrupted 检查点和
-    必须创建一个新的不可变工件而不是覆盖早期的工件
-    快照。
+1. Only one active turn per session
+2. A direct host prompt is rejected with `AGENT_BUSY` while
+   running/waiting_permission. The renderer's Send-while-running path pushes
+   the next prompt into the Host-owned turn queue (schema v15, D375 / D386 /
+   ADR 0213) through `agent/queue/push` and mirrors the durable entries from
+   `agent/event/queueChanged`; the Agent Host module releases one entry after
+   `agent_end`, holds a restored queue until the owner attaches, and moves an
+   entry to the head on `agent/queue/prioritize`, so normal user sends do not
+   surface `AGENT_BUSY`.
+3. A graceful stop completes the current assistant/tool boundary as a normal
+   `completed` turn before the renderer releases a queued prompt.
+4. Abort from running or waiting_permission is allowed. Renderer smart Stop
+   removes an unanswered root user row and restores its session/turn-scoped
+   pre-serialization composer snapshot; once assistant text, thinking, or any
+   tool row begins, abort preserves the partial transcript and restores no
+   draft. The snapshot keeps structured file/image references and is never
+   reconstructed by parsing model-facing `@path` text.
+5. Permission timeout moves to tool denied, then agent may continue or end based on runtime handling
+6. Session status returns to idle after terminal turn states are persisted
+7. Changing the renderer's active project/session does not transition or abort
+   any background session
+8. A tool transition retains the originating session's persisted project root,
+   or that session's own scratch root when it is temporary; it never adopts the
+   newly active project's root
+9. `session.endTurn` moves only a `running` turn to terminal. In that same
+   transaction, unseen `completed` inserts `task.completed`, unseen `error`
+   inserts `task.failed`, and a result already visible in the focused current
+   chat or any `aborted` turn inserts no notification (D117). Repeated terminal
+   calls are no-ops. Renderer terminal lifecycle events update the transcript
+   and turn result card; the sidebar terminal mark is derived only from the
+   corresponding unread notification, never from `agent_end` alone.
+10. Fork is allowed only while the source is idle. The child begins idle with
+   no turn or waiting-permission state. Electron returns `AGENT_BUSY` for its
+   active runtime guard and normalizes the host's persisted running-turn
+   `CONFLICT` fallback to the same IPC error. Neither path produces a partial
+   child.
+11. Supplying `throughMessageId` changes only the snapshot boundary. Assistant
+    Fork/Edit still creates a new idle session id with no shared turn,
+    permission wait, runtime, or provider-cache state (D134).
+12. `EnterPlanMode`, `EnterGoalMode`, `SubmitPlan`, and `SubmitGoal` must be the
+    only tool call in their
+    assistant batch. A submit tool preserves exact Markdown bytes in a new
+    host-owned `.pi/<kind>/*.md` artifact and creates one pending
+    `plan_approvals` row with its `kind` plus structured title/question and
+    artifact fields. A submit tool called against the other kind's mode fails
+    with `PLAN_KIND_MISMATCH` and writes nothing.
+13. Only a matching `plans.resolve` can settle a pending proposal. Approval
+    atomically changes the durable mode to Agent, stores the selected explicit
+    permission mode, assigns an execution ID, and changes the row's
+    `execution_state` to `queued`.
+14. Approve and reject are the only resolution actions. Rejection and expiry
+    close the pending row, then return the live state to the editable
+    planning state of the same contract mode
+    and grant no execution tools. A pending interruption does the same; a
+    queued/running interruption after approval stays Agent.
+15. A second prompt, Plan or Goal submission, configuration change, or execution
+    is
+    rejected while the session has an active turn, pending approval, or
+    queued/running execution. Configuration is accepted only while idle.
+16. A later turn in the same contract mode may revise a
+    rejected/expired/interrupted checkpoint and
+    must create a new immutable artifact rather than overwrite the earlier
+    snapshot.
+17. A terminal parent provider/stream error aborts leftover delegates and
+    returns the session to idle so Continue is accepted. Parent idle with
+    running delegates still keeps the turn open (D328 / D352).
 
-## 4. 持久化点
+## 4. Persistence points
 
-消息持久化按照 04-data-storage §5 (D119) 分为两步：fsync'd
-转录文件行第一，索引事务第二。
+Message persistence is two-step per 04-data-storage §5 (D119): fsync'd
+transcript-file line first, index transaction second.
 
-- 用户消息：接受时
-- 转运行行：开始+终端`session.endTurn`更新
-- 通知行：与看不见的 completed/error 终端相同的交易
-  更新；决不会为了可见的当前结果或中止
-- assistant/tool 消息：在 message_end/tool_end 上。完成的助手快照在
-  outbox 追加之前先做检查点；握手在冷启动 `session.get` 之前等待该
-  排空（D327）。再验证仍在运行或
-  刚完成、实时行尚未刷入磁盘的会话时，把有界持久化页按时间顺序缝
-  到实时快照上，使更早的实时行留在该页之前、进行中或尚未刷入的尾巴
-  留在该页之后（D317、D324）。只有当该页已包含每一条实时行时才清掉
-  实时来源标记。
-- 孤儿会话恢复：活着的 JSONL 若 sessions 行已不在，则在主机启动和
-  `session.appendMessage` 时重新插入；排队的 outbox 在恢复后排空，
-  `session.delete` 丢掉该会话的 outbox 条目（D318）
-- 未应答的智能停止：标记在现有生命周期中中止的回合，
-  然后以原子方式将记录重写为其根用户行之前的前缀；
-  结构化输入框快照仅保留渲染器内存
-- mode/project 字段：更改时
-- Plan/Goal 提交：将精确的 Markdown 字节写入新的唯一值
-  `.pi/<kind>/*.md`，
-  记录 path/hash/size 加上类型和结构 title/question，然后插入
-  `pending`
-  批准事件之前的 `plan_approvals` 行
-- Plan/Goal审批：审批结果、模式转换、权限模式、
-执行
-  一笔交易中的 ID 和 `queued` 状态； reject/expiry/interruption 保留
-  合同模式并将实时规划返回可编辑状态
-- 启动恢复：以事务方式中断待批准的任务
-  queued/running 在服务 RPC 之前执行状态；中止关联的运行
-  轮流工作并且永不重播
-- 分叉快照：新的转录文件加上一个子 session/index 交易；
-  源持久性保持不变；消息范围的快照结束
-  包含在所选消息中
+- user message: on accept, including attachment kind/name/MIME/size and a
+  content-addressed image ref when applicable; transient base64 is never a
+  persistence field
+- turn run row: on start + terminal `session.endTurn` update
+- notification row: same transaction as an unseen completed/error terminal
+  update; never for a visible-current result or abort
+- assistant/tool messages: on message_end/tool_end. Electron retains each
+  in-flight tool's metadata with its owning turn until the terminal event is
+  persisted; delayed cleanup is scoped to that turn so a later turn's long
+  `TaskWait` cannot lose its name, args, or duration. A completed tool row is
+  replayed through `message_end` as a renderer recovery path, allowing a
+  reload that dropped the running row to append the terminal message.
+  The finished assistant snapshot is checkpointed before the outbox append;
+  handshake awaits that drain before a cold `session.get` (D327). Renderer
+  revalidation of a running or just-completed session stitches the
+  bounded durable page onto the live snapshot in chronological order so older
+  live rows stay before that page and the in-flight or not-yet-flushed tail
+  stays after it (D317, D324). Live provenance is cleared only once that page
+  already contains every live row.
+- orphaned session restore: a live JSONL whose sessions row is gone is
+  reinserted at host boot and on `session.appendMessage`; a queued outbox
+  drains after that restore, and `session.delete` drops that session's
+  outbox entries (D318)
+- unanswered smart Stop: mark the turn aborted through the existing lifecycle,
+  then atomically rewrite the transcript to the prefix before its root user row;
+  the structured composer snapshot remains renderer-memory-only
+- mode/project fields: on change
+- temporary-session tool binding: a path-less session uses its own
+  `<data_dir>/scratch/<sessionId>` root while keeping `projectPath` absent;
+  Plan/Goal workspace validation continues to require a persisted project
+- Plan/Goal submission: write exact Markdown bytes to a new unique
+  `.pi/<kind>/*.md`,
+  record path/hash/size plus the kind and structured title/question, and insert
+  a `pending`
+  `plan_approvals` row before the approval event
+- Plan/Goal approval: approval outcome, mode transition, permission mode,
+  execution
+  ID, and `queued` state in one transaction; reject/expiry/interruption retain
+  the contract mode and return live planning to editable state
+- startup recovery: transactionally interrupt pending approvals and
+  queued/running execution states before serving RPC; abort associated running
+  turns and never replay work
+- fork snapshot: new transcript file plus one child session/index transaction;
+  source persistence remains untouched; a message-scoped snapshot ends
+  inclusively at the selected message
 
-## 5. 验收
+## 5. Acceptance
 
-1. 繁忙会话无法启动第二个并发轮次
-2. Abort是幂等的
-3. waiting_permission在UI状态中可见
-4. 两个保留的项目选项卡中的会话可以独立运行，无需
-   转录事件或工作空间根交叉
-5. 每个未见过的 completed/failed 回合恰好产生一条通知记录
-   而可见当前结果或中止的回合不会产生任何结果
-6. 空闲分叉作为独立的空闲会话启动；繁忙的信号源无法
-   生一个孩子
-7. 消息范围的分叉排除后面的行并且从没有源运行时开始
-   或提供商缓存状态
-8. Plan、Goal 和 Agent 使用 1 个 pi Agent； Composer-左模式芯片、UI
-   条目，以及
-   `queued`/reject/expiry/interruption 收敛于相同的规划状态，并且
-批准恢复
-   Agent 模式下的 Agent
-9. 合约模式策略仅通过选择的权限模式允许Bash
-   和
-   在 Goal 中拒绝 Write/Edit/plugins，无论 `auto` 或会话授权如何
-   与 Plan 完全相同
-10. SubmitPlan/SubmitGoal 使用以下命令写入精确唯一的 `.pi/<kind>/*.md` 工件
-    hash/size，
-    保持 title/question 结构化，并且只有 approve/reject 可以解析其
-    `plan_approvals` 行
-11.到期使用`PLAN_APPROVAL_TIMEOUT`；启动中断、shell故障、
-    进程恢复失败关闭，并且重新启动不会重放挂起，
-    排队或正在运行的工作
-12. Goal 执行在结束前报告每个接受标准的结果
-    转牌圈，并且 scheduled/unattended Goal 跑路被拒绝
-    `PLAN_REQUIRES_INTERACTIVE_SESSION` 与 Plan 完全相同
+1. Busy session cannot start second concurrent turn
+2. Abort is idempotent
+3. waiting_permission is visible in UI status
+4. sessions in two retained project tabs may run independently without
+   transcript-event or workspace-root crossover
+5. each unseen completed/failed turn produces exactly one notification record
+   while a visible-current result or aborted turn produces none
+6. an idle fork starts as an independent idle session; a busy source cannot
+   produce a child
+7. a message-scoped fork excludes later rows and begins with no source runtime
+   or provider-cache state
+8. a running session can queue removable FIFO prompts per session; Send now
+   completes the current turn at the next boundary, while immediate Abort
+   leaves the queue intact
+9. Plan, Goal, and Agent use one pi Agent; the Composer-left mode chip, UI
+   entry, and
+   `EnterPlanMode`/`EnterGoalMode` converge on the same planning state, and
+   approval resumes
+   that Agent in Agent mode
+10. Contract-mode policy permits Bash only through the selected permission mode
+   and
+   denies Write/Edit/plugins regardless of `auto` or session grants, in Goal
+   exactly as in Plan
+11. SubmitPlan/SubmitGoal writes an exact unique `.pi/<kind>/*.md` artifact with
+    hash/size,
+    keeps title/question structured, and only approve/reject can resolve its
+    `plan_approvals` row
+12. Expiry uses `PLAN_APPROVAL_TIMEOUT`; startup interruption, shell failure,
+    and process recovery are fail closed, and restart does not replay pending,
+    queued, or running work
+13. A Goal execution reports each acceptance criterion's outcome before ending
+    the turn, and a scheduled/unattended Goal run is rejected with
+    `PLAN_REQUIRES_INTERACTIVE_SESSION` exactly like Plan

@@ -1,49 +1,56 @@
-# ADR 0103: 紧凑的上下文用量摘要
+# ADR 0103: Compact context usage summary
 
 - Status: Accepted (amended by D347 / ADR 0184 and D355 / ADR 0193)
 - Date: 2026-08-18
 - Deciders: PI-Desktop renderer and UX maintainers
 - Amends: D103, D184, ADR 0047
 
-## 背景
+## Context
 
-上下文用量检查器暴露了有用的 token 数据，但其默认面板变成了一份
-密集的诊断报告：堆叠的 KPI 卡片、多个来源角标、provider 行、解释
-估算的文案，以及每个工具一行视觉行。这使一次快速的容量检查与会
-话本身争夺注意力。
+The context usage inspector exposed useful token data, but its default panel
+became a dense diagnostic report: stacked KPI cards, multiple source badges,
+provider rows, explanatory estimate copy, and one visual row for every tool.
+That made a quick capacity check compete with the conversation.
 
-## 决策
+## Decision
 
-1. 保留现有的点击/键盘触发、剩余容量状态、视口感知的 body
-   portal、外部点击关闭和 Escape 行为。
-2. 保留面板的核心摘要：剩余 token 和百分比、已用/窗口计数、轮次
-   总计、已完成轮次的生成速度、精确的 provider 用量值、聚合的工
-   具类型/调用/token 数，以及存在时最新的压缩摘要。D355 将占用
-   量、轮次总计和 provider 值限定为最后一次模型请求；速度和工具
-   保持为视觉轮次。
-3. 轮次和速度值渲染为无边框的内联统计。provider 和工具用量渲染
-   为两行紧凑摘要行，没有分区卡片或来源角标。聚合工具总计上的
-   `~` 标记仍是估算信号。
-4. 从默认面板移除按工具行、占比条、provider/工具来源角标、解释
-   估算的段落和已用容量仪表。底层的用量聚合和持久化保持不变，
-   因此这只是渲染进程的呈现工作。
-5. 保持触发器和面板的无障碍性：本地化标签、对话框语义、键盘激
-   活、Escape/外部关闭时的焦点返还，以及碰撞感知定位保持不变。
+1. Keep the existing click/keyboard trigger, remaining-capacity state,
+   viewport-aware body portal, outside-click dismissal, and Escape behavior.
+2. Keep the panel's core summary: remaining tokens and percentage,
+   used/window counts, turn total, completed-turn generation speed, exact
+   provider usage values, aggregate tool types/calls/tokens, and the newest
+   compaction summary when present. D355 scopes occupancy, turn total, and
+   provider values to the last model request; speed and tools stay the
+   visual turn.
+3. Render the turn and speed values as unboxed inline stats. Render provider and
+   tool usage as two compact summary rows without section cards or source
+   badges. The `~` marker on the aggregate tool total remains the estimate
+   signal.
+4. Remove per-tool rows, share bars, the provider/tool source badges, the
+   explanatory estimate paragraph, and the used-capacity meter from the
+   default panel. The underlying usage aggregation and persistence remain
+   unchanged, so this is renderer-only presentation work.
+5. Keep the trigger and panel accessible: localized labels, dialog semantics,
+   keyboard activation, focus return on Escape/outside dismissal, and collision-
+   aware placement remain unchanged.
 
-## 后果
+## Consequences
 
-- 例行的上下文检查装进一个短小、可扫读的面板，而不是一列高高的
-  诊断清单。
-- 精确的 provider 数据和聚合工具成本保持可见，而按工具的详细归
-  因不再是默认界面的一部分。
-- 无宿主协议、存储 schema、运行时记账或模型元数据契约变化。
-- E2E 和组件规范必须校验紧凑摘要，而不是被移除的诊断行。
+- A routine context check fits in a short, scannable panel instead of a tall
+  diagnostic list.
+- Exact provider data and aggregate tool cost remain visible, while detailed
+  per-tool attribution is no longer part of the default surface.
+- No host protocol, storage schema, runtime accounting, or model metadata
+  contract changes.
+- The E2E and component specifications must validate the compact summary rather
+  than the removed diagnostic rows.
 
-## 被拒绝的替代方案
+## Rejected alternatives
 
-- **保留所有行，只缩小字号：** 保留了密度问题，并使面板更难扫
-  读。
-- **完全移除工具用量：** 丢失"工具贡献了大型轮次"这一有用信
-  号；聚合行以低视觉成本保留了该信号。
-- **立即把所有细节藏到二级展开后：** 为一次状态检查增加额外交
-  互；推迟到用户证明需要钻取归因时再做。
+- **Keep all rows and only reduce font size:** preserves the density problem and
+  makes the panel harder to scan.
+- **Remove tool usage entirely:** loses the useful signal that tools contributed
+  to a large turn; the aggregate row keeps that signal at low visual cost.
+- **Move every detail behind a second disclosure immediately:** adds another
+  interaction to a status check and is deferred until users demonstrate a need
+  for drill-down attribution.

@@ -1,73 +1,80 @@
-# ADR 0027: 让 pi-ai 成为模型元数据的权威
+# ADR 0027: Make pi-ai authoritative for model metadata
 
-- 状态: 已接受
-- 日期: 2026-07-27
+- Status: Accepted
+- Date: 2026-07-27
 
-## 背景
+## Context
 
-PI-Desktop 此前从 pi-ai 读取推理提示，但重建了一个更小的运行时模型，
-带桌面端自有的默认值和 provider 级覆盖。因此已知模型丢失了 pi 的
-上下文窗口、输出上限、输入模式、定价、请求头和部分兼容性记录。
-Settings 还允许用户独立于所选模型替换推理支持、thinking 级别、
-上下文大小、输出大小和 temperature。
+PI-Desktop previously read reasoning hints from pi-ai but rebuilt a smaller
+runtime model with desktop-owned defaults and provider-level overrides. Known
+models therefore lost pi's context window, output limit, input modes, pricing,
+headers, and parts of their compatibility record. Settings also allowed users
+to replace reasoning support, thinking levels, context size, output size, and
+temperature independently from the selected model.
 
-这种分裂的所有权使模型行为取决于两套配置。它还要求 PI-Desktop 修补
-单个模型的语义，例如 MiMo 的 thinking 方言和 Claude 自适应 off 行为。
+That split ownership made model behavior depend on two configurations. It also
+required PI-Desktop to patch individual model semantics such as MiMo thinking
+dialects and adaptive Claude off behavior.
 
-## 决策
+## Decision
 
-对于从 pi-ai 内置目录解析出的每个模型，pi-ai 是模型元数据和兼容性
-行为的唯一权威。
+For every model resolved from pi-ai's built-in catalog, pi-ai is the sole
+authority for model metadata and compatibility behavior.
 
-- Electron 主进程解析一个完整的可序列化 pi 模型快照：名称、base
-  URL、推理标志、thinking 级别映射、输入模式、定价、上下文窗口、
-  输出上限、请求头和兼容性数据。
-- Sidecar 原样使用该快照，只替换运行时连接身份：所选模型 id、配置
-  的 provider id、所选 API 适配器和显式配置的端点 URL。
-- PI-Desktop 不改写已知模型的推理支持、thinking 级别、上下文上限、
-  输出上限、temperature 或兼容性标志。
-- Provider Settings 不再暴露模型参数覆盖，模型菜单不再为未知模型
-  启用推理。
-- pi 无法识别的自由形式模型 id 仍然允许。它使用显式的通用纯文本、
-  非推理回退和保守的运行时上限。这保留了开放的自定义 provider
-  路径，而不声称 pi 尚未发布的模型能力。
-- 缓存/发现的模型列表仍是选择和离线发现数据；它们不覆盖运行时
-  模型语义。
-- 对已知模型的修正属于上游 pi-ai 或 pi-ai 升级，而不是 PI-Desktop
-  的模型专属补丁。
+- Electron main resolves one complete serializable pi model snapshot: name,
+  base URL, reasoning flag, thinking-level map, input modes, pricing, context
+  window, output limit, headers, and compatibility data.
+- The sidecar uses that snapshot verbatim and replaces only the runtime
+  connection identity: selected model id, configured provider id, selected API
+  adapter, and an explicitly configured endpoint URL.
+- PI-Desktop does not rewrite known-model reasoning support, thinking levels,
+  context limits, output limits, temperature, or compatibility flags.
+- Provider Settings no longer expose model-parameter overrides, and the model
+  menu no longer enables reasoning for an unknown model.
+- A free-form model id that pi does not recognize remains allowed. It uses an
+  explicit generic text-only, non-reasoning fallback with conservative runtime
+  limits. This preserves the open custom-provider path without claiming model
+  capabilities that pi has not published.
+- Cached/discovered model lists remain selection and offline-discovery data;
+  they do not override runtime model semantics.
+- Corrections to a known model belong upstream in pi-ai or in a pi-ai upgrade,
+  not in a PI-Desktop model-specific patch.
 
-这取代 D102 和 D096/D107 的 provider 覆盖条款。它不改变 ADR 0018
-的持久会话 thinking 级别枚举或 transcript 处理。
+This supersedes D102 and the provider-override clauses of D096/D107. It does
+not change the durable session thinking-level enum or transcript handling from
+ADR 0018.
 
-## 后果
+## Consequences
 
-- 已知模型在原生和兼容端点上保留钉住的 pi-ai 版本发布的完整元数据。
-- PI-Desktop 少维护一个模型矩阵，也不会悄悄偏离 pi 的适配器。
-- 更新 pi-ai 可能有意改变可用的 thinking 级别或模型上限，必须由
-  目录解析测试覆盖。
-- 未知自定义模型仍可用于文本，但模型专属的推理、视觉、定价和大
-  上下文保证要等到 pi 识别它们。
-- 遗留的 provider 覆盖字段出于兼容性在持久化记录中可能仍然可读，
-  但不再影响运行时解析。
+- Known models retain the complete metadata shipped by the pinned pi-ai
+  version across native and compatible endpoints.
+- PI-Desktop has one less model matrix to maintain and cannot drift silently
+  from pi's adapters.
+- Updating pi-ai may intentionally change available thinking levels or model
+  limits and must be covered by catalog-resolution tests.
+- Unknown custom models remain usable for text, but model-specific reasoning,
+  vision, pricing, and large-context guarantees wait until pi recognizes them.
+- Legacy provider override fields may remain readable in persisted records for
+  compatibility, but they no longer affect runtime resolution.
 
-## 备选方案
+## Alternatives
 
-### 在 pi 元数据之上合并 provider 覆盖
+### Merge provider overrides over pi metadata
 
-否决，因为它保留双重所有权，并可能产生所选适配器或模型不支持的
-组合。
+Rejected because it preserves dual ownership and can produce combinations the
+selected adapter or model does not support.
 
-### 只从 pi 保留 thinking 兼容性
+### Keep only thinking compatibility from pi
 
-否决，因为它会继续丢弃上下文、输出、输入、定价和其他模型专属
-字段。
+Rejected because it continues discarding context, output, input, pricing, and
+other model-specific fields.
 
-### 拒绝未知模型 id
+### Reject unknown model ids
 
-否决，因为这会违反产品的自由形式自定义 provider 策略，并把内置
-目录变成封闭白名单。
+Rejected because it would violate the product's free-form custom-provider
+policy and turn the bundled catalog into a closed allowlist.
 
-## 参考
+## References
 
 - `docs/spec/03-runtime/02-agent-runtime.md`
 - `docs/spec/03-runtime/11-provider-model-system.md`

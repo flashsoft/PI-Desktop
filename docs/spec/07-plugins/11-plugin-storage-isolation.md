@@ -1,10 +1,10 @@
-# 11. 插件存储隔离
+# 11. Plugin Storage Isolation
 
-## 1. 目标
+## 1. Goals
 
-将插件数据与宿主核心数据隔离，避免交叉污染和未授权读取。
+Isolate plugin data from the host's core data to avoid cross-contamination and unauthorized reads.
 
-## 2. 目录布局
+## 2. Directory layout
 
 ```text
 ~/.pi-desktop/
@@ -19,7 +19,7 @@
  └── ...
 ```
 
-## 3. registry.json（逻辑模型）
+## 3. registry.json (logical model)
 
 ```ts
 type PluginRegistry = {
@@ -42,80 +42,81 @@ type PluginRegistry = {
 }
 ```
 
-## 4. 插件私有数据
+## 4. Plugin private data
 
-`pi.plugin.getDataPath()` 指向：
+`pi.plugin.getDataPath()` points to:
 
 ```text
 ~/.pi-desktop/plugins/data/<plugin-id>/
 ```
 
-用途：
-- 缓存
-- 本地索引
-- 大型插件配置文件
+Uses:
+- cache
+- local index
+- large plugin config files
 
-禁止：
-- 使用该 API 获取其他 pluginId 的路径
+Prohibited:
+- Using this API to obtain another pluginId's path
 
-## 5. 设置存储
+## 5. Settings storage
 
-插件设置可以存储在：
+Plugin settings can be stored in:
 
-- 宿主 DB 的 `kv` 表中该插件的命名空间下（03-runtime/04 §4.1）
-- 或插件数据目录下的 settings.json
+- The host DB's `kv` table under the plugin's namespace (03-runtime/04 §4.1)
+- Or settings.json under the plugin data directory
 
-推荐集中存储在宿主中，便于备份和卸载清理。
+Storing centrally in the host is recommended for easier backup and uninstall cleanup.
 
 ```ts
 // kv: ns = `plugin:<plugin-id>`, key, value_json, updated_at
 // uninstall cleanup = DELETE FROM kv WHERE ns = 'plugin:<plugin-id>'
 ```
 
-## 6. 日志隔离
+## 6. Log isolation
 
-每个插件拥有自己的日志通道：
-- 文件：`plugins/logs/<plugin-id>.log`
-- UI：可按插件过滤
+Each plugin has its own log channel:
+- File: `plugins/logs/<plugin-id>.log`
+- UI: filterable by plugin
 
-宿主核心日志不会写入插件文件。
+Host core logs are not written into plugin files.
 
-## 7. 会话与秘密隔离
+## 7. Session and secret isolation
 
-插件不能直接访问：
-- pi.sqlite（会话、设置、任何宿主表）
+Plugins cannot directly access:
+- pi.sqlite (sessions, settings, any host table)
 - secrets
 - provider key
-- 其他插件的私有 registry 数据
+- other plugins' private registry data
 
-经过评审的 `desktop.control` 网关现在提供有界的会话协作投影与变更目录。
-它不暴露宿主表、转录文件、凭据、Electron IPC 或 MCP bearer token。宿主
-从活跃的 Agent 工具调用推导来源身份，把投递与出处 ledger 持久化在
-host-core 中，并审计该插件操作；插件私有状态永远不会被当作授权或会话
-身份。
+The reviewed `desktop.control` gateway now offers the bounded session
+collaboration projection and mutation catalog. It does not expose host tables,
+transcript files, credentials, Electron IPC, or the MCP bearer token. The host
+derives source identity from the active Agent tool invocation, persists the
+delivery and provenance ledger in host-core, and audits the plugin operation;
+plugin-private state is never treated as authorization or session identity.
 
-## 8. 卸载清理策略
+## 8. Uninstall cleanup policy
 
-默认：
-- 删除已安装代码
-- 删除数据
-- 删除日志（或保留最近一份）
+Default:
+- Delete installed code
+- Delete data
+- Delete logs (or keep the most recent one)
 
-高级：
-- 保留数据
+Advanced:
+- Keep data
 
-## 9. 备份建议
+## 9. Backup suggestions
 
-未来的导出/备份可以拆分为：
-- 仅宿主配置
-- 宿主配置 + 插件列表
-- 完整（包含插件数据）
+A future export/backup can be split into:
+- Host config only
+- Host config + plugin list
+- Full (including plugin data)
 
-MVP 不实现完整的备份协议；只预留目录边界。
+The MVP does not implement a full backup protocol; it only reserves directory boundaries.
 
-## 10. 验收
+## 10. Acceptance
 
-1. 插件只能写入自己的数据目录
-2. 卸载后按策略清理数据
-3. registry 可以恢复已安装列表
-4. 插件日志可以单独查看
+1. A plugin can only write to its own data directory
+2. Data is cleaned up per policy after uninstall
+3. The registry can restore the installed list
+4. Plugin logs can be viewed separately

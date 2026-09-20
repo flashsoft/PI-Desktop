@@ -1,45 +1,52 @@
-# ADR 0079: 使用 VitePress 构建双语文档站点
+# ADR 0079: Use VitePress for the bilingual documentation site
 
 - **Status:** Accepted
 - **Date:** 2026-08-13
 
-## 背景
+## Context
 
-仓库中的规范、ADR、项目笔记和插件编写资料在不断增长。纯 Markdown
-文件便于评审，但当前目录缺少共享导航、本地搜索、响应式阅读体验
-以及清晰的语言入口。
+The repository has a growing set of specifications, ADRs, project notes, and
+plugin authoring material. Plain Markdown files are easy to review, but the
+current directory has no shared navigation, local search, responsive reading
+experience, or clear language entry point.
 
-## 决策
+## Decision
 
-将 `docs/` 设为 pnpm workspace 中一个独立的 VitePress 项目。保留
-现有 Markdown 文件作为事实来源，并添加一个自定义响应式主题，提供
-本地搜索、英文与简体中文语言入口以及精心组织的导航。
+Make `docs/` a standalone VitePress project in the pnpm workspace. Keep the
+existing Markdown files in place as the source of truth and add a custom,
+responsive theme with local search, English and Simplified Chinese locale
+entry points, and curated navigation.
 
-英文站点是完整的，并保持为权威版本。中文站点提供翻译后的导览、
-主题地图，以及与每份规范逐路径对应的完整配套页面。翻译页面保留
-代码和协议标识符，带有指向对应英文源文件的可见链接，并使用相同
-的生成式侧边栏结构，使覆盖缺口可被检测。
+The English site is complete and remains canonical. The Chinese site provides a
+translated orientation, topic map, and a complete path-for-path companion for
+every specification. Translated pages preserve code and protocol identifiers,
+carry a visible link to the matching English source, and use the same generated
+sidebar structure so coverage gaps are detectable.
 
-共享主题在落地页、指南、规范、ADR、项目和插件页面中使用同一套
-居中布局系统。阅读宽度独立于侧边栏和大纲栏进行约束；表格和代码
-块在该宽度内滚动。首页在移动端保持文本位于系统视觉图之前，并支
-持浅色和深色外观且无水平溢出。
+The shared theme uses one centered layout system across landing, guide,
+specification, ADR, project, and plugin pages. Reading width is bounded
+independently from the sidebar and outline rails; tables and code blocks scroll
+inside that width. The homepage keeps its text before the system visual on
+mobile and supports light and dark appearance without horizontal overflow.
 
-## 后果
+## Consequences
 
-- 贡献者可以使用 `pnpm docs:*` 命令运行、构建和预览文档。
-- 文档拥有稳定的静态站点形态，无需引入服务器运行时。
-- 新的用户可见文档行为必须纳入 E2E 测试计划。
-- 英文仍是规范、ADR、协议术语和面向代码的文档的权威语言。
-- 改变行为的英文规范修改必须在同一次逻辑改动中更新其中文配套
-  页面。
-- VitePress 成为开发依赖，docs 包加入现有的 pnpm workspace。
+- Contributors can run, build, and preview the docs with `pnpm docs:*` commands.
+- Documentation has a stable static site shape without adding a server runtime.
+- New user-visible documentation behavior must be covered in the E2E test plan.
+- English remains the canonical language for specs, ADRs, protocol terms, and
+  code-facing documentation.
+- A behavior-changing English specification edit must update its Chinese
+  companion in the same logical change.
+- VitePress becomes a development dependency and the docs package joins the
+  existing pnpm workspace.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- 仅保留纯 Markdown：保持最小工具链，但无法解决导航、搜索、
-  响应式呈现或双语入口问题。
-- 只翻译导览和主题落地页：降低维护成本，但当读者进入技术细节
-  时中文导航会恰好切回英文，且语言覆盖情况无法验证。
-- 使用托管文档平台：引入外部发布依赖，并使本地预览与仓库源码
-  的代表性降低。
+- Keep plain Markdown only: preserves the smallest toolchain, but does not
+  solve navigation, search, responsive presentation, or bilingual entry points.
+- Translate only orientation and topic landing pages: lowers maintenance cost,
+  but makes Chinese navigation switch back to English precisely when a reader
+  reaches the technical detail and leaves locale coverage impossible to verify.
+- Use a hosted docs platform: adds an external publishing dependency and makes
+  local preview less representative of the repository source.

@@ -1,104 +1,114 @@
-# ADR 0016: 围绕保留的多项目标签页组织侧边栏
+# ADR 0016: Organize the sidebar around retained multi-project tabs
 
-- 状态: 已接受
-- 日期: 2026-07-26
+- Status: Accepted
+- Date: 2026-07-26
 
-## 背景
+## Context
 
-D088 用一个当前项目组加无路径的 Temporary 会话替换了混合的
-Recents 列表。这让 workspace 边界可见了，但也迫使每次项目切换都
-替换唯一的项目组，并移除了基本的组织控件。跨多个仓库工作的用户
-需要在侧边栏中保留这些项目、折叠不活跃的分组，以及在不删除持久
-数据的情况下固定或归档项目和会话行。
+D088 replaced the mixed Recents list with one current-project group plus
+path-less Temporary sessions. That made the workspace boundary visible, but it
+also forced every project switch to replace the only project group and removed
+basic organization controls. A user working across several repositories needs
+to retain those projects in the sidebar, collapse inactive groups, and pin or
+archive project and conversation rows without deleting durable data.
 
-宿主目前通过 `workspace.set`（渲染进程桥接层为 `project.set`）暴露
-一个选中的 workspace。Agent turns、权限和 transcripts 已经按会话
-键控。用一个多 workspace 单例替换宿主 workspace 会扩大特权状态
-接口面，并使后台工具执行取决于渲染进程最近选中了哪个标签页。
+The host currently exposes one selected workspace through `workspace.set`
+(`project.set` at the renderer bridge). Agent turns, permissions, and
+transcripts are already keyed by session. Replacing the host workspace with a
+multi-workspace singleton would enlarge the privileged-state surface and make
+background tool execution depend on whichever tab the renderer selected most
+recently.
 
-## 决策
+## Decision
 
-### 保留的项目标签页
+### Retained project tabs
 
-- 渲染进程保留一个有序的、规范化项目路径集合。每个保留的路径在
-  侧边栏中显示为一个可独立折叠的项目组。无路径的 Temporary 组
-  保持独立。
-- 打开一个项目会添加其路径而不关闭其他标签页。选中一个标签页
-  通过现有的 `project.set` 操作激活该路径。宿主仍然恰好有一个
-  活跃 workspace 作为可见的外壳上下文。
-- 关闭标签页只移除其保留的侧边栏条目。它不归档项目、不删除会话、
-  也不移除宿主拥有的 `projects` 行。当活跃标签页关闭时，渲染进程
-  激活剩余的标签页或清除选中的 workspace。
+- The renderer retains an ordered set of normalized project paths. Every
+  retained path appears as an independently collapsible project group in the
+  sidebar. A path-less Temporary group remains separate.
+- Opening a project adds its path without closing other tabs. Selecting a tab
+  activates that path through the existing `project.set` operation. The host
+  still has exactly one active workspace for visible shell context.
+- Closing a tab removes only its retained sidebar entry. It does not archive
+  the project, delete sessions, or remove the host-owned `projects` row. When
+  the active tab closes, the renderer activates a remaining tab or clears the
+  selected workspace.
 
-### 渲染进程拥有的组织元数据
+### Renderer-owned organization metadata
 
-- 项目元数据以规范化完整路径为键，包含 `pinned`、`archived`、
-  `collapsed` 和可选的手动 `order`。
-- 会话元数据以持久的 session id 为键，包含 `pinned`、`archived`
-  和可选的手动 `order`。
-- 面向用户的侧边栏排序支持 `recent`、`created`、`oldest` 和
-  `name`。固定的行始终排在未固定的行之前；所选排序是次级次序。
-  持久化的 `manual` 值和可选的 `order` 字段出于兼容性保留，但本
-  决策不引入拖拽或其他手动重排交互；没有显式先前次序的行使用
-  稳定的 recent-order 回退。
-- 归档是非破坏性的。归档的行默认被隐藏，可通过显式的归档视图
-  恢复。删除仍是一个独立的宿主操作。
-- 展示记录是尽力而为的渲染进程本地存储。它不包含 transcript、
-  工具参数、provider 密钥或其他特权数据。
+- Project metadata is keyed by normalized full path and contains
+  `pinned`, `archived`, `collapsed`, and optional manual `order`.
+- Conversation metadata is keyed by durable session id and contains
+  `pinned`, `archived`, and optional manual `order`.
+- User-facing sidebar ordering supports `recent`, `created`, `oldest`, and
+  `name`. Pinned rows always precede unpinned rows; the selected sort is the
+  secondary order. A persisted `manual` value and optional `order` fields are
+  retained for compatibility, but this decision does not introduce drag or
+  other manual-reorder interaction; rows without an explicit prior order use
+  the stable recent-order fallback.
+- Archive is non-destructive. Archived rows are omitted by default and
+  recoverable through the explicit archived view. Delete remains a separate
+  host operation.
+- The presentation record is best-effort renderer local storage. It contains
+  no transcript, tool argument, provider secret, or other privileged data.
 
-### 会话 workspace 隔离
+### Session workspace isolation
 
-- 与会话关联的项目是该会话工具根目录的权威。`tools.execute` 从
-  持久化的 `session.projectPath`/`project_id` 解析 workspace，
-  而不是从可变的活跃标签页解析。
-- 选择另一个项目或会话永远不会中止正在运行的 turn。每个会话的
-  运行状态和授权保持独立，后台工具调用仍被沙箱限制在发起会话的
-  项目内。
-- Temporary 会话没有项目根目录。切换到 Temporary 会话会清除可见
-  的活跃 workspace，并且不继承先前选中项目的工具访问权。
+- The project associated with a session is the authority for that session's
+  tool root. `tools.execute` resolves the workspace from the persisted
+  `session.projectPath`/`project_id`, not from the mutable active tab.
+- Selecting another project or conversation never aborts a running turn.
+  Per-session run state and grants remain independent, and background tool
+  calls remain sandboxed to the originating session's project.
+- Temporary sessions have no project root. Switching to a Temporary
+  conversation clears the visible active workspace and does not inherit the
+  previously selected project's tool access.
 
-这取代了 D088 的单当前项目和禁止多项目树的限制，并恢复了随 D068
-一起被取代的、按作用域划分的项目/会话行操作。D088 的精确路径
-分组、按作用域的草稿复用和 Temporary 会话边界仍然有效。不需要
-新的渲染进程 IPC 通道。
+This supersedes D088's one-current-project and no-multi-project-tree
+limitations, and restores scoped project/conversation row actions superseded
+with D068. D088's exact-path grouping, scoped draft reuse, and Temporary
+session boundary remain in force. No new renderer IPC channel is required.
 
-## 后果
+## Consequences
 
-- 侧边栏可以在一个可独立滚动的区域内显示多个项目组，而主面板
-  仍只显示一个目标页/transcript。
-- 当渲染进程偏好可用时，项目/会话的固定、归档、折叠、排序和
-  打开路径在应用重启后仍然保留。清除这些偏好只重置展示；宿主
-  拥有的项目和会话保持完好。
-- 激活一个缺失或不可访问的保留路径会报告现有的 workspace 错误，
-  而不会悄悄删除该标签页或其会话。
-- 宿主工具执行必须先加载会话再解析其 workspace。兼容窗口期内，
-  没有持久会话的遗留调用可以回退到选中的宿主 workspace。
-- Projects 索引仍是持久的项目目录，也是已关闭或已归档侧边栏
-  标签页的恢复路径。
+- The sidebar can show several project groups in one independently scrollable
+  region while the main pane still shows one destination/transcript.
+- Project/session pin, archive, collapse, sort, and open paths
+  survive app restart when renderer preferences are available. Clearing those
+  preferences resets presentation only; host-owned projects and sessions stay
+  intact.
+- Activating a missing or inaccessible retained path reports the existing
+  workspace error without silently deleting the tab or its sessions.
+- Host tool execution must load the session before resolving its workspace.
+  Legacy calls without a durable session may fall back to the selected host
+  workspace during the compatibility window.
+- The Projects index remains the durable project directory and the recovery
+  path for closed or archived sidebar tabs.
 
-## 备选方案
+## Alternatives
 
-### 只保留一个项目组
+### Keep exactly one project group
 
-否决，因为它在每次项目切换时丢弃工作集，使并行会话工作变得
-笨拙。
+Rejected because it discards the working set on every project switch and makes
+parallel session work cumbersome.
 
-### 把归档和固定标志存入宿主 schema
+### Store archive and pin flags in the host schema
 
-本轮否决，因为这些标志只影响本地展示。持久的项目/会话身份和
-删除仍属于宿主。
+Rejected for this iteration because the flags affect only local presentation.
+Durable project/session identity and deletion continue to belong to the host.
 
-### 每个打开的标签页对应一个宿主 workspace
+### Add one host workspace per open tab
 
-否决，因为只有工具执行需要 workspace 根目录，而持久会话已经
-能标识它。第二个宿主 workspace 注册表会复制项目/会话状态。
+Rejected because only tool execution needs a workspace root, and the durable
+session already identifies it. A second host workspace registry would
+duplicate project/session state.
 
-### 每个项目在独立的原生窗口中打开
+### Open each project in a separate native window
 
-否决，因为它会使窗口/进程状态成倍增加，并且不能解决主工作台中
-的会话组织问题。
+Rejected because it multiplies window/process state and does not solve
+conversation organization in the primary workbench.
 
-## 参考
+## References
 
 - `docs/spec/03-runtime/03-tools-and-permissions.md`
 - `docs/spec/03-runtime/04-data-storage.md`

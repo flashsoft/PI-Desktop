@@ -1,75 +1,87 @@
-# ADR 0060: 在 RPC 锁下归档 Regenerate 分支
+# ADR 0060: Archive the Regenerate Branch Under the RPC Lock
 
-- 状态： 已接受
-- 日期： 2026-08-06
-- 决策者： PI-Desktop 核心
-- 相关： D119（transcript 文件存储）、D109（regenerate 历史分页器）、
-  ADR 0041（解耦消息持久化）
+- Status: Accepted
+- Date: 2026-08-06
+- Deciders: PI-Desktop core
+- Related: D119 (transcript file store), D109 (regenerate history pager),
+  ADR 0041 (decoupled message persistence)
 
-## 背景
+## Context
 
-Electron 主进程中的轮次完成逻辑用一次跨四个宿主调用的读-改-写来归档已完成
-的 regenerate 分支：`session.get`、`session.listRevisions`、
-`session.saveRevision`，然后是 `session.replaceMessages`，用来在用户根上打
-印分页器元数据（`revisionRootId` / `revisionCount` / `activeRevision`）。
+Turn completion in Electron main archived the finished regenerate branch with a
+read-modify-write across four host calls: `session.get`, `session.listRevisions`,
+`session.saveRevision`, then `session.replaceMessages` to stamp pager metadata
+(`revisionRootId` / `revisionCount` / `activeRevision`) on the user root.
 
-assistant 与 tool 消息不走这条路径。它们经由应用持有的
-`PersistenceOutbox`（ADR 0041），通过 `session.appendMessage` 异步到达
-SQLite。因此两条路径竞争，`session.get` 可能观测到比它正在归档的轮次少一
-条消息的 transcript。
+Assistant and tool messages do not take that path. They travel through the
+app-owned `PersistenceOutbox` (ADR 0041) and reach SQLite asynchronously through
+`session.appendMessage`. The two paths therefore race, and `session.get` can
+observe a transcript that is one message short of the turn it is archiving.
 
-`session.replaceMessages` 是整 transcript 重写：它删除会话的所有索引行，
-并从调用方的数组重写 transcript 文件。在 outbox 冲刷完成之前拍摄的快照会
-被作为事实写回，因此其间追加的消息会从 transcript 文件和索引中同时被删
-除。一个已观测到的会话正是这样丢失了最后的 assistant 消息——模型调用成
-功（`outcome=ok`、`providerStatus=200`），追加也成功了，而仅为打印的重写在
-62 ms 之后从过期快照落地。这次重写还丢弃了每行的 `turn_id`，因为重新插入
-的索引行没有携带轮次归属。
+`session.replaceMessages` is a whole-transcript rewrite: it deletes every index
+row for the session and rewrites the transcript file from the caller's array. A
+snapshot taken before the outbox drained is written back as the truth, so the
+message appended in between is deleted from both the transcript file and the
+index. One observed session lost its final assistant message exactly this way —
+the model call succeeded (`outcome=ok`, `providerStatus=200`), the append
+succeeded, and the stamp-only rewrite landed 62 ms later from a stale snapshot.
+The rewrite also dropped `turn_id` on every row, because the reinserted index
+rows carried no turn attribution.
 
-在那个案例中写入的元数据是空操作：根已携带预期的 `revisionCount` /
-`activeRevision`。一次只为幂等打印的重写摧毁了一条消息。
+The metadata being written was a no-op in that case: the root already carried
+the intended `revisionCount` / `activeRevision`. A rewrite whose only purpose is
+an idempotent stamp destroyed a message.
 
-## 决策
+## Decision
 
-1. 轮次完成调用一个新的宿主方法 `session.saveActiveRevision`，它在持有宿主
-   状态锁的同时，在单个 RPC 内完成读取、归档与打印。没有 transcript 快照
-   跨越进程边界，也不存在让并发 `session.appendMessage` 被覆盖的窗口。
-2. 分页器打印恰好重写一行 transcript（`transcripts::update_message`），其
-   他每一行原样复制。文件在该函数内重新读取，因此在任何调用方自己的读取
-   之后追加的行都能存活。元数据打印再也不能让 transcript 付出最新消息的
-   代价。
-3. Electron 主进程在调用之前冲刷持久化 outbox，并在 outbox 无法冲刷时跳过
-   归档（带警告）。一旦用户翻回某个分支，不完整的分支归档会永远静默出
-   错，所以不归档是更好的失败。
-4. `session.replaceMessages` 在重写后保留每条幸存消息的所属 `turn_id`。
-   剩余调用方（regenerate 截断、工具评审状态）不再从索引剥离轮次归属。
-5. `session.replaceMessages` 被文档化为只对在调用期间持有整个 transcript
-   的调用方安全。从 Electron 主进程对它做读-改-写不是受支持的模式。
-6. 新方法是加法式的，协议版本保持 9。宿主与 Electron 在同一产物中发布，
-   没有该方法的宿主会让调用失败，而调用方已把这种情况记录为跳过归档而不
-   是当作数据丢失。v9 客户端依赖的任何东西都不变。
+1. Turn completion calls one new host method, `session.saveActiveRevision`,
+   which performs read, archive, and stamp inside a single RPC while holding the
+   host state lock. No transcript snapshot crosses a process boundary and no
+   window exists for a concurrent `session.appendMessage` to be overwritten.
+2. The pager stamp rewrites exactly one transcript line
+   (`transcripts::update_message`), copying every other line through verbatim.
+   The file is re-read inside that function, so a line appended after any
+   caller's own read survives. A metadata stamp can no longer cost the
+   transcript its newest messages.
+3. Electron main drains the persistence outbox before calling, and skips the
+   archive (with a warning) when the outbox cannot be drained. An incomplete
+   branch archive is silently wrong forever once a user pages back to it, so
+   not archiving is the better failure.
+4. `session.replaceMessages` keeps each surviving message's owning `turn_id`
+   across the rewrite. Remaining callers (regenerate truncation, tool review
+   state) no longer strip turn attribution from the index.
+5. `session.replaceMessages` is documented as safe only for a caller that owns
+   the whole transcript for the duration of the call. Read-modify-write over it
+   from Electron main is not a supported pattern.
+6. The new method is additive and the protocol version stays at 9. Host and
+   Electron ship in one artifact, and a host without the method fails the call,
+   which the caller already logs as a skipped archive rather than treating as
+   data loss. Nothing a v9 client relies on changes.
 
-## 已考虑的备选方案
+## Alternatives considered
 
-- **等待 outbox 并保留四调用重写：** 缩小窗口但不关闭它。追加路径上的任
-  何未来写入者都会重新打开它，且破坏性原语仍留在轮次完成路径中。已拒绝。
-- **通过定向 `session.updateMessage` RPC 打印，并把归档留在 Electron：**
-  仍是两次宿主调用，且归档在锁外读取快照，所以即使存活 transcript 幸存，
-  归档的分支仍可能缺少最后一条消息。已拒绝。
-- **让 `session.replaceMessages` 合并未知的更新消息：** 在一个契约是"这就
-  是 transcript"的方法中做隐式合并，会让 regenerate 截断无法删除任何东
-  西。已拒绝。
-- **把协议版本提升到 10：** 不会换来任何协商，因为握手已要求一起发布的组
-  件之间精确相等，还迫使编辑五个无关的冻结契约守卫。已拒绝。
+- **Await the outbox and keep the four-call rewrite:** narrows the window but
+  does not close it. Any future writer on the append path reopens it, and the
+  destructive primitive stays in the turn-completion path. Rejected.
+- **Stamp through a targeted `session.updateMessage` RPC and keep the archive
+  in Electron:** still two host calls with the archive reading a snapshot from
+  outside the lock, so the archived branch can miss the final message even
+  though the live transcript survives. Rejected.
+- **Make `session.replaceMessages` merge unknown newer messages:** an implicit
+  merge in a method whose contract is "this is the transcript" would make
+  regenerate truncation unable to delete anything. Rejected.
+- **Bump the protocol version to 10:** buys no negotiation because handshake
+  already requires exact equality between components that ship together, and
+  forces edits to five unrelated frozen-contract guards. Rejected.
 
-## 后果
+## Consequences
 
-- 在 regenerate 之后完成的轮次不再可能丢失最后的 assistant 消息，归档的
-  分支包含完整轮次。
-- `turn_id` 在 transcript 重写后存活，因此按轮次查询与诊断在 regenerate 与
-  工具评审更新之后保持准确。
-- Electron 主进程持有更少的 transcript 逻辑：分支根查找、修订索引运算与打
-  印现在位于 host-core 并带单元测试，其中包括一个在归档读取之后追加消息的
-  测试。
-- 已被之前行为丢失的数据不可恢复；该消息在重写后的 transcript 与归档的修
-  订负载中都不存在。
+- A turn that completes after a regenerate can no longer lose its final
+  assistant message, and archived branches contain the whole turn.
+- `turn_id` survives transcript rewrites, so per-turn queries and diagnostics
+  stay accurate after regenerate and tool review updates.
+- Electron main holds less transcript logic: the branch root search, the
+  revision index arithmetic, and the stamp now live in host-core with unit
+  tests, including one that appends a message after the archive's read.
+- Data already lost to the previous behavior is not recoverable; the message is
+  absent from both the rewritten transcript and the archived revision payload.

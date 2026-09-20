@@ -1,35 +1,43 @@
-# ADR 0295: 会话 thinking 参数省略
+# ADR 0295: Session thinking-parameter omission
 
-- 状态：已接受
-- 日期：2026-09-20
-- 决策者：PI-Desktop 运行时与 UX 维护者
-- 修订：ADR 0194、ADR 0144、ADR 0221
-- 相关：D456、E2E-203a
+- Status: Accepted
+- Date: 2026-09-20
+- Deciders: PI-Desktop runtime and UX maintainers
+- Amends: ADR 0194, ADR 0144, ADR 0221
+- Related: D456, E2E-203a
 
-## 背景
+## Context
 
-子代理已经提供 `thinkingLevel: omit`（ADR 0194）：agent 簿记状态保持
-`off`，但请求使用低层 provider 流，因此不合成任何 thinking 覆盖。会话此前
-只接受七个规范等级。显式的 `off` 与省略该参数并不等价；适配器经常把
-`off` 序列化为 `reasoning_effort: "none"` 或 `thinking: disabled`。用户需要
-在 Composer 的模型 × 推理菜单上有这第三种选择。
+Subagents already offer `thinkingLevel: omit` (ADR 0194): the agent bookkeeping
+state stays `off`, but the request uses the low-level provider stream so no
+thinking override is synthesized. Sessions only accepted the seven canonical
+levels. Explicit `off` is not equivalent to omitting the parameter; adapters
+often serialize `off` as `reasoning_effort: "none"` or `thinking: disabled`.
+Users need that third choice on the Composer model × reasoning menu.
 
-## 决策
+## Decision
 
-1. 在七个规范等级之外，持久化 `omit` 作为一种会话 `thinkingLevel`。模型
-   绑定的 `thinkingLevels` 和目录能力列表保持为七个规范值；`omit` 是客户
-   端选择器，不是已发布的能力。
-2. 只要所选模型暴露至少一个已启用的规范等级，Composer 推理菜单就在前面
-   追加 `omit`。徽标渲染规范字符串 `omit`（ADR 0221）。非推理模型保持仅
-   `off` 的菜单。
-3. 运行时钳制在推理模型上保留 `omit`，否则映射为 `off`。agent 簿记保持
-   `off`；父级流使用与子代理相同的低层省略路径
-   （`thinkingLevelMap.off = null`）。
-4. Schema v19 重建 `sessions`，使 CHECK 包含 `omit`。握手协议版本不变。
+1. Persist `omit` as a session `thinkingLevel` alongside the seven canonical
+   levels. Model-binding `thinkingLevels` and catalog capability lists remain
+   the seven canonical values; `omit` is a client selector, not a published
+   capability.
+2. The Composer reasoning menu prepends `omit` whenever the selected model
+   exposes at least one enabled canonical level. The chip renders the
+   canonical string `omit` (ADR 0221). Non-reasoning models keep an `off`-only
+   menu.
+3. Runtime clamping preserves `omit` on a reasoning model and maps it to `off`
+   otherwise. Agent bookkeeping stays `off`; the parent stream uses the same
+   low-level omit path as subagents (`thinkingLevelMap.off = null`).
+4. Schema v19 rebuilds `sessions` so the CHECK includes `omit`. Handshake protocol version is unchanged.
+5. Settings `defaultThinkingLevel` accepts `omit` when the binding enables any
+   canonical reasoning level, so new sessions can start without a thinking
+   override. Capability chips stay canonical; an off-only binding still
+   rejects `omit`.
 
-## 后果
+## Consequences
 
-- Composer 可以让 provider 适配器的默认 thinking 行为保持控制，而不必禁用
-  thinking。
-- 现有会话保留其存储的规范等级。
-- 子代理继承父级的 `omit` 时继续保持省略。
+- Composer can leave the provider adapter's default thinking behavior in
+  control without disabling thinking.
+- Existing sessions keep their stored canonical levels.
+- Subagent inherit of a parent `omit` continues to omit.
+- A reasoning model's Settings default can be `omit`; new sessions inherit it.

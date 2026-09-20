@@ -1,210 +1,244 @@
-# ADR message-quotes-and-side-chats: 消息引用与渲染进程所有的侧边聊天
-> 已被 ADR 0268 取代。
+# ADR message-quotes-and-side-chats: Message Quotes and Renderer-Owned Side Chats
+> Superseded by ADR 0268.
 
-- 状态：已被 ADR 0268 取代
-- 日期：2026-09-11
-- 决策者：PI-Desktop 运行时与桌面 UI 维护者
-- 修订：D209、D301
-- 保留：D097、D128、D134、D154
-- 相关：[04-ux/08-component-spec.md](../spec/04-ux/08-component-spec.md) ·
+- Status: Superseded by ADR 0268
+- Date: 2026-09-11
+- Deciders: PI-Desktop runtime and desktop UI maintainers
+- Amends: D209, D301
+- Preserves: D097, D128, D134, D154
+- Related: [04-ux/08-component-spec.md](../spec/04-ux/08-component-spec.md) ·
   [04-ux/09-interaction-patterns.md](../spec/04-ux/09-interaction-patterns.md) ·
   [04-ux/01-ui-ia.md](../spec/04-ux/01-ui-ia.md) ·
   [06-delivery/04-e2e-test-plan.md](../spec/06-delivery/04-e2e-test-plan.md) ·
-  E2E-CHAT-quote-prefill、E2E-CHAT-side-chat-fork、E2E-CHAT-side-chat-stream、E2E-CHAT-side-chat-add-to-main、E2E-CHAT-side-chat-promote、E2E-CHAT-side-chat-close ·
-  修订案：D-LOCAL-selection-overlay、E2E-CHAT-selection-markdown
+  E2E-CHAT-quote-prefill, E2E-CHAT-side-chat-fork, E2E-CHAT-side-chat-stream, E2E-CHAT-side-chat-add-to-main, E2E-CHAT-side-chat-promote, E2E-CHAT-side-chat-close ·
+  Amendment: D-LOCAL-selection-overlay, E2E-CHAT-selection-markdown
 
-## 背景
+## Context
 
-一段长对话中带有用户想要复用的早期提示和回答。手动复制或重新粘贴到
-输入框是目前唯一的交付路径，而重读一段回答来转述它会丢失下一轮应当
-引用的精确措辞。
+A long conversation carries earlier prompts and answers the user wants to reuse.
+Copying them by hand or re-pasting into the composer is the only shipped path,
+and re-reading an answer to paraphrase it loses the exact wording the next turn
+should reference.
 
-现有的 `session.fork`（ADR 0023、D134）已经能从锚点消息产生一个独立的
-持久子会话，但每一个使用它的对话框都会激活该子会话。这对于用户想要继续
-的分叉是正确的，而对于一个顺带的问题则是错误的：fork 会替换可见的主
-对话，主转录离开屏幕，再回来要付出一次会话切换的成本。
+The existing `session.fork` (ADR 0023, D134) already produces an independent
+durable child from an anchor message, but every dialog that uses it activates
+the child. That is correct for a divergence the user wants to continue, and
+wrong for a side question: the fork replaces the visible main conversation, the
+main transcript leaves the screen, and coming back costs a session switch.
 
-## 决策
+## Decision
 
-1. 每一条用户消息和每一个 assistant 轮次在其悬停操作行中获得一个
-   **引用** 操作，与复制、编辑、删除、分叉和重试并列。
-2. 引用通过现有的输入框预填充契约，把该消息的 Markdown 引用块插入活跃
-   会话的输入框草稿，然后聚焦输入框。它绝不发送提示、绝不创建会话、
-   也不向转录写入任何内容。当实时文本选区位于被点击的消息行内时，摘录
-   使用该选区，否则使用消息自身的文本（对 assistant 轮次，即其回答
-   文本）。
-3. 引用文本为每行摘录前缀 `> `、一个空行，然后是由 `chat.quoteSource`
-   渲染的归属行（"Quoted from {{title}}"；中文为"引用自 {{title}}"），
-   其中标题是来源会话的标题。摘录上限为 2000 字符，超出时以省略号结尾。
-   引用是普通草稿文本：D209 的智能 Stop 仍会恢复未获回答的发送，D301
-   的按会话草稿保留不变。引用不新增输入框 chip 类型，也不新增文件引用。
-4. **打开侧边聊天** 在 assistant 轮次上提供（以该 assistant 消息为锚点
-   fork），也在用户消息上提供（以该用户消息为锚点 fork），工具提示与
-   无障碍名称为 `chat.startSideChat`。它打开一个以所选消息为锚点的
-   仅渲染进程草稿。打开和输入不会调用 `session.fork`。第一次显式的
-   非空 Send 会 fork 子会话但不激活它，然后通过现有的提示路径发送。
-   并发发送共享一次创建。产生的子会话是持久的。
-5. 在第一次 Send 之前，工作面板使用一个仅渲染进程的草稿 id。创建会把
-   该标签页就地替换为 `sidechat:<childSessionId>`，包括父会话保留的
-   面板上下文。创建期间切换会话或关闭不得重新打开面板。草稿文本存于
-   侧边聊天条目中，在面板切换和创建/发送失败后存活，并且只有在用户
-   期间没有编辑过它时才在接受后清空。
+1. Every user message and every assistant turn gains a **Quote** action in its
+   hover action row, beside Copy, Edit, Delete, Fork, and Retry.
+2. Quote inserts a Markdown blockquote of the message into the composer draft
+   of the active session through the existing composer-prefill contract and then
+   focuses the composer. It never sends a prompt, never creates a session, and
+   writes nothing to the transcript. The excerpt is the live text selection when
+   that selection is inside the clicked message row, otherwise the message's own
+   text (for an assistant turn, its answer text).
+3. Quote text is `> ` per excerpt line, one blank line, then the attribution
+   line rendered from `chat.quoteSource` ("Quoted from {{title}}"; Chinese
+   "引用自 {{title}}"), where the title is the source session's title. The
+   excerpt is capped at 2000 characters with a trailing ellipsis. The quote is
+   ordinary draft text: D209's smart Stop still restores an unanswered send and
+   D301's per-session draft retention is unchanged. Quoting adds no composer
+   chip kind and no file reference.
+4. **Open side chat** is offered on an assistant turn (fork anchored at that
+   assistant message) and on a user message (fork anchored at that user
+   message), with the tooltip and accessible name `chat.startSideChat`. It opens
+   a renderer-only draft anchored at the selected message. Opening and
+   typing do not call `session.fork`. First explicit Send with nonempty text
+   forks the child without activating it, then sends through the existing prompt
+   path. Concurrent sends share one creation. The resulting child is durable.
+5. Before first Send the work panel uses a renderer-only draft id. Creation
+   replaces that tab with `sidechat:<childSessionId>` in place, including the
+   parent's retained panel context. Switching sessions or closing during
+   creation must not reopen a panel. Draft text lives in the side-chat entry,
+   survives panel switches and failed creation/sends, and is cleared after
+   acceptance only if the user has not edited it in the meantime.
 
-6. 当侧边聊天已注册时，子会话的 agent 事件从活跃转录所消费的同一个
-   事件流（消息和工具开始/更新/结束）投影到一个渲染进程所有的按会话
-   转录映射中，复用现有的后台转录 reducer。因此即使子会话从来不是
-   应用的活跃会话，面板也会实时流式更新。
-7. 面板内容：一个紧凑的头部，带有侧边聊天标题、"添加到主聊天"
-   （`sideChat.addToMain`）、"作为会话打开"（`sideChat.openAsSession`）
-   和共享的标签页关闭控件；用现有转录组件渲染的子会话转录；当子会话
-   请求批准或提问时显示现有的权限卡和询问卡（两者都已按请求自己的
-   会话 id 解析），因此需要回答的子会话绝不会被卡在一个不可见的提示
-   后面；以及一个紧凑的输入框（占位符 `sideChat.placeholder`，空状态行
-   `sideChat.empty`），带有 Send 和 Stop，其中 Send 通过现有提示路径
-   发往子会话，Stop 中止该子会话。标签页文本复用 `sideChat.title`。
-8. "添加到主聊天"把侧边聊天最新的 assistant 回答作为对该回答的引用
-   复制到主对话的输入框中，遵循与第 3 条相同的引用契约和 2000 字符
-   上限，归属于侧边聊天的标题。它绝不自动发送。
-9. "作为会话打开"通过正常的会话选择路径激活子会话，因此完整的输入框、
-   提示队列和停止控件都适用，并释放侧边聊天注册及其标签页。
-10. 关闭标签页会移除注册及其转录投影。未发送的草稿不留下任何 host
-    记录。已创建的子会话不会被删除，它在侧栏、会话列表和搜索中仍然是
-    一个普通会话。
-11. 侧边聊天条目在以下时机被移除：标签页关闭时、子会话作为会话打开时、
-    以及父会话或子会话被删除时。
-12. 边界：不提升 host 协议（v11），不改变存储 schema（v15），不新增
-    IPC 通道，不新增权限。该功能复用 `session.fork`、现有的提示与中止
-    路径，以及现有的工作面板界面。侧边聊天由渲染进程所有，跨应用重启
-    不持久化；持久的子会话是持久的。
-13. 引入的 i18n key：`chat.quote`、`chat.quoteSource`、
-    `chat.startSideChat`、`sideChat.title`、`sideChat.sessionTitle`、
-    `sideChat.placeholder`、`sideChat.empty`、`sideChat.addToMain`、
-    `sideChat.openAsSession`。Send 复用 `chat.send`，Stop 复用
-    `chat.stopGenerating`。
+6. While a side chat is registered, the child's agent events are projected into
+   a renderer-owned per-session transcript map from the same event stream the
+   active transcript consumes (message and tool start / update / end), reusing
+   the existing background-transcript reducer. The panel therefore streams live
+   even though the child is never the app's active session.
+7. Panel content: a compact header with the side-chat title, "Add to main chat"
+   (`sideChat.addToMain`), "Open as a conversation" (`sideChat.openAsSession`),
+   and the shared tab-close control; the child's transcript rendered with the
+   existing transcript component; the existing permission card and ask card when
+   the child requests approval or asks a question (both already resolve by the
+   request's own session id), so a child that needs an answer never stalls behind
+   an invisible prompt;
+   and a compact input (placeholder `sideChat.placeholder`, empty-state line
+   `sideChat.empty`) with Send and Stop, where Send targets the child session
+   through the existing prompt path and Stop aborts that child session. The tab
+   label reuses `sideChat.title`.
+8. "Add to main chat" copies the side chat's newest assistant answer into the
+   main conversation's composer as a quote of that answer, under the same quote
+   contract and 2000-character cap as item 3, attributed to the side chat's
+   title. It never sends automatically.
+9. "Open as a conversation" activates the child through the normal
+   session-selection path, so the full composer, prompt queue, and stop controls
+   apply, and releases the side-chat registration and its tab.
+10. Closing the tab removes the registration and its transcript projection. The
+    unsent draft leaves no host record. An already created child session is
+    not deleted and remains an ordinary session in the sidebar,
+    session lists, and search.
+11. Side-chat entries are removed when the tab closes, when the child is opened
+    as a conversation, and when the parent or child session is deleted.
+12. Boundaries: no host protocol bump (v11), no storage-schema change (v15), no
+    new IPC channel, and no new permission. The feature reuses `session.fork`,
+    the existing prompt and abort paths, and the existing work-panel surface.
+    Side chats are renderer-owned and are not persisted across app restarts; the
+    durable child session is.
+13. i18n keys introduced: `chat.quote`, `chat.quoteSource`,
+    `chat.startSideChat`, `sideChat.title`, `sideChat.sessionTitle`,
+    `sideChat.placeholder`, `sideChat.empty`, `sideChat.addToMain`,
+    `sideChat.openAsSession`. Send reuses `chat.send` and Stop reuses
+    `chat.stopGenerating`.
 
-## 保留行为
+## Preserved behavior
 
-- D097 / D128 / D154 的工作面板所有权不变：面板仍然是一个停靠的、
-  可调整大小的、渲染进程所有的界面，其资源由触发者打开、按身份作为
-  key、以先右后左的邻居选择关闭，并按会话原子切换。`sidechat` 标签页
-  是该模型中的又一个资源，而不是第二个面板。
-- D209 和 D301 仅以扩展方式被修订：引用文本是普通草稿文本，因此 chip
-  保留其规范路径序列化，智能 Stop 保留其序列化前的撤销快照，按会话
-  草稿槽不变。引用预填充只是增加了一个草稿来源，不改变这些规则中的
-  任何一条。
-- D134 的 fork/edit 工具栏行为对 assistant 轮次保留：分叉、编辑和
-  重新生成仍使用相同的持久锚点，并仍激活其子会话。
-- 子会话在存储、列表、标题、搜索、删除和远程控制方面都是普通会话；
-  不持久化任何侧边聊天标记。
+- D097 / D128 / D154 work-panel ownership is unchanged: the panel is still a
+  docked, resizable, renderer-owned surface whose resources are opened by their
+  trigger, keyed by identity, closed with right-then-left neighbor selection,
+  and switched atomically per session. A `sidechat` tab is one more resource in
+  that model, not a second panel.
+- D209 and D301 are amended only by extension: quoted text is plain draft text,
+  so chips keep their canonical-path serialization, smart Stop keeps its
+  pre-serialization undo snapshot, and per-session draft slots are unchanged.
+  The quote prefill adds one draft source and changes none of those rules.
+- D134's fork/edit toolbar behavior is preserved for assistant turns: Fork,
+  Edit, and Regenerate still use the same durable anchor and still activate
+  their child.
+- The child session is an ordinary session for storage, listing, title, search,
+  deletion, and remote-control purposes; no side-chat flag is persisted.
 
-## 后果
+## Consequences
 
-- 用户可以在下一轮中复用一段精确的早期提示或回答而不离开输入框，且
-  引用文本在发送前可见、可编辑。
-- 顺带的问题在主对话旁边流式呈现，而不是替换它；可见会话、其转录、
-  其滚动位置和其保留的面板上下文都留在原地。
-- 侧边聊天关闭时面板不失去任何东西：只有渲染进程所有的投影和注册
-  消失，因为子会话是持久会话。
-- 侧边聊天不会作为面板状态在应用重启后存活，因此想继续与子会话工作
-  的用户可以从侧栏把它作为普通会话打开。
-- 2000 字符上限约束了一段引用能到达输入框、以及发送后能到达提示
-  上下文的体量。
+- A user can reuse an exact earlier prompt or answer in the next turn without
+  leaving the composer, and the quoted text is visible and editable before it is
+  sent.
+- A side question streams beside the main conversation instead of replacing it;
+  the visible session, its transcript, its scroll position, and its retained
+  panel context stay where they were.
+- The panel loses nothing when the side chat closes: only the renderer-owned
+  projection and registration go away, because the child is a durable session.
+- Side chats do not survive an app restart as panel state, so a user who wants
+  to keep working with the child opens it from the sidebar as an ordinary
+  conversation.
+- The 2000-character cap bounds how much of a quote can reach the composer and,
+  after a send, the prompt context.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-- **为引用新增一种输入框 chip 类型或文件引用：** 被拒绝。chip 需要在
-  D209/D362 哨兵引用之外新增一种序列化类型，却没有用户可见的收益，
-  而普通引用块文本已经能在草稿保留和智能 Stop 下原样存活。
-- **复用 fork-并-激活来做侧边聊天：** 被拒绝；那正是"作为会话打开"。
-  为了问一个顺带的问题而激活 fork 会替换可见的主对话，这正是本功能
-  要避免的行为。
-- **host 所有的侧边聊天存储与 RPC：** 被拒绝。一个持久子会话加上一个
-  临时的渲染进程侧投影不需要协议、schema 或权限变更。
-- **轮询 `session.get` 获取面板内容：** 被拒绝。现有的 agent 事件流
-  已经携带消息和工具生命周期，后台转录 reducer 已经能把它转换为行。
-- **"添加到主聊天"后自动发送：** 被拒绝。主输入框保持为可审查的草稿；
-  只有用户能发送它。
-- **只在消息末尾保留引用操作：** 已在 D-LOCAL-selection-overlay 中被
-  拒绝。操作行是引用整条消息的合适位置，但引用一个句子、一个公式或
-  一张表格意味着要滚到用户正在阅读的那条消息的末尾。
+- **A new composer chip kind or file reference for quotes:** rejected. A chip
+  would need a new serialization kind beside D209/D362 sentinel references for
+  no user-visible gain, while plain blockquote text already survives draft
+  retention and smart Stop unchanged.
+- **Reuse fork-and-activate for side chat:** rejected; that is exactly "Open as
+  a conversation". Activating a fork to ask a side question would replace the
+  visible main conversation, which is the behavior this feature exists to avoid.
+- **Host-owned side-chat storage and RPC:** rejected. A durable child plus a
+  temporary renderer-side projection needs no protocol, schema, or permission
+  change.
+- **Poll `session.get` for the panel's content:** rejected. The existing agent
+  event stream already carries message and tool lifecycle, and the
+  background-transcript reducer already turns it into rows.
+- **Auto-send after "Add to main chat":** rejected. The main composer stays a
+  reviewable draft; only the user sends it.
+- **Keep the quote action at the end of the message only:** rejected in D-LOCAL-selection-overlay.
+  The action row is the right home for quoting a whole message, but quoting a
+  sentence, a formula, or a table means reaching the end of the very message the
+  user is still reading.
 
-## 修订案（D-LOCAL-selection-overlay，2026-09-11）—— 引用入口跟随选区
+## Amendment (D-LOCAL-selection-overlay, 2026-09-11) — the quote affordance follows the selection
 
-几何与行为跟随 ChatGPT 桌面应用的选中文本浮层；摘录与侧边聊天目标
-保持 PI-Desktop 自己的契约（D-LOCAL-message-quotes）。
+Geometry and behavior follow the ChatGPT desktop app's selected-text overlay; the
+excerpt and the side-chat target stay PI-Desktop's own contracts (D-LOCAL-message-quotes).
 
-- 决策 1 不变：每一条用户消息和每一个 assistant 轮次保留针对整条消息
-  的引用操作。转录行内的非空文本选区会额外在其上方浮动**一个**浮层。
-- 位置：浮层在选区可见矩形的水平中心，位于该矩形上方
-  `SELECTION_QUOTE_GAP`（8 px）处，并在两个轴向上以
-  `SELECTION_QUOTE_MARGIN`（8 px）的余量钳制在其**边界**之内。边界是
-  每一个裁剪祖先矩形（转录滚动容器是其中之一）与视口的交集，并以停靠
-  输入框的顶部为上限——输入框浮在转录之上，因此滚动容器自己的底边并
-  不是可见底部。`Composer` 发布 `data-composer-dock` 钩子供该上限使用，
-  而不是让浮层去猜一个类名。浮层被 portal 到 `document.body`，存在于
-  body-portaled 的 popover 层中，因此它绝不参与转录的布局或滚动范围。
-- 选区必须位于**一个**行内：跨行的拖拽不产生浮层；两端离开该行的范围
-  在被引用之前会被钳制回该行的内容。
-- 线程滚动时浮层**重新计算并跟随**选区（它不会隐藏）；与选区无关的
-  滚动则不动它。它也在选区变化、双击、按键抬起、指针抬起、指针取消和
-  缩放时重新计算，每个动画帧最多一次；当按下落在浮层之外或选区坍缩时
-  隐藏。
-- 操作按参考浮层的顺序：**添加到聊天**（`chat.addToChat`）通过
-  D-LOCAL-message-quotes 决策 3 的契约把摘录写入活跃会话的输入框草稿，
-  并通过现有预填充路径聚焦输入框；**在侧边聊天中提问**
-  （`chat.askInSideChat`）打开一个仅渲染进程的侧边聊天草稿，并把摘录
-  预填充为 Markdown 引用块而不发送；**复制** 复用 `chat.copy`，把
-  Markdown 写入剪贴板。当可见会话正在运行时侧边聊天操作被禁用，因为
-  host 拒绝在轮次中途 fork。每个操作都先清除原生选区，因此浮层不会
-  比它自己的点击活得更久。浮层不在只读投影中渲染（D-LOCAL-message-quotes
-  决策 12 的规则扩展到它）。
-- 决策 3 的摘录仍从渲染后的 DOM 恢复，而不是来自
-  `Selection.toString()`。触及公式的范围扩展到整个公式，并从 KaTeX 的
-  `application/x-tex` 注解中以 `$…$`（行内）或 `$$…$$`（展示）形式
-  引用；代码块变成一个分隔符长度超过其内部最长反引号串并保留其语言的
-  代码围栏；行内代码保留其反引号；表格行变成一行 `a | b`；任务复选框
-  变成 `[x] `/`[ ] `；转录外壳（操作行、复制按钮）被丢弃，而文件引用
-  chip 保留其代码文本。行操作和浮层调用同一条恢复路径，因此二者不会
-  漂移。
-- 相对参考实现的两处有意偏离，都是因为引用落在一个 PI-Desktop 会渲染
-  回来的 **Markdown 草稿** 中：公式使用 `$…$` / `$$…$$`（本渲染进程
-  解析 remark-math，而不是 `\(…\)`），表格行使用 `a | b`（Markdown）
-  而不是制表符分隔文本。参考实现的编号 `annotation` 模型未被采纳：
-  D-LOCAL-message-quotes 决策 3 把摘录保留为普通、可见、可编辑的草稿
-  文本。
-- 2000 字符上限、`> ` 引用块、`chat.quoteSource` 归属、追加到草稿的
-  行为、聚焦，以及不发送/不建会话/不写转录的边界保持不变。引入的
-  i18n key：`chat.addToChat`、`chat.askInSideChat`（复制复用
-  `chat.copy`）。
-- 边界保持为 D-LOCAL-message-quotes 决策 12 的边界：不提升 host 协议，
-  不改变存储 schema，不新增 IPC 通道，不新增权限。浮层仅存在于渲染
-  进程，除了现有输入框草稿之外不持有任何持久状态。
-- 由 E2E-CHAT-quote-prefill（浮层位置、跟随与操作）、E2E-CHAT-selection-markdown
-  （公式、表格、代码与行内代码恢复）和 E2E-CHAT-selection-side-chat
-  （在侧边聊天中提问）覆盖。
+- Decision 1 stands: every user message and every assistant turn keeps its Quote
+  action for the whole message. A non-empty text selection inside a transcript
+  row additionally floats **one** overlay above it.
+- Placement: the overlay is horizontally centered on the selection's visible
+  rect, sits `SELECTION_QUOTE_GAP` (8 px) above that rect, and is clamped into
+  its **bounds** on both axes with `SELECTION_QUOTE_MARGIN` (8 px) of slack. The
+  bounds are the intersection of every clipping ancestor's rect (the transcript
+  scroller is one) with the viewport, capped by the top of the docked composer —
+  which floats over the transcript, so the scroller's own bottom edge is not the
+  visible bottom. `Composer` publishes the `data-composer-dock` hook for that cap
+  instead of the overlay guessing a class name. The overlay is portaled to
+  `document.body` and lives in the body-portaled popover layer, so it never
+  participates in the transcript's layout or scroll extent.
+- The selection has to live in **one** row: a drag that crosses rows raises no
+  overlay, and a range whose ends leave the row is clamped back to that row's
+  contents before it is quoted.
+- While the thread scrolls the overlay **recomputes and follows** the selection
+  (it does not hide); a scroll of something unrelated to the selection leaves it
+  alone. It also recomputes on selection change, double click, key up, pointer
+  up, pointer cancel, and resize, at most once per animation frame, and it hides
+  when a press lands outside it or when the selection collapses.
+- Actions, in the reference overlay's order: **Add to chat**
+  (`chat.addToChat`) writes the excerpt into the active session's composer draft
+  through D-LOCAL-message-quotes decision 3's contract and focuses the composer via the existing
+  prefill path; **Ask in side chat** (`chat.askInSideChat`) opens a renderer-only
+  side-chat draft and prefills the excerpt as a Markdown blockquote without
+  sending; **Copy** reuses `chat.copy` and writes the
+  Markdown to the clipboard. The side-chat action is disabled while the visible
+  session is running, because the host refuses a fork mid-turn. Every action
+  clears the native selection first, so the overlay does not outlive its own
+  click. The overlay is not rendered in a read-only projection (D-LOCAL-message-quotes decision
+  12's rule extends to it).
+- Decision 3's excerpt is still recovered from the rendered DOM rather than from
+  `Selection.toString()`. A range that touches a formula is expanded to the whole
+  formula and quoted from KaTeX's `application/x-tex` annotation as `$…$`
+  (inline) or `$$…$$` (display); a code block becomes a fence whose delimiter
+  outgrows the longest backtick run inside it and keeps its language; inline code
+  keeps its backticks; a table row becomes one `a | b` line; task checkboxes
+  become `[x] `/`[ ] `; transcript chrome (action rows, copy buttons) is dropped
+  while a file-reference chip keeps its code text. The row action and the overlay
+  call that one recovery path, so they cannot drift.
+- Two deliberate deviations from the reference implementation, both because the
+  quote lands in a **Markdown draft** PI-Desktop renders back: formulas use
+  `$…$` / `$$…$$` (this renderer parses remark-math, not `\(…\)`), and table
+  rows use `a | b` (Markdown) rather than tab-separated text. The reference's
+  numbered `annotation` model is not adopted: D-LOCAL-message-quotes decision 3 keeps the excerpt
+  as ordinary, visible, editable draft text.
+- The 2000-character cap, the `> ` blockquote, the `chat.quoteSource`
+  attribution, the append-to-draft behavior, focus, and the no-send/no-session/
+  no-transcript-write boundaries are unchanged. i18n keys introduced:
+  `chat.addToChat`, `chat.askInSideChat` (Copy reuses `chat.copy`).
+- Boundaries remain those of D-LOCAL-message-quotes decision 12: no host protocol bump, no storage
+  schema change, no new IPC channel, no new permission. The overlay is
+  renderer-only and holds no durable state beyond the existing composer draft.
+- Covered by E2E-CHAT-quote-prefill (overlay placement, follow, and actions), E2E-CHAT-selection-markdown (formula,
+  table, code, and inline-code recovery), and E2E-CHAT-selection-side-chat (ask in side chat).
 
-## 上游集成修订案（2026-09-14）
+## Upstream integration amendment (2026-09-14)
 
-侧边聊天注册使用上游的工作面板标签页条和启动器。关闭最后一个标签页
-保持启动器打开；关闭一个侧边聊天只移除它的注册/投影，绝不移除其持久
-子会话或无关标签页。共享的上游 delta 感知转录 reducer 也为停靠的子
-会话供料。已注册的转录和草稿在渲染进程所有的状态中跨标签页切换存活。
-滚动位置是组件局部的，重挂载时可能重置。侧边聊天注册和草稿不跨应用
-重启持久化。
+Side-chat registrations use the upstream work-panel tab strip and launcher.
+Closing the final tab leaves the launcher open; closing a side chat removes only
+its registration/projection, never its durable child or unrelated tabs. The
+shared upstream delta-aware transcript reducer also feeds docked children.
+Registered transcripts and drafts persist across tab switches in renderer-owned
+state. Scroll position is component-local and may reset on remount. Side-chat
+registrations and drafts do not persist across application restarts.
 
-## 首次发送创建修订案（Issue #421）
+## First-send creation amendment (Issue #421)
 
-打开侧边聊天是一个可逆的草稿交互。选区浮层的"在侧边聊天中提问"预填充
-一个 Markdown 引用块，绝不自动发送。"作为会话打开"和"添加到主聊天"在
-子会话存在之前不可用。一次成功的 fork 之后跟随一次失败的发送，会保留
-该子会话供重试，而不是再创建一个。显式 Send 之后关闭时，即使 provider
-拒绝了提示，也可能保留已创建的子会话。现有会话绝不会作为清理被删除。
-不改变 IPC、host 所有权或数据库 schema。
+Opening a side chat is a reversible draft interaction. Selection-overlay
+Ask in side chat prefills a Markdown blockquote and never sends automatically.
+Open as a conversation and Add to main chat are unavailable until a child
+exists. A successful fork followed by a failed send keeps that child for retry
+rather than creating another one. Closing after an explicit Send may retain the
+created child even if the provider rejects the prompt. Existing sessions are
+never deleted as cleanup. No IPC, host ownership, or database schema changes.
 
-### 侧边聊天 Send 可用性
+### Side-chat Send availability
 
-草稿使用父会话的实时可用性。正在运行/繁忙的父会话会禁用第一次 Send
-并给出可见解释；只读父会话同样禁用它。提交操作共享同一道闸门，对被
-阻止的程序化提交进行报告，且不创建子会话、不清空文本。创建之后，提交
-操作在发送前再次检查子会话当前的可用性。已存在的子会话保持其正常的
-队列和 Stop 行为。恢复会自动重新启用 Send。
+Drafts use the parent session's live availability. A running/busy parent disables
+first Send with a visible explanation; a read-only parent also disables it.
+The submission action shares the same gate and reports blocked programmatic
+submissions without creating a child or clearing text. After creation, the
+submission action checks the child's current availability again before sending.
+Existing children keep their normal queue and Stop behavior. Recovery re-enables Send automatically.

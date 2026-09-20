@@ -1,43 +1,47 @@
-# ADR 0123: Windows/Linux 窗口控件使用原生任务栏最小化
+# ADR 0123: Use native taskbar minimize for Windows/Linux window controls
 
 - Status: Accepted
 - Date: 2026-08-25
 - Deciders: PI-Desktop core
 - Related: D216, D230, D252, D256, E2E-124, ADR 0078, ADR 0090, ADR 0117
 
-## 背景
+## Context
 
-Windows/Linux 使用无边框窗口，最小化、最大化和关闭控件由渲染进程
-绘制。最小化动作此前调用 `window.hide()`，这会把窗口从任务栏移除，
-使该动作表现得像关闭到托盘。关闭按钮已经有一个独立的、持久化的
-`tray`/`quit` 选择，因此两个不同的控件意外地使用了同一种隐藏窗口
-行为。
+Windows/Linux use a frameless window with renderer-drawn minimize, maximize,
+and close controls. The minimize action was calling `window.hide()`, which
+removed the window from the taskbar and made the action behave like a
+close-to-tray operation. The close button already has an independent,
+persisted `tray`/`quit` choice, so two different controls were unexpectedly
+using the same hidden-window behavior.
 
-## 决策
+## Decision
 
-1. Windows/Linux 渲染进程窗口控件的 `minimize` 动作调用 Electron 的
-   原生 `BrowserWindow.minimize()` 过渡。Windows/Linux 原生菜单的
-   最小化动作使用相同的过渡。
-2. 主窗口的 `minimize` 事件不会把 Windows/Linux 的原生最小化转换为
-   `hide()`。操作系统保留任务栏条目，使用户可以正常恢复同一窗口。
-3. macOS 保留其既有的红绿灯按钮、驻留托盘的最小化行为。
-   Windows/Linux 的关闭行为仍由 ADR 0090 持有：关闭按钮在 `tray`
-   下隐藏到托盘，在 `quit` 下退出。
-4. 驻留托盘、关闭行为持久化、IPC 动作白名单、宿主协议和后台进程
-   生命周期均不改变。
+1. The Windows/Linux renderer window-control `minimize` action calls
+   Electron's native `BrowserWindow.minimize()` transition. The Windows/Linux
+   native-menu minimize action uses the same transition.
+2. The main-window `minimize` event does not convert Windows/Linux native
+   minimization into `hide()`. The operating system keeps the taskbar entry so
+   the user can restore the same window normally.
+3. macOS keeps its existing traffic-light tray-resident minimize behavior.
+   Windows/Linux close behavior remains owned by ADR 0090: the close button
+   hides to the tray for `tray` and exits for `quit`.
+4. The resident tray, close-behavior persistence, IPC action allowlists, host
+   protocol, and background-process lifetime do not change.
 
-## 后果
+## Consequences
 
-- Windows/Linux 的三个窗口按钮现在符合预期的桌面模型：最小化进入
-  任务栏，最大化切换窗口状态，关闭遵循用户记住的 tray/quit 选择。
-- 托盘仍可用于关闭到托盘以及 macOS 既有的最小化行为；没有引入
-  第二个托盘生命周期。
-- 不需要新的特权桥接或协议版本，因为既有的 `minimize` 动作只改变
-  其由 Main 持有的 Electron 效果。
+- The three Windows/Linux window buttons now match the expected desktop model:
+  minimize goes to the taskbar, maximize toggles the window, and close follows
+  the user's remembered tray/quit choice.
+- The tray remains available for close-to-tray and for macOS's existing
+  minimize behavior; no second tray lifecycle is introduced.
+- No new privileged bridge or protocol version is required because the
+  existing `minimize` action changes only its Main-owned Electron effect.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- **保持显式最小化为隐藏到托盘：** 否决，因为当选择关闭到托盘时，
-  这会让最小化和关闭控件无法区分，并移除标准的任务栏恢复路径。
-- **移除驻留托盘：** 否决，因为关闭到托盘和 macOS 最小化仍需要
-  一个可靠的恢复界面。
+- **Keep explicit minimize as hide-to-tray:** rejected because it makes the
+  minimize and close controls indistinguishable when close-to-tray is selected
+  and removes the standard taskbar restore path.
+- **Remove the resident tray:** rejected because close-to-tray and macOS
+  minimize still need a reliable restore surface.

@@ -1,69 +1,75 @@
-# ADR 0014: 采用宿主拥有的存储 schema v2
+# ADR 0014: Adopt host-owned storage schema v2
 
-- 状态: 已接受
-- 日期: 2026-07-26
+- Status: Accepted
+- Date: 2026-07-26
 
-## 背景
+## Context
 
-最初的桌面持久化模型把持久状态分散在一个有限的 SQLite schema 和
-Electron 拥有的 JSON 文件之间。会话消息存储的是有损的文本投影，
-项目身份被表示为单例 workspace，计划任务绕过了 Rust 宿主，还有
-若干产品界面对 turns、artifacts、任务运行、模型元数据或索引搜索
-都没有持久化模型。
+The original desktop persistence model split durable state across a limited
+SQLite schema and Electron-owned JSON files. Session messages stored a lossy
+text projection, project identity was represented as a singleton workspace,
+scheduled tasks bypassed the Rust host, and several product surfaces had no
+durable model for turns, artifacts, task runs, model metadata, or indexed
+search.
 
-这些边界与 ADR 0011 中冻结的宿主所有权规则相冲突，并使协议可见的
-行为取决于哪个进程最后写入了本地文件。就地扩展旧表也会留下模糊的
-所有权和不一致的迁移行为。
+Those boundaries conflict with the frozen host-ownership rule in ADR 0011 and
+make protocol-visible behavior depend on which process last wrote a local
+file. Expanding the old tables in place would also leave ambiguous ownership
+and inconsistent migration behavior.
 
-## 决策
+## Decision
 
-在单一的宿主拥有的 `pi.sqlite` 数据库中采用 schema v2。
+Adopt schema v2 in the single host-owned `pi.sqlite` database.
 
-Rust 宿主是以下内容的唯一写入方：
+The Rust host is the exclusive writer for:
 
-- 带命名空间的键/值配置；
-- 项目和项目级会话；
-- 规范的 transcript 块和 turn 生命周期数据；
-- 模型目录元数据；
-- artifacts；
-- 计划任务和任务运行历史；
-- 已索引、可清理的审计事件。
+- namespaced key/value configuration;
+- projects and project-scoped sessions;
+- canonical transcript blocks and turn lifecycle data;
+- model catalog metadata;
+- artifacts;
+- scheduled tasks and task-run history;
+- indexed, prunable audit events.
 
-Electron 只能通过宿主 RPC 协议访问这些状态。计划任务 JSON 会被导入
-宿主数据库，不再具有权威性。
+Electron accesses this state only through the host RPC protocol. Scheduled
+task JSON is imported into the host database and is no longer authoritative.
 
-迁移是以 `PRAGMA user_version` 为键的有序 Rust 函数。v1 到 v2 的
-迁移在重建不兼容的表之前创建一次性备份，保留可恢复的用户数据，并
-以事务方式完成。会话/项目导入和遗留计划任务导入是幂等的。
+Migrations are ordered Rust functions keyed by `PRAGMA user_version`. The
+v1-to-v2 migration creates a one-shot backup before rebuilding incompatible
+tables, preserves recoverable user data, and completes transactionally.
+Session/project imports and legacy scheduled-task imports are idempotent.
 
-## 后果
+## Consequences
 
-- 持久状态有唯一的所有权边界和唯一的迁移机制。
-- Transcript 块、turns、用量、artifacts、项目分组、任务历史和
-  搜索可以在没有渲染进程拥有的持久化的情况下演进。
-- 迁移失败会被暴露出来，而不是悄悄打开一个部分升级的数据库。
-- 备份会占用额外磁盘空间，直到用户删除它。
-- 协议、存储、迁移和 E2E spec 必须随未来的结构性变化一起演进。
-- Schema v2 替换了 D086 之前描述的存储实现，同时保留 ADR 0011 的
-  Rust 宿主所有权边界。
+- Durable state has one ownership boundary and one migration mechanism.
+- Transcript blocks, turns, usage, artifacts, project grouping, task history,
+  and search can evolve without renderer-owned persistence.
+- A migration failure is surfaced instead of silently opening a partially
+  upgraded database.
+- The backup consumes additional disk space until the user removes it.
+- Protocol, storage, migration, and E2E specifications must move together with
+  future structural changes.
+- Schema v2 replaces the storage implementation described before D086 while
+  retaining ADR 0011's Rust-host ownership boundary.
 
-## 备选方案
+## Alternatives
 
-### 不重建、直接扩展 v1 表
+### Extend the v1 tables without rebuilding
 
-否决，因为 v1 的消息形态是有损的，且分裂的所有权模型会保留。
+Rejected because the v1 message shape is lossy and the split ownership model
+would remain.
 
-### 将计划任务保留在 Electron JSON 中
+### Keep scheduled tasks in Electron JSON
 
-否决，因为这违反宿主拥有的持久化边界，并阻碍原子化的任务/运行
-生命周期更新。
+Rejected because it violates the host-owned persistence boundary and prevents
+atomic task/run lifecycle updates.
 
-### 让渲染进程直接写 SQLite
+### Let the renderer write SQLite directly
 
-否决，因为并发写入方会把 UI 生命周期与数据完整性耦合在一起，并
-绕过宿主 RPC 校验。
+Rejected because concurrent writers would couple UI lifecycle to data
+integrity and bypass host RPC validation.
 
-## 参考
+## References
 
 - `docs/adr/0011-host-rpc-and-storage-defaults.md`
 - `docs/spec/03-runtime/04-data-storage.md`

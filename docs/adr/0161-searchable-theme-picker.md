@@ -1,37 +1,44 @@
-# ADR 0161: 与语言选择器一致的可搜索主题选择器
+# ADR 0161: Searchable theme picker matching language
 
-- 状态：已接受
-- 日期：2026-09-05
-- 决策负责人：PI-Desktop 桌面端/设置维护者
-- 相关：D316、D314、ADR 0160、D175
+- Status: Accepted
+- Date: 2026-09-05
+- Decision owners: PI-Desktop desktop/settings maintainers
+- Related: D316, D314, ADR 0160, D175
 
-## 背景
+## Context
 
-设置 → 常规 → 外观以三张预览卡片（System / Light / Dark）展示主题，
-插件主题换行进入同一网格。语言和字体已经是可搜索的选择器行。插件主题
-会让卡片网格换行超过三列，且视觉预览图无法随贡献的调色板扩展。语言
-选择器已经解决了同样的列表增长问题。
+Settings → General → Appearance presented theme as three preview cards
+(System / Light / Dark), with plugin themes wrapping into the same grid.
+Language and Font are already searchable picker rows. Plugin themes make
+the card grid wrap past three columns, and the visual mockups did not
+scale with contributed palettes. The language picker already solved the
+same growing-list problem.
 
-## 决策
+## Decision
 
-1. 主题是一个可搜索的选择器行，采用与语言相同的锚定菜单模式：关闭
-   状态的触发器按当前标签尺寸显示，受设置控件列宽上限约束，菜单通过
-   portal 渲染使设置卡片无法裁剪它，搜索可过滤列表。
-2. 内置的 System、Light、Dark 保持置顶。插件主题在分隔线之后跟随，
-   保留现有的 "Provided by …" 提示。搜索匹配标签、描述、id 和插件 id。
-3. `AppSettings.theme` 不变（`system` | `light` | `dark` |
-   `plugin:<pluginId>:<themeId>`）。不可用的插件主题仍回退到 `system`。
-4. 本 ADR 修订 ADR 0160 中"外观保留主题为三张预览卡片"的条款。
+1. Theme is a searchable picker row, same anchored-menu pattern as
+   Language: the closed trigger sizes to the current label, capped by the
+   settings control column, the menu portals so the settings card cannot clip
+   it, and search filters the list.
+2. Built-in System, Light, and Dark stay pinned at the top. Plugin
+   themes follow after a divider, with the existing "Provided by …"
+   hint. Search matches labels, descriptions, ids, and plugin ids.
+3. `AppSettings.theme` is unchanged (`system` | `light` | `dark` |
+   `plugin:<pluginId>:<themeId>`). An unavailable plugin theme still
+   falls back to `system`.
+4. This amends ADR 0160's clause that Appearance keeps Theme as three
+   preview cards.
 
-## 后果
+## Consequences
 
-- 外观的三行——主题、语言、字体——共享同一种控件模式。
-- 插件主题不再让三列卡片网格换行。
-- 新增插件主题不会改变选择器外观。
+- Appearance's three rows — Theme, Language, Font — share one control
+  pattern.
+- Plugin themes no longer wrap a three-column card grid.
+- Adding a plugin theme does not change the picker chrome.
 
-## 替代方案
+## Alternatives
 
-- 主题继续用可换行的预览卡片：一旦插件添加超过一两个调色板就不可读，
-  且与语言选择器不一致。
-- 在选择器行内保留迷你窗口预览图：为一个选中即立即可见的选择增加
-  多余的界面装饰。
+- Keep theme as wrapping preview cards: unreadable once plugins add
+  more than one or two palettes, and inconsistent with Language.
+- Keep mini-window mockups inside the picker rows: extra chrome for a
+  choice that is already visible the moment it is selected.

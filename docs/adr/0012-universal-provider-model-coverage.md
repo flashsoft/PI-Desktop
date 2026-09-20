@@ -1,53 +1,53 @@
-# ADR 0012: 通过 pi-ai + OpenAI 兼容扩展实现通用 provider/模型覆盖
+# ADR 0012: Universal provider/model coverage via pi-ai + OpenAI-compatible extensibility
 
-- 状态: 已接受
-- 日期: 2026-07-25
+- Status: Accepted
+- Date: 2026-07-25
 
-## 背景
+## Context
 
-产品需求：
+Product requirement:
 
-> Provider 支持必须广泛覆盖市场上的厂商/模型，而不是一小个固定集合。
+> Provider support must cover market vendors/models broadly, not a small fixed set.
 
-自研并维护每家厂商的 SDK 是不现实的。pi-ai 已经提供多 provider 抽象，而大多数长尾厂商都暴露 OpenAI 兼容的 API。
+Implementing and maintaining every vendor SDK in-house is unrealistic. pi-ai already provides multi-provider abstractions, and most long-tail vendors expose OpenAI-compatible APIs.
 
-## 决策
+## Decision
 
-1. 使用 **pi-ai** 作为原生多 provider 引擎
-2. 将 **OpenAI 兼容 provider** 视为一等公民
-3. 提供**可刷新的模型目录** + **用户自定义模型 ID**
-4. **不**强制会阻止未知模型的封闭产品白名单
-5. 在 UI 预设中暴露主流厂商，同时允许任意自定义端点
+1. Use **pi-ai** as the native multi-provider engine
+2. Treat **OpenAI-compatible providers** as first-class
+3. Ship a **refreshable model catalog** + **user-defined model IDs**
+4. Do **not** enforce a closed product allowlist that blocks unknown models
+5. Expose major vendors in UI presets, while allowing arbitrary custom endpoints
 
-## 后果
+## Consequences
 
-### 正面
-- 以可控的工程范围实现广泛的市场覆盖
-- "支持市场厂商/模型"的务实路径
-- pi-ai 已有集成的地方可获得原生质量
-- 容易支持网关和本地模型服务器
-- 其余一切的通用兜底出口
-- 未来厂商通常无需改写应用即可接入
-- 目录无需改写应用即可演进
+### Positive
+- Broad market coverage with manageable engineering scope
+- Practical path to "support market vendors/models"
+- Native quality where pi-ai has integrations
+- Easy support for gateways and local model servers
+- Universal escape hatch for everything else
+- Future vendors can often be onboarded without an app rewrite
+- Catalog remains evolvable without an app rewrite
 
-### 负面 / 权衡
-- 各厂商的能力质量参差不齐
-- 目录/能力元数据可能不完整（尤其是冷门模型），需要刷新/手动覆盖
-- OpenAI 兼容的怪异行为仍需要兼容开关
-- 目录新鲜度依赖于刷新/内置快照
+### Negative / tradeoffs
+- Capability quality differs by vendor
+- Catalog/capability metadata may be incomplete (especially for obscure models) and needs refresh/manual overrides
+- OpenAI-compatible quirks still need compatibility flags
+- Catalog freshness depends on refresh/bundled snapshots
 
-## 考虑过的备选方案
+## Alternatives considered
 
-1. **只做极小的固定厂商列表**（例如只有 3-4 家头部厂商）
-   - 否决：无法满足全球化和用户期望
-2. **自研并维护所有厂商 SDK**（例如用 Rust 重新实现每家厂商 SDK）
-   - 否决：与 pi-ai 重复，拖慢交付，维护成本高
-3. **只做 OpenAI 兼容，不做原生 provider**
-   - 否决：对有原生怪异行为的主流厂商，UX/质量更差
-4. **硬编码的封闭/固定模型白名单**
-   - 否决：模型每周都在变化；会挡住高级用户
+1. **Tiny fixed vendor list only** (e.g., only 3-4 top vendors)
+   - Rejected: fails globalization and user expectation
+2. **Build and maintain all vendor SDKs ourselves** (e.g., reimplement every vendor SDK in Rust)
+   - Rejected: duplicates pi-ai, slows delivery, high maintenance
+3. **Only OpenAI-compatible, no native providers**
+   - Rejected: worse UX/quality for major vendors with native quirks
+4. **Hardcoded closed/fixed model allowlist**
+   - Rejected: models churn weekly; blocks power users
 
-## 后续 spec
+## Follow-up specs
 
 - `docs/spec/03-runtime/11-provider-model-system.md`
 - `docs/spec/03-runtime/12-provider-config-schema.md`

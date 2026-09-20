@@ -1,9 +1,9 @@
-# 架构与工程
+# Architecture & Engineering
 
-| 医生 | 描述 |
+| Doc | Description |
 |---|---|
-| [01-architecture.md](/spec/02-architecture/01-architecture) | 系统架构 |
-| [02-tech-stack.md](/spec/02-architecture/02-tech-stack) | 技术栈 |
-| [03-repo-struct.md](/spec/02-architecture/03-repo-structure) | 存储库结构 |
-| [04-documentation-site.md](/spec/02-architecture/04-documentation-site) | 文档站点 |
-| [05-remote-agent-control.md](/spec/02-architecture/05-remote-agent-control) | 远程 Agent Host 和 Gateway 目标架构 |
+| [01-architecture.md](01-architecture.md) | System architecture |
+| [02-tech-stack.md](02-tech-stack.md) | Tech stack |
+| [03-repo-structure.md](03-repo-structure.md) | Repository structure |
+| [04-documentation-site.md](04-documentation-site.md) | Documentation site |
+| [05-remote-agent-control.md](05-remote-agent-control.md) | Remote Agent Host and Gateway target architecture |

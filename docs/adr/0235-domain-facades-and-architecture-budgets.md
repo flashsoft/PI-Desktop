@@ -1,4 +1,4 @@
-# ADR 0235: 保留领域门面并执行架构预算
+# ADR 0235: Preserve Domain Facades and Enforce Architecture Budgets
 
 - Status: Accepted
 - Date: 2026-09-12
@@ -6,51 +6,59 @@
 
 ## Context
 
-桌面应用此前有若干大型模块，把装配与多个领域职责混合在一起。拆分
-这些模块可以降低变更耦合，但替换既定的入口点会破坏导入、源码契
-约、插件集成或协议假设。仓库还需要一种可重复的方式来防止同样的热
-点再次膨胀。
+The desktop application had several large modules that combined wiring with
+multiple domain responsibilities. Splitting those modules reduces change
+coupling, but replacing established entry points would break imports, source
+contracts, plugin integrations, or protocol assumptions. The repository also
+needs a repeatable way to prevent the same hotspots from growing again.
 
-本次重构覆盖 Electron 主进程 IPC 和运行时装配、渲染进程页面、
-host-core 持久化和服务领域、共享公共类型，以及 E2E 测试基础设施。
-这些边界必须保留现有的 IPC 通道、插件 SDK 行为、宿主 RPC 数据和持
-久化格式。
+The refactor covers Electron main IPC and runtime wiring, renderer pages,
+host-core persistence and service domains, shared public types, and E2E test
+infrastructure. These boundaries must preserve existing IPC channels, plugin
+SDK behavior, host RPC data, and persisted formats.
 
 ## Decision
 
-1. 在既定的公共路径上保持稳定的门面模块。Electron 主进程
-   `index.ts`、渲染进程页面入口点、共享 `types.ts`，以及 Rust 的
-   `plugins`、`db`、`providers` 和 `plans` 模块，仍然是其领域实现之
-   上的兼容门面。
-2. 把实现职责放进领域模块：Electron IPC 和运行时模块、渲染进程
-   `features/*` 模块、host-core 领域子模块，以及
-   `packages/shared/src/types/*` 文件。门面可以装配或再导出这些模块，
-   但不得成为第二个实现。
-3. 源码契约测试保留在所属模块边界上，并为兼容路径保留公共再导出覆
-   盖。共享的 E2E boot、session、plan、plugin、host、fixture、wait
-   和断言辅助是协议和生命周期测试套件的公共测试界面。
-4. 用 `node scripts/check-architecture.mjs` 执行源码规模预算。该检查
-   器报告仓库指标、守护 main 和 store 门面限制、拒绝新增的超大的普
-   通 TypeScript 文件，并要求超大 Rust 文件有文档化的理由。例外是显
-   式的，并随 allowlist 一起审查。
-5. 在 CI 中与现有的构建、类型检查和测试关卡一起，运行聚焦的 Biome
-   lint、架构检查器、Rust 格式化和工作区 Clippy 检查。现有 Clippy
-   警告在被聚焦的后续变更逐步减少期间保持可见。
+1. Keep stable facade modules at established public paths. Electron main
+   `index.ts`, renderer page entry points, shared `types.ts`, and the Rust
+   `plugins`, `db`, `providers`, and `plans` modules remain compatible facades
+   over their domain implementations.
+2. Put implementation responsibility in domain modules: Electron IPC and
+   runtime modules, renderer `features/*` modules, host-core domain
+   submodules, and `packages/shared/src/types/*` files. The facades may wire
+   or re-export these modules but must not become a second implementation.
+3. Keep source-contract tests at the owning module boundary and retain public
+   re-export coverage for compatibility paths. Shared E2E boot, session, plan,
+   plugin, host, fixture, wait, and assertion helpers are the common test
+   surface for protocol and lifecycle suites.
+4. Enforce source-size budgets with
+   `node scripts/check-architecture.mjs`. The checker reports repository
+   metrics, protects the main and store facade limits, rejects newly added
+   oversized ordinary TypeScript files, and requires a documented reason for
+   oversized Rust files. Exceptions are explicit and reviewed with the
+   allowlist.
+5. Run the focused Biome lint, architecture checker, Rust formatting, and
+   workspace Clippy checks in CI alongside the existing build, typecheck, and
+   test gates. Existing Clippy warnings remain visible while they are reduced
+   in focused follow-up changes.
 
 ## Consequences
 
-- 现有导入路径、IPC 通道、插件 SDK 契约、宿主 RPC 数据和持久化格式
-  保持稳定，同时实现所有权更容易定位。
-- 新的领域工作有明确的归属，并以源码规模限制进行度量。
-- 一小部分遗留模块被显式记录为技术债，而不是被静默地继续扩大。
-- 架构检查器增加了一个仓库级的维护关卡，其指标使未来的重构进度可
-  审查。
+- Existing import paths, IPC channels, plugin SDK contracts, host RPC data,
+  and persistence formats remain stable while implementation ownership is
+  easier to locate.
+- New domain work has a clear home and is measured against source-size limits.
+- A small set of legacy modules remains explicitly documented as technical
+  debt instead of being expanded silently.
+- The architecture checker adds a repository-level maintenance gate and its
+  metrics make future refactor progress reviewable.
 
 ## Alternatives considered
 
-- **用新路径替换公共模块：** 被拒绝，因为这会让兼容性成为每个调用
-  方和插件的责任。
-- **应用大范围的格式化或风格 lint 迁移：** 被拒绝，因为它会把历史
-  清理与架构变更混在一起，使行为审查变得模糊。
-- **使用未记录文档的规模例外：** 被拒绝，因为没有显式理由的棘轮会
-  允许新的热点积累。
+- **Replace the public modules with new paths:** rejected because it would
+  make compatibility the responsibility of every caller and plugin.
+- **Apply a broad formatter or stylistic lint migration:** rejected because
+  it would mix historical cleanup with the architecture change and obscure
+  behavioral review.
+- **Use an undocumented size exception:** rejected because a ratchet without
+  an explicit reason would allow new hotspots to accumulate.

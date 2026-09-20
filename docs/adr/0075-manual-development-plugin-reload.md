@@ -1,32 +1,40 @@
-# ADR 0075: 开发插件权限上限的手动重载
+# ADR 0075: Manual reload for development-plugin permission ceilings
 
-- 状态： 已接受
-- 日期： 2026-08-12
+- Status: Accepted
+- Date: 2026-08-12
 
-## 背景
+## Context
 
-开发插件从其本地文件夹被监听并热重载。监听有意拒绝添加了超出文件夹加载时
-所批准权限上限的 manifest。在此操作存在之前，开发者必须通过选择器重新加载
-该文件夹，以评审变更后的 manifest 并恢复开发。
+Development plugins are watched and hot-reloaded from their local folders. The
+watcher intentionally refuses a manifest that adds permissions beyond the
+ceiling approved when the folder was loaded. Before this action existed, the
+developer had to load the folder again through the picker to review the changed
+manifest and resume development.
 
-## 决策
+## Decision
 
-添加渲染进程到主进程的 `pi-desktop/plugin/reload` invoke 通道。Electron 主
-进程通过宿主注册表解析插件 id，用注册表当前的权限加载已注册路径，并在成
-功加载后重新武装开发监听器。插件页只对 `source: "dev"` 行暴露该操作，并在
-invoke 完成后刷新其列表。
+Add a renderer-to-main `pi-desktop/plugin/reload` invoke channel. Electron main
+resolves the plugin id through the host registry, loads the registered path with
+the registry's current permissions, and re-arms the development watcher after a
+successful load. The Plugins page exposes the action only for `source: "dev"`
+rows and refreshes its list after the invoke completes.
 
-自动监听器保持保守：它不能扩大权限上限。手动重载是显式的开发者操作，它确
-认当前 manifest，并使其声明的权限成为之后自动重载的新上限。
+The automatic watcher remains conservative: it cannot widen the permission
+ceiling. A manual reload is an explicit developer action that acknowledges the
+current manifest and makes its declared permissions the new ceiling for later
+automatic reloads.
 
-## 后果
+## Consequences
 
-- 开发者无需重新选择文件夹即可从权限门控的热重载中恢复。
-- 已安装与市场插件不获得手动重载控件。
-- 现有监听器、插件 runtime 与 host-core 存储契约保持不变；新通道是加法式的
-  Electron IPC 界面。
+- Developers can recover from permission-gated hot reloads without re-picking a
+  folder.
+- Installed and marketplace plugins do not gain a manual reload control.
+- The existing watcher, plugin runtime, and host-core storage contracts remain
+  unchanged; the new channel is an additive Electron IPC surface.
 
-## 已考虑的备选方案
+## Alternatives considered
 
-- 复用文件夹选择器：已拒绝，因为它重复路径选择，并让恢复不必要地 disruptive。
-- 允许自动重载扩大权限：已拒绝，因为文件编辑绝不能静默授予新能力。
+- Reusing the folder picker: rejected because it repeats path selection and
+  makes recovery needlessly disruptive.
+- Allowing automatic reloads to widen permissions: rejected because file edits
+  must not silently grant new capabilities.

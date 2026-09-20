@@ -1,4 +1,4 @@
-# ADR 0264：宿主中介的文件操作跟随视图正在浏览的文件夹
+# ADR 0264: Host-Mediated File Actions Follow the Folder a View Is Browsing
 
 - **Status**: Accepted
 - **Date**: 2026-09-15 (amends [ADR 0263](0263-project-folder-roots-for-plugin-views.md))
@@ -6,76 +6,89 @@
   [ADR 0249](0249-chatgpt-style-logical-project-groups.md) ·
   [07-plugins/03-plugin-api](../spec/07-plugins/03-plugin-api.md)
 
-## 背景
+## Context
 
-ADR 0263 §6 让贡献视图一次浏览多文件夹项目中的一个文件夹，并让视图负责
-记住是哪一个。它没有提及视图自身无法执行的两个动作：用系统默认应用
-打开文件（`fs.openDefault`）和在 OS 文件管理器中显示它（`fs.reveal`）。
-两者都是宿主中介的，并且都是针对 **workspace 根**定义的：请求携带
-workspace 相对路径，宿主在那里解析它（ADR 0241，`plugin-runtime.ts`
-`resolveFsRequest`）。
+ADR 0263 §6 let a contributed view browse one folder of a multi-folder project at
+a time, and made the view responsible for remembering which one. It said nothing
+about the two actions a view cannot perform itself: opening a file with the
+system default application (`fs.openDefault`) and revealing it in the OS file
+manager (`fs.reveal`). Both are host-mediated, and both were defined against the
+**workspace root**: the request carries a workspace-relative path, and the host
+resolves it there (ADR 0241, `plugin-runtime.ts` `resolveFsRequest`).
 
-当 workspace 根同时也是视图能浏览的唯一文件夹时，该契约是正确的。一旦
-视图可以选择兄弟文件夹，它就不正确了：条目列表相对于*所选*文件夹，因
-此把相对路径交给宿主的视图会让它针对主文件夹解析。两个文件夹持有同名
-文件时这是静默的——在浏览第二个文件夹时打开 `shared.txt` 会打开第一
-个文件夹的文件——而只有第二个文件夹持有的文件会报告未找到。两者都
-可以从文件夹切换器到达。
+That contract was correct while the workspace root was also the only folder a
+view could browse. Once the view can select a sibling folder it is not: the entry
+list is relative to the *selected* folder, so a view that hands a relative path to
+the host has it resolved against the primary folder instead. Two folders holding a
+same-named file make that silent — opening `shared.txt` while browsing the second
+folder opens the first folder's file — and a file only the second folder holds
+reports not found. Both were reachable from the folder switcher.
 
-## 决策
+## Decision
 
-1. **当所选文件夹不是主文件夹时，视图用绝对路径寻址文件。** 相对路径
-   保持表示 workspace 根，因此主文件夹的情况逐字节不变。这与 ADR 0263
-   §4 已经应用于聊天文件引用的规则相同：地址形态跟随拥有该文件的文
-   件夹。
-2. **`fs.openDefault` 和 `fs.reveal` 接受打开项目的任何已注册文件夹根
-   内的绝对路径。** 该根随后成为请求的包含基座，ADR 0249 §5 已经为工
-   具请求认可了这一点。相对形式针对应答文件夹的声明 scope 匹配。
-3. **放宽仅限这两个动作。** 它们把路径交给 OS 且不返回文件内容；其他
-   所有 fs 模式保持 workspace 根，因此没有插件获得对另一个文件夹的字
-   节访问。声明根为 `userSelected` 的插件不受影响：其基座保持为用户
-   选择的目录。
-4. **守卫就是其他每个请求都要通过的那些。** 请求仍需要声明的
-   `fs.read`；声明 scope 未覆盖的项目文件夹内的路径被拒绝而不是被同
-   意；凭据和仓库内部与在 workspace 根下完全一样被拒绝；包含通过链接
-   解析，因此已注册文件夹内的符号链接或 junction 不能把请求带出它。
-5. **Session 的结束就是其文档的结束。** 当视图的打开文件关闭时——在
-   文件夹切换或任何其他关闭时——其编辑器缓冲被清除，而不仅仅是隐
-   藏：窗格绝不能保留来自用户已离开文件夹的文档，陈旧缓冲也绝不能成
-   为之后的保存或另一个文件夹中同名文件遇到的东西。
+1. **A view addresses a file by an absolute path when the selected folder is not
+   the primary one.** A relative path keeps meaning the workspace root, so the
+   primary-folder case is unchanged, byte for byte. This is the same rule ADR 0263
+   §4 already applies to chat file references: the address shape follows the folder
+   that owns the file.
+2. **`fs.openDefault` and `fs.reveal` accept an absolute path inside any registered
+   folder root of the open project.** That root then becomes the containment base
+   for the request, which ADR 0249 §5 already sanctions for tool requests. The
+   relative form is matched against the declared scope of the folder that answered.
+3. **The widening is limited to these two actions.** They hand a path to the OS and
+   return no file content; every other fs mode keeps the workspace root, so no
+   plugin gains byte access to another folder. A plugin whose declared root is
+   `userSelected` is unaffected: its base stays the directory the user chose.
+4. **The guards are the ones every other request passes.** The request still needs
+   the declared `fs.read`; a path inside a project folder that the declared scope
+   does not cover is refused rather than consented; credential and repository
+   internals are refused exactly as under the workspace root; and containment is
+   resolved through links, so a symlink or junction inside a registered folder
+   cannot carry the request out of it.
+5. **The end of a session is the end of its documents.** When a view's open file
+   closes — on a folder switch, or any other close — its editor buffer is cleared,
+   not merely hidden: the pane must not keep a document from a folder the user has
+   left, and a stale buffer must never be what a later save or a same-named file
+   in another folder meets.
 
-## 后果
+## Consequences
 
-- 打开或显示文件在项目的每个文件夹中行为相同：动作到达用户右键点击
-  的那个文件，在他们正在浏览的文件夹中。
-- 组授权保持为用户编写的列表。插件不能走到用户未注册的文件夹，也不
-  能读取它以前不能读取的文件。
-- 忽略该规则的视图（在浏览兄弟文件夹时发送相对路径）仍得到旧行为：
-  它打开主文件夹的文件。因此该情况的契约被记录在插件 API 中，而不是
-  保持隐式。
-- 编辑文件仍是插件自己的事：它的读写仍通过它自己的围栏下自己的
-  Node fs（ADR 0241），只有这两个中介动作经过宿主。
+- Opening or revealing a file behaves the same in every folder of a project: the
+  action reaches the file the user right-clicked, in the folder they are browsing.
+- The group grant stays a user-authored list. A plugin cannot walk to a folder the
+  user did not register, and cannot read a file it could not read before.
+- A view that ignores the rule (sends a relative path while browsing a sibling
+  folder) still gets the old behaviour: it opens the primary folder's file. The
+  contract for that case is therefore documented in the plugin API rather than left
+  implicit.
+- Editing a file remains the plugin's own business: its reads and writes still go
+  through its own Node fs under its own jail (ADR 0241), and only these two
+  mediated actions go through the host.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-### 把插件的整个 `fs` 根放宽到所选文件夹
+### Widen the plugin's whole `fs` root to the selected folder
 
-被拒绝：宿主不知道视图正在浏览哪个文件夹——该选择在设计上是插件本
-地的（ADR 0263 §6）——而按调用的基座会让任何插件声称另一个项目文
-件夹用于读写，这是 ADR 0249 §5 刻意绑定到用户可见工具请求的授权。
+Rejected: the host does not know which folder a view is browsing — that choice is
+plugin-local by design (ADR 0263 §6) — and a per-call base would let any plugin
+claim another project folder for reading and writing, which is a grant ADR 0249 §5
+deliberately tied to a user-visible tool request.
 
-### 让视图发送相对于 workspace 根的路径
+### Have the view send a path relative to the workspace root
 
-被拒绝：只有当兄弟文件夹位于主文件夹之内时才可计算。作为无关目录的
-兄弟文件夹——项目组的普通情况——没有这样的路径，而发明 `../` 形式
-正是包含检查所拒绝的逃逸。
+Rejected: only computable when the sibling folder sits inside the primary one.
+Sibling folders that are unrelated directories — the ordinary case for a project
+group — have no such path, and inventing `../` forms is exactly the escape the
+containment checks refuse.
 
-### 在插件进程内解析该动作
+### Resolve the action inside the plugin process
 
-被拒绝：宿主中介路径的意义在于宿主拥有决定和审计。插件刻意不声明
-shell 或系统打开能力，也不应该为一个它已经在显示的文件增加一个。
+Rejected: the point of the host-mediated route is that the host owns the decision
+and the audit. The plugin deliberately does not declare a shell or a system-open
+capability, and it should not grow one for a file it is already displaying.
 
-### 在选择兄弟文件夹时禁用这两个动作
+### Disable the two actions while a sibling folder is selected
 
-被拒绝：它把可修复的寻址错误变成了缺失的功能。切换了文件夹的用户正
-看着那些文件，并期望同样的上下文菜单对它们工作。
+Rejected: it turns a fixable addressing mistake into a missing feature. The user
+who switched folders is looking at those files and expects the same context menu
+to work on them.

@@ -1,30 +1,30 @@
-# ADR 0155: 新增智谱 / Z.AI 命名端点预设
+# ADR 0155: Add Zhipu / Z.AI Named Endpoint Presets
 
 - Status: Accepted
 - Date: 2026-09-05
 - Deciders: PI-Desktop core
 - Updates ADR 0012, ADR 0020, and ADR 0116
 
-## 背景
+## Context
 
-智谱 AI（Zhipu）暴露两种产品模式和两个区域：
+Zhipu AI (智谱) exposes two product modes and two regions:
 
-- 标准 API 与 GLM Coding Plan
-- 中国（`open.bigmodel.cn`）与国际（`api.z.ai`）
+- Standard API vs GLM Coding Plan
+- China (`open.bigmodel.cn`) vs international (`api.z.ai`)
 
-pi-ai 已经为两个 Coding Plan URL 提供了 Completions 传输（`zai`、
-`zai-coding-cn`），并从这些主机检测 `thinkingFormat: "zai"`。
-models.dev 已经发布全部四个端点。PI-Desktop 的添加 provider 对话框
-此前是一个通用的 OpenAI 兼容表单，因此用户必须知道要粘贴哪个 URL，
-而且保存的行使用 `vendorKey: "custom"`。
+pi-ai already ships Completions transports for the two Coding Plan URLs
+(`zai`, `zai-coding-cn`) and detects `thinkingFormat: "zai"` from those hosts.
+models.dev already publishes all four endpoints. PI-Desktop's add-provider
+dialog was a generic OpenAI-compatible form, so users had to know which URL to
+paste, and a saved row used `vendorKey: "custom"`.
 
-Issue #35 要求对 API 与 Coding Plan、中国与国际做一等配置，而不
-引入新的厂商 SDK。
+Issue #35 asked for first-class configuration of API vs Coding Plan and
+China vs international, without a new vendor SDK.
 
-## 决策
+## Decision
 
-在添加 provider 的 **Service** 选择器中暴露四个命名端点预设。它们
-保留在既有的 OpenAI 兼容路径上：
+Expose four named endpoint presets in the add-provider **Service** select.
+They stay on the existing OpenAI-compatible path:
 
 ```text
 vendorKey              baseUrl
@@ -34,24 +34,25 @@ zai                    https://api.z.ai/api/paas/v4
 zai-coding-plan        https://api.z.ai/api/coding/paas/v4
 ```
 
-选择预设会填入名称、锁定 Base URL、保持 `apiStyle:
-"chat_completions"`，并持久化 models.dev 的 `vendorKey`。显示名保持
-可编辑。Coding Plan 显示一行 API key 提示。这是一个紧凑的选择器，
-而不是恢复的厂商卡片网格。
+Selecting a preset fills the name, locks the Base URL, keeps `apiStyle:
+"chat_completions"`, and persists the models.dev `vendorKey`. The display name
+stays editable. Coding Plan shows a one-line API-key hint. This is a compact
+select, not a restored vendor-card grid.
 
-pi-ai 的 `zai` 传输是国际版 Coding Plan，而 models.dev 的 `zai` 是
-标准 API。PI-Desktop 存储 models.dev 键加精确 URL，使目录匹配无法
-混淆它们。`zai-coding-cn` 仍是 `zhipuai-coding-plan` 的别名。
+pi-ai's `zai` transport is the international Coding Plan, while models.dev
+`zai` is the standard API. PI-Desktop stores the models.dev key plus the exact
+URL so catalog matching cannot confuse them. `zai-coding-cn` remains an alias
+of `zhipuai-coding-plan`.
 
-当配置的 URL 或 `vendorKey` 匹配预设时，sidecar 的 Completions 模型
-记录获得 `thinkingFormat: "zai"` 和 `zaiToolStream: true`。不引入新的
-线上适配器、密钥表或宿主协议。
+When the configured URL or `vendorKey` matches a preset, the sidecar Completions
+model record receives `thinkingFormat: "zai"` and `zaiToolStream: true`. No new
+wire adapter, secret table, or host protocol is introduced.
 
-## 后果
+## Consequences
 
-- 中国和国际的智谱用户无需从外部文档复制 URL 即可在 API 与
-  Coding Plan 之间选择。
-- 目录丰富跟随所选端点，而不是通用的 custom 行。
-- 通用 OpenAI 兼容配置仍是 Custom 端点选项。
-- OpenCode Go 保持为 API 风格预设；智谱不会增加四个更多的 apiStyle
-  值。
+- China and international Zhipu users can pick API vs Coding Plan without
+  copying URLs from external docs.
+- Catalog enrichment follows the selected endpoint, not a generic custom row.
+- Generic OpenAI-compatible configuration remains the Custom endpoint option.
+- OpenCode Go stays an API-style preset; Zhipu does not add four more apiStyle
+  values.

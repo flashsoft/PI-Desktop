@@ -1,4 +1,4 @@
-# ADR 0218: 跨 Composer 与传输层的生效图像输入覆盖
+# ADR 0218: Effective Image-Input Overrides Across Composer and Transport
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -7,37 +7,43 @@
 
 ## Context
 
-高级模型设置允许 provider 绑定覆盖某个端点是否接受图像输入。该覆盖有
-意是三态的：`null` 表示遵循已发布的模型记录，`true` 和 `false` 显式
-启用或禁用图像输入。Composer 的模型行此前仅从已发布的目录推导视觉徽
-章，因此一个被配置为纯文本的模型可能在看似纯文本的同时传输图像，或
-者一个被配置为视觉的模型可能宣传一个端点已被禁止使用的能力。
+Advanced model settings allow a provider binding to override whether an endpoint
+accepts image input. The override is intentionally three-state: `null` means
+follow the published model record, while `true` and `false` explicitly enable or
+disable image input. Composer model rows still derived their vision badge only
+from the published catalog, so a configured text-only model could transport an
+image while appearing text-only, or a configured vision model could advertise a
+capability that the endpoint had been disabled from using.
 
 ## Decision
 
-1. 针对确切的 provider/model 绑定解析生效的图像输入能力。显式的
-   `supportsImages` 值优先；`null` 或缺失的值遵循已发布的模型能力。
-2. Composer 模型行徽章、附件状态和主进程图像传输使用同一个生效结
-   果。不修改共享的已发布 `ModelInfo` 记录。
-3. 当不存在显式绑定覆盖时，对未知或自定义模型 id 保持保守。仅靠发
-   现或缓存元数据不能把它们提升为可传输图像。
-4. 保留现有的附件边界：在十进制 10 MB 应用限制内的合格图像使用临时
-   图像块；被禁用、未知或超大的图像使用安全的 `@path` 回退。
+1. Resolve the effective image-input capability for the exact provider/model
+   binding. An explicit `supportsImages` value wins; `null` or an absent value
+   follows the published model capability.
+2. Use that same effective result for the Composer model-row badge, attachment
+   status, and main-process image transport. Do not mutate the shared published
+   `ModelInfo` record.
+3. Keep unknown or custom model ids conservative when no explicit binding
+   override exists. Discovery or cache metadata alone cannot promote them to
+   image transport.
+4. Preserve the existing attachment boundary: eligible images within the
+   decimal 10 MB app limit use transient image blocks; disabled, unknown, or
+   oversized images use the safe `@path` fallback.
 
 ## Consequences
 
-- provider 绑定可以在模型选择器和请求路径中都准确描述自定义或代理
-  端点。
-- 把覆盖重置为 `null` 会恢复已发布目录的行为。
-- 当没有配置本地端点专属覆盖时，已发布的目录元数据保持不可变且权
-  威。
-- Composer 的视觉徽章和传输决策不可能相互漂移。
+- A provider binding can accurately describe a custom or proxied endpoint in
+  both the model picker and the request path.
+- Resetting an override to `null` restores the published catalog behavior.
+- Published catalog metadata remains immutable and authoritative when no local
+  endpoint-specific override is configured.
+- The Composer's vision badge and transport decision cannot drift apart.
 
 ## Alternatives considered
 
-- **保持徽章仅看目录：** 被拒绝，因为它会错误表示已配置的端点，并
-  与传输决策背离。
-- **修改已发布的模型记录：** 被拒绝，因为它会把端点本地设置泄漏进
-  共享目录状态和其他绑定。
-- **对未知模型信任发现结果：** 被拒绝，因为发现结果对图像传输来说
-  不是充分的序列化或安全保证。
+- **Keep the badge catalog-only:** rejected because it misrepresents configured
+  endpoints and diverges from the transport decision.
+- **Mutate the published model record:** rejected because it would leak
+  endpoint-local settings into shared catalog state and other bindings.
+- **Trust discovery for unknown models:** rejected because discovery is not a
+  sufficient serialization or safety guarantee for image transport.

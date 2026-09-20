@@ -1,17 +1,17 @@
-# 12. 提供商配置架构
+# 12. Provider Config Schema
 
-## 1. 存储位置
+## 1. Storage location
 
-由 Rust 主机 DB/settings 存储拥有。
+Owned by Rust host DB/settings store.
 
-表（[04-data-storage](/spec/03-runtime/04-data-storage) §4.3–4.4、§4.11 中的规范 DDL）：
+Tables (canonical DDL in [04-data-storage](04-data-storage.md) §4.3–4.4, §4.11):
 
 - `providers`
-- `models`（单个目录表；`source: bundled | discovered | user` 替换旧的 `provider_models` / `model_catalog_cache` 拆分）
-- `secrets_meta`（无原始秘密值）
-- 最近模型的 MRU 位于 `kv(ns='cache')` 中，而不是表中
+- `models` (single catalog table; `source: bundled | discovered | user` replaces the old `provider_models` / `model_catalog_cache` split)
+- `secrets_meta` (no raw secret values)
+- recent-model MRU lives in `kv(ns='cache')`, not a table
 
-## 2. 提供商记录 JSON 架构（逻辑）
+## 2. Provider record JSON schema (logical)
 
 ```json
 {
@@ -41,15 +41,21 @@
       ]
     },
     "secretRef": { "type": "string" },
+    "ownerPluginId": { "type": ["string", "null"] },
     "headers": {
       "type": "object",
       "additionalProperties": { "type": "string" },
       "maxProperties": 32
     },
-    "userAgent": { "type": "string", "maxLength": 256, "description": "legacy; migrates into headers.User-Agent" },
+    "userAgent": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "legacy; migrates into headers.User-Agent"
+    },
     "apiStyle": {
       "enum": [
         "chat_completions",
+        "opencode_go",
         "responses",
         "anthropic_messages",
         "google_generative_ai",
@@ -93,7 +99,7 @@
           },
           "defaultThinkingLevel": {
             "type": ["string", "null"],
-            "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max", null]
+            "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max", "omit", null]
           },
           "supportsImages": { "type": ["boolean", "null"] },
           "supportsDocuments": { "type": ["boolean", "null"] },
@@ -101,155 +107,271 @@
         }
       }
     },
-    "ownerPluginId": { "type": ["string", "null"] },
     "createdAt": { "type": "string" },
     "updatedAt": { "type": "string" }
   }
 }
 ```
 
-插件通过 `contributes.providers` 声明的行带有 `ownerPluginId`（其行 id 为
-`plugin:<pluginId>:<declaredId>`），对模型解析、发现、连接测试和会话绑定而言
-它是一行普通 provider。用户路径对它只读：`providers.update` 与
-`providers.delete` 会以 `PROVIDER_OWNED_BY_PLUGIN` 错误拒绝。该声明在每次插件
-加载时从插件 manifest 重新读取，并对自己拥有的字段具有权威性，而已存储的
-`headers`、OAuth 账户标签以及用户填入的凭据都会保留。停用插件保留该行并将其
-关闭；卸载插件或移除该声明会删除该行及其两个凭据引用（ADR 0259，
-`07-plugins/02-plugin-manifest-schema.md` §5.4）。
+`models[].alias` is an optional display label (ADR 0192). `models[].id`
+remains the identity sent to the provider and the alias is never used for
+provider or model resolution; UI naming and clearing rules are specified in
+[04-ux/08-component-spec](../04-ux/08-component-spec.md). Host-core trims the
+alias, drops a blank one, and enforces the 60-character limit by rejecting an
+over-long alias with `MODEL_ALIAS_TOO_LONG`.
 
-`models[].alias` 是可选展示标签（ADR 0192）。`models[].id` 仍是发给提供商的
-身份，别名从不用于提供商或模型解析。host-core 会修剪别名、丢弃空白值，
-并在超过 60 个 Unicode 字符时以 `MODEL_ALIAS_TOO_LONG` 拒绝。
+`models[].contextWindowSource` records where the stored `contextWindow` came
+from. `catalog` marks a models.dev snapshot that a later catalog correction may
+replace; `user` marks a number entered in Settings and is never replaced. The
+property is optional, so a config written before the marker stays readable and
+older clients ignore it. Host-core keeps only those two values and drops anything
+else, so an unreadable marker cannot turn into a third state. The resolution rule
+is specified in [13-model-catalog-and-selection](13-model-catalog-and-selection.md) §9.1.
 
-`models[].contextWindowSource` 记录存储的 `contextWindow` 来自哪里：`catalog` 表示
-models.dev 快照，之后的目录修正可以替换它；`user` 表示用户在设置中手改的值，永不被
-替换。该字段可选，因此早于该标记写出的配置仍可读，旧客户端会忽略它。host-core 只
-保留这两个取值、丢弃其它值，避免出现第三种无人识别的状态。解析规则见
-[13-model-catalog-and-selection](13-model-catalog-and-selection.md) §9.1。
+`compatibility.supportsReasoning` and
+`compatibility.supportedThinkingLevels` remain readable for stored-record and
+older-client compatibility, but Electron main ignores them during runtime
+model resolution. The public provider shape is enriched from the local
+models.dev snapshot. Unknown free-form models initially expose
+`supportsReasoning=false` and `supportedThinkingLevels=["off"]`; Settings may
+still persist an explicit thinking-level binding for an endpoint that supports
+it. The raw secret and internal compatibility JSON remain hidden.
 
-`compatibility.supportsReasoning` 和
-`compatibility.supportedThinkingLevels` 对于存储的记录保持可读状态
-旧客户端兼容性，但 Electron main 在运行时忽略它们
-模型分辨率。公共提供商形状是从精确的 pi-ai 中丰富的
-代替模型记录。未知的自由形式模型暴露了 `supportsReasoning=false`
-和 `supportedThinkingLevels=["off"]`。原始秘密和内部兼容性
-JSON 保持隐藏状态。
+Anthropic Messages providers may store either the service root or a URL ending
+in `/v1`. Model discovery preserves that configured path and requests
+`/v1/models` exactly once; runtime request setup removes the trailing `/v1`
+before invoking pi-ai, whose Anthropic SDK adds `/v1` to the messages route.
+Both forms therefore send messages to the configured service's
+`/v1/messages` endpoint rather than a doubled `/v1/v1/messages` path.
 
-`authKind: "oauth"` 标记厂商账户行（ADR 0095、D237）：其凭据是保存在
-`secret:provider:<id>:oauth` 下的 OAuth 授权，而不是粘贴的密钥，因此该行
-不为它保存 `secretRef`，并以空密钥启动。两种账户专用 apiStyle 是厂商账户专用的
-线路 API —— `openai_codex_responses`（Codex 会话封装）与 `pi_messages`
-（radius 网关）—— 自定义提供商对话框不提供它们，因为二者都无法配合手输的
-base URL 与粘贴的密钥工作。新建自定义服务只提供 Chat Completions、Responses、Anthropic
-Messages 和 Google Generative AI；OpenCode Go 仍通过具名服务配置。
-历史非 OAuth 行若保存了上述账户专用格式，编辑时会显示禁选的当前格式和
-说明，并允许原样保存。仅打开编辑器不会根据匹配的端点预设修改协议、名称
-或 URL；选择其他格式才是明确变更。复制此类行时保留草稿中的原格式供
-确认，但在主动选择支持的格式前禁止保存和模型发现，并显示原因。
-不迁移已有认证类型或凭据。厂商行的样式不由厂商固定：GitHub Copilot 同时
-提供 Anthropic、Chat Completions 与 Responses 模型，因此样式跟随所选模型，
-并在每次切换模型时重写。`config_json.oauth.accountLabel` 保存已登录账户的
-非敏感展示标签。
+For OpenAI-compatible Chat Completions models, the runtime defaults
+`compat.supportsDeveloperRole` to `false`, so system instructions are sent as
+`role: "system"` even when the selected model supports reasoning. A resolved
+model record may explicitly set it to `true` for an upstream that accepts
+`role: "developer"`; this override is model-scoped.
 
-### 将提供商配置复制为独立草稿
+`authKind: "oauth"` marks a vendor-account row (ADR 0095, D237, D240): the credential
+is an OAuth grant under `secret:provider:<id>:oauth` rather than a pasted key,
+so the row carries no `secretRef` for it and launches with an empty key. The
+two account-only apiStyle values are vendor-account wire APIs — `openai_codex_responses`
+(the Codex conversation envelope) and `pi_messages` (the radius gateway) — and
+are not offered in the custom-provider dialog because neither works against a
+hand-typed base URL with a pasted key. New custom services offer only
+Chat Completions, Responses, Anthropic Messages, and Google Generative AI;
+OpenCode Go remains a named service. Existing non-OAuth rows with either
+account-only style remain editable: their current format is shown as a disabled
+legacy option with an explanation and can be saved unchanged. Merely opening
+the editor does not derive another protocol, name, or URL from a matching
+endpoint preset. Selecting another format is an explicit change. Copying such
+a row preserves its draft format for review, but saving and discovery remain
+disabled with a visible explanation until a supported format is explicitly
+chosen. No existing authentication kind or credential is migrated. A vendor row's style is not fixed by the
+vendor: GitHub Copilot serves Anthropic, Chat Completions, and Responses
+models, so the style follows the selected model and is rewritten on each model
+change. The vendor account editor uses the same multi-model binding controls as
+an AI service: authenticated catalog models and custom IDs can be selected,
+and each binding persists its context window, max output tokens, thinking levels,
+and default thinking level in `models`. `config_json.oauth.accountLabel` holds the non-secret display label for
+the signed-in account.
+Each successful login creates a new row even when another row has the same
+`vendorKey`; the row id scopes the credential and runtime binding. The vendor
+catalog exposes these rows as an `accounts` array with `providerId`, an optional
+non-secret `accountLabel`, and a `connected` flag. The custom-provider dialog
+does not edit or delete OAuth rows; the Vendor accounts card calls
+`providers.delete` for the selected row.
 
-模型配置页在普通非 OAuth 提供商行提供**复制**操作，通常打开新的自定义
-服务草稿。草稿中的 API 格式可以修改，便于为同一站点的其他协议复用地址
-和模型绑定。OpenCode Go 是例外：副本保留命名服务与固定的 `opencode_go`
-格式；先切换为自定义服务，才能选择普通 API 格式。OAuth 账户行不提供此操作。
+`models` is the provider's selected model binding array. Each binding owns its
+context/output limits and explicit thinking configuration. Published catalog
+levels seed a newly selected known model, but the binding may enable any
+canonical level so a proxy or newly released endpoint is configurable before
+the catalog is updated. `defaultModelId` remains a
+read compatibility field and is kept equal to the first binding when a new
+provider is saved. When an older record has only `defaultModelId`, the host
+materializes one binding on read with a 128,000 context window, 8,192 max
+output, no enabled thinking levels, and a null default. The settings editor
+still renders all canonical choices for that legacy binding, and the next write
+stores the explicit binding array in `config_json.models`.
 
-草稿按明确的字段白名单构建：来源名称、`baseUrl`、`apiStyle` 以及 `models`
-中已声明的绑定字段。模型对象及嵌套的 `thinkingLevels` 数组独立复制，编辑
-草稿不能修改来源对象。建议名称可带复制标记，用户可以在保存前修改。
-不复制来源 `id`、凭据或凭据引用、`hasSecret` 状态、OAuth 元数据、自定义
-`headers` 或未知字段。允许使用的自定义请求头也可能包含 token，因此全部
-省略。对话框说明：需要认证信息或自定义请求头时，应为新配置重新填写。
+For context resolution, that 128,000 value is a backward-compatible generic
+seed, not a reason to hide a published long-context limit. If models.dev now
+publishes a positive `limit.context`, the effective runtime and inspector window
+follow it; a non-default value entered in the model's Advanced controls remains
+an explicit per-model override. Unknown IDs continue to use 128,000.
 
-Base URL 格式无效、不是 HTTP(S)，或包含用户名/密码、查询参数、片段时，
-草稿中的地址留空，避免复制历史 URL 中的凭据。
+`availableForSubagents` is an optional, persisted opt-in on each model binding.
+Host read/write and normalization preserve `true`; records created before this
+field existed remain disabled by default. This flag is what Electron main uses
+to build the delegation model catalog, so changing it survives provider edits
+and application restarts.
 
-草稿使用正常的新提供商发现路径，不得把来源 provider id 传给模型发现或
-连接测试来解析来源保存的密钥。需要认证的发现请求只使用为新草稿明确
-填写的凭据。复制操作不读取或复制秘密存储中的值。
+`apiStyle: "opencode_go"` is a first-class OpenCode Go preset layered on the
+OpenAI-compatible provider type. It persists as its own style so the UI can
+identify the service, but runtime requests use the OpenAI Chat Completions
+wire adapter. The Service select offers OpenCode Go next to named Zhipu
+endpoints. The preset always uses `name: "OpenCode Go"` and
+`baseUrl: "https://opencode.ai/zen/go/v1"`; the common path is Service + API
+key, with the host shown as a summary. Model discovery calls the fixed
+`/models` endpoint with a Bearer key, and the raw key continues to follow the
+normal secret-store path.
 
-取消草稿不持久化提供商或配置。保存走现有 `createProvider` /
-`providers.create` 流程，分配新的提供商身份；填写新密钥时创建该提供商
-自己的凭据引用。来源提供商与全局默认提供商、模型选择保持不变。新
-提供商自己的默认模型仍按现有创建规则取首个所选模型。复制操作不新增
-IPC 方法、存储 schema 或权限边界。
+OpenCode Go (and any `opencode.ai` host) requires a stable
+`x-opencode-session` header on LLM requests. Agent-runtime sends that header
+plus `x-opencode-client: pi-desktop` and `User-Agent: pi-desktop/<APP_VERSION>`
+on session turns, subagent turns, prompt enhancement, and plugin one-shots.
+Caller-supplied headers override the client and User-Agent values; a missing
+or empty session header is always restored from the conversation id.
 
-## 3. 内置供应商预设
+`headers` is an optional per-row map stored in `config_json.headers`. Empty,
+omitted, or update `{}` keeps the adapter default (pi-ai's `pi (…)` string,
+Anthropic OAuth's `claude-cli/<version>`, or OpenCode's
+`pi-desktop/<APP_VERSION>`). A non-empty map is last-writer on that row's
+outbound HTTP — session turns, subagents, prompt enhancement, plugin one-shots,
+`/models` discovery (including unsaved form values), connection tests, and
+OAuth token refresh. A fetch wrapper is the last writer so Codex and the
+Anthropic SDK cannot overwrite it. The same values are also placed on stream-
+option headers so OpenCode's caller-wins rule stays true. Keys are
+case-insensitive unique, at most 32 entries, name ≤ 256 bytes, value ≤ 4096
+bytes, no CR/LF, names alphanumeric plus hyphen. Reserved keys
+(`authorization`, `proxy-authorization`, `host`, `content-type`,
+`content-length`, `cookie`, `set-cookie`, `connection`, `transfer-encoding`,
+`te`, `trailer`, `upgrade`, `keep-alive`, `x-api-key`, `api-key`,
+`chatgpt-account-id`, `x-opencode-session`) are rejected so this cannot smash
+signing or app routing. This is not a secret. Leftover `config_json.userAgent`
+migrates into `headers["User-Agent"]` on read; writing `headers` drops it.
+Overriding Anthropic OAuth's `claude-cli/…` User-Agent can make Claude Pro/Max
+reject the request. First OAuth login does not collect headers; they are
+edited on the account after it exists. Advanced UI is a compact key/value
+editor, not a dedicated User-Agent field.
 
-仅预设预填表单默认值；他们不是一个封闭的世界。
+Copilot OAuth rows also retain the static IDE identity headers from the pinned
+pi-ai transport model (`Editor-Version`, `Editor-Plugin-Version`, and
+`Copilot-Integration-Id`) even though runtime models use the local row id for
+account isolation. Agent-runtime supplies Copilot's context-sensitive request
+headers per call; a saved custom header with the same name overrides the
+default.
 
-| 供应商密钥 | 默认协议 | 授权类型 | 需要基本网址 |
+
+A row a plugin declared through `contributes.providers` carries
+`ownerPluginId` (its row id is `plugin:<pluginId>:<declaredId>`), and it is a
+normal provider row for model resolution, discovery, connection testing, and
+session binding. It is read-only for the user path: `providers.update` and
+`providers.delete` refuse it with a `PROVIDER_OWNED_BY_PLUGIN` error. The
+declaration is re-read from the plugin manifest on every plugin load and is
+authoritative for its own fields, while stored `headers`, the OAuth account
+label, and a credential the user entered are kept. Disabling the plugin keeps
+the row and turns it off; uninstalling it, or removing the declaration, deletes
+the row and both credential refs (ADR 0259,
+`07-plugins/02-plugin-manifest-schema.md` §5.4).
+### Copy a provider into an independent draft
+
+Model configuration offers **Copy** on ordinary non-OAuth provider rows. The
+action normally opens a new custom-service draft with an editable API format,
+allowing the same endpoint and model bindings to be reused for another
+protocol. OpenCode Go is the exception: its copy retains the named service and
+fixed `opencode_go` format; selecting Custom service first makes the ordinary
+API formats editable. OAuth account rows do not offer this action.
+
+The draft is built from an explicit allowlist: the source name, `baseUrl`,
+`apiStyle`, and declared `models` binding fields. Model objects and nested
+`thinkingLevels` arrays are copied independently so draft edits cannot mutate
+the source. A copy label may distinguish the suggested name; the user can edit
+it before saving. No source `id`, credential or credential reference,
+`hasSecret` state, OAuth metadata, custom `headers`, or unknown fields are
+copied. All custom headers are omitted because an otherwise permitted header
+may contain a token. The dialog explains that credentials and custom headers
+must be supplied again when needed.
+
+A malformed Base URL, a non-HTTP(S) scheme, or a URL containing user info,
+query parameters, or a fragment is left blank in the draft so legacy URL
+credentials are not copied.
+
+The draft uses the normal new-provider discovery path: it must not pass the
+source provider id to model discovery or connection testing to resolve that
+provider's stored key. Any authenticated discovery uses only credentials
+explicitly supplied for the new draft. Copying does not read or duplicate
+secret-store values.
+
+Canceling the draft performs no provider/configuration persistence. Saving
+uses the existing `createProvider` / `providers.create` flow and assigns a new
+provider identity and, when a new key is entered, that provider's own secret
+reference. The source provider and global default provider/model selections
+remain unchanged. The first selected model remains the new provider's own
+default through the existing create behavior. Copying adds no IPC method,
+storage schema, or permission boundary.
+
+## 3. Built-in vendor presets
+
+Presets only prefill form defaults; they are not a closed world.
+
+| vendorKey | default protocol | authKind | baseUrl required |
 |---|---|---|---|
-| 开放性 | 开放性 | api_key | 不 |
-| 人择的 | 人择的 | api_key | 不 |
-| 谷歌 | 谷歌 | api_key | 不 |
-| 开放路由器 | openai_兼容 | api_key_and_base_url | 是的 |
-| 深度搜索 | openai_兼容 | api_key_and_base_url | 是的 |
-| 格罗克 | openai_兼容 | api_key_and_base_url | 是的 |
-| 在一起 | openai_兼容 | api_key_and_base_url | 是的 |
-| 烟花 | openai_兼容 | api_key_and_base_url | 是的 |
-| 米斯塔拉尔 | openai_兼容或本机 | api_key | 可选的 |
-| 赛 | openai_兼容 | api_key_and_base_url | 是的 |
-| azure_openai | openai_兼容 | azure_api_key | 是的 |
-| 基岩 | 基岩 | aws_sdk_默认 | 不 |
-| 奥拉马 | openai_兼容 | 无 | 是的 |
-| 工作室 | openai_兼容 | 无 | 是的 |
-| 定制 | openai_兼容 | api_key_and_base_url | 是的 |
+| openai | openai | api_key | no |
+| anthropic | anthropic | api_key | no |
+| google | google | api_key | no |
+| openrouter | openai_compatible | api_key_and_base_url | yes |
+| deepseek | openai_compatible | api_key_and_base_url | yes |
+| groq | openai_compatible | api_key_and_base_url | yes |
+| together | openai_compatible | api_key_and_base_url | yes |
+| fireworks | openai_compatible | api_key_and_base_url | yes |
+| mistral | openai_compatible or native | api_key | optional |
+| xai | openai_compatible | api_key_and_base_url | yes |
+| azure_openai | openai_compatible | azure_api_key | yes |
+| bedrock | bedrock | aws_sdk_default | no |
+| ollama | openai_compatible | none | yes |
+| lmstudio | openai_compatible | none | yes |
+| custom | openai_compatible | api_key_and_base_url | yes |
 
-### 固定 API 风格预设
+### Fixed API-style presets
 
-| apiStyle | 提供商类型 | authKind | 名称 | baseUrl |
+| apiStyle | provider type | authKind | name | baseUrl |
 |---|---|---|---|---|
 | `opencode_go` | `openai_compatible` | `api_key_and_base_url` | `OpenCode Go` | `https://opencode.ai/zen/go/v1` |
 
-OpenCode Go（以及任何 `opencode.ai` 主机）的 LLM 请求必须带稳定的
-`x-opencode-session`。agent-runtime 在会话、子代理、提示增强与插件 one-shot
-上发送该头，并附带 `x-opencode-client: pi-desktop` 与
-`User-Agent: pi-desktop/<APP_VERSION>`。行上可选的 `headers` 会覆盖这些默认值；留空则保持适配器默认。
+### Named endpoint presets
 
-每行（AI 服务或 OAuth 账户）可在高级选项中用键值行编辑自定义请求头。空映射保持 pi-ai / `claude-cli` / OpenCode 默认。fetch 包装器是最后写入者，因此 Codex 与 Anthropic SDK 无法覆盖。禁止 `Authorization` / `Host` / `Content-Type` 等保留头。遗留的 `userAgent` 读取时迁入 `headers["User-Agent"]`。首次 OAuth 登录不收集请求头，登录后再编辑。覆盖 Anthropic OAuth 的 `claude-cli/…` 可能导致 Claude Pro/Max 拒绝请求。
+These rows are created from the add-provider **Service** select, not from a
+new protocol. They remain `type: "openai_compatible"`. The common path is
+Service + API key; the published host is a summary, and the display name is
+editable in Advanced. Custom endpoint shows Name beside Base URL, then API key
+beside API format. `vendorKey` is the models.dev provider key.
 
-### 命名端点预设
+International: OpenAI (`responses`), Anthropic (`anthropic_messages`), Google
+Gemini (`google_generative_ai`), OpenRouter, Groq, xAI, Mistral, Together AI,
+Fireworks, OpenCode Go (`opencode_go`), Z.AI / Z.AI Coding Plan.
 
-这些行由添加提供商对话框的**服务**下拉框创建。命名服务的常见路径是服务 +
-API 密钥；自定义端点在常见路径上并排显示 API 密钥与接口格式。`vendorKey`
-使用 models.dev 提供商键。
+China: DeepSeek, Qwen DashScope (`alibaba-cn`), Moonshot (`moonshotai-cn`),
+Zhipu AI / Coding Plan, SiliconFlow (`siliconflow-cn`), Volcengine Ark,
+MiniMax (`anthropic_messages` at `https://api.minimaxi.com/anthropic/v1`),
+MiniMax (OpenAI) (`chat_completions` at `https://api.minimaxi.com/v1`, aliases
+`minimax-openai` / `minimax-compatible`), Kimi For Coding (`anthropic_messages`).
 
-国际：OpenAI、Anthropic、Google Gemini、OpenRouter、Groq、xAI、Mistral、
-Together、Fireworks、OpenCode Go、Z.AI。
+Zhipu / Z.AI Completions requests still receive `thinkingFormat: "zai"` and
+`zaiToolStream: true`. pi-ai `zai-coding-cn` remains an alias of
+`zhipuai-coding-plan`. DeepSeek-family Completions requests receive
+`requiresReasoningContentOnAssistantMessages: true` when the vendor key, URL,
+model id, or catalog family identifies DeepSeek. `thinkingFormat` is unchanged.
 
-国内：DeepSeek、通义千问、月之暗面、智谱 / Coding Plan、硅基流动、火山方舟、
-MiniMax（`anthropic_messages`，`https://api.minimaxi.com/anthropic/v1`）、
-MiniMax (OpenAI)（`chat_completions`，`https://api.minimaxi.com/v1`，别名
-`minimax-openai` / `minimax-compatible`）、Kimi 编程。
+### Vendor-account presets
 
-智谱 / Z.AI 的 Completions 请求仍使用 `thinkingFormat: "zai"` 与
-`zaiToolStream: true`。DeepSeek 系 Completions 在 vendor key、URL、模型 ID 或
-目录 family 能识别为 DeepSeek 时设置
-`requiresReasoningContentOnAssistantMessages: true`，不改 `thinkingFormat`。
+These rows are created by signing in (Settings -> Model configuration ->
+Vendor accounts), not by the custom-provider dialog. The list is derived at
+runtime from `models.getProviders().filter(p => p.auth.oauth)`, so it tracks
+pi-ai rather than this table; every login creates a separate row, and
+`baseUrl`, `apiStyle`, and `defaultModelId` are filled in from that account's
+own catalog after login. Matching models.dev records provide the binding
+metadata; an account model absent from the snapshot remains generic.
 
-### 厂商账户预设
-
-这些行由登录创建（设置 → 模型配置 → 厂商账户），而不是由自定义提供商
-对话框创建。列表在运行时由 `models.getProviders().filter(p => p.auth.oauth)`
-派生，因此它跟随 pi-ai 而不是本表；`baseUrl`、`apiStyle` 与 `defaultModelId`
-在登录后由账户自己的目录填入。
-
-| vendorKey | 订阅 | 典型 apiStyle | 登录形态 |
+| vendorKey | subscription | typical apiStyle | login shape |
 |---|---|---|---|
-| anthropic | Claude Pro/Max | anthropic_messages | PKCE + 本地回调 |
-| openai-codex | ChatGPT Plus/Pro | openai_codex_responses | PKCE + 本地回调，或手动贴码 |
-| github-copilot | Copilot | 随模型而变 | 设备码 |
-| openrouter | 账户余额 | chat_completions | PKCE + 本地回调 |
-| kimi-coding | Kimi | chat_completions（仅 headers 认证） | 设备码 |
-| xai | xAI | chat_completions | 设备码 |
-| radius | Radius | pi_messages | PKCE + 本地回调 |
+| anthropic | Claude Pro/Max | anthropic_messages | PKCE + local callback |
+| openai-codex | ChatGPT Plus/Pro | openai_codex_responses | PKCE + local callback, or pasted code |
+| github-copilot | Copilot | varies by model | device code |
+| openrouter | account credit | chat_completions | PKCE + local callback |
+| kimi-coding | Kimi | chat_completions (headers-only auth) | device code |
+| xai | xAI | chat_completions | device code |
+| radius | Radius | pi_messages | PKCE + local callback |
 
-## 4. 模型目录缓存记录
+## 4. Model catalog cache record
 
 ```ts
 type ModelCatalogCacheRecord = {
@@ -260,49 +382,60 @@ type ModelCatalogCacheRecord = {
   capabilities: string[]
   contextWindow?: number
   source: "bundled" | "discovered" | "user"
+  /** Renderer annotation for a row resolved from the bundled models.dev snapshot. */
+  catalogSource?: "models.dev"
   updatedAt: string
   raw?: unknown
 }
 ```
 
-上下文窗口解析与 sidecar 保持一致：若 models.dev 已发布正数
-`limit.context`，它会替换旧 binding 中的 128k 通用种子；用户在模型
-Advanced 控件中设置的非默认值仍优先。未知模型继续使用 128k 的保守后备。
+## 5. Bundled models.dev snapshot
 
-Copilot OAuth 行还会保留固定 pin 的 pi-ai 传输模型中的静态 IDE 身份标头
-（`Editor-Version`、`Editor-Plugin-Version` 与 `Copilot-Integration-Id`），
-即使运行时模型使用本地行 id 进行账户隔离。Agent 运行时会按每次调用提供
-Copilot 的上下文相关请求标头；已保存的同名自定义 header 会覆盖默认值。
+The raw public catalog is checked into the release resource at
+`apps/desktop/resources/models.dev/api.json` and packaged at
+`resources/models.dev/api.json`. `scripts/release.mjs` fetches and validates
+`https://models.dev/api.json`, then atomically replaces the checked-in file
+before creating a release tag. Electron main reads this bundled snapshot at
+startup without network I/O. Settings → Model configuration can refetch the
+URL, but a successful response updates only the current process's in-memory
+catalog; it never writes the packaged resource or a user cache. Cache reads
+never send provider credentials to models.dev. The Rust `models` table continues
+to store only normalized provider selection rows; it does not need a schema
+change for the raw snapshot.
 
-## 5. IPC / 主机方法（提供商域）
+## 6. IPC / host methods (provider domain)
 
 - `providers.list`
+- `providers.reorder`
 - `providers.get`
 - `providers.create`
 - `providers.update`
 - `providers.delete`
 - `providers.testConnection`
 - `providers.listModels`
-- `providers.cacheModels`（内部 Electron-main 到主机持久桥）
+- `providers.cacheModels` (internal Electron-main to host persistence bridge)
 - `providers.refreshModels`
 - `providers.upsertUserModel`
 - `providers.deleteUserModel`
 
-## 6. 安全限制
+## 6. Security constraints
 
-1. list/get 提供商 API 从未返回原始机密
-2. 如果可以使用密钥存储，`headers` 不得存储 `Authorization: Bearer <secret>`
-3.导出设置默认排除机密
+1. raw secrets never returned by list/get provider APIs
+2. `headers` must not store `Authorization: Bearer <secret>` if secret store can be used
+3. export settings excludes secrets by default
 
-## 7. 迁移
+## 7. Migration
 
-- 通过 `PRAGMA user_version` 的架构版本（04-数据存储§7）
-- 提供商记录累加进化；每个提供商的扩展字段登陆 `config_json`
-- 未知的未来协议值不应使旧的应用程序版本崩溃（ignore/disable，带有警告）
+- schema version via `PRAGMA user_version` (04-data-storage §7)
+- provider records additive-evolved; per-provider extension fields land in `config_json`
+- unknown future protocol values should not crash older app versions (ignore/disable with warning)
+- an unknown or legacy `apiStyle` remains editable: the provider editor uses
+  `chat_completions` as its safe UI fallback, and a subsequent save repairs the
+  stored style instead of crashing while normalizing the base URL
 
-## 8. SQL（Rust 拥有的 SQLite）
+## 8. SQL (Rust-owned SQLite)
 
-规范的 DDL 位于 [04-data-storage](/spec/03-runtime/04-data-storage) (D086) 中。提供商域表摘要：
+The canonical DDL lives in [04-data-storage](04-data-storage.md) (D086). Summary of the provider-domain tables:
 
 ```sql
 -- providers: id/name/vendor_key/type/protocol/api_style/auth_kind/base_url/
@@ -315,91 +448,124 @@ Copilot 的上下文相关请求标头；已保存的同名自定义 header 会�
 -- secrets_meta: secret_ref PK, owner_kind/owner_id, kind, backend
 ```
 
-> 原始秘密材料**不**存储在这些表中。
+> Raw secret material is **not** stored in these tables.
 
-## 9. 宿主方法合约 (v1)
+## 9. Host method contracts (v1)
 
 ### `providers.list`
-- 在：`{ includeDisabled?: boolean }`
-- 输出：`{ providers: ProviderPublic[] }`
-- `ProviderPublic` 排除原始秘密；包括 `hasSecret: boolean`（**任一种**凭据
-  存在即为真）、`hasOauth: boolean`、非敏感的 `oauthAccountLabel?: string`
-  与可选的 `headers?: Record<string, string>`
+- in: `{ includeDisabled?: boolean }`
+- out: `{ providers: ProviderPublic[] }`
+- `ProviderPublic` excludes raw secrets; includes `hasSecret: boolean` (true
+  for **either** credential), `hasOauth: boolean`, the non-secret
+  `oauthAccountLabel?: string`, and optional `headers?: Record<string, string>`
+
+### `providers.reorder`
+- in: `{ id: string, targetId: string, placement: "before" | "after" }`
+- out: `{ ok: true }`
+- Atomically move the source relative to the target in the current host list.
+  A missing source/target or invalid placement returns `INVALID_PARAMS` without
+  writing. Moving to the current position is a successful no-op.
+- Persist ordered provider IDs in `kv` at `providers.order`. `providers.list`
+  applies that order before returning rows; absent metadata preserves creation
+  order. New providers follow saved rows in creation order, deleted IDs are
+  ignored, and disabled rows keep their relative position when filtered out.
+- This is a display preference, including for plugin-owned rows. Provider
+  configuration, credentials, enabled state, timestamps and the default model
+  remain unchanged. Plugin configuration write restrictions still apply.
+- Uses the existing `kv` extension boundary; no database migration or protocol
+  version bump. Older applications ignore this metadata.
 
 ### `providers.create` / `providers.update`
-- 在：提供商字段 + 可选的 `secretValue` + 可选的 `oauthAccountLabel`
-  （合并进 `config_json.oauth`，传空字符串即清除）+ 可选的 `headers`
-  （合并进 `config_json.headers`，传 `{}` 即清除）；遗留 `userAgent` 读取时迁入 `headers["User-Agent"]`；旧客户端仍可能发送
-  `supportsReasoning` / `supportedThinkingLevels`
-- 行为：保留配置；如果存在secretValue，则写入密钥存储并设置
-  `secretRef`；传统思维领域可能仍保留在
-  `config_json.compatibility` 但不影响运行时分辨率
-- 输出：`ProviderPublic`
+- in: provider fields + optional `secretValue` + optional `oauthAccountLabel`
+  (merged into `config_json.oauth`, cleared with an empty string) + optional
+  `headers` (merged into `config_json.headers`, cleared with `{}`); leftover
+  `config_json.userAgent` migrates into `headers["User-Agent"]` on read; legacy
+  clients may still send `supportsReasoning` / `supportedThinkingLevels`; new
+  clients send `models: ModelBinding[]`
+- behavior: persist config; if secretValue present, write secret store and set
+  `secretRef`; legacy thinking fields may remain in
+  `config_json.compatibility` but do not affect runtime resolution
+- a plugin-owned row is refused with `PROVIDER_OWNED_BY_PLUGIN`; its declaration
+  is the only writer of its own fields (§2)
+- out: `ProviderPublic`
 
 ### `providers.delete`
-- 在：`{ id, deleteSecret?: boolean }` 默认 `deleteSecret=true`
-- 行为：同时清除两个凭据引用（`:api_key` 与 `:oauth`）及其元数据记录，
-  因此重新创建的提供商绝不会继承他人的刷新令牌
-- 输出：`{ ok: true }`
+- in: `{ id, deleteSecret?: boolean }` default `deleteSecret=true`
+- behavior: clears both credential refs (`:api_key` and `:oauth`) and their
+  metadata rows, so a re-created provider can never inherit a stranger's
+  refresh token. The renderer uses this same operation for removing one OAuth
+  account, so deleting one row cannot remove another account with the same
+  `vendorKey`
+- a plugin-owned row is refused with `PROVIDER_OWNED_BY_PLUGIN`; the owning
+  plugin's lifecycle removes it
+- out: `{ ok: true }`
 
 ### `providers.testConnection`
-- 在：`{ id, modelId?: string }`
-- 输出：`{ ok: boolean, latencyMs?: number, error?: AppError, sampleModelId?: string }`
-- `authKind: "oauth"` 行通过解析厂商认证（必要时刷新令牌）来自证，而不是用
-  它并不持有的密钥去访问网络
+- in: `{ id, modelId?: string }`
+- out: `{ ok: boolean, latencyMs?: number, error?: AppError, sampleModelId?: string }`
+- an `authKind: "oauth"` row proves itself by resolving vendor auth (refreshing
+  the token if it expired) instead of probing the network with a key it does
+  not have
 
 ### `providers.listModels`
-- 渲染器 IPC 位于：`{ providerId, source?: "cache"|"refresh" }`； `cache`
-  返回没有提供商网络访问权限的持久目录，而 `refresh`
-  在 Electron main 中运行发现
-- 将 RPC 托管在：`{ providerId?: string }` 中；只读取 Rust 拥有的 `models`
-  表
-- 对 `authKind: "oauth"` 行，Electron 主进程读取已认证的目录
-  （`models.getAvailable`，它已应用厂商自己的 `filterModels`，因此 Copilot
-  账户列出的是其订阅包含的模型），而不是调用 `/models`；返回的每个模型都
-  带着其线路 API 所隐含的 apiStyle。`openai-codex` 这类静态厂商使用已固定
-  的 pi-ai 目录（0.85.1 包含 `gpt-6-astra`）；models.dev 不会发明这些 ID。
-- 输出：`{ models: ModelCatalogItem[] }`；每个模型都带有 pi-resolved
-  `reasoning` 功能和 `supportedThinkingLevels`。缓存的功能标签
-  旧提供程序字段无法覆盖 pi 模型记录。
+- renderer IPC in: `{ providerId, source?: "cache"|"refresh" }`; `cache`
+  returns the durable catalog without provider network access, while `refresh`
+  reads the local models.dev snapshot and runs provider endpoint discovery only for IDs absent from it
+- host RPC in: `{ providerId?: string }`; reads only the Rust-owned `models`
+  table
+- for an `authKind: "oauth"` row Electron main reads the authenticated catalog
+  (`models.getAvailable`, which applies the vendor's own `filterModels`, so a
+  Copilot account lists what its subscription includes) instead of calling
+  `/models`; each returned model carries the apiStyle its wire API implies.
+  Static vendors such as `openai-codex` use the pinned pi-ai catalog (0.85.1
+  includes `gpt-6-astra`); models.dev does not invent those IDs.
+- out: `{ models: ModelCatalogItem[] }`; each known model carries the complete
+  models.dev metadata including `reasoning`, `supportedThinkingLevels`, limits,
+  modalities, output types, and capability tags. Cached/provider claims cannot
+  override the local catalog record.
 
-### `providers.cacheModels`（内部主机 RPC）
-- 在：`{ providerId, models: DiscoveredModelInput[] }`
-- 行为：以事务方式将成功的实时发现更新到 `models` 中
-`source='discovered'`；永远不会覆盖 `source='user'` 行并且永远不会删除
-  失败或部分刷新时先前的缓存行
-- 输出：`{ cached: number, models: ModelCatalogItem[] }`
-- 原始机密和授权标头绝不是此调用的一部分
+### `providers.cacheModels` (internal host RPC)
+- in: `{ providerId, models: DiscoveredModelInput[] }`
+- behavior: transactionally upsert successful live discovery into `models` as
+  `source='discovered'`; never overwrite `source='user'` rows and never delete
+  prior cache rows on a failed or partial refresh
+- out: `{ cached: number, models: ModelCatalogItem[] }`
+- raw secrets and authorization headers are never part of this call
 
 ### `providers.refreshModels`
-- 在：`{ id }`
-- 输出：`{ added: number, updated: number, removed: number, models: ModelCatalogItem[] }`
+- in: `{ id }`
+- out: `{ added: number, updated: number, removed: number, models: ModelCatalogItem[] }`
 
 ### `providers.upsertUserModel` / `providers.deleteUserModel`
-- 管理自由格式/覆盖模型条目
+- manage free-form / override model entries
 
-## 10. 验证规则
+## 10. Validation rules
 
-1. `name` 在提供商中是唯一的（不区分大小写）
-2. `openai_compatible` / 本地网关需要绝对 `baseUrl`，除非预设表示可选
-3. `authKind=none` 禁止用于需要密钥的云预设
-4. headers key 不区分大小写，唯一
-5. headers key 不区分大小写且唯一，最多 32 条；禁止保留头与 CR/LF
-6. 强制实施 SecretValue 最大长度（例如 8KB）
-6. modelId 必须是非空的修剪字符串；允许 `/`、`.`、`:`、`-`
-7.旧客户端上的未知协议 => 提供程序显示为禁用并带有警告，而不是崩溃
-8. 旧版 `supportsReasoning`（如果存在）仍必须验证为布尔值，但
-   没有运行时效果
-9. 旧版 `supportedThinkingLevels`（如果存在）仍必须验证为
-   一系列规范思维水平，但没有运行时效果
+1. API/custom `name` unique (case-insensitive) among editable providers;
+   OAuth rows may share a vendor display name because `providerId` is their
+   account identity
+2. `openai_compatible` / local gateways require absolute `baseUrl` unless preset says optional
+3. `apiStyle=opencode_go` requires the fixed OpenCode Go name and endpoint; clients must not accept overrides
+4. `authKind=none` forbidden for cloud presets that require keys
+5. headers keys are case-insensitive unique, at most 32 entries; names
+   alphanumeric plus hyphen; values trimmed, at most 4096 bytes, no CR/LF
+6. reserved header names (`authorization`, `host`, `content-type`,
+   `x-api-key`, `x-opencode-session`, and the rest listed above) are rejected
+7. secretValue max length enforced (e.g. 8KB)
+8. modelId must be non-empty trimmed string; allow `/`, `.`, `:`, `-`
+9. unknown protocol on older clients => provider shown disabled with warning, not crash
+10. Legacy `supportsReasoning`, when present, must still validate as boolean but
+   has no runtime effect
+11. Legacy `supportedThinkingLevels`, when present, must still validate as an
+  array of canonical thinking levels but has no runtime effect
 
-## 11. 秘密引用格式
+## 11. Secret ref format
 
 ```text
 secret:provider:<providerId>:api_key
 secret:provider:<providerId>:oauth
 ```
 
-两个引用相互独立，因此一行可以只有密钥、只有厂商账户，或两者兼有；参见
-[14-secrets-storage](14-secrets-storage.md) §10。未来的多重秘密提供商可能会
-继续添加后缀（`:client_secret` 等）。
+The two refs are independent, so one row may hold a key, a vendor account, or
+both; see [14-secrets-storage](14-secrets-storage.md) §10. Future multi-secret
+providers may add further suffixes (`:client_secret`, etc.).

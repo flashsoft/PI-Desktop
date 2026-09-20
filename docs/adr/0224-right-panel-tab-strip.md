@@ -1,4 +1,4 @@
-# ADR 0224: 右侧面板标签条与数据驱动的添加菜单
+# ADR 0224: Right Panel Tab Strip and Data-Driven Add Menu
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -6,42 +6,47 @@
 
 ## Context
 
-右侧工作面板此前用一个标题菜单同时承载工具启动器和对话打开的资源。
-这让打开的资源更难扫读，使关闭动作远离它们所属的标签，并允许菜单变
-成第二个滚动界面。Issue 中的 HTML 演示确立了预期的结构和交互形态，
-但它的模拟内容不是应用数据来源。
+The right work panel used one header menu for both tool launchers and
+conversation-opened resources. That made open resources harder to scan, put
+close actions far from their tabs, and allowed the menu to become a second
+scrolling surface. The issue's HTML demo establishes the intended structure
+and interaction shape, but its simulated content is not an application data
+source.
 
 ## Decision
 
-工作面板标题栏是一个可水平滚动的标签条，后面跟一个固定的、紧凑的
-`+` 触发器。标签条是唯一的水平滚动区域；`+` 保持可见。每个打开的
-Review、文件或插件视图都由一个 ARIA tab 表示。标签在点击时激活，在
-其悬停/焦点关闭按钮或中键点击时关闭，并支持
-ArrowLeft/ArrowRight/Home/End 以及 Delete/Backspace。关闭最后一个标签
-后面板保持打开，并在主体中显示一个 New 启动器。
+The work-panel header is a horizontally scrollable tab strip followed by a
+fixed, tight `+` trigger. The strip is the only horizontally scrolling region;
+the `+` remains visible. Every open Review, file, or plugin view is represented
+by one ARIA tab. Tabs activate on click, close on their hover/focus close
+button or middle-click, and support ArrowLeft/ArrowRight/Home/End plus
+Delete/Backspace. Closing the final tab keeps the panel open and shows a New
+launcher in the body.
 
-`+` 菜单只有一个 **Tools & panels** 组。Review 是唯一的宿主拥有条
-目；所有其他条目来自 `contributes.views` 返回的当前插件视图元数据。
-渲染进程不得硬编码内置的 Files 或 Browser 条目，也不得在对应绑定未
-实际注册时显示快捷键标签。打开的插件视图保持单例标签，重新打开其一
-会激活现有标签。
+The `+` menu has one **Tools & panels** group. Review is the only host-owned
+entry; all other entries come from the current plugin-view metadata returned by
+`contributes.views`. The renderer must not hardcode bundled Files or Browser
+entries, and must not show shortcut labels unless the corresponding binding is
+actually registered. Open plugin views remain singleton tabs and reopening one
+activates its existing tab.
 
-视口固定的面板开关仍然是唯一的折叠控件。它使用两态面板图标、
-`aria-pressed`，以及本地化的 tooltip/无障碍名称——当用户已解析的
-`Mod+J` 绑定存在时会包含它。该绑定仍然可以通过现有的键盘快捷键机
-制自定义。
+The viewport-fixed panel toggle remains the sole collapse control. It uses the
+two-state panel icon, `aria-pressed`, and a localized tooltip/accessibility name
+that includes the user's resolved `Mod+J` binding when one exists. The binding
+remains customizable through the existing keyboard-shortcut machinery.
 
-新配置文件的默认面板宽度为 360px，位于现有 244–720px 范围内。已保
-存的宽度不会被本次变更新写。不引入协议、持久化标签 schema、插件
-manifest 或原生窗口预留的变更。
+The new-profile default panel width is 360px within the existing 244–720px
+range. A saved width is not rewritten by this change. No protocol, persisted
+tab schema, plugin manifest, or native-window reservation is introduced.
 
 ## Consequences
 
-- 标签条让活动资源及其关闭入口可见，同时保持面板宽度和现有的原生
-  界面遮挡边界。
-- New 启动器在最后一个标签关闭后给出一个明确的下一步动作，而不改
-  变面板的会话范围状态模型。
-- 插件作者在其作用域视图贡献可用时自动获得一个面板启动器；宿主的
-  内置列表不会与插件元数据漂移。
-- 更大的默认值给标题栏留出了容纳 166px Windows/Linux 标题栏预留的
-  空间，同时保留用户已选择的宽度。
+- The tab strip makes the active resource and its close affordance visible while
+  preserving panel width and the existing native-surface occlusion boundary.
+- The New launcher gives an intentional next action after the last tab closes
+  without changing the panel's session-scoped state model.
+- Plugin authors automatically receive a panel launcher whenever their scoped
+  view contribution is available; the host's built-in list does not drift from
+  plugin metadata.
+- The larger default gives the header enough room for the 166px Windows/Linux
+  titlebar reservation while preserving existing user-selected widths.

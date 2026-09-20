@@ -1,4 +1,4 @@
-# ADR 0223: 上下文用量显示偏好
+# ADR 0223: Context Usage Display Preference
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -11,45 +11,55 @@
 
 ## Context
 
-Composer 工具栏的上下文用量检查器（ADR 0184 / D347）总是以剩余容量
-数字为先导：触发圆环、弹层标题、tooltip 和 `aria-label` 都显示剩余
-token 数和百分比。一些用户觉得已用容量数字更直观——尤其是上下文负
-载很轻、剩余数字接近整个窗口大小时，一眼看去几乎没有信息量。
+The composer toolbar's context usage inspector (ADR 0184 / D347) always leads
+with the remaining-capacity figure: the trigger ring, popover heading,
+tooltip, and `aria-label` all show the remaining token count and percentage.
+Some users find the used-capacity figure more intuitive — especially when
+context is lightly loaded and the remaining number is close to the total
+window, which provides little signal at a glance.
 
 ## Decision
 
-1. 新设置 `AppSettings.contextUsageDisplay`（`ContextUsageDisplay =
-   "remaining" | "used"`）让用户选择上下文检查器以哪个数字为先导。
-   默认值（以及缺失或无法识别值的回退）是 `"remaining"`，保持现有行
-   为。
-2. 当 `contextUsageDisplay` 为 `"used"` 时，Composer 工具栏圆环的弧
-   长（`strokeDashoffset`）、触发器百分比和 token 标签、弹层标题、
-   tooltip 和 `aria-label` 都切换到已用容量的一对数值，取代剩余容量
-   的一对。圆环按 `usedRatio` 而不是 `remainingRatio` 成比例填充。
-3. 警告和危险颜色阈值无论显示模式如何都保持基于**剩余**容量（剩余
-   ≤ 25% → 警告，≤ 10% → 危险）。显示为“used 78%”的读数仍然会变
-   成警告色，因为只剩 22%。
-4. 设置 → AI → Defaults 新增一个 `ContextUsageDisplayRow`（分段控
-   件：Remaining / Used），放在链接打开位置行之后、回车发送行之前。
-5. 该变更仅限渲染进程：不涉及协议、存储 schema、宿主侧迁移或 IPC
-   变更。host-core 的设置合并保留未知键，因此持久化的
-   `contextUsageDisplay` 值无需 schema 版本提升即可跨升级存活。
+1. A new setting `AppSettings.contextUsageDisplay` (`ContextUsageDisplay =
+   "remaining" | "used"`) lets the user choose which figure the context
+   inspector leads with. The default (and fallback for absent or
+   unrecognised values) is `"remaining"`, preserving the existing behaviour.
+2. When `contextUsageDisplay` is `"used"`, the composer toolbar ring's
+   arc length (`strokeDashoffset`), the trigger percentage and token label,
+   the popover heading, the tooltip, and the `aria-label` all switch to
+   the used-capacity pair instead of the remaining pair. The ring fills
+   proportionally to `usedRatio` rather than `remainingRatio`.
+3. Warning and critical color thresholds remain based on **remaining**
+   capacity (remaining ≤ 25 % → warning, ≤ 10 % → critical) regardless
+   of the display mode. A display reading "used 78 %" still turns warning
+   colour because only 22 % remains.
+4. Settings → AI → Defaults gains a `ContextUsageDisplayRow` (segmented
+   control: Remaining / Used) placed after the Link open destination row
+   and before the Enter-to-send row.
+5. The change is renderer-only: no protocol, storage schema, host-side
+   migration, or IPC change. The host-core settings merge preserves
+   unknown keys, so persisted `contextUsageDisplay` values survive across
+   upgrades without a schema bump.
 
 ## Consequences
 
-- 偏好“我已经花了多少”心智模型的用户得到一致的显示；偏好原有
-  “还剩多少”模型的用户默认看不到任何变化。
-- 切换到 `"used"` 时圆环弧线方向在视觉上翻转，这是正确的对应关系：
-  圆环越满表示消耗的上下文越多。
-- 颜色语义在各模式间保持稳定，因此无论选择哪种显示方向，警告/危险
-  信号都不会有歧义。
-- 没有宿主或存储变更意味着没有迁移风险，也不需要提升协议版本。
+- Users who prefer a "how much have I spent" mental model get a consistent
+  display; users who prefer the original "how much is left" model see no
+  change by default.
+- The ring arc direction flips visually when switching to `"used"`, which
+  is the correct correspondence: a fuller ring means more context consumed.
+- Color semantics stay stable across modes, so the warning/critical signal
+  is never ambiguous regardless of the chosen display direction.
+- No host or storage change means no migration risk and no protocol version
+  bump.
 
 ## Rejected alternatives
 
-- **布尔开关（show-used: true/false）：** 对互斥的显示模式来说，两
-  值分段控件比复选框读起来更清晰，而且 `ContextUsageDisplay` 联合类
-  型为未来的模式留出空间，无需类型重命名。
-- **颜色阈值也跟随显示模式：** 被拒绝；这会让“used 90%”的圆环在
-  只剩 10% 时仍显示绿色，具有危险的误导性。剩余容量是安全信号，必
-  须在颜色上保持权威。
+- **Boolean toggle (show-used: true/false):** a two-value segmented control
+  reads clearer than a checkbox for mutually exclusive display modes, and
+  the `ContextUsageDisplay` union type leaves room for future modes without
+  a type rename.
+- **Color thresholds also follow display mode:** rejected; it would make a
+  "used 90 %" ring green despite only 10 % remaining, which is dangerously
+  misleading. Remaining capacity is the safety signal and must stay
+  authoritative for color.

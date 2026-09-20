@@ -1,4 +1,4 @@
-# ADR 0222: Composer 中的原生文件和文件夹拖放
+# ADR 0222: Native File and Folder Drops in the Composer
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -8,55 +8,57 @@
 
 ## Context
 
-Composer 已经通过会话范围的 scratch 流程处理剪贴板文件和选择器选中的
-文件。原生文件系统拖放此前仍交由浏览器默认行为处理，这可能会打开或
-导航离开应用。文件夹需要与普通文件不同的处理：显示来源路径对 `@`
-补全很有用，但遍历或复制文件夹会是无界的，并且会违反 scratch 所有
-权。
+The Composer already handles clipboard files and picker-selected files through
+the session-scoped scratch flow. Native file-system drag-and-drop was still
+left to the browser default, which could open or navigate away from the app.
+Folders need different treatment from regular files: showing the source path
+is useful for `@` completion, but traversing or copying a folder would be
+unbounded and would violate scratch ownership.
 
 ## Decision
 
-1. Composer 外壳接受原生文件系统拖放，并对包含文件条目的传输阻止浏
-   览器默认行为。整个外壳在 drag-over 期间获得一个强调色描边；该描
-   边不改变布局。
-2. Electron preload 只针对用户发起的拖放 `File` 对象暴露
-   `webUtils.getPathForFile`。渲染进程使用现有的
-   `webkitGetAsEntry()` 信号对文件夹进行分类，并保持操作系统条目顺
-   序。
-3. 拖放的普通文件作为有界字节通过现有的 `composer/pasteFiles` 桥接
-   传输。它们被写入活动会话的 scratch 目录之下，并渲染为现有的可移
-   除叶子名称徽章。
-4. 拖放的文件夹绝不被读取、遍历或复制。它们的完整原生路径以字面
-   `@<path>/` 目录形式插入到光标处。混合的文件/文件夹拖放在异步文
-   件保存过程中保持顺序、周围的草稿文本、焦点和光标位置。
-5. 这仅是渲染进程/preload 的交互变更。它不新增宿主 RPC 方法、协议
-   消息、工作区写入或持久存储 schema。
+1. The Composer shell accepts native file-system drops and prevents the browser
+   default for transfers containing file items. The whole shell gets an accent
+   outline during drag-over; the outline does not change layout.
+2. The Electron preload exposes only `webUtils.getPathForFile` for the
+   user-originated dropped `File` object. The renderer uses the existing
+   `webkitGetAsEntry()` signal to classify folders and keeps the OS item order.
+3. Regular dropped files are transferred as bounded bytes through the existing
+   `composer/pasteFiles` bridge. They are written below the active session's
+   scratch directory and rendered as the existing removable leaf-name chips.
+4. Dropped folders are never read, traversed, or copied. Their complete native
+   path is inserted at the caret as the literal `@<path>/` directory form.
+   Mixed file/folder drops preserve order, surrounding draft text, focus, and
+   the caret across the asynchronous file save.
+5. This is a renderer/preload interaction change only. It adds no host RPC
+   method, protocol message, workspace write, or durable storage schema.
 
 ## Security and boundary notes
 
-- 渲染进程只在原生用户拖放时获得来源路径，并将其用作可见的 prompt
-  文本；它不会因此获得任意文件系统读写能力。
-- 文件夹拖放不枚举条目、不传输字节，因此大文件夹不可能变成无界的
-  scratch 操作。
-- 普通文件保留 ADR 0059 现有的主进程大小、名称、会话和 scratch 根
-  校验。
+- The renderer receives a source path only for a native user drop and uses it
+  as visible prompt text; it does not gain arbitrary filesystem read or write
+  access.
+- Folder drops do not enumerate entries or transfer bytes, so a large folder
+  cannot turn into an unbounded scratch operation.
+- Regular files retain the existing main-process size, name, session, and
+  scratch-root validation from ADR 0059.
 
 ## Alternatives considered
 
-- **遍历并复制拖放的文件夹：** 被拒绝，因为它是无界的，并且会让一
-  个显示路径的手势改变会话 scratch 内容。
-- **只插入文件夹叶子名称：** 被拒绝，因为它丢失了消除歧义和继续
-  `@` 补全所需的路径。
-- **新增主进程文件夹 IPC：** 被拒绝，因为 preload 路径桥接已经能为
-  这个用户发起的手势提供来源路径，无需扩大文件系统能力或增加协议
-  界面。
-- **保留浏览器默认行为：** 被拒绝，因为拖放文件或文件夹可能导航或
-  打开被拖放的资源，而不是编辑 prompt。
+- **Traverse and copy dropped folders:** rejected because it is unbounded and
+  would make a path-display gesture mutate session scratch contents.
+- **Insert only the folder leaf name:** rejected because it loses the path
+  needed to disambiguate and continue `@` completion.
+- **Add a new main-process folder IPC:** rejected because the preload path
+  bridge supplies the source path for this user-originated gesture without
+  widening filesystem capabilities or adding a protocol surface.
+- **Keep the browser default:** rejected because dropping a file or folder
+  could navigate or open the dropped resource instead of editing the prompt.
 
 ## Consequences
 
-- 用户可以把文件和文件夹直接拖进聊天输入框。
-- 文件与粘贴的文件具有相同的有界 scratch 生命周期和附件元数据；文
-  件夹保持为可见的引用而不会被复制。
-- Composer 现有的草稿和徽章持久化逻辑仍然是混合异步拖放的唯一事实
-  来源。
+- Users can drag files and folders directly into the chat input.
+- Files have the same bounded scratch lifecycle and attachment metadata as
+  pasted files; folders remain visible references without being copied.
+- The Composer's existing draft and chip persistence logic remains the single
+  source of truth for mixed asynchronous drops.

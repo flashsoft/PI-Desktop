@@ -1,197 +1,225 @@
-# PI-Desktop 基线冻结
+# PI-Desktop Baseline Freeze
 
-- 基线版本：`0.4.18`
-- 日期：`2026-09-14`
-- 状态：`已冻结实现细节（Plan 检查点工件 + 批准/执行启动栅栏 + 协议 v11 + 架构 v16 + 宿主拥有的插件会话导入/读取/更新/删除 P0/P1 + 可选 shell 目录 + 无图标的 Composer 提示行 + 回合边界的上下文检查点压缩 + 会话作用域工作面板 + 按边缘划分的工作面板/聊天调整大小所有权 + 带随包发布快照的 models.dev 模型目录 + provider/运行时安全 + M5 加固 + 设置 IA + 项目归档 + 侧边栏组织 + 应用更新投递 + 三平台发布 + Extensions 页面密度与主题可读的操作 + 自定义全局 UI 字体 + ChatGPT 风格的逻辑项目组）`
-- 语言策略：代码、标识符、提交信息 **English-first**；仓库文档 **中文 primary**（2026-09-19 修订，原冻结为 English-first）
-- 后端策略：**Rust host core + pi agent sidecar**
+- Baseline Version: `0.4.18`
+- Date: `2026-09-14`
+- Status: `Frozen for implementation details (Plan checkpoint artifact + approval/execution startup fence + protocol v11 + schema v16 + host-owned plugin session import/read/update/delete P0/P1 + selectable shell catalog + icon-free composer prompt row + turn-boundary context checkpoint compaction + session-scoped work panel + edge-specific work-panel/chat resize ownership + models.dev model catalog with a bundled release snapshot + provider/runtime safety + M5 hardening + settings IA + project archive + sidebar organization + app update delivery + three-platform release + Extensions page density and theme-readable actions + custom global UI font + ChatGPT-style logical project groups)`
+- Language policy: **English-first**
+- Backend policy: **Rust host core + pi agent sidecar**
 
-> 版本历史：`0.3.4` 冻结了 provider/运行时安全决策
-> （D001–D033）。`0.4.0` 吸收了 Codex 视觉对齐决策系列
-> （D034+，权威来源 = decisions-log §D）和 M5 加固决策
-> （D078–D083：签名通道、品牌图标、监督、渲染器沙箱、
-> 日志通道、窗口状态）。`0.4.1` 冻结了来自 D090 / ADR 0013 的
-> 紧凑四目的地设置目录。`0.4.2` 用 D092 / ADR 0015 的
-> 窗口响应式布局替换了冻结的 720px 设置内容上限。
-> `0.4.3` 通过 D093 / ADR 0016 采用了保留式多项目侧边栏标签、
-> 非破坏性的项目/会话组织，以及以会话为根的工具隔离。
-> `0.4.4` 通过 D095 移除了被动的 Composer 上下文栏。
-> `0.4.5` 通过 D096/D102 和 ADR 0018 冻结了端到端思考级别与
-> provider 预设。`0.4.6` 用 D120 / ADR 0022 的打包应用更新模式
-> 取代 D020 的一概推迟，同时保留 D010。
-> `0.4.7` 通过 D126 解除了 D010 的仅 macOS 发布范围：标签构建
-> 为 macOS arm64、Windows x64 和 Linux x64 发布安装程序和
-> electron-updater 订阅源。
-> D285 在 arm64 通道之外增加了原生 macOS Intel x64 标签通道；两种
-> macOS 架构都从各自匹配的 runner 发布 DMG/ZIP 工件。
-> `0.4.8` 通过 D133 / ADR 0026 把持久的项目索引从首页侧边栏移入
-> 设置，成为第五个**项目归档**目的地。
-> `0.4.9` 通过 D136 / ADR 0027 让固定的 pi-ai 目录成为已知模型
-> 元数据的权威来源，并移除了桌面自有的模型参数覆盖。
-> ADR 0133 / D266 最初引入 models.dev 作为远程主来源；ADR 0134
-> 取代了该回退设计，使 models.dev 成为唯一的元数据来源并附带一份
-> 签入仓库的发布快照。pi-ai 仍是传输、OAuth 与账户可用性层。
-> `0.4.10` 通过 D142 / ADR 0028 用运行时会话作用域上下文取代了
-> 会话切换时破坏性的工作面板清空。
-> `0.4.11` 通过 D158 / ADR 0030 采用了回合边界的模型上下文检查点
-> 压缩，同时保留完整可见转录。ADR 0049 的上下文恢复修正案为自动
-> 压缩失败增加了持久的保留尾部回退。D200 / ADR 0061 从模型窗口而
-> 非设置推导预算，并移除了压缩设置。D203 / ADR 0064 随后重建该机制
-> 以匹配 Codex：压缩仅内联进行；回合仍在继续时检查点携带摘要加最新
-> 活跃用户消息；已完成回合不携带裸露的历史用户消息。面向模型的
-> `new_context` 工具和两条预算提醒回归，每次压缩新增一行转录和一条
-> 警告，并存在一个由内部开关控制的无摘要滚动族。
-> `0.4.12` 通过 D160 / ADR 0031 统一了首页与线程内停靠的 Composer
-> 提示行（不带前导品牌标记），同时保留其他位置的外壳品牌。
-> `0.4.13` 通过 D188 / ADR 0052 用 Plan 运行状态取代 Chat 运行配置。
-> Plan 是处于规划状态的同一个 pi Agent，保留权限模式选择，在该策略下
-> 暴露 Bash，拒绝 Write/Edit/插件工具，并通过独立的宿主拥有批准转换
-> 提交结构化计划。宿主协议为 v7，存储架构为 v8；持久的 Chat 值迁移
-> 为 Plan，Agent 仍是默认值。
-> `0.4.14` 通过 D189 / ADR 0053 用 `<workspaceRoot>/.pi/plan/*.md`
-> 下不可变的宿主写入 Markdown 检查点取代该提案。SubmitPlan 接受
-> title、Markdown 和 question；Markdown 字节精确保留，title/question
-> 仍是结构化批准字段。批准只有 approve/reject，需显式选择权限且默认
-> 为 Ask，并打开工件供审阅。待处理、排队和运行中的工作由启动进程
-> 栅栏中断且不重放，已批准的会话保持 Agent。ADR 0054 增加了可选
-> shell 目录，同时保留 Bash 协议名称。宿主协议为 v9，存储架构为 v10。
-> `0.4.15` 通过 D196 / ADR 0058 修订了 D169 的 Extensions 呈现：
-> 移除四卡片数字概览带，共享按钮表面使用语义化主题 token，使主要与
-> 次要操作在深色和浅色主题下都保持可见。宿主协议与存储架构无变化。
-> `0.4.16` 通过 D232 / ADR 0083 增加用户可选的全局 UI 字体：设置
-> 外观卡片获得可搜索的字体选择器；选择持久化为
-> `AppSettings.fontFamily` 并覆盖 `--font-sans`。四个开放许可
-> （SIL OFL 1.1）字体族 —— Geist、Inter、Noto Sans SC 和
-> LXGW WenKai —— 随包本地附带许可文本，已安装的系统字体族由
-> Electron main 通过增量 allowlist 通道
-> `pi-desktop/app/systemFonts` 枚举。宿主协议与存储架构无变化。
-> `0.4.17` 通过 ADR 0249 用 ChatGPT 风格的宿主拥有逻辑项目组取代
-> 渲染器拥有的多文件夹标签投影。一个组拥有自己的名称、有序的本地
-> 根、共享指令、共享记忆和组内会话；其第一个根仍是唯一可见的宿主
-> 工作区。增量组数据使用现有的 `kv` 扩展边界，因此存储架构与宿主
-> 协议版本保持不变。
-> `0.4.18` 把项目溢出操作重命名为 Edit project，并增加宿主支持的
-> 逻辑项目根调整。编辑器保持 Primary 根固定，支持添加/移除符合条件的
-> 附加根，并拒绝移除仍拥有聊天的根。
+> Version history: `0.3.4` froze provider/runtime-safety decisions
+> (D001–D033). `0.4.0` absorbs the Codex visual-parity decision series
+> (D034+, gold source = decisions-log §D) and the M5 hardening decisions
+> (D078–D083: signing lanes, brand icon, supervision, renderer sandbox,
+> log channels, window state). `0.4.1` freezes the compact four-destination
+> settings directory from D090 / ADR 0013. `0.4.2` replaces the frozen 720px
+> settings content cap with the window-responsive D092 / ADR 0015 layout.
+> `0.4.3` adopts retained multi-project sidebar tabs, non-destructive
+> project/session organization, and session-rooted tool isolation through
+> D093 / ADR 0016. `0.4.4` removes the passive composer context rail through
+> D095. `0.4.5` freezes end-to-end thinking levels and provider presets through
+> D096/D102 and ADR 0018. `0.4.6` supersedes D020's blanket deferral with the
+> packaged application update modes in D120 / ADR 0022 while preserving D010.
+> `0.4.7` lifts D010's macOS-only release scope through D126: tag builds
+> publish installers and electron-updater feeds for macOS arm64, Windows x64,
+> and Linux x64.
+> D285 adds a native macOS Intel x64 tag lane alongside the arm64 lane; both
+> macOS architectures publish DMG/ZIP artifacts from their matching runners.
+> `0.4.8` moves the durable Projects index out of the home sidebar and into
+> Settings as the fifth **Project archive** destination through D133 / ADR 0026.
+> `0.4.9` made the pinned pi-ai catalog authoritative for known-model metadata
+> and removed desktop-owned model parameter overrides through D136 / ADR 0027.
+> ADR 0133 / D266 first introduced models.dev as a remote primary; ADR 0134
+> supersedes that fallback design and makes models.dev the sole metadata source
+> with a checked-in release snapshot. pi-ai remains the transport, OAuth, and
+> account-availability layer.
+> `0.4.10` replaces destructive work-panel clearing on conversation switches
+> with runtime session-scoped contexts through D142 / ADR 0028.
+> `0.4.11` adopts turn-boundary model-context checkpoint compaction through
+> D158 / ADR 0030 while preserving the complete visible transcript. The
+> context-recovery amendment in ADR 0049 adds a durable retained-tail
+> fallback for automatic compaction failures. D200 / ADR 0061 derives the
+> budgets from the model window instead of settings and removes the compaction
+> settings. D203 / ADR 0064 then rebuilds the mechanism to match Codex:
+> compaction is inline only, a checkpoint carries the summary plus the latest
+> active user message only while a turn continues; completed turns
+> carry no naked historical user messages. The model-facing `new_context` tool
+> and two budget reminders are
+> back, each compaction adds a transcript row and one warning, and a
+> no-summary rollover family exists behind an internal switch.
+> `0.4.12` standardizes home and thread-docked composer prompt rows without a
+> leading brand mark through D160 / ADR 0031 while preserving shell branding
+> elsewhere.
+> `0.4.13` replaces the Chat operating profile with the Plan operating state
+> through D188 / ADR 0052. Plan is the same pi Agent in planning state, keeps
+> permission-mode selection, exposes Bash subject to that policy, denies
+> Write/Edit/plugin tools, and submits structured plans through a separate
+> host-owned approval transition. The host protocol is v7 and storage schema
+> v8; persisted Chat values migrate to Plan while Agent remains the default.
+> `0.4.14` replaces that proposal with immutable host-written Markdown
+> checkpoints under `<workspaceRoot>/.pi/plan/*.md` through D189 / ADR 0053.
+> SubmitPlan accepts title, Markdown, and question; the Markdown bytes are
+> preserved exactly while title/question remain structured approval fields.
+> Approval is approve/reject only with explicit permission selection defaulting
+> to Ask, and opens the artifact for review. Pending, queued, and running work
+> is interrupted by the startup process fence without replay, while an
+> already-approved session remains Agent. ADR 0054 adds the selectable shell
+> catalog while retaining the Bash protocol name. The host protocol is v9 and
+> storage schema is v10.
+> `0.4.15` amends the D169 Extensions presentation through D196 / ADR 0058:
+> the four-card numeric overview band is removed, and shared button surfaces
+> use semantic theme tokens so primary and secondary actions remain visible in
+> dark and light themes. No host protocol or storage schema changes.
+> `0.4.16` adds a user-selectable global UI font through D232 / ADR 0083: the
+> Settings Appearance card gains a searchable Font picker; the selection
+> persists as `AppSettings.fontFamily` and overrides `--font-sans`. Four
+> open-licensed (SIL OFL 1.1) families — Geist, Inter, Noto Sans SC, and
+> LXGW WenKai — shipped locally with license texts, and installed system
+> families are enumerated by Electron main through the additive allowlisted
+> channel `pi-desktop/app/systemFonts`. D598 / ADR 0298 later removed the
+> bundled families: the app ships no font, the picker offers System default
+> plus installed system families, and every stack ends in the system-only CJK
+> fallback tier. No host protocol or storage schema changes.
+> `0.4.17` replaces the renderer-owned multi-folder tab projection with
+> ChatGPT-style host-owned logical project groups through ADR 0249. A group
+> owns its name, ordered local roots, shared instructions, shared memory, and
+> grouped sessions; its first root remains the only visible host workspace.
+> The additive group data uses the existing `kv` extension boundary, so the
+> storage schema and host protocol versions remain unchanged.
+> `0.4.18` renames the project overflow action to Edit project and adds
+> host-backed adjustment of logical project roots. The editor keeps the Primary
+> root fixed, supports adding/removing eligible additional roots, and rejects
+> removal of roots that still own chats.
 
-> 当前的基线后修正案通过 ADR 0200 / D367 增加 P0/P1 宿主拥有的插件
-> 会话 API，通过 ADR 0201 / D368 增加显式项目 id 加宿主拥有的会话
-> 刷新，并通过 ADR 0203 / D370 增加可选加入的本地 MCP 控制面
-> （目录与绑定由 D372 收紧）。协议 v11 保持不变；架构 v16 在架构 v15
-> 之上增加宿主拥有的会话协作 ledger（D409 / ADR 0239）。架构 v15 在
-> 架构 v14（增加插件来源 sidecar 与软删除标记）之上增加宿主拥有的
-> 回合队列（D386 / ADR 0213）。会话变更、任意重新绑定、provider/模型
-> 绑定、批量删除和标签操作仍然推迟；显式 `projectId` 是导入会话有限
-> 的项目绑定例外。本地控制面仅限 loopback，不会重新打开已推迟的远程
-> Gateway / WebUI 范围。ADR 0205 / D373 为未来的 post-MVP 里程碑定义
-> 了远程 Agent Host、Gateway 和多绑定控制面目标；D374 把该目标修订为
-> 一个规范性 WebSocket 绑定、一个无头 Agent Host 模块和完整的本地批准
-> 词汇表，D375 安排 SSH 隧道远程 Host 先行，而 Gateway 与浏览器访问
-> 保持未排期。它们都不改变当前的排除范围。
+> The current post-baseline amendments add the P0/P1 host-owned plugin session
+> API through ADR 0200 / D367, explicit project ids plus host-owned session
+> refresh through ADR 0201 / D368, and the opt-in local MCP control plane
+> through ADR 0203 / D370 (catalog and bind tightened by D372). Protocol v11 remains unchanged; schema v16 adds the host-owned session collaboration ledger
+> (D409 / ADR 0239) on top of schema v15. Schema v15 adds the Host-owned turn queue
+> (D386 / ADR 0213) on top of schema v14, which added the
+> plugin origin sidecar and soft-delete marker. Session mutation, arbitrary
+> re-binding, provider/model binding, batch-delete, and tag operations remain
+> deferred; an explicit `projectId` is the limited project-binding exception
+> for imported sessions. The local control plane is loopback-only and does not
+> reopen the deferred remote Gateway / WebUI scope. ADR 0205 / D373 defines the
+> remote Agent Host, Gateway, and multi-binding control-plane target for a
+> future post-MVP milestone; D374 amends that target to one normative
+> WebSocket binding, a headless Agent Host module, and the full local
+> approval vocabulary, and D375 schedules the SSH-tunnel remote Host first
+> while Gateway and browser access stay unscheduled. None of them changes the
+> current exclusion.
 
-## 冻结决策
+## Frozen Decisions
 
-1. 产品名称：**PI-Desktop**
-2. 桌面外壳：**Electron**
-3. UI：**React + TypeScript + Vite + Tailwind**
-4. UI 默认语言：**English**
-5. 文档 / issue / 提交语言：仓库文档 **中文 primary**，issue / 提交信息 **English primary**（2026-09-19 修订）
-6. Agent 引擎：**pi（`pi-ai` + `pi-agent-core`）**
-7. 后端宿主核心：**Rust**
-8. Agent 循环位置：**Node/TypeScript pi sidecar**（不在渲染器）
-9. Electron main 角色：**薄编排器**
-10. 桥接：**渲染器仅经 preload IPC**
-11. 宿主服务传输：**Rust sidecar + stdio JSON-RPC（NDJSON）**
-12. 存储所有权：**Rust host-core 独家拥有 SQLite**
-13. MVP 领域：**本地编程 agent**
-14. 默认模式：**Agent**
-15. 产品运行选择器：**Agent | Plan**；内部的 `page = "chat"`
-    值仍是会话表面的实现细节，不是一种运行模式
-16. Agent 工具：**Read / Glob / Grep / Write / Edit / Bash**
-17. 权限超时：**120s → deny**
-18. 会话授权范围：**按 toolName**
-19. `~/.pi` 一次性自动导入：**不在 MVP**。ADR 0254 增加了针对
-    规范 Pi v3 JSONL 的只读原生会话发现与显式继续；它不会静默导入
-    或复制会话到 Desktop 存储。
-20. 不在 MVP：**Gateway / 远程 WebUI 控制**；本地 loopback MCP 控制
-    是 D370 记录的基线后可选加入例外
-21. 扩展模型：**用户可安装的插件系统**
-22. 插件第一阶段：**commands / panel / agentTools / skills**
-23. 插件运行时目标：**独立进程**；M4 可使用宿主管理的沙箱运行时
-24. 插件市场：**协议已定义，实现推迟**
-25. 插件包格式：**`.piplug`（zip）**
-26. 插件信任第一步：**sha256 校验和；签名随后**
-27. 首个发布平台：**仅 macOS arm64** —— 在 `0.4.7`/D126 中解除；
-    标签构建现在发布原生 macOS arm64 与 Intel x64、Windows x64，
-    以及 Linux x64 AppImage、deb 和 rpm 工件
-28. TS schema 库：**typebox**
-29. i18n 库：**i18next**
-30. Bash：**非交互、流式，从可选 shell 目录解析；默认超时 60s，
-    可有界覆盖**
-31. 引导：**内联清单**
-32. 可观测性 MVP：**仅本地日志**
-33. 错误模型：**共享 AppError 错误码注册表**
-34. Provider 覆盖：**经 pi-ai 原生 + OpenAI 兼容 + 自定义实现通用覆盖**
-35. 模型策略：**无封闭 allowlist；models.dev 发布目录、通用未知 ID
-    和自由形式模型 ID**
-36. Provider 存储：**Rust SQLite 配置 + OS 秘密存储引用**
-37. 秘密后端：**safeStorage 为主 + 加密文件回退**
-38. 工作区忽略：**denylist + 默认值 + `.pi-desktopignore`**
-39. 工具结果限制：**按工具预算（搜索 128KB / 4000 行，shell 96KB /
-    4000 行）；仅当结果被截短时才有 `truncated`**
-40. 设置目录：**Basics / Model configuration / Import / Project archive /
-    Info**；项目归档拥有持久的项目发现、归档、恢复与重新打开工作流；
-    插件管理仍是应用外壳独立的 **Plugins** 目的地
-41. 侧边栏组织：**保留式逻辑项目组，宿主拥有有序本地根，渲染器本地的
-    项目/会话置顶、归档、折叠与排序元数据**
-42. 项目激活：**经现有 `project.set` 的单一可见宿主工作区；组的会话
-    与上下文默认到 primary 根，而注册组根下的显式绝对路径使用宿主规范
-    包含判断**
-43. 上下文管理：**Codex 形态的 pi 原生检查点摘要 —— 在确定性的
-    请求前硬栅栏处内联压缩；回合继续时摘要仅加最新活跃用户消息
-    （已完成回合之后不含裸露的历史用户消息）、持久的宿主检查点，
-    以及一次溢出重试。模型可以通过 `new_context` 请求新窗口；每次
-    压缩新增一行转录和一条警告。无面向用户的设置**
-44. Plan 工具与策略：**Read / Glob / Grep / BrowserPreview / Bash 外加
-    `EnterPlanMode` 和 `SubmitPlan`；Write/Edit/插件与未知工具被拒绝。
-    Bash 遵循 `ask`、`accept-edits` 或 `auto`，因此 Plan 是规划意图，
-    而不是严格的只读安全配置。**
-45. Plan 检查点：**`SubmitPlan(title, markdown, question)` 使 host-core
-    把精确的 Markdown 字节保存在一个新的唯一
-    `<workspaceRoot>/.pi/plan/*.md` 工件中，而 title/question 仍是现有
-    `plan_approvals` 行中的结构化字段。该行记录工件 path/hash/size 和
-    执行字段。approve/reject 是仅有的操作；批准显式选择 `ask`、
-    `accept-edits` 或 `auto`，UI 默认为 Ask，打开工件供审阅，并在
-    30 个绝对分钟后以 `PLAN_APPROVAL_TIMEOUT` 过期。**
-46. Plan 恢复与 shell：**启动事务在服务 RPC 之前把先前的 pending、
-    queued 和 running Plan 工作标记为 interrupted，不重放；已批准的
-    中断执行让会话保持 Agent。配置仅限空闲时，每个会话有一个运行中
-    回合。渲染器可以在回合运行期间暂存一份最新的下一回合配置，但
-    只在宿主报告空闲后才提交该选择。`defaultCommandShell` 选择平台
-    目录条目；不可用的持久选择回退到第一个可用平台 shell，每个回合
-    固定有效的 ID/方言，宿主在 60 秒默认超时内流式输出之前拒绝过期
-    身份。**
+1. Product name: **PI-Desktop**
+2. Desktop shell: **Electron**
+3. UI: **React + TypeScript + Vite + Tailwind**
+4. UI language default: **English**
+5. Docs / issues / commits language: **English primary**
+6. Agent engine: **pi (`pi-ai` + `pi-agent-core`)**
+7. Backend host core: **Rust**
+8. Agent loop location: **Node/TypeScript pi sidecar** (not renderer)
+9. Electron main role: **thin orchestrator**
+10. Bridge: **preload IPC only for renderer**
+11. Host services transport: **Rust sidecar + stdio JSON-RPC (NDJSON)**
+12. Storage ownership: **Rust host-core owns SQLite exclusively**
+13. MVP domain: **local coding agent**
+14. Default mode: **Agent**
+15. Product operating selector: **Agent | Plan**; the internal `page = "chat"`
+    value remains a conversation-surface implementation detail, not an
+    operating mode
+16. Agent tools: **Read / Glob / Grep / Write / Edit / Bash**
+17. Permission timeout: **120s → deny**
+18. Session grant scope: **by toolName**
+19. `~/.pi` one-shot auto-import: **not in MVP**. ADR 0254 adds read-only
+    native-session discovery and explicit continuation against the canonical Pi
+    v3 JSONL; it does not silently import or copy sessions into Desktop storage.
+20. Not in MVP: **Gateway / remote WebUI control**; local loopback MCP control
+    is the post-baseline, opt-in exception recorded by D370
+21. Extension model: **user-installable plugin system**
+22. Plugin first phase: **commands / panel / agentTools / skills**
+23. Plugin runtime target: **separate process**; M4 may use host-managed sandboxed runtime
+24. Plugin market: **protocol defined, implementation postponed**
+25. Plugin package format: **`.piplug` (zip)**
+26. Plugin trust first step: **sha256 checksum; signature later**
+27. First release platform: **macOS arm64 only** — lifted in `0.4.7`/D126;
+    tag builds now publish native macOS arm64 and Intel x64, Windows x64, and
+    Linux x64 AppImage, deb, and rpm artifacts
+28. TS schema library: **typebox**
+29. i18n library: **i18next**
+30. Bash: **non-interactive, streamed, and resolved from the selectable shell
+    catalog; default timeout 60s with a bounded override**
+31. Onboarding: **inline checklist**
+32. Observability MVP: **local logs only**
+33. Error model: **shared AppError code registry**
+34. Provider coverage: **universal via pi-ai native + OpenAI-compatible + custom**
+35. Model policy: **no closed allowlist; models.dev release catalog, generic unknown IDs, and free-form model IDs**
+36. Provider storage: **Rust SQLite configs + OS secret store references**
+37. Secrets backend: **safeStorage primary + encrypted file fallback**
+38. Workspace ignore: **denylist + defaults + `.pi-desktopignore`**
+39. Tool result limits: **per-tool budgets (128KB / 4000 lines search, 96KB / 4000 lines shell); `truncated` only when a result is cut short**
+40. Settings directory: **Basics / Model configuration / Import / Project archive / Info**;
+    the project archive owns durable project discovery, archive, restore, and
+    reopen workflows;
+    plugin management remains the app shell's independent **Plugins** destination
+41. Sidebar organization: **retained logical project groups with host-owned
+    ordered local roots and renderer-local project/session pin, archive,
+    collapse, and sort metadata**
+42. Project activation: **one visible host workspace via existing
+    `project.set`; group sessions and context default to the primary root,
+    while explicit absolute paths under registered group roots use host
+    canonical containment**
+43. Context management: **pi-native checkpoint summaries in Codex's shape —
+     inline compaction at the deterministic pre-request hard guard, the summary
+     plus only the latest active user message while a turn continues (and no
+     naked historical user messages after a completed turn), durable host
+     checkpoints, and one overflow retry. The model can request a new window through
+     `new_context`; every compaction adds a transcript row and one warning.
+     No user-facing settings**
+44. Plan tools and policy: **Read / Glob / Grep / BrowserPreview / Bash plus
+    `EnterPlanMode` and `SubmitPlan`; Write/Edit/plugin and
+    unknown tools are denied. Bash follows `ask`, `accept-edits`, or `auto`, so
+    Plan is planning intent, not a strict read-only security profile.**
+45. Plan checkpoint: **`SubmitPlan(title, markdown, question)` causes host-core
+    to preserve the exact Markdown bytes in a new unique
+    `<workspaceRoot>/.pi/plan/*.md` artifact, while title/question remain
+    structured fields in the existing `plan_approvals` row. The row records the
+    artifact path/hash/size and execution fields. Approve/reject are the only
+    actions; approval explicitly selects `ask`, `accept-edits`, or `auto` with
+    Ask as the UI default, opens the artifact for review, and expires after 30
+    absolute minutes with `PLAN_APPROVAL_TIMEOUT`.**
+46. Plan recovery and shells: **a startup transaction marks prior pending,
+    queued, and running Plan work interrupted before serving RPC, with no
+    replay; an already-approved interrupted execution leaves the session Agent.
+    Configuration is idle-only and each session has one running turn.
+    The renderer may stage one latest next-turn configuration while a turn is
+    running, but it submits that choice only after the host reports idle.
+    `defaultCommandShell` selects the platform catalog entry; unavailable
+    persisted choices fall back to the first available platform shell, each
+    turn pins effective ID/dialect, and host rejects stale identity before
+    streaming output under the 60-second default timeout.**
 
-## 权威来源
+## Source of Truth
 
-- 规范索引：`docs/spec/README.md`
-- 导航：`docs/spec/NAV.md`
-- 决策日志：`docs/spec/08-meta/decisions-log.md`
-- ADR：`docs/adr/`
-- 示例插件：`examples/plugins/hello`
+- Spec index: `docs/spec/README.md`
+- Navigation: `docs/spec/NAV.md`
+- Decisions log: `docs/spec/08-meta/decisions-log.md`
+- ADRs: `docs/adr/`
+- Example plugin: `examples/plugins/hello`
 
-## 交付状态
+## Delivery Status
 
-**M6 — Plan** 已于 2026-08-05 按这些冻结细节实现并验收：
+**M6 — Plan** was implemented and accepted on 2026-08-05 against these frozen
+details:
 
-1. 共享的 Plan/会话/shell 契约与协议 v10
-2. 架构 v10 迁移、不可变 plan 工件，以及 `plan_approvals`
-   执行字段/启动栅栏
-3. Rust 权威的 Plan 策略、shell 身份与进程取消
-4. 单 Agent 的 SubmitPlan/批准/执行状态转换
-5. 渲染器工件批准、shell 选择与 EN/zh-CN UX
-6. 聚焦的迁移、策略、流式、超时、恢复验证，以及渲染的
-   EN/zh-CN 验证
+1. shared Plan/session/shell contracts and protocol v10
+2. schema v10 migration, immutable plan artifacts, and the `plan_approvals`
+   execution fields/startup fence
+3. Rust-authoritative Plan policy, shell identity, and process cancellation
+4. one-Agent SubmitPlan/approval/execution state transitions
+5. renderer artifact approval, shell selection, and EN/zh-CN UX
+6. focused migration, policy, streaming, timeout, recovery, and rendered
+   EN/zh-CN verification
 
-冻结的协议保持 v9，存储架构保持 v10。未来的变更必须保留自动化的
-M6 场景 E2E-104 至 E2E-117，或在更改契约之前更新相关决策记录。
+The frozen protocol remains v9 and storage schema remains v10. Future changes
+must preserve the automated M6 scenarios E2E-104 through E2E-117 or update the
+relevant decision record before changing the contract.

@@ -1,34 +1,37 @@
-# ADR 0117: 为原生最小化保留 Windows 任务栏条目
+# ADR 0117: Preserve the Windows taskbar entry for native minimize
 
 - Status: Accepted (amended by ADR 0123)
 - Date: 2026-08-24
 - Deciders: PI-Desktop core
 - Related: D216, D252, D256, E2E-124, ADR 0078, ADR 0123
 
-## 背景
+## Context
 
-D216 的托盘常驻最小化决策会把主窗口从操作系统的窗口列表中隐
-藏。在 Windows 上，点击聚焦窗口的任务栏按钮是原生的最小化/还原
-开关。Electron 通过主窗口的 `minimize` 事件报告该开关的最小化一
-半。此前的处理器随后调用 `window.hide()`，这会移除任务栏条目，
-只留下托盘图标作为还原路径。
+The tray-resident minimize decision in D216 hides the main window from the
+operating system's window list. On Windows, clicking the taskbar button of the
+focused window is a native minimize/restore toggle. Electron reports the
+minimize half of that toggle through the main window's `minimize` event. The
+current handler then calls `window.hide()`, which removes the taskbar entry and
+leaves only the tray icon as a restore path.
 
-## 决策
+## Decision
 
-1. 在 Windows 上，主窗口的原生 `minimize` 事件不再被转换为
-   `window.hide()`。由操作系统完成最小化，因此主窗口保持由其任
-   务栏条目表示。
-2. 渲染进程绘制的 Windows 最小化按钮和 Windows 原生菜单的最小化
-   动作使用相同的原生最小化过渡。Linux 的渲染进程和原生菜单最
-   小化动作也使用该过渡。macOS 原生最小化事件保持托盘常驻。
-3. 现有的还原路径继续还原并聚焦同一个窗口。因此当窗口只是被遮
-   住时，点击任务栏条目保持其现有的带到前台行为；不需要新的
-   IPC、存储或宿主协议契约。
+1. On Windows, the main window's native `minimize` event is not converted to
+   `window.hide()`. The OS completes the minimize, so the main window remains
+   represented by its taskbar entry.
+2. The renderer-drawn Windows minimize button and the Windows native-menu
+   minimize action use the same native minimize transition. Linux uses that
+   transition for its renderer and native-menu minimize actions as well. The
+   macOS native minimize event remains tray-resident.
+3. The existing restore path continues to restore and focus the same window.
+   Clicking the taskbar entry while the window is merely covered therefore
+   keeps its existing bring-to-front behavior; no new IPC, storage, or host
+   protocol contract is needed.
 
-## 后果
+## Consequences
 
-- Windows 对操作系统任务栏开关和显式的应用内最小化动作使用同一
-  个原生任务栏最小化模型。
-- Windows/Linux 任务栏最小化的窗口仍可从任务栏到达；关闭到托盘
-  的窗口仍可从常驻托盘图标到达。
-- 后台工作和窗口边界持久化不变。
+- Windows has one native taskbar minimize model for both the OS taskbar toggle
+  and the explicit in-app minimize action.
+- Windows/Linux taskbar-minimized windows remain reachable from the taskbar;
+  close-to-tray windows remain reachable from the resident tray icon.
+- Background work and window bounds persistence are unchanged.

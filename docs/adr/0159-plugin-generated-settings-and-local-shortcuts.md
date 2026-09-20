@@ -1,31 +1,36 @@
-# ADR 0159: 生成式插件设置与插件本地快捷键
+# ADR 0159: Generated plugin settings and plugin-local shortcuts
 
-- 状态：已接受
-- 日期：2026-08-13
-- 决策负责人：PI-Desktop 桌面端/插件维护者
+- Status: Accepted
+- Date: 2026-08-13
+- Decision owners: PI-Desktop desktop/plugin maintainers
 
-## 背景
+## Context
 
-插件已经可以声明设置并读写其私有设置，但用户没有标准的方式来编辑这些
-值。下一个已知设置是快捷键，而在插件设置契约稳定之前就将插件快捷键
-全局注册，会扩大冲突和生命周期的处理面。
+Plugins already declared settings and could read/write their private settings,
+but users had no standard way to edit those values. The next known setting is a
+shortcut, and registering plugin shortcuts globally would expand the collision
+and lifecycle surface before the plugin settings contract is stable.
 
-## 决策
+## Decision
 
-1. `contributes.settings` 是生成的设置 UI 的事实来源。支持的类型为
-   `string`、`number`、`boolean`、`select`、`json` 和 `shortcut`。
-2. 快捷键设置通过 `command` 声明一个插件命令，并具有固定的
-   `scope: "plugin"`。用户可以在已安装插件页面中编辑它。
-3. 插件快捷键仅在 PI-Desktop 窗口聚焦时由渲染进程处理。宿主在执行命令
-   之前会重新检查插件的激活作用域。它们不是 Electron/全局快捷键。
-4. 宿主校验设置值，将其持久化到插件私有设置文件中，并向插件进程发送
-   `plugin:settingsChanged`。
-5. 密钥类设置继续保持拒绝，直到设计出专门的安全存储契约。
+1. `contributes.settings` is the source of truth for the generated settings UI.
+   Supported types are `string`, `number`, `boolean`, `select`, `json`, and
+   `shortcut`.
+2. A shortcut setting declares a plugin command through `command` and has the
+   fixed `scope: "plugin"`. The user may edit it in the installed plugin page.
+3. Plugin shortcuts are handled by the renderer only while the PI-Desktop
+   window is focused. The host re-checks the plugin activation scope before
+   executing the command. They are not Electron/global shortcuts.
+4. The host validates values, persists them in the plugin-private settings
+   file, and sends `plugin:settingsChanged` to the plugin process.
+5. Secret settings remain rejected until a dedicated secure storage contract is
+   designed.
 
-## 后果
+## Consequences
 
-- 插件作者无需捆绑自定义配置页面即可交付可用的设置界面。
-- 现有的应用快捷键映射仍然是应用全局行为的权威来源，插件快捷键无法
-  取代它。
-- 未来的全局插件快捷键功能需要针对冲突处理、OS 注册以及禁用/后台
-  插件状态另行决策。
+- Plugin authors can ship a usable settings surface without bundling a custom
+  configuration page.
+- The existing application shortcut map remains authoritative for app-global
+  behavior and plugin shortcuts cannot replace it.
+- A future global plugin shortcut feature will require a separate decision for
+  collision handling, OS registration, and disabled/background plugin state.

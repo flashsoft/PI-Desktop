@@ -1,45 +1,49 @@
-# ADR 0193: 上下文检查器中的最近请求占用
+# ADR 0193: Last-request occupancy in the context inspector
 
-- 状态：已接受
-- 日期：2026-09-09
-- 决策者：PI-Desktop 渲染进程与 UX 维护者
-- 修订：D103、D184、D244、D347、ADR 0047、ADR 0103、ADR 0184
-- 相关：D355、E2E-060d、US-UI-61
+- Status: Accepted
+- Date: 2026-09-09
+- Deciders: PI-Desktop renderer and UX maintainers
+- Amends: D103, D184, D244, D347, ADR 0047, ADR 0103, ADR 0184
+- Related: D355, E2E-060d, US-UI-61
 
-## 背景
+## Context
 
-composer 检查器混合了两种 token 口径。剩余容量和已用/窗口计数来自最新
-的 assistant **消息**。轮次总计、输入、输出、缓存读/写、推理和缓存命中
-率来自求和的可视**轮次**——工具循环中的每一次模型调用。
+The composer inspector mixed two token scopes. Remaining capacity and the
+used/window counts came from the newest assistant **message**. Turn total,
+input, output, cache read/write, reasoning, and cache hit rate came from
+the summed visual **turn** — every model call in a tool loop.
 
-这使得 55k 的窗口旁边出现 367k 的缓存读取总计和九次工具调用后 377k 的
-轮次总计。这些数字计费正确，却看起来像泄漏。OpenCode 的上下文组件和
-压缩检查只使用最后一条 assistant 消息：
+That made a 55k window sit next to a 367k cache-read total and a 377k turn
+total after nine tool calls. The numbers were billed correctly and still
+looked like a leak. OpenCode's context widget and compaction check use only
+the last assistant message:
 
 `input + output + reasoning + cache.read + cache.write`
 
-## 决策
+## Decision
 
-1. 占用、剩余容量、已用/窗口计数、轮次总计、provider
-   input/output/cache/reasoning 和缓存命中率，均取最新的带用量 assistant
-   消息（最后一次模型请求）。占用为该消息上的
-   `input + output + reasoning + cacheRead + cacheWrite`。
-2. 已完成轮次的生成速度和聚合工具行仍描述可视轮次（周围用户消息之间
-   的每个片段和工具调用）。
-3. 宿主已完成轮次汇总、`addUsage` 和 Token Insights 保持累加计费。本
-   改动是父级 `message.usage` 的渲染进程展示。
-4. 后续没有总计的流式轮次仍然不窃取上一个带用量轮次。委托行仍然不
-   驱动圆环。
+1. Occupancy, remaining capacity, used/window counts, turn total, provider
+   input/output/cache/reasoning, and cache hit rate are the newest
+   usage-bearing assistant message (the last model request). Occupancy is
+   `input + output + reasoning + cacheRead + cacheWrite` on that message.
+2. Completed-turn generation speed and the aggregate tool row still describe
+   the visual turn (every fragment and tool call between the surrounding
+   user messages).
+3. Host completed-turn rollups, `addUsage`, and Token Insights stay additive
+   billing. This change is renderer presentation of parent `message.usage`.
+4. A later streaming turn without totals still does not steal the previous
+   usage-bearing turn. Delegate rows still do not drive the ring.
 
-## 后果
+## Consequences
 
-- 缓存读取与上下文窗口保持同一量级。
-- 工具密集的轮次不再看起来像溢出了模型窗口。
-- 按轮次求和的缓存和成本仍对用量插件可用，只是不进入占用圆环。
+- Cache read stays on the same scale as the context window.
+- A tool-heavy turn no longer looks like it overflowed the model window.
+- Turn-summed cache and cost remain available to the usage plugin, not the
+  occupancy ring.
 
-## 已否决的替代方案
+## Rejected alternatives
 
-- **保留轮次求和、只改标签：** 用户仍会在同一面板中把 367k 缓存读取
-  与 55k 窗口对比。
-- **同时显示最近请求占用和按轮次求和的缓存：** 紧凑检查器中的两个
-  总计会重新制造最初的矛盾。
+- **Keep the turn sum and only relabel it:** users still compare 367k cache
+  read to a 55k window in the same panel.
+- **Show both last-request occupancy and turn-summed cache:** two totals in
+  a compact inspector recreate the original contradiction.

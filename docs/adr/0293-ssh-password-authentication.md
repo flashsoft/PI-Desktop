@@ -1,159 +1,185 @@
-# ADR 0293: 远程宿主引导的 SSH 密码认证
+# ADR 0293: SSH password authentication for the remote-host bootstrap
 
-- 状态：已接受
-- 日期：2026-09-19
-- 决策：D454
-- 修订：[ADR 0292](0292-ssh-remote-host-bootstrap.md)——其"不持有 SSH 密钥"
-  不变量
-- 相关：[ADR 0286](0286-remote-host-desktop-kernel.md)（D449）、ADR 0205（D373）、
-  `02-architecture/05-remote-agent-control.md` §5.2、
+- Status: Accepted
+- Date: 2026-09-19
+- Decision: D454
+- Amends: [ADR 0292](0292-ssh-remote-host-bootstrap.md) — its "no SSH secret is
+- Related: [ADR 0286](0286-remote-host-desktop-kernel.md) (D449), ADR 0205 (D373),
+  `02-architecture/05-remote-agent-control.md` §5.2,
   `05-security/02-remote-control-security.md` §3.4
 
-## 背景
+## Context
 
-ADR 0292 通过调用系统 `ssh` 客户端，在用户已经可以通过 SSH 到达的机器上
-引导一个 `pi-host`。这个选择是有意为之，其主要论据是应用完全不持有 SSH
-密钥：`~/.ssh/config`、agent 和 `known_hosts` 决定登录，因此应用没有可泄露
-的东西。`BatchMode=yes` 强制执行了这一声明——需要交互式密码的宿主会立即
-以带类型的错误失败，而不是挂在看不见的提示后面。
+ADR 0292 bootstraps a `pi-host` on a machine the user already reaches over SSH
+by shelling out to the system `ssh` client. That choice was made deliberately
+and its main argument was that the app holds no SSH secret at all:
+`~/.ssh/config`, the agent, and `known_hosts` decide the login, so there is
+nothing for the app to leak. `BatchMode=yes` enforced the claim — a host that
+needed an interactive password failed immediately with a typed error instead of
+hanging behind an invisible prompt.
 
-这是正确的默认，并且保持不变。但对于这个功能为之存在的机器，它并不够。
-一台全新的云实例、一台 NAS、一个容器宿主，或任何只用密码配置、尚未配置
-密钥的机器，在终端里经过一个 `ssh` 提示就能到达，而桌面会拒绝它。用户
-唯一的补救办法是先从终端安装密钥——这正是引导功能本要消除的"那就去用
-终端"弯路。
+That is the right default and it stays. It is not, however, sufficient for the
+machines this feature exists for. A fresh cloud instance, a NAS, a container
+host, or any box provisioned with a password and no key yet is reachable from a
+terminal after one `ssh` prompt, while the desktop refuses it. The user's only
+recourse is to install a key from a terminal first — which is exactly the
+"use your terminal instead" detour the bootstrap was built to remove.
 
-在严格保持该不变量字面成立的前提下，没有办法支持这种情况。接受密码意味着
-应用持有秘密，因此决策是它采取什么形态，而不是它是否存在。三个约束圈定了
-答案：
+There is no way to support that case while keeping the invariant literally
+true. Accepting a password means the app holds a secret, so the decision is
+what shape that takes, not whether it exists. Three constraints bound the
+answer:
 
-- 传输在没有终端的情况下派生 `ssh`，所以密码不能直接递过去；必须给
-  OpenSSH 一种索要密码的方式。
-- 一个必须跨重启存活以保持重连的秘密是静态秘密，而应用已经恰好有一个
-  它信任的静态加密存储。
-- 传输是一个端口（`SshTransport`），引导和隧道管理器在它的另一侧，因此
-  承载秘密的任何机制都必须能通过这条接缝表达。
+- The transport spawns `ssh` with no terminal, so a password cannot simply be
+  handed over; OpenSSH must be given a way to ask for one.
+- A secret that must survive a restart to keep reconnecting is a secret at rest,
+  and the app already has exactly one encrypted-at-rest store it trusts.
+- The transport is a port (`SshTransport`) with the bootstrap and the tunnel
+  manager on the other side of it, so whatever carries the secret has to be
+  expressible through that seam.
 
-## 决策
+## Decision
 
-1. **密码认证是可选启用的，密钥或 agent 保持默认。** 没有凭据时，argv 与
-   ADR 0292 产生的逐字节相同，`BatchMode=yes` 也在内。只有携带密码的目标
-   才有差别。
+1. **Password auth is opt-in, and a key or agent stays the default.** Absent
+   credentials, the argv is byte-for-byte what ADR 0292 produced, `BatchMode=yes`
+   included. A target that carries a password is the only one that differs.
 
-2. **秘密通过 OpenSSH 自己的 askpass helper 到达 `ssh`**
-   （`remote/ssh-askpass.ts`）。`SSH_ASKPASS` 指向一个生成的 `/bin/sh`
-   脚本，`SSH_ASKPASS_REQUIRE=force` 让 `ssh` 在没有终端的情况下使用它；
-   脚本 `cat` 出文件中的秘密并终止该行，因为 `ssh` 只读取 helper 应答到
-   第一个换行为止。因此秘密从不是 `ssh` 的参数，也从不是环境变量——环境
-   里是一个路径，文件里是字节，所以 `ps` 输出和 argv 转储保持干净。它的
-   保密性依靠权限位而非约定：`mkdtemp` 创建的 `0700` 目录、`0600` 的秘密
-   文件、`0700` 的 helper。
+2. **The secret reaches `ssh` through OpenSSH's own askpass helper**
+   (`remote/ssh-askpass.ts`). `SSH_ASKPASS` names a generated `/bin/sh` script
+   and `SSH_ASKPASS_REQUIRE=force` makes `ssh` use it without a terminal; the
+   script `cat`s the secret from a file and terminates the line, because
+   `ssh` reads the helper's answer only up to the first line break. The secret
+   is therefore never an `ssh` argument and never an environment variable — it
+   is a path in the environment and bytes in a file, so `ps` output and argv
+   dumps stay clean. Its confidentiality rests on modes rather than convention:
+   a `0700` directory created by `mkdtemp`, a `0600` secret, a `0700` helper.
 
-3. **仅在提供密码时 `BatchMode=yes` 变为 `BatchMode=no`，并配合
-   `NumberOfPasswordPrompts=1` 和 `PubkeyAuthentication=no`。** helper 对
-   每个提示用同一个秘密作答，所以重试只会重复一个错误密码，而重复失败
-   正是触发服务器自身锁定的行为。一次提示，一次应答。默认身份被跳过：
-   加密的 `~/.ssh/id_rsa` 会把那唯一一次提示消耗为密钥口令，登录密码就
-   永远不会被尝试。设置中的密码模式取代密钥；两者都有的用户选择密钥
-   模式。
+3. **`BatchMode=yes` becomes `BatchMode=no` only when a password is supplied,
+   together with `NumberOfPasswordPrompts=1` and `PubkeyAuthentication=no`.**
+   The helper answers every prompt with the same secret, so a retry could only
+   repeat a wrong password, and repeated failures are what trip a server's own
+   lockout. One prompt, one answer. Default identities are skipped: an encrypted
+   `~/.ssh/id_rsa` would consume that single prompt as a key passphrase and the
+   login password would never be tried. Password mode in Settings replaces a
+   key; a user with both picks key mode.
 
-4. **凭据是短命的。** 材料在子进程即将认证时写入，在它不可能还在提示
-   之后删除：`exec` / `execWithInput` 子进程关闭后、转发的本地端口起来
-   之后，或 `dispose` 时。引用计数让共享副本在并发子进程间存活，并在
-   最后一个完成后丢弃，因此普通情况下磁盘上只在一次认证期间存在一个
-   文件，之后什么都不留。
+4. **The credential is short-lived.** Material is written when a child is about
+   to authenticate and deleted once it cannot still be prompting: after an
+   `exec` / `execWithInput` child has closed, after a forward's local port is
+   up, or on `dispose`. A reference count keeps a shared copy alive across
+   concurrent children and drops it when the last one is done, so the ordinary
+   case leaves one file on disk for the duration of one authentication and
+   nothing afterwards.
 
-5. **密码以加密形式持久化，存放在新的记录字段中。**
-   `RemoteHostRecord.sshSecret` 通过设备令牌已经在用的同一个
-   `safeStorage` 支撑的 `EncryptionPort`，以 `encryptedSshSecret` 写入
-   `remote-hosts.json`，并以同样方式读回。`metadata.ssh` 中的描述符增加
-   `auth: "password"`——且只写入这一个值，因此密钥描述符和本次改动之前
-   写入的每条记录保持原样。SSH 密码无法解密的记录（钥匙串迁移了、操作
-   系统用户不同）丢失秘密但保留已配对的宿主，因为设备令牌与它相互独立。
+5. **The password is persisted encrypted, in a new record field.**
+   `RemoteHostRecord.sshSecret` is written to `remote-hosts.json` as
+   `encryptedSshSecret` through the same `safeStorage`-backed `EncryptionPort`
+   the device token already uses, and read back the same way. The descriptor in
+   `metadata.ssh` gains `auth: "password"` — and only that value is written, so
+   a key descriptor and every record written before this change keep exactly the
+   shape they had. A record whose SSH password will not decrypt (keychain moved,
+   different OS user) loses the secret but keeps the paired host, because the
+   device token is independent of it.
 
-6. **秘密从不到达渲染进程。** `RemoteHostSshMetadata` 按构造保持无秘密：
-   它是明文元数据，存储在 `metadata` 中，并在 `RemoteHostBootstrapResult`
-   内回显给渲染进程。密码在它旁边流动——从 IPC 请求进入
-   `SshTarget.password`，再作为 `SshBootstrapOutcome.sshSecret` 从引导中
-   返回，交给调用方加密——而 `RemoteHostSummary` 不变。
+6. **The secret never reaches the renderer.** `RemoteHostSshMetadata` stays
+   secret-free by construction: it is plaintext metadata, it is stored in
+   `metadata`, and it is echoed to the renderer inside
+   `RemoteHostBootstrapResult`. The password travels beside it — from the IPC
+   request into `SshTarget.password`, and back out of the bootstrap as
+   `SshBootstrapOutcome.sshSecret` for the caller to encrypt — and
+   `RemoteHostSummary` is unchanged.
 
-7. **不可能奏效的密码在任何东西运行之前被拒绝。** 换行无法在 askpass
-   往返中存活，所以 `assertSshPassword` 在引导中以 `INVALID_ARGUMENT`
-   拒绝它，而不是让它变成一次失败的认证。Windows 以指明补救办法的
-   `HOST_BOOTSTRAP_FAILED` 拒绝，因为 Windows OpenSSH 无法执行 shell 脚本
-   askpass helper，而随附一个 helper 可执行文件本身就是一个项目。记为
-   `auth: "password"` 但没有可用秘密的宿主根本不会被打开，这报告为宿主
-   断开连接，而不是登录被拒。
+7. **A password that cannot work is refused before anything runs.** A line break
+   cannot survive the askpass round trip, so `assertSshPassword` rejects one with
+   `INVALID_ARGUMENT` in the bootstrap rather than letting it become a failed
+   authentication. Windows is refused with `HOST_BOOTSTRAP_FAILED` naming the
+   remedy, because Windows OpenSSH cannot execute a shell-script askpass helper
+   and shipping a helper executable is a project of its own. A host recorded as
+   `auth: "password"` with no usable secret is not opened at all, which is
+   reported as the host being disconnected instead of as a rejected login.
 
-8. **设置界面如实说明行为。** SSH 表单增加一个认证模式，带掩码密码字段
-   和显示切换，其说明文字声明登录密码会保存在操作系统钥匙串中，以便
-   重启后重新连接。此前承诺从不存储密码的文案在全部八个随附语言中被
-   替换。
+8. **The Settings surface says what it does.** The SSH form gains an
+   authentication mode with a masked password field and a reveal toggle, and its
+   description states that the login password is saved in the OS keychain so the
+   host reconnects after a restart. The copy that promised no password was ever
+   stored is replaced in all eight shipped locales.
 
-## 不变量
+## Invariants
 
-- 未提供密码时，一切不变：同样的 argv、同样的 `BatchMode=yes`、不创建
-  凭据文件、不设置 askpass 变量。
-- 密码从不是 `ssh` 参数、从不是环境变量的值、从不在 URL 中、从不在日志
-  行中、从不在渲染进程载荷中。
-- 凭据文件只存在于 `0700` 目录内，只存在于 `ssh` 子进程仍可能提示的
-  区间内，并在每条路径上被移除——包括 `dispose` 和失败的 `forward`。
-- 除了系统 `ssh` 客户端，没有任何东西消费该秘密；没有库、没有第二个
-  凭据存储、没有自己的钥匙串条目。
-- 畸形或缺失的描述符仍然降级为"不是 SSH 宿主"，而不是用垃圾参数派生
-  进程。
+- With no password supplied, nothing changes: same argv, same
+  `BatchMode=yes`, no credential file created, no askpass variables set.
+- The password is never an `ssh` argument, never an environment variable value,
+  never in a URL, never in a log line, and never in a renderer payload.
+- Credential files exist only inside a `0700` directory, only for the interval
+  in which an `ssh` child can still prompt, and are removed on every path —
+  including `dispose` and a failed `forward`.
+- Nothing but the system `ssh` client consumes the secret; no library,
+  no second credential store, and no keychain entry of its own.
+- A malformed or absent descriptor still degrades to "not an SSH host" rather
+  than to a spawn with junk arguments.
 
-## 范围外
+## Out of scope
 
-- **交互式（不持久化）提示。** 密码由用户在设置中提供一次，要么被加密
-  记住，要么完全不存；没有"每次都问我"模式，那需要主进程的提示界面。
-- **keyboard-interactive 认证作为单独模式。** `ssh` 把它当作同一个提示，
-  所以 helper 用一个秘密回答两者，没有第二个开关可暴露。
-- **Windows 支持**，如上所述；以及**非 Linux 远程目标**，与 ADR 0292
-  一样不变。
-- **密钥口令存储。** 口令解锁的是本地密钥；askpass helper 回答那个提示
-  只是同一个秘密被提供给登录的副作用。
+- **Interactive (non-persisted) prompting.** The password is supplied once by
+  the user in Settings and either remembered encrypted or not at all; there is
+  no "ask me each time" mode, which would need a main-process prompt surface.
+- **Keyboard-interactive auth as a separate mode.** `ssh` treats it as the same
+  prompt, so the helper answers both with one secret and there is no second
+  switch to expose.
+- **Windows support**, as above, and **non-Linux remote targets**, unchanged
+  from ADR 0292.
+- **Key passphrase storage.** A passphrase unlocks a local key; the askpass
+  helper answers that prompt only as a side effect of the same secret being
+  supplied for the login.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- **`sshpass`，或把秘密放在环境变量中的 `SSH_ASKPASS`。** 被拒绝：
-  `sshpass` 是必须安装的第三方依赖，而且任一形式都会把秘密暴露给任何
-  能读取进程环境或参数的东西——包括共享机器上的其他用户。
-- **PTY 加脚本化的 `expect` 式对话。** 被拒绝：它重新引入一个伪终端，
-  桌面不得不解析其提示和时序，并且在一条被设计为关闭失败的路径上重新
-  使交互提示成为可能。
-- **在 `metadata` 中明文存密码。** 被拒绝：`metadata` 是明文、用户可编辑、
-  不受钥匙串保护，这会把一个可复用的凭据放进应用无法保护的文件里。
-- **静态什么都不存，每次启动时询问。** 暂时被拒绝：这会让 SSH 宿主成为
-  唯一一个启动时需要人在场的已配对宿主，重启会静默地让它离线。把它
-  加密在与设备令牌相同的存储中，保持单一凭据模型而不是两个。
-- **`ssh -o PreferredAuthentications=password`。** 作为*密钥路径*默认被
-  拒绝：强制方法会把一次可用的 agent 登录变成失败。密码模式（提供了
-  秘密）改为设置 `PubkeyAuthentication=no`，这是设置中的互斥选择而不是
-  落空默认值。
+- **`sshpass`, or `SSH_ASKPASS` with the secret in the environment.**
+  Rejected: `sshpass` is a third-party dependency that must be installed, and
+  either form exposes the secret to anything that can read the process
+  environment or arguments — including other users on a shared machine.
+- **A PTY and a scripted `expect`-style dialog.** Rejected: it reintroduces a
+  pseudo-terminal whose prompts and timing the desktop would have to parse, and
+  it makes an interactive prompt possible again on a path that was designed to
+  fail closed.
+- **Store the password unencrypted in `metadata`.** Rejected: `metadata` is
+  plaintext, is user-editable, and is not covered by the keychain, so it would
+  put a reusable credential into a file the app cannot protect.
+- **Keep nothing at rest and ask on every launch.** Rejected for now: it would
+  make an SSH host the only paired host that needs a human at startup, so a
+  restart would silently leave it offline. Encrypting it in the same store as
+  the device token keeps one credential model instead of two.
+- **`ssh -o PreferredAuthentications=password`.** Rejected as a *key-path*
+  default: forcing the method would turn a working agent login into a failure.
+  Password mode (a secret supplied) instead sets `PubkeyAuthentication=no`,
+  which is the exclusive Settings choice rather than a fall-through.
 
-## 测试
+## Testing
 
-`apps/desktop/test/remote-host-ssh-password.test.mjs` 用 fixture 可执行文件
-和假 `EncryptionPort` 驱动整条路径，因此不触碰网络或真实钥匙串。它断言：
-密码派生的 argv 不携带秘密、密钥派生的 argv 不变；helper 恰好应答秘密
-文件的内容；文件、helper 及其目录分别为 `0600` / `0700` / `0700`；材料
-在其子进程完成后以及 `dispose` 之后消失；经注册表往返后
-`remote-hosts.json` 中没有明文；以及改动前已存在的密钥记录读回时没有新增
-字段。
+`apps/desktop/test/remote-host-ssh-password.test.mjs` drives the whole path with
+fixture executables and a fake `EncryptionPort`, so nothing touches a network or
+a real keychain. It asserts the argv of a password spawn carries no secret and
+the argv of a key spawn is unchanged, that the helper answers exactly what the
+secret file holds, that the file, the helper, and their directory carry
+`0600` / `0700` / `0700`, that material is gone once its child is done and after
+`dispose`, that a round trip through the registry leaves no cleartext in
+`remote-hosts.json`, and that a pre-existing key record reads back with no added
+field.
 
-## 后果
+## Consequences
 
-- 桌面现在可以被要求持有一个 SSH 密码，这是对应用受信范围的真实扩大。
-  它的边界是：按宿主可选启用、通过已有的存储静态加密、从不暴露给渲染
-  进程或进程表。
-- `remote-hosts.json` 增加可选的 `encryptedSshSecret` 和
-  `metadata.ssh.auth`。两者都是增量添加：文件的 `version` 保持 `1`，
-  密钥认证的记录写法与之前完全一样。
-- 用户现在可以引导一个唯一凭据是密码的宿主，这消除了 ADR 0292 的
-  `BatchMode=yes` 留下的终端弯路。
-- 服务器端锁定策略变得可以经应用触达：一个错误的已存密码在每次连接时
-  产生一次失败尝试。`NumberOfPasswordPrompts=1` 把它控制在用户所要求的
-  最小值。
-- 声称从不存储密码的 `settings.remoteHosts` 文案不得不在八个语言中修改，
-  ADR 0292 中的声明也需要一次明确的修订，而不是悄悄编辑。
+- The desktop can now be asked to hold an SSH password, which is a real widening
+  of what the app is trusted with. It is bounded by being opt-in per host,
+  encrypted at rest through the store that already exists, and never exposed to
+  the renderer or the process table.
+- `remote-hosts.json` gains an optional `encryptedSshSecret` and
+  `metadata.ssh.auth`. Both are additive: the file's `version` stays `1`, and a
+  key-authenticated record is written exactly as before.
+- Users can now bootstrap a host whose only credential is a password, which
+  removes the terminal detour that ADR 0292's `BatchMode=yes` left in place.
+- Server-side lockout policy becomes reachable through the app: one wrong saved
+  password produces one failed attempt per connect. `NumberOfPasswordPrompts=1`
+  keeps that to the minimum the user asked for.
+- The `settings.remoteHosts` copy that claimed no password is ever stored had to
+  change in eight locales, and the claim in ADR 0292 needed an explicit
+  amendment rather than a quiet edit.

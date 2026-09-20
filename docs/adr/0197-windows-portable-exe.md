@@ -1,4 +1,4 @@
-# ADR 0197: 发布 Windows 免安装可执行文件
+# ADR 0197: Publish a Windows Portable Executable
 
 - Status: Accepted
 - Date: 2026-09-09
@@ -7,46 +7,49 @@
 
 ## Context
 
-Windows 的 tag 发布此前只发布 NSIS 安装程序
-（`PI-Desktop-Setup-<version>.exe`）。将单个可执行文件加入白名单、
-或禁止安装程序的企业环境，无法在未经批准安装的情况下运行该产物。
-本需求是一个免安装的 `.exe`，而不是改变数据所有权或 NSIS 应用内
-更新通道。
+Windows tag releases published only an NSIS installer
+(`PI-Desktop-Setup-<version>.exe`). Company environments that whitelist a
+single executable, or that block installers, cannot run that artifact without
+an approved install. The request is a no-install `.exe`, not a change to data
+ownership or to the NSIS in-app update lane.
 
-electron-builder 的 `portable` 目标会生成用户级自解压可执行文件，
-它不会写出 `latest.yml`。将 NSIS 更新器应用于 portable 运行会启动
-安装程序，把免安装副本变成已安装的副本。
+electron-builder's `portable` target produces a user-level self-extracting
+executable. It does not write `latest.yml`. Applying the NSIS updater to a
+portable run would launch the installer and convert the no-install copy into
+an installed one.
 
 ## Decision
 
-1. Windows x64 发布通道同时发布 NSIS 和 portable 目标。
-2. portable 产物文件名不含空格：
-   `PI-Desktop-Portable-${version}.exe`。
-3. portable 请求 `user` 执行级别，因此启动不需要管理员权限。
-4. electron-builder 继续只为 NSIS 写出 `latest.yml`。portable 不会
-   成为自动更新载荷。
-5. 打包后的 portable 运行通过 `PORTABLE_EXECUTABLE_FILE` 检测，并
-   使用“通知并给出链接”的交付方式。NSIS 安装保留应用内下载和
-   quit-and-install 流程。
-6. 用户数据、日志和密钥仍保留在现有应用数据目录中。本决策不引入
-   beside-the-exe 配置文件目录。
+1. The Windows x64 release lane publishes both NSIS and portable targets.
+2. The portable artifact name is space-free:
+   `PI-Desktop-Portable-${version}.exe`.
+3. Portable requests `user` execution level so launch does not require
+   administrator rights.
+4. electron-builder continues to write `latest.yml` only for NSIS. Portable
+   does not become an auto-update payload.
+5. Packaged portable runs are detected by `PORTABLE_EXECUTABLE_FILE` and use
+   notify-and-link delivery. NSIS installs keep in-app download and
+   quit-and-install.
+6. User data, logs, and secrets stay in the existing application data
+   directory. This decision does not introduce a beside-the-exe profile.
 
 ## Consequences
 
-- 无法运行安装程序的 Windows 用户可以从 GitHub Release 下载并启动
-  单个可执行文件。
-- portable 用户在应用内发现更新并打开发布页面；由用户自行替换
-  portable 文件。
-- NSIS 应用内更新、哈希和 feed 所有权保持不变。
-- portable 进程在每次启动时仍会将应用文件解包到 Windows 临时目录
-  下。白名单针对的是下载的 portable 可执行文件；如果策略同时禁止
-  临时目录中的执行，则可能仍需使用 NSIS 安装。
+- Windows users who cannot run an installer can download and launch one
+  executable from the GitHub Release.
+- Portable users discover updates in-app and open the releases page; they
+  replace the portable file themselves.
+- NSIS in-app updates, hashes, and feed ownership are unchanged.
+- The portable process still unpacks application files under the Windows temp
+  directory for that launch. Whitelisting applies to the downloaded portable
+  executable; a policy that also blocks temp-directory execution may still
+  require the NSIS install.
 
 ## Alternatives considered
 
-- 仅打包 `win-unpacked` 的 Zip：被拒绝，因为所要求的产物是免安装
-  `.exe`。
-- 通过 NSIS 安装程序对 portable 做应用内更新：被拒绝，因为这会安装
-  应用并要求安装程序获得白名单许可。
-- beside-the-exe 数据目录：被拒绝，因为这是无关的数据所有权变更；
-  `PI_DESKTOP_DATA_DIR` 已经可以在需要时重新定位配置文件目录。
+- Zip of `win-unpacked` only: rejected as the requested artifact is a
+  no-install `.exe`.
+- In-app update of portable via the NSIS installer: rejected because it would
+  install the application and require a whitelisted installer.
+- Beside-the-exe data directory: rejected as an unrelated data-ownership
+  change; `PI_DESKTOP_DATA_DIR` already relocates the profile when needed.

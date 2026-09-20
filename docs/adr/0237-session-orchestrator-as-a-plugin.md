@@ -1,4 +1,4 @@
-# ADR 0237：将 Session 编排保留在官方插件中
+# ADR 0237: Keep Session Orchestration in an Official Plugin
 
 - Status: Accepted
 - Date: 2026-09-13
@@ -6,72 +6,83 @@
 - Decision: D391
 - Related: ADR 0200, ADR 0203, ADR 0208, ADR 0062, ADR 0089
 
-## 背景
+## Context
 
-某些任务受益于多个独立 Agent 同时工作，但现有的 `Task` 家族是有意设计的
-有边界的进程内子 Agent 系统。新的编排功能不得创建第二个 session 存储、
-绕过插件权限，或让渲染进程成为 Agent 运行时。
+Some tasks benefit from several independent Agents working at the same time,
+but the existing `Task` family is intentionally a bounded in-process
+subagent system. A new orchestration feature must not create a second session
+store, bypass plugin permissions, or make the renderer an Agent runtime.
 
-公共插件 SDK 已经暴露了 Agent 工具和经过审查的 `desktop.control` 网关。
-它并未暴露实时 session 创建或 Agent 生命周期事件，因此首个实现需要一个
-小型组合层，而不将编排移入 host-core。
+The public plugin SDK already exposes Agent tools and the reviewed
+`desktop.control` gateway. It does not expose live session creation or Agent
+lifecycle events, so the first implementation needs a small composition layer
+without moving orchestration into host-core.
 
-## 决策
+## Decision
 
-将 `pi.session-orchestrator` 作为普通的 marketplace 插件发布。它注册
-`SessionTask` Agent Tool，包含 `spawn`、`send`、`supervise`、`status`、
-`wait`、`result`、`accept`、`cancel` 和 `list` 动作。
+Ship `pi.session-orchestrator` as an ordinary marketplace plugin. It registers the
+`SessionTask` Agent Tool with `spawn`, `send`, `supervise`, `status`, `wait`,
+`result`, `accept`, `cancel`, and `list` actions.
 
-- `spawn` 使用 `session/create` 随后调用 `agent/prompt`，创建一个不复制
-  transcript 的全新持久 session。它继承父级的 project、provider/model、
-  thinking level 和 permission mode。
-- `send` 复用已记录的 worker session。`cancel` 使用 `agent/abort`，并且
-  绝不删除 session。
-- 插件只在其私有数据目录中持久化 parent/worker 关系、任务、状态、时间戳
-  和有边界的报告。宿主持有的 worker transcript 仍是事实来源。工具响应
-  和关系存储中的规范 worker 身份是 `session/create` 返回的原始持久
-  `sessionId`；0.2.x 的 `workerSessionId` 设置在加载时迁移，不会创建
-  第二个 Work ID。
-- 父级只能控制记录在其自身 session id 之下的 Worker Session ID。`send`
-  或 `supervise` 的后续操作寻址同一批 Session ID，因此子级保留自己的
-  上下文，而不会创建替代 session。Worker session 不能使用该工具创建或
-  控制更多 worker。活跃工作上限为每个父级四个 worker、整个插件共十六个。
-- 在生命周期订阅存在之前，`wait` 执行一秒间隔的轻量状态轮询，默认超时
-  25 秒、最大超时 45 秒。每次桌面读取限定在五秒以内，报告 transcript
-  读取延迟到 worker 不再运行时进行，超时返回 `timedOut`，使插件工具
-  不会无限期占用宿主截止时间。Agents 面板使用相同的仅状态刷新路径。
-- 一个简单的 `Agents` 工作面板视图列出 worker，并提供状态刷新、
-  Open Session 和 Stop。
+- `spawn` uses `session/create` followed by `agent/prompt`, creating a new
+  durable session with no copied transcript. It inherits the parent project,
+  provider/model, thinking level, and permission mode.
+- `send` reuses the recorded worker session. `cancel` uses `agent/abort` and
+  never deletes the session.
+- The plugin persists only the parent/worker relationship, task, status,
+  timestamp, and bounded report in its private data directory. The host-owned
+  worker transcript remains the source of truth. The canonical worker identity
+  in the tool response and relationship store is the original durable
+  `sessionId` returned by `session/create`; 0.2.x `workerSessionId` settings are
+  migrated on load and no second Work ID is created.
+- A parent may control only Worker Session IDs recorded under its own session
+  id. A `send` or `supervise` follow-up addresses those same Session IDs, so a
+  child retains its own context without creating a replacement session. Worker
+  sessions cannot use the tool to create or control more workers. Active work
+  is capped at four workers per parent and sixteen across the plugin.
+- Until a lifecycle subscription exists, `wait` performs one-second lightweight
+  status polling with a 25-second default and 45-second maximum timeout. Each
+  desktop read is bounded at five seconds, report transcript reads are deferred
+  until a worker is no longer running, and a timeout returns `timedOut` so the
+  plugin tool does not occupy the host deadline indefinitely. The Agents panel
+  uses the same status-only refresh path.
+- A simple `Agents` work-panel view lists workers and offers status refresh,
+  Open Session, and Stop.
 
-两个增量宿主原语支撑这些边界：
+Two additive host primitives support these boundaries:
 
-1. `session/create` 接受可选的 `inheritPermissionFromSessionId`。对于
-   插件发起的调用，桌面网关将该 id 绑定到当前 Agent 工具 session。宿主
-   随后在持有状态锁的情况下复制现有父级的持久化 permission mode；调用方
-   绝不能提交任意的 worker permission mode，省略时保留现有的 `inherit`
-   默认值。
-2. 经过审查的桌面目录新增 `session/open`，它校验并选择一个已存在的持久
-   session。插件发起的 create/prompt 调用会刷新渲染进程，但不会窃取父级
-   的活跃 session；显式的 `session/open` 是唯一的导航动作。
+1. `session/create` accepts optional `inheritPermissionFromSessionId`. For a
+   plugin-originated call, the desktop gateway binds that id to the current
+   Agent tool session. The host then copies the existing parent's persisted
+   permission mode while holding the state lock; callers never submit an
+   arbitrary worker permission mode, and omission retains the existing
+   `inherit` default.
+2. The reviewed desktop catalog gains `session/open`, which validates and
+   selects an existing durable session. Plugin-originated create/prompt calls
+   refresh the renderer without stealing the parent's active session; explicit
+   `session/open` is the only navigation action.
 
-不添加 Rust schema 迁移、MCP 自调用、MCP token 访问、A2A 通道、消息
-总线、DAG，也不改动 `Task`、`TaskWait`、`TaskList` 或 `TaskStop`。
+No Rust schema migration, MCP self-call, MCP token access, A2A channel, message
+bus, DAG, or change to `Task`, `TaskWait`, `TaskList`, or `TaskStop` is added.
 
-## 后果
+## Consequences
 
-父级可以扇出真实的持久 worker，同时每个 worker 在常规 session UI 中保持
-可见、可检查。现有的 session 和 subagent 行为保持不变，插件数据可以在
-插件或应用重启后恢复关系列表。
+The parent can fan out real durable workers while every worker stays visible
+and inspectable in the normal session UI. Existing session and subagent
+behavior remains intact, and plugin data can restore the relationship list
+after a plugin or app restart.
 
-首个版本不接收生命周期事件，因此存在有边界的轮询延迟。插件还有四 worker
-上限，且不提供无作用域的任意 session 控制或 worker 到 worker 的消息传递。
-危险宿主操作绝不用于编排；任何未来扩展都必须保留现有的 desktop-control
-权限和原生同意边界。
+The first version does not receive lifecycle events and therefore has bounded
+polling latency. The plugin also has a four-worker limit and does not provide
+unscoped arbitrary-session control or worker-to-worker messaging. A dangerous
+host operation is never used for orchestration; any future extension must
+preserve the existing desktop-control permission and native-consent boundary.
 
-## 验证
+## Verification
 
-插件运行时集成测试覆盖三个并行真实 session 请求、父级作用域、跨重载
-持久化、规范 Session ID 路由、同 session 上下文复用、有界报告提取、
-超时安全的状态轮询、旧设置迁移，以及不删除的取消。Host-core 测试覆盖
-可选的权限继承输入。E2E 计划将真实 provider 旅程记录为
-`E2E-PLUGIN-session-orchestrator-real-workers`。
+The plugin runtime integration test covers three parallel real-session
+requests, parent scoping, persistence across reload, canonical Session ID
+routing, same-session context reuse, bounded report extraction, timeout-safe
+status polling, legacy settings migration, and cancellation without deletion.
+Host-core tests cover the optional permission-inheritance input. The E2E plan records
+the live-provider journey as `E2E-PLUGIN-session-orchestrator-real-workers`.

@@ -1,56 +1,65 @@
-# ADR transcript-reading-ownership: 共享渲染进程的历史与搜索视图
+# ADR transcript-reading-ownership: Share renderer history and search views
 
-- 状态：已接受
-- 日期：2026-09-13
-- 修订：[ADR session-content-search](/adr/session-content-search)
+- Status: Accepted
+- Date: 2026-09-13
+- Amends: [ADR session-content-search](/adr/session-content-search)
 
-## 背景
+## Context
 
-搜索导航在普通历史分页、全局目标交接和实时/模型缓存之外新增了一个
-窗格局部控制器。这些相互独立的路径各自需要取消和重写处理。嵌套的
-assistant 回答可以被搜索到，却没有顶层的转录行，而 Markdown 可能隐藏
-与查询匹配的源码字符。
+Search navigation added a pane-local controller alongside ordinary history
+paging, a global target handoff, and live/model caches. These independent paths
+needed separate cancellation and rewrite handling. Nested assistant answers
+were searchable but had no top-level transcript row, while Markdown could hide
+the source characters that matched a query.
 
-## 决策
+## Decision
 
-渲染进程 store 为每个保留会话拥有一个临时的 `TranscriptView`。普通分页
-和搜索使用相同的读取操作和物理游标；MainChat 和 subagent 停靠区使用
-同一个投影。待定视图的身份拥有一次异步读取。替换、驱逐、返回最新、
-规范编辑和新一轮会使过期的目标或页面完成失效。普通历史对重叠行总是
-使用当前的规范值，包括流式到完成的过渡。显式搜索保留其选中的历史
-快照，直到用户离开它或开始一轮。
+The renderer store owns one transient `TranscriptView` per retained session.
+Ordinary paging and search use the same read actions and physical cursors;
+MainChat and the subagent dock use the same projection. The pending view's
+identity owns an asynchronous read. Replacement, eviction, return to latest,
+canonical edits, and a new turn invalidate stale target or page completions.
+Ordinary history always uses the current canonical value for overlapping rows,
+including streaming-to-complete transitions. Explicit search retains its
+selected historical snapshot until the user leaves it or starts a turn.
 
-阅读视图绝不填充运行时/模型缓存。当历史不完整或被展示截断时，消息
-操作会水合规范输入，然后在发布前重新检查会话、运行、导航和消息快照
-所有权。
+Reading views never populate runtime/model caches. A message action hydrates
+canonical input when history is partial or display-limited, then rechecks the
+session, run, navigation, and message-snapshot ownership before publishing it.
 
-增量添加的 `SessionDetail.navigationParent` 字段携带嵌套目标最近的所属
-Task，作为有上限的展示上下文。它不扩大物理页面，也不改变其游标。现有
-的无上限读取和普通读取省略它。渲染进程揭示该 Task 并在现有的详情停靠
-区中定位回答；缺失的父级上下文是一次显式的导航失败。
+The additive `SessionDetail.navigationParent` field carries a nested target's
+latest owning Task as capped display context. It does not widen the physical
+page or change its cursors. Existing uncapped and ordinary reads omit it. The
+renderer reveals the Task and locates the answer in the existing details dock;
+missing parent context is an explicit navigation failure.
 
-解析器所有的源码偏移把隐藏的 Markdown 语法和目标映射到可见元素。用户
-文本和文件 chip 保留等价的源码偏移。字面渲染匹配使用 CSS 范围；仅源码
-命中的匹配高亮其所属元素。共享的浏览器聚焦效应释放底部跟随，并以一个
-截止期限或第一次阅读手势为界约束布局校正。
+Parser-owned source offsets map hidden Markdown syntax and destinations to
+visible elements. User text and file chips preserve equivalent source offsets.
+Literal rendered matches use CSS ranges; source-only matches highlight their
+owning element. The shared browser focus effect releases bottom following and
+bounds layout correction by a deadline or the first reading gesture.
 
-## 后果
+## Consequences
 
-这移除了全局目标转移、窗格局部导航控制器，以及独立的普通历史加载锁。
-实时/模型缓存所有权、转录存储、IPC 白名单和协议版本保持不变。可选的
-父级投影对现有会话读取方向后兼容。
+This removes the global target transfer, pane-local navigation controller, and
+separate ordinary-history load lock. Live/model cache ownership, transcript
+storage, IPC allowlisting, and protocol version remain unchanged. The optional
+parent projection is backward compatible for existing session readers.
 
-导航不会把整个转录加载进渲染进程。稳定 ID 和父级查找仍扫描规范的物理
-身份；本决策不引入新的搜索或消息偏移索引。完整的所选消息文本按设计
-仍然可能很大。仅源码命中的匹配识别可见的所属元素，而不是把隐藏的
-Markdown 复制成额外的 UI 文本。
+Navigation does not load an entire transcript into the renderer. Stable-ID and
+parent lookup still scan canonical physical identities; this decision does not
+introduce a new search or message-offset index. Complete selected message text
+can still be large, by design. Source-only matches identify the visible owner
+rather than reproducing hidden Markdown as extra UI copy.
 
-## 验证
+## Validation
 
-渲染进程状态测试覆盖相互竞争的读取、普通分页期间的流式、新一轮、窗格
-驱逐、同 ID 重写和规范操作准备。服务器渲染测试覆盖嵌套回答、折叠的
-Task 披露、Markdown 目标与分隔符、文件 chip、长消息和 CRLF 源码偏移。
-浏览器效应单元测试覆盖几何、手势打断和 StrictMode 风格的清理/重放。
-Host 测试覆盖有界物理页面和页面之外的最近父级上下文。交互契约是
-`E2E-SESSION-content-search-and-message-navigation`；这些单元/渲染检查
-不声称已完成一次原生应用 E2E 运行。
+Renderer state tests cover competing reads, streaming during ordinary paging,
+new turns, pane eviction, same-ID rewrites, and canonical action preparation.
+Server rendering tests exercise nested answers, collapsed Task disclosure,
+Markdown destinations and delimiters, file chips, long messages, and CRLF source
+offsets. Browser-effect unit tests cover geometry, gesture interruption, and
+StrictMode-style cleanup/replay. Host tests cover bounded physical pages and
+latest parent context outside the page. The interaction contract is
+`E2E-SESSION-content-search-and-message-navigation`; these unit/rendering checks
+do not claim a completed native-app E2E run.

@@ -1,44 +1,49 @@
-# ADR 0078: 跨平台托盘常驻最小化
+# ADR 0078: Cross-platform tray-resident minimize
 
-- 状态： 已接受实现（经 ADR 0117、ADR 0123 与 ADR tray-session-shortcuts 修订）
-- 日期： 2026-08-12
-- 决策者： PI-Desktop 核心
-- 相关： D216、D252、D256、E2E-124、ADR 0117、ADR 0123
+- Status: Accepted for implementation (amended by ADR 0117, ADR 0123, and ADR tray-session-shortcuts)
+- Date: 2026-08-12
+- Deciders: PI-Desktop core
+- Related: D216, D252, D256, E2E-124, ADR 0117, ADR 0123
 
-## 背景
+## Context
 
-PI-Desktop 已经在 Windows/Linux 上有自定义窗口控件，在 macOS 上有原生红绿灯
-控件。它们的最小化操作目前使用原生窗口最小化，这让应用消失进不同的 OS 窗
-口界面，且没有提供一致的方式让后台工作保持常驻。Electron 主进程已经持有窗
-口生命周期与关闭，所以托盘集成属于那里，而不是渲染进程桥。
+PI-Desktop already has custom window controls on Windows/Linux and native
+traffic-light controls on macOS. Their minimize actions currently use native
+window minimization, which makes the app disappear into different OS window
+surfaces and does not provide a consistent way to keep background work
+resident. The Electron Main process already owns window lifecycle and shutdown,
+so a tray integration belongs there rather than in the renderer bridge.
 
-## 决策
+## Decision
 
-1. Electron 主进程在每个受支持的桌面平台上创建一个托盘图标。打包构建为
-   Windows/Linux 携带现有产品 PNG 作为额外资源。macOS 携带一个单独的、从
-   PI 标记派生的透明单色模板资源；浅色应用磁贴不是菜单栏剪影的一部分。
-2. 主进程拦截主窗口的 `minimize` 事件，并且仅对 macOS 红绿灯最小化把它隐
-   藏到托盘。在 Windows/Linux 上，原生最小化转换——包括渲染进程与原生菜
-   单操作——按普通 OS 最小化完成，任务栏条目保持可用。隐藏不关闭窗口，
-   也不销毁任一后端。
-3. 托盘单击与双击、显示菜单项以及 macOS 应用激活会恢复并聚焦现有窗口。
-   如果窗口已关闭，它们通过现有窗口工厂创建新窗口。
-4. 托盘菜单包含本地化的显示 PI-Desktop 与退出 PI-Desktop 项。退出调用
-   `app.quit()`，因此遵循现有的 `before-quit` 关闭序列。关闭主窗口仍是显
-   式的退出操作。
+1. Electron Main creates one tray icon on every supported desktop platform.
+   Packaged builds carry the existing product PNG as an extra resource for
+   Windows/Linux. macOS carries a separate transparent monochrome template
+   asset derived from the PI mark; the light application tile is not part of
+   the menu bar silhouette.
+2. Main intercepts the `minimize` event for the main window and hides it to the
+   tray only for macOS traffic-light minimization. On Windows/Linux, native
+   minimize transitions — including the renderer and native-menu actions —
+   complete as ordinary OS minimization so the taskbar entry remains available.
+   Hiding does not close the window or dispose either backend.
+3. Tray click and double-click, the Show menu item, and macOS app activation
+   restore and focus the existing window. If the window was closed, they create
+   a new one through the existing window factory.
+4. The tray menu contains localized Show PI-Desktop and Quit PI-Desktop items.
+   Quit calls `app.quit()` and therefore follows the existing `before-quit`
+   shutdown sequence. Closing the main window remains an explicit quit action.
 
-## 后果
+## Consequences
 
-- macOS 保留其托盘常驻最小化行为，而 Windows/Linux 对显式最小化操作使用正
-  常的任务栏最小化/恢复能力。关闭到托盘仍通过用户可配置的关闭行为提供。
-- 渲染进程不需要新的特权 IPC 界面。
-- 托盘图标是必需的打包资源；缺失图标被记录，应用保持可用而不是在启动时
-  崩溃。
-- 窗口边界持久化不变，因为隐藏的窗口保留其正常边界，且不被视为新的窗口
-  状态。
+- macOS keeps its tray-resident minimize behavior, while Windows/Linux use the
+  normal taskbar minimize/restore affordance for explicit minimize actions.
+  Close-to-tray remains available through the user-configurable close behavior.
+- The renderer needs no new privileged IPC surface.
+- A tray icon is a required packaged resource; a missing icon is logged and
+  the app remains usable rather than crashing during boot.
+- Window bounds persistence remains unchanged because a hidden window retains
+  its normal bounds and is not treated as a new window state.
 
-## 会话菜单修订
+## Session-menu amendment
 
-[ADR tray-session-shortcuts](tray-session-shortcuts.md) 用有界会话分组扩展
-条款 3–4，并让 macOS 单击打开菜单而不恢复主窗口。打开、双击与退出保留其
-生命周期行为。
+[ADR tray-session-shortcuts](tray-session-shortcuts.md) extends clauses 3–4 with bounded session groups and makes macOS single-click open the menu without restoring the main window. Open, double-click, and Quit retain their lifecycle behavior.

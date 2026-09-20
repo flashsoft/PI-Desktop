@@ -1,48 +1,50 @@
-# ADR 0171: 宿主拥有的已完成轮次 token 历史
+# ADR 0171: Host-owned completed-turn token history
 
-- 状态：已接受（由 ADR 0173 修订）
-- 日期：2026-09-07
-- 决策者：PI-Desktop 核心团队
-- 相关：D103、D157、D331、D335、ADR 0014、ADR 0173、
-  `03-runtime/04-data-storage.md` §4.6、
-  `03-runtime/06-host-rpc-protocol.md`、
-  `04-ux/06-settings-ia.md`、E2E-186
+- Status: Accepted (amended by ADR 0173)
+- Date: 2026-09-07
+- Deciders: PI-Desktop core
+- Related: D103, D157, D331, D335, ADR 0014, ADR 0173,
+  `03-runtime/04-data-storage.md` §4.6,
+  `03-runtime/06-host-rpc-protocol.md`,
+  `04-ux/06-settings-ia.md`, E2E-186
 
-## 背景
+## Context
 
-`turns` 表已经存储 `input_tokens`、`output_tokens` 和 `usage_json`，
-`session.endTurn` 也已经接受 `usage`。但 Electron 从未发送它。每条消息
-的芯片（D103）从 assistant 的 `meta_json` 读取 provider usage。把子
-agent 花费混入这些芯片会让上下文检查器和组合轮次总计虚高。
+The `turns` table already stores `input_tokens`, `output_tokens`, and
+`usage_json`, and `session.endTurn` already accepted `usage`. Electron never
+sent it. Per-message chips (D103) read provider usage from assistant
+`meta_json`. Mixing subagent spend into those chips would inflate the context
+inspector and the composed-turn total.
 
-仍然需要一个持久的已完成轮次总计，以便后续的仪表板无需新的 schema
-版本即可展示用户实际花费了多少——包括子 agent。
+A durable completed-turn total is still required so a later dashboard can show
+what the user actually spent, including subagents, without a new schema version.
 
-## 决策
+## Decision
 
-1. **父级 `message.usage` 保持为 provider 报告值。** 子 agent 总计永不
-   合并进 assistant 行。
-2. **轮次汇总为 `session.endTurn.usage`。** Electron 汇总持久轮次中每个
-   父级 assistant `message_end` 的 usage，并加上 `turn_end.subagentUsage`
-   增量。只有这个总和存储在 `turns` 上。
-3. **`stats.getTokenUsageHistory` 是一个增量式宿主 RPC。** 它在有界的本地
-   日历窗口内读取已完成轮次，按 `day` / ISO `week` / `month` 分桶，填充
-   空桶，且不提升 `PROTOCOL_VERSION` 或 `SCHEMA_VERSION`。
-   `idx_turns_ended_at` 在启动时以 `CREATE INDEX IF NOT EXISTS` 创建。
-4. **面向用户的仪表板不在设置中。** ADR 0173 将该界面移至市场插件
-   `pi.token-insights`。本 RPC 仍然存在，使包含子 agent 花费的本地已完成
-   轮次历史有宿主所有者。Electron 开始发送 `usage` 之前的历史行可能为
-   零。
+1. **Parent `message.usage` stays provider-reported.** Subagent totals never
+   merge into an assistant row.
+2. **Turn rollup is `session.endTurn.usage`.** Electron sums every parent
+   assistant `message_end` usage for the durable turn and adds
+   `turn_end.subagentUsage` deltas. Only that sum is stored on `turns`.
+3. **`stats.getTokenUsageHistory` is an additive host RPC.** It reads completed
+   turns in a bounded local-calendar window, buckets by `day` / ISO `week` /
+   `month`, fills empty buckets, and does not bump `PROTOCOL_VERSION` or
+   `SCHEMA_VERSION`. `idx_turns_ended_at` is created with
+   `CREATE INDEX IF NOT EXISTS` at boot.
+4. **The user-facing dashboard is not Settings.** ADR 0173 moves that surface
+   to marketplace plugin `pi.token-insights`. This RPC still exists so local
+   completed-turn history, including subagent spend, has a host owner.
+   Historical rows from before Electron sent `usage` may be zero.
 
-## 后果
+## Consequences
 
-- 上下文检查器和 D103 芯片保持精确的 provider 数值。
-- 新的已完成轮次会填充宿主历史；较早的轮次可能为零。
-- 热力图位于 `pi.token-insights`（ADR 0173）。
-- 后续从 transcript `meta.usage` 回填将是一项独立改动。
+- Context inspector and D103 chips keep exact provider values.
+- New completed turns populate host history; older turns may be zero.
+- The heatmap lives in `pi.token-insights` (ADR 0173).
+- A later backfill from transcript `meta.usage` would be a separate change.
 
-## 替代方案
+## Alternatives
 
-- 用子 agent 花费重写父级 `message.usage`：否决（D103）。
-- 在宿主设置页扫描 JSONL transcript：否决（无界、所有者错误）。市场
-  插件可以扫描本地工具元数据，包括 JSONL。
+- Rewrite parent `message.usage` with subagent spend: rejected (D103).
+- Scan JSONL transcripts in the host Settings page: rejected (unbounded, wrong
+  owner). The marketplace plugin may scan local tool metadata, including JSONL.

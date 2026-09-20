@@ -1,61 +1,67 @@
-# ADR 0023: 独立的会话分叉（Fork）
+# ADR 0023: Independent Conversation Session Fork
 
-## 状态
+## Status
 
-已接受。
+Accepted.
 
-## 背景
+## Context
 
-PI-Desktop 已经在一个会话内保留线性的重新生成变体。用户还需要一个
-Codex 风格的命令，复制当前会话，使后续的提示和配置变更可以分叉，
-而不改写源会话。
+PI-Desktop already preserves linear regenerate variants within one
+conversation. Users also need a Codex-style command that copies the current
+conversation so later prompts and configuration changes can diverge without
+rewriting the source.
 
-在渲染进程中组合 `session.create` 和消息替换会暴露部分完成的子会话、
-丢失规范的 transcript 块、遗漏每会话执行配置，并越过 Rust 宿主的
-持久化所有权边界。在保留协议 v4 的情况下添加该操作，还会让旧宿主
-通过启动握手，只在调用新命令时才失败。
+Composing `session.create` and message replacement in the renderer would expose
+partial children, lose canonical transcript blocks, omit per-session execution
+configuration, and cross the Rust host's persistence ownership boundary. Adding
+the operation while retaining protocol v4 would also allow an older host to
+pass startup handshake and fail only when the new command is invoked.
 
-## 决策
+## Decision
 
-- 协议 v5 新增必需的宿主 RPC `session.fork` 和渲染进程 IPC
-  `session/fork`。
-- Rust 宿主拥有一个快照操作：默认把源会话完整的活跃规范 transcript
-  复制到一个新会话，并重映射消息和工具调用标识符。可选的
-  `throughMessageId` 使快照在该消息处（含）结束；未知的边界不创建
-  子会话并返回 `NOT_FOUND`。
-- 子会话继承项目、provider、模型、模式、thinking 和权限模式。不继承
-  turns、regenerate 修订、通知、artifacts、会话授权、scratch 数据、
-  固定状态或实时运行时状态。
-- 不存储父子血缘。这是一个独立的会话副本，不是消息树，也不替代
-  线性的 regenerate 历史。
-- Assistant 回答的 Fork 直接使用有界快照。Assistant Edit 使用同一个
-  有界子会话，把原始/编辑后的回答尾部存入该子会话现有的线性修订
-  存储，并激活编辑后的尾部。源 transcript、修订、运行时和
-  provider 缓存状态保持不动。
-- Fork 仅在源会话空闲时可用。Electron 暴露 `AGENT_BUSY`；宿主保留
-  一个持久化的运行中 turn 的 `CONFLICT` 防护，Electron 在 IPC 边界
-  将其规范化。
-- 已处理的文件或索引失败会移除子会话 transcript，不留下可见的子
-  会话。进程崩溃继续遵循 transcript 存储现有的孤儿文件恢复策略。
+- Protocol v5 adds required host RPC `session.fork` and renderer IPC
+  `session/fork`.
+- The Rust host owns one snapshot operation: by default it copies the source's
+  complete active canonical transcript into a new session and remaps message
+  and tool-call identifiers. Optional `throughMessageId` makes the snapshot end
+  inclusively at that message; an unknown boundary creates no child and returns
+  `NOT_FOUND`.
+- The child inherits project, provider, model, mode, thinking, and permission
+  mode. It does not inherit turns, regenerate revisions, notifications,
+  artifacts, session grants, scratch data, pin state, or live runtime state.
+- No parent/child lineage is stored. This is an independent conversation copy,
+  not a message tree and not a replacement for linear regenerate history.
+- Assistant response Fork uses the bounded snapshot directly. Assistant Edit
+  uses the same bounded child, stores original/edited response tails in that
+  child's existing linear revision store, and activates the edited tail. The
+  source transcript, revisions, runtime, and provider-cache state remain
+  untouched.
+- Fork is available only while the source is idle. Electron exposes
+  `AGENT_BUSY`; the host retains a persisted running-turn `CONFLICT` guard that
+  Electron normalizes at the IPC boundary.
+- A handled file or index failure removes the child transcript and leaves no
+  visible child. Process crashes continue to follow the transcript store's
+  existing orphan-file recovery policy.
 
-## 后果
+## Consequences
 
-- 协议 v4 的渲染进程和宿主二进制在启动时被拒绝，而不是在选择
-  Create branch 时才惰性失败。
-- 源会话和子会话可以独立地演进、重新配置、持久化和删除。
-- Fork 的存储成本与活跃 transcript 大小成正比。
-- 消息作用域的 Fork/Edit 存储成本与所选回答之前的规范前缀加上
-  任何仅子会话的修订负载成正比。
-- 每个子会话都有新的 session id，并首先创建/重新播种自己的 pi
-  运行时；编辑后的上下文绝不复用从源 transcript 构建的缓存状态。
-- 初始实现有意不提供血缘 UI、合并操作或任意消息级分支树；Edit
-  回滚保持为双条目的线性修订族。
+- Renderer and host binaries from protocol v4 are rejected during startup
+  instead of failing lazily when Create branch is selected.
+- Source and child can evolve, reconfigure, persist, and delete independently.
+- Fork storage cost is proportional to the active transcript size.
+- Message-scoped Fork/Edit storage cost is proportional to the canonical
+  prefix through the selected response plus any child-only revision payloads.
+- Every child has a new session id and first creates/reseeds its own pi runtime;
+  edited context never reuses cache state built from the source transcript.
+- The initial implementation intentionally has no ancestry UI, merge operation,
+  or arbitrary message-level branch tree; Edit rollback stays a two-entry
+  linear revision family.
 
-## 备选方案
+## Alternatives
 
-- 渲染进程拥有的 `create + replaceMessages`：否决，因为它在宿主
-  拥有的 transcript 和索引之间不是原子的。
-- 持久化的父子血缘：推迟，因为所请求的工作流只需要一个独立副本，
-  且 D109 保持消息修订导航为线性。
-- 复制 regenerate 修订：否决，因为修订根和消息标识符会需要第二
-  个分支图和模糊不清的分页历史。
+- Renderer-owned `create + replaceMessages`: rejected because it is not atomic
+  across the host-owned transcript and index.
+- Persistent parent/child lineage: deferred because the requested workflow only
+  needs an independent copy and D109 keeps message revision navigation linear.
+- Copy regenerate revisions: rejected because revision roots and message
+  identifiers would require a second branch graph and ambiguous pager history.

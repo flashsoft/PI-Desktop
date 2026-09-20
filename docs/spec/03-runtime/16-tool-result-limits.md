@@ -1,58 +1,62 @@
-# 16. 工具结果限制和截断
+# 16. Tool Result Limits & Truncation
 
 ## 1. Goal
 
-通过限制工具输出来保持代理上下文健康和 UI 响应，而不会造成静默数据损坏。
+Keep agent context healthy and UI responsive by bounding tool outputs without silent data corruption.
 
-## 2. 默认限制
+## 2. Default limits
 
-预算是按工具类别计算的，而不是一个共享上限。单个 256KB 上限控制
-在实践中，一切都意味着没有上限：测量的会话平均每次 154KB
-`Read` 并将整个上下文的 56% 花在 read/search 结果上，其中
-强制压实并使代理重新搜索已经发现的内容。
+Budgets are per tool class, not one shared cap. A single 256KB cap governing
+everything meant no cap in practice: measured sessions averaged 154KB per
+`Read` and spent 56% of their whole context on read/search results, which
+forced compaction and made the agent re-search what it had already found.
 
-Read/Glob/Grep 的预算仍比 shell 更紧，因为结果可以按需再取（缩小模式、推进偏移）。48KB 过紧：普通源码的默认窗口就会溢出，于是几乎每次 Read 都报 `truncated`，智能体只好重新搜索已经读过的内容。
+Read/Glob/Grep get a tighter budget than shell because their results are
+re-fetchable on demand (narrow the pattern, advance the offset). 48KB was too
+tight: a default window of ordinary source already overflowed, so almost every
+Read reported `truncated` and the agent re-searched what it had.
 
-Bash 输出通过了两个独立的上限。 **捕获**层限制了什么
-主机在进程流式传输时保留在内存中，这就是溢出文件
-是写自。 **结果**预算限制了达到模型的内容。捕获是
-故意选择两者中较宽松的一个：如果它符合结果预算，则溢出
-副本永远不会比它所支持的摘录更完整。
+Bash output passes two independent ceilings. The **capture** layer bounds what
+the host retains in memory while the process streams, and is what the spill file
+is written from. The **result** budget bounds what reaches the model. Capture is
+deliberately the looser of the two: if it matched the result budget, a spilled
+copy could never be fuller than the excerpt it exists to back.
 
-| 频道 | 限制 | 超过时采取行动 |
+| channel | limit | action when exceeded |
 |---|---|---|
-| 读取/Glob/Grep 结果 (`BUDGET_SEARCH`) | 128 KB，4000 行 | 绑定窗口 + `notice` 命名下一步 |
-| Bash 标准输出 (`BUDGET_SHELL`) | 96 KB，4000 行，头 | 截断+标记+溢出 |
-| Bash stderr (`BUDGET_SHELL_ERR`) | 96 KB，4000 行，**尾部** | 截断+标记+溢出 |
-| 任何单行 (`MAX_LINE_CHARS`) | 16,384 个字符 | 剪辑，在 `notice` 中计数 |
-| 阅读窗口 | 默认 2000 行（最大 4000），`offset`/`limit`；始终报告 `totalLines` | 分页；仅在本窗口被切断时 `truncated` |
-| Grep 匹配 (`headLimit`) | 默认200 | 以 `truncated: true` 停止 |
-| 全局条目 (`limit`) | 默认 100 个，最大 1000 个 | 以 `truncated: true` 停止 |
-| Bash 捕获保留 (`CAPTURE_MAX_BYTES` / `CAPTURE_MAX_LINES`) | 512 KB，200000 行 | 停止保留；报告遗漏的字节和行 |
-| 溢出的完整输出（`SPILL_MAX_BYTES`） | 512 KB | 停止保留；标记仍然命名该文件 |
-| Bash 输出流 | 每个流序列 | 保留 stdout/stderr 分离 |
-| Bash 超时 | 默认 60 秒；1–21,600 秒覆盖 | 杀死进程树+错误 |
-| `Edit.ops` 负载 | 256 KB，200 个操作 | `INVALID_ARGUMENT`；更多 Edit 上限见 [18](/spec/03-runtime/18-line-anchored-edit-contract) §12 |
+| Read / Glob / Grep result (`BUDGET_SEARCH`) | 128 KB, 4000 lines | bound the window + `notice` naming the next step |
+| Bash stdout (`BUDGET_SHELL`) | 96 KB, 4000 lines, head | truncate + marker + spill |
+| Bash stderr (`BUDGET_SHELL_ERR`) | 96 KB, 4000 lines, **tail** | truncate + marker + spill |
+| any single line (`MAX_LINE_CHARS`) | 16,384 chars | clip, count it in `notice` |
+| Read window | 2000 lines default (max 4000), `offset`/`limit`; `totalLines` always reported | paginate; `truncated` only when this window was cut |
+| Grep matches (`headLimit`) | 200 default | stop with `truncated: true` |
+| Glob entries (`limit`) | 100 default, 1000 max | stop with `truncated: true` |
+| Bash capture retention (`CAPTURE_MAX_BYTES` / `CAPTURE_MAX_LINES`) | 512 KB, 200000 lines | stop retaining; report omitted bytes and lines |
+| spilled full output (`SPILL_MAX_BYTES`) | 512 KB | stop retaining; marker still names the file |
+| Bash output stream | per-stream sequence | preserve stdout/stderr separation |
+| Bash timeout | 60s default; 1–21,600s override | kill process tree + error |
+| `Edit.ops` payload | 256 KB, 200 ops | `INVALID_ARGUMENT`; further Edit caps in [18](18-line-anchored-edit-contract.md) §12 |
 
-被剪辑的行不是已显示的行。`Read` 会把每一条在 `MAX_LINE_CHARS` 处剪断的行
-从 `Edit` 契约校验所用的来源集中排除
-（[18-line-anchored-edit-contract](/spec/03-runtime/18-line-anchored-edit-contract) §4.3），
-因此压缩或生成的行必须先被收窄到可见范围内才能编辑。剪辑因此同时限制
-上下文**并**阻止对被剪断部分的盲写，而不是只做到前者。
+A clipped line is not a displayed line. `Read` excludes every line it cut at
+`MAX_LINE_CHARS` from the provenance set the `Edit` contract validates against
+([18-line-anchored-edit-contract](18-line-anchored-edit-contract.md) §4.3), so a
+minified or generated line must be narrowed into view before it can be edited.
+Clipping therefore bounds context *and* blocks blind edits on the part that was
+cut, instead of only the first.
 
-限制由主机强制执行。 `builtin_tool_defs()` 中的工具描述包含
-逐字数字和范围参数：这个工具看起来无法
-作用域事物通过 Bash 和手动 shell 管道进行路由
-首先是耗尽上下文的内容。
+Limits are host-enforced. Tool descriptions in `builtin_tool_defs()` carry the
+numbers and the scoping parameters verbatim: a tool that looks incapable of the
+scoped thing gets routed around through Bash, and hand-rolled shell pipelines
+are what exhausted context in the first place.
 
-读取从不拒绝文件大小。前一个 >512KB 拒绝告诉模型
-“使用 Grep 或 Bash 对其进行采样”，这正是未分页读取的方式
-Goal/`Read` 管道，其输出不受限制。
+Read never refuses on file size. The former >512KB rejection told the model to
+"use Grep or Bash to sample it", which is exactly how an unpaginated read became
+a `sed`/`awk` pipeline whose output nothing bounded.
 
-## 3. 截断标记格式
+## 3. Truncation marker format
 
-已实现的标记 (host-core `truncate_to`)，附加用于头部切割和
-预先进行尾部切割：
+Implemented markers (host-core `truncate_to`), appended for a head cut and
+prepended for a tail cut:
 
 ```text
 [truncated: kept the first 4000 of 51234 lines; limit 4000 lines / 96KB. Full output saved to <path> — Grep it, or Read it with offset/limit.]
@@ -60,68 +64,74 @@ Goal/`Read` 管道，其输出不受限制。
 [truncated: no complete line fits the 96KB limit; kept 98304 bytes of a single 4200000-byte line. Full output saved to <path> — Grep it, or Read it with offset/limit.]
 ```
 
-标记总是标明哪一端幸存下来，有多少被排除在总数之外，
-适用的限制，以及从哪里获得其余的。出现溢出语句
-仅当实际编写完整副本时。
+A marker always states which end survived, how much was kept out of the total,
+the limit that applied, and where to get the rest. The spill sentence appears
+only when a full copy was actually written.
 
-Read/Glob/Grep 不在其有效负载中嵌入标记：窗口元数据
-（`offset`、`lineCount`、`totalLines`、`truncated`）加上 `notice` 字符串携带与
-兄弟字段相同的信息，这让负载本身保持可机械解析。`Read` 的内容带行号并以
-`[path#TAG]` 开头（ADR 0087）；它不再是字节忠实的，因此把它复制进 `Write` 的
-消费者必须去掉头部和 `N:` 前缀，`Write` 也会防御性地去掉它们。
+Read/Glob/Grep do not embed a marker in their payload: the window metadata
+(`offset`, `lineCount`, `totalLines`, `truncated`) plus a `notice` string carry
+the same information as sibling fields, which keeps the payload itself
+mechanically parseable. `Read` content is line-numbered and headed by
+`[path#TAG]` (ADR 0087); it is no longer byte-faithful, so a consumer copying it
+into `Write` must strip the header and the `N:` prefixes, which `Write` also does
+defensively.
 
-仅检查点聚合截断使用不同的模型上下文标记
-§4 因此诊断可以区分信息被缩短的位置。
+Checkpoint-only aggregate truncation uses the distinct model-context marker in
+§4 so diagnostics can distinguish where information was shortened.
 
-## 3a。泄漏文件
+## 3a. Spill files
 
-当 Bash 输出超出其预算时，更完整的副本（最多 `SPILL_MAX_BYTES`）
-写入 `<data_dir>/scratch/<session_id>/tool-output/<label>-<ms>-<seq>.log`
-并在标记中命名。重用每个会话的临时生命周期
-(`scratch::remove_session_dir` / `sweep`)，因此溢出会随着会话而消失，并且
-过时的内容在启动时就会被清除——没有单独的保留策略。
+When Bash output exceeds its budget, the fuller copy (up to `SPILL_MAX_BYTES`)
+is written to `<data_dir>/scratch/<session_id>/tool-output/<label>-<ms>-<seq>.log`
+and named in the marker. That reuses the per-session scratch lifecycle
+(`scratch::remove_session_dir` / `sweep`), so spills die with their session and
+stale ones are swept at startup — no separate retention policy.
 
-该目录是在第一次溢出时创建的，而不是在会话启动时创建的，因此会话
-保持在预算之内，什么都没有留下。一次失败的泄漏只需要付出暗示，
-从来不是工具的结果。
+The directory is created on first spill, not on session start, so sessions that
+stayed under budget leave nothing behind. A failed spill costs the hint only,
+never the tool result.
 
-Grep 可以读取溢出文件，因为显式 `path` 参数会停止父级
-忽略应用中的文件 — 同样的规则可以让 `path` 进入
-`node_modules` 或 `dist`。
+Grep can read spill files, because an explicit `path` argument stops parent
+ignore files from applying — the same rule that lets `path` reach into
+`node_modules` or `dist`.
 
-## 4. 面向模型与面向 UI
+## 4. Model-facing vs UI-facing
 
-- 模型接收带有标记的截断有效负载
-- Renderer 在 Bash 运行时接收有序的 `stdout` 和 `stderr` 块；的
-  最终 model/UI 结果仍然是有界组合有效负载。
-- UI 可能会为 Bash/Read 提供“在查看器中打开完整输出”（后 MVP 可选）
-- 完整的原始输出不需要永久保留；会话可能会在 MVP 中存储截断的形式
-- 每个结果主机上限不会聚合并行批次，并且它
-  在上下文压缩期间不需要：活动回合的检查点仅保留最新的用户消息，已完成
-  回合不保留用户消息，因此工具结果根本不会跨越边界 (D203/D275)。刀具输出
-  仅通过检查点摘要即可到达下一个上下文。
-- 活动检查点可能截断的一条消息是最新的保留用户消息，
-  超过 20,000 个代币保留限制的代币。它保留了 75/25
-  head/tail 与此标记之间共享其文本，而不是
-  掉落：
+- model receives truncated payload with marker
+- Renderer receives ordered `stdout` and `stderr` chunks while Bash runs; the
+  final model/UI result remains the bounded combined payload.
+- UI may offer “open full output in viewer” for Bash/Read later (post-MVP optional)
+- full raw output is not required to persist forever; session may store truncated form in MVP
+- the per-result host cap does not bound a parallel batch in aggregate, and it
+  does not need to during context compaction: an active-turn checkpoint retains
+  only the latest user message while an active turn continues, and a
+  completed-turn checkpoint retains none, so no tool result crosses the
+  boundary at all (D203/D275). Completed turns carry no user message past the
+  boundary; tool output reaches the next context solely through the checkpoint
+  summary.
+- the one active user message a checkpoint may truncate crosses the 20,000-token
+  retention limit. It keeps a 75/25 head/tail share of its text with this marker
+  in between, rather than being dropped:
 
 ```text
 [checkpoint truncated: this message crossed the retained context budget]
 ```
 
-- 仅检查点截断永远不会重写原始转录消息
-  或其 UI/diagnostic 结果；它仅改变未来的重建模型
-  上下文
+- checkpoint-only truncation never rewrites the original transcript message
+  or its UI/diagnostic result; it changes only future reconstructed model
+  context
 
-## 5. 部分结果标志
+## 5. Partial result flags
 
-每个有界工具都会报告 `truncated: boolean`。对 Read 来说，该标志仅在本窗口
-比调用方请求的更短时为真（字节预算打断扫描，或某行被剪辑）。一次返回了
-请求窗口或默认窗口的 Read，即使文件更长也报告 `truncated: false`；
-`totalLines`、`offset`、`lineCount` 和下一个偏移的 `notice` 描述剩余部分。
-Grep 与 Glob 在匹配/条目上限挡住了剩余命中时设 `truncated: true`。
+Every bounded tool reports `truncated: boolean`. For Read, that flag is true
+only when this window was cut short of what the caller asked for (the byte
+budget stopped the scan, or a line was clipped). A Read that returned the
+requested or default window of a longer file reports `truncated: false`;
+`totalLines`, `offset`, `lineCount`, and a next-offset `notice` describe the
+remainder. Grep and Glob set `truncated: true` when the match/entry cap hid
+remaining hits.
 
-Read/Glob/Grep 另外报告什么被限制以及如何继续：
+Read/Glob/Grep additionally report what was bounded and how to continue:
 
 ```ts
 type ReadResult = {
@@ -143,52 +153,55 @@ type GrepResult =
 type GlobResult = { matches: string[]; count: number; truncated: boolean; notice?: string }
 ```
 
-`tags` 只在 `content` 模式下出现，因为只有该模式会显示行。另外两种模式可搜索，
-但不是可编辑的锚点。
+`tags` is present only in `content` mode, because only that mode displays lines.
+The other two modes are searchable but not editable anchors.
 
-对于批准的外部路径，`path` 是绝对路径； `Read` 还报道
-`root: "external"`。 `Glob` 和 `Grep` 使用绝对路径作为其外部
-匹配。 sidecar 发出 `filesWithMatches`； host-core 还标准化了
-常见的 `files_with_matches` 和 `files-with-matches` 提供商拼写。
+For an approved external path, `path` is absolute; `Read` also reports
+`root: "external"`. `Glob` and `Grep` use absolute paths for their external
+matches. The sidecar emits `filesWithMatches`; host-core also normalizes the
+common `files_with_matches` and `files-with-matches` provider spellings.
 
-`notice` 是面向模型的散文，而不是稳定的契约：它命名了下一个偏移量，
-停止扫描的预算，或剪切了多少行。成功分页的 Read 不会再让模型去 Grep。
-`truncated` 与计数才是稳定信号。UI 的截断芯片跟随 `truncated`。
+`notice` is model-facing prose, not a stable contract: it names the next offset,
+the budget that stopped the scan, or how many lines were clipped. It does not
+tell the model to Grep after a successful paged Read. `truncated` and the
+counts are the stable signals. The UI truncated chip follows `truncated`.
 
-## 6. 优先级规则
+## 6. Priority rules
 
-1. 截断时切勿省略截断标记
-2. Bash 标准输出保持领先地位； Bash stderr 保留其**尾巴**，因为失败
-   命令的可操作消息是它最后打印并删除的内容
-   96KB 的进度噪声导致模型盲目重试
-3. 二进制文件：不要将原始二进制文件转储到模型中；返回元数据错误
-   `TOOL_BINARY_CONTENT`。通过扩展黑名单加上嗅探来检测
-   第一个 4KB（任何 NUL 字节，或 >30% 不可打印）。 Grep 跳过二进制文件
-   静默地而不是匹配有损解码的字节
-4. 比整个预算长的单行会产生字符边界安全前缀
-   （或后缀，用于尾部切割），绝不是空的有效负载
-5. 聚合检查点截断必须保留每个提供商有效的助手
-   tool-call/result 配对并在持久化之前重新估计结果尾部
-6.Glob和Grep的相关顺序是文件修改时间，最新的在前，
-   因此，有上限的结果使一半更有可能被询问
-7. 超时和中止仅在完成过程后关闭两个输出流
-   树已被关闭；没有孤儿进程可以继续写入输出
+1. never omit truncation marker when truncated
+2. Bash stdout keeps its head; Bash stderr keeps its **tail**, because a failing
+   command's actionable message is the last thing it printed and dropping it for
+   96KB of progress noise is what makes the model retry blindly
+3. binary files: do not dump raw binary into model; return metadata error
+   `TOOL_BINARY_CONTENT`. Detected by extension blacklist plus a sniff of the
+   first 4KB (any NUL byte, or >30% non-printable). Grep skips binary files
+   silently rather than matching lossily-decoded bytes
+4. a single line longer than the whole budget yields a char-boundary-safe prefix
+   (or suffix, for a tail cut), never an empty payload
+5. aggregate checkpoint truncation must preserve every provider-valid assistant
+   tool-call/result pair and re-estimate the resulting tail before persistence
+6. relevance ordering for Glob and Grep is file modification time, newest first,
+   so a capped result keeps the half more likely to be asked about
+7. Timeout and abort close both output streams only after the complete process
+   tree has been shut down; no orphan process may continue writing output
 
-## 7. 验收标准
+## 7. Acceptance criteria
 
-- [x] 超大 Bash 输出用标记截断并溢出更完整的副本
-- [x] Bash stderr 在截断时保留其最后几行
-- [x] Grep 在 `headLimit` 和 `truncated: true` 处停止
-- [x] Grep 和 Read 在 16,384 个字符处剪辑行，且被剪辑的行被排除在 `Edit` 来源集之外
-- [x] Read 对多兆字节文件进行分页而不是拒绝它，报告下一个偏移量，并在填满请求窗口时不设 `truncated`
-- [x] 读取拒绝带有 `TOOL_BINARY_CONTENT` 的二进制内容
-- [x] 显式 `path` 到达被忽略的树（`node_modules`，溢出目录）
-- [x] Glob 和 Grep 按修改时间对结果进行排序，最新的在前
-- [x] 截断结果仍然有效 UTF-8 文本
-- [x] 捕获上限高于结果预算，因此溢出的副本可以
-  比它支持的摘录更完整，并报告它省略的字节和行
-- [ ] stdout 和 stderr 分别使用稳定的每个工具序列值进行流传输
-- [ ] Bash 使用 60 秒默认值并拒绝 1–21,600 秒之外的覆盖
-- [ ] timeout/abort 停止完整的进程树并且不再发出后续块
-- [ ] 超大并行结果批次压缩为有界标记尾部，
-  重新启动后仍然存在，并保持原始成绩单结果不变
+- [x] oversize Bash output truncates with marker and spills the fuller copy
+- [x] Bash stderr retains its final lines when truncated
+- [x] Grep stops at `headLimit` with `truncated: true`
+- [x] Grep and Read clip lines at 16,384 chars, and a clipped line is excluded
+  from the `Edit` provenance set
+- [x] Read paginates a multi-megabyte file instead of refusing it, reports the
+  next offset, and does not set `truncated` when the requested window was filled
+- [x] Read refuses binary content with `TOOL_BINARY_CONTENT`
+- [x] an explicit `path` reaches into an ignored tree (`node_modules`, spill dir)
+- [x] Glob and Grep order results by modification time, newest first
+- [x] truncated results still valid UTF-8 text
+- [x] the capture ceiling sits above the result budget, so a spilled copy can be
+  fuller than the excerpt it backs, and reports the bytes and lines it omitted
+- [ ] stdout and stderr stream separately with stable per-tool sequence values
+- [ ] Bash uses the 60s default and rejects an override outside 1–21,600s
+- [ ] timeout/abort stops the complete process tree and emits no later chunks
+- [ ] an oversized parallel result batch compacts to a bounded marked tail,
+  survives restart, and leaves the original transcript results unchanged

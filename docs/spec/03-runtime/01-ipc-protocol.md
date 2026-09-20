@@ -1,57 +1,60 @@
-# 01. IPC 协议
+# 01. IPC Protocol
 
-## 1. 目标
+## 1. Goal
 
-定义渲染器和主程序之间的稳定契约。
+Define a stable contract between the renderer and main.
 
-原则：
+Principles:
 
-1. 所有功能均经过 preload 许可名单
-2. 输入 Requests/responses
-3. 长时间运行的任务使用事件流，而不是单个超大响应
-4. 错误必须有代码+消息
+1. All capabilities go through the preload allowlist
+2. Requests/responses are typed
+3. Long-running tasks use event streams, not a single oversized response
+4. Errors must have a code + message
 
-## 2. API 组
+## 2. API Groups
 
-| 域名 | 描述 |
+| Domain | Description |
 |---|---|
-| `app` | 应用程序信息、健康检查 |
-| `agent` | 对话、中止、状态和交互式 Asktool 解决方案 |
-| `plan` | Plan 提案列出、决议和变更事件 |
-| `session` | 会话 CRUD/历史记录 |
-| `session collaboration` | 侧边栏投影使用的有界只读协作状态；变更仍通过已审查的插件网关完成 |
-| `settings` | 配置 read/write |
-| `secrets` | 秘密 write/delete/exists（绝不将明文返回到 UI 日志） |
-| `project` | 工作空间选择、逻辑项目组与查询 |
-| `tool` | 权限确认回调 |
-| `shell` | 主机 shell 目录和持久默认 shell |
-| `log` | 前端可以显示的诊断信息 |
-| `plugin` | 插件 install/enable-disable/query/permissions |
-| `commandPalette` | 命令面板搜索和执行 |
-| `workspace` | 工作区选择和遗留工作树诊断 |
-| `browser` | 工作面板嵌入预览 navigation/bounds/visibility + 状态事件 |
-| `fs` | 工作面板工作区文件 listing/reading/reveal，聊天文件引用对项目、会话临时目录与附件根的补全，以及用户点击后用系统默认应用打开（只读） |
-| `window` | 无框窗口状态、控件和有界工作面板宽度预留 |
-| `menu` | 列入许可名单的应用程序菜单命令和本机 editing/window 操作 |
-| `notification` | 持久收件箱 list/read/clear 和 new/activated 事件 |
-| `stats` | 已完成回合的 token 历史（host RPC；仪表板由插件拥有） |
+| `app` | App info, health checks |
+| `agent` | Conversation, queued-send stop/abort, status, and interactive asktool resolution |
+| `plan` | Plan proposal listing, resolution, and change events |
+| `session` | Session CRUD / history / title metadata and summarization |
+| `session collaboration` | Read-only bounded collaboration status for sidebar projections; mutation stays in the reviewed plugin gateway |
+| `settings` | Config read/write |
+| `secrets` | Secret write/delete/exists (never return plaintext to UI logs) |
+| `project` | Workspace selection, logical project groups, and query |
+| `tool` | Permission confirmation callback |
+| `shell` | Host shell catalog and persisted default shell |
+| `log` | Diagnostics that the frontend can display |
+| `plugin` | Plugin install/enable-disable/query/permissions |
+| `commandPalette` | Command palette search and execution |
+| `workspace` | Workspace selection and legacy working-tree diagnostics |
+| `browser` | Work panel embedded preview navigation/bounds/visibility + state events |
+| `fs` | Work panel workspace file listing/reading/reveal, chat file-reference completion against the project, session scratch, and attachment roots, plus user-initiated open with the OS default handler (read-only) |
+| `window` | Frameless window state, controls, and compatibility work-panel geometry channels |
+| `menu` | Allowlisted application-menu commands and native editing/window actions |
+| `notification` | Durable inbox list/read/clear and new/activated events |
+| `stats` | Completed-turn token history (host RPC; dashboard is plugin-owned) |
 
-## 3. 通道约定
+## 3. Channel Conventions
 
 ```text
 invoke: pi-desktop/<domain>/<action>
 event: pi-desktop/<domain>/event/<name>
 ```
 
-示例：
+Examples:
 
 - `pi-desktop/agent/prompt`
 - `pi-desktop/agent/steer`
+- `pi-desktop/agent/stop`
 - `pi-desktop/agent/abort`
 - `pi-desktop/agent/event/message`
 - `pi-desktop/agent/askTool/resolve`
 - `pi-desktop/session/list`
+- `pi-desktop/session/summarizeTitle`
 - `pi-desktop/project/open`
+- `pi-desktop/project/pickFolders`
 - `pi-desktop/project/clone`
 - `pi-desktop/project/cloneCheckout`
 - `pi-desktop/project/openFolder`
@@ -61,12 +64,15 @@ event: pi-desktop/<domain>/event/<name>
 - `pi-desktop/project-group/update`
 - `pi-desktop/project-group/memory/get` / `save`
 - `pi-desktop/project-group/instructions/get` / `save`
+- `pi-desktop/session/getScratchPath`
+- `pi-desktop/session/openScratchPath`
 - `pi-desktop/session/collaboration`
 
-## 3.1 逻辑项目组
+## 3.1 Logical project groups
 
-逻辑项目组是渲染器使用的 ChatGPT 风格项目容器。宿主拥有其 id、显示名称、
-有序根目录、Primary 根目录、共享记忆和共享指令。首次选择的根目录是 Primary。
+A project group is the ChatGPT-style project container used by the renderer.
+The host owns its id, display name, ordered roots, primary root, shared memory,
+and shared instructions. The first selected root is primary.
 
 ```ts
 type ProjectGroupRoot = { path: string; name: string; position: number };
@@ -83,13 +89,16 @@ type ProjectGroupRecord = {
 };
 ```
 
-`project-group/create` 是新增能力，不会改变当前工作区。`project-group/list` 每个逻辑
-项目组返回一行；旧的仅路径项目会作为 `legacy` 单根项目组返回。项目组记忆和指令
-由所有 Primary 路径属于该组的会话共享。Primary 路径是内置工具的默认工作区；运行时
-会公开所有已登记根目录，访问附加根目录必须使用绝对路径并经过规范化校验，其他
-外部路径仍遵循普通权限流程。
+`project-group/create` is additive and does not change the active workspace.
+`project-group/list` returns one row per logical group; old path projects are
+returned as `legacy` single-root groups. Group memory and instructions are
+shared by all sessions whose primary path belongs to the group. The primary
+path is the default builtin-tool workspace. The runtime advertises all registered
+roots; an absolute path under an additional root is canonicalized and executed
+against that root, while arbitrary external paths still require the ordinary
+permission flow.
 
-## 4. 通用响应包络
+## 4. Common Response Envelope
 
 ```ts
 type Result<T> =
@@ -112,12 +121,21 @@ type AppError = {
 type AgentPromptRequest = {
  sessionId: string;
  content: string;
- /** 宿主拥有的协作投递；内容和来源由 ledger 提供。 */
+ /** Host-owned collaboration delivery; its ledger supplies content and provenance. */
  sessionMessageId?: string;
+ attachments?: AgentPromptAttachment[];
  /** Truncate durable transcript to N leading messages before append (regenerate). */
  truncateBefore?: number;
  /** Renderer snapshot used to close the prompt-to-completion notification race. */
  viewingSessionId?: string | null;
+};
+
+type AgentPromptAttachment = {
+ path: string;
+ name: string;
+ kind: "image" | "file";
+ mimeType?: string;
+ size?: number;
 };
 
 type AgentPromptResponse = {
@@ -126,21 +144,25 @@ type AgentPromptResponse = {
 };
 ```
 
-斜线模板扩展 (D123)：当 `content` 以 `/name` 开头且
-名称与加载的 pi 提示模板匹配，主进程处理程序展开
-持久化之前调用 (`parseCommandArgs` + `substituteArgs`)。
-持久化的用户消息存储 `content = expanded text` 以及一个可选的
-`command: string` 字段携带转录的键入调用
-显示。重新设定种子会重播 `content`，因此代理上下文在整个过程中是相同的
-重新启动。 Builtin/plugin 斜杠别名永远不会到达此通道 —
-渲染器在本地执行它们。未知的 `/foo` 作为文字传递
-内容。 `@path` 令牌不会在管道 (D124) 中的任何位置进行转换。
+Slash template expansion (D123): when `content` starts with `/name` and the
+name matches a loaded pi prompt template, the main-process handler expands
+the invocation (`parseCommandArgs` + `substituteArgs`) before persisting.
+The persisted user message stores `content = expanded text` plus an optional
+`command: string` field carrying the typed invocation for transcript
+display. Reseed replays `content`, so the agent context is identical across
+restarts. Builtin/plugin slash aliases never reach this channel — the
+renderer executes them locally. Unknown `/foo` passes through as literal
+content. Ordinary `@path` tokens are not transformed anywhere in the pipeline
+(D124). Composer-owned pasted file references travel separately in
+`attachments`; they are validated and prepared by Electron main at dispatch,
+so a pasted image does not depend on the model being able to interpret a path
+token.
 
-提示执行解析 `mode`、`providerId`、`modelId` 和 `thinkingLevel`
-从持久会话记录和快照中获取有效的命令 shell ID 和
-Bash 的方言。
-渲染器通过以下方式更改这些值
-会话空闲时的 `pi-desktop/session/configure`：
+Prompt execution resolves `mode`, `providerId`, `modelId`, and `thinkingLevel`
+from the durable session record and snapshots the effective command shell ID and
+dialect for Bash.
+The renderer changes those values through
+`pi-desktop/session/configure` while the session is idle:
 
 ```ts
 type ThinkingLevel =
@@ -157,35 +179,51 @@ type SessionConfigureRequest = {
 };
 ```
 
-仅当会话空闲时才接受 `session/configure`。模式、提供商、
-模型、权限和 shell 默认更改在回合或回合时被拒绝
-Plan/Goal `content = expanded text`/`command: string`/`content` 记录存在。渲染器可能会保留这些
-控制在回合期间可编辑，但它会将最新的完整配置排队
-本地并仅在终止事件后调用此通道；跑步的
-回合永远不会观察到乐观的下一个回合选择。
+`session/configure` is accepted only while the session is idle. Mode, provider,
+model, permission, and shell-default changes are rejected while a turn or a
+Plan/Goal `pending`/`queued`/`running` record exists. The renderer may keep these
+controls editable during a turn, but it queues the latest full configuration
+locally and invokes this channel only after the terminal event; the running
+turn never observes that optimistic next-turn choice.
 
-只有更改后的有效全局 `defaultCommandShell` 在所有范围内仅处于空闲状态
-受影响的会话：任何活动轮次或 pending/queued/running Plan/Goal 工作块
-该 shell 会发生变化，而省略的或幂等的 shell 字段则不会。
+Only a changed effective global `defaultCommandShell` is idle-only across all
+affected sessions: any active turn or pending/queued/running Plan/Goal work blocks
+that shell change, while an omitted or idempotent shell field does not.
 
-图像和文件有效负载不是当前提示合同的一部分。
+`attachments` is an additive prompt field. The renderer sends metadata and a
+source path only; it never sends binary data. Electron main validates the path
+against the session scratch/project roots, persists image bytes in the
+content-addressed attachment store, and derives the effective model transport
+from the published model record plus the exact binding's `supportsImages`
+override. An absent or `null` override follows the published image capability;
+`true` enables and `false` disables image input for that configured model.
+Eligible images become transient pi-ai image blocks when the effective
+capability is enabled. Unknown/custom models without an explicit override,
+non-vision models, and images above the 10 MB inline bound receive a safe
+`@path` fallback.
+Main uses streamed hashing and file copying for images above that bound, and the
+sidecar uses the same bounded-read rule when rebuilding history. The durable
+user message stores `content` plus attachment metadata/ref, never base64.
+Invalid attachment paths fail with `PATH_OUTSIDE_WORKSPACE`.
 
-重新生成历史记录 (D109) 也使用会话通道：
+Regenerate history (D109) also uses session channels:
 
 - `pi-desktop/session/saveRevision`
 - `pi-desktop/session/listRevisions`
 - `pi-desktop/session/activateRevision`
 
-Root 用户轮次可能包括 `revisionRootId`、`revisionCount` 和
-`activeRevision`。激活修订版将实时尾部替换为
-`prefix + archived branch` 并处置会话代理。
- 输入框
-附件可供性保持隐藏，直到 main、sidecar、pi 模型
-功能和持久性都会消耗有效负载。
+Root user turns may include `revisionRootId`, `revisionCount`, and
+`activeRevision`. Activating a revision replaces the live tail with
+`prefix + archived branch` and disposes the session agent.
+The sidecar receives only the prepared attachment subset needed for the
+current turn. On a vision runtime, persisted image refs are hydrated from the
+session-bound attachment/scratch roots when history is rebuilt; oversized or
+unavailable images remain path fallbacks. This keeps renderer, main, sidecar, the models.dev catalog, and host
+persistence on one capability-aware contract.
 
-### 5.1a 向当前回合补充指令
+### 5.1a Steer an active turn
 
-`pi-desktop/agent/steer` 接受 `AgentSteerRequest`：
+`pi-desktop/agent/steer` accepts `AgentSteerRequest`:
 
 ```ts
 type AgentSteerRequest = {
@@ -197,24 +235,36 @@ type AgentSteerRequest = {
 };
 ```
 
-成功时返回现有回合的 `{ accepted: true, turnId }`。主进程检查正在运行的持久回合，
-从现有 sidecar 运行时读取当前项目的附件根目录和模型图像能力，再执行普通提示所用的
-有界附件准备。sidecar 在这些 IO 完成后重新验证 `expectedTurnId`。
-目标回合不存在、已结束、正在停止、标识不匹配，或正在等待 Plan/Goal 审批时，返回
-`TURN_NOT_FOUND`，不会退回到新建回合或排队。空载荷返回 `INVALID_ARGUMENT`。
+It returns `{ accepted: true, turnId }` for the existing turn. Main checks its
+active durable turn, asks the existing sidecar runtime for the active project's
+attachment roots and model image capability, then applies the ordinary bounded
+attachment preparation. The sidecar revalidates `expectedTurnId` after that IO.
+A missing, ended, stopping, or mismatched turn, or a pending plan/goal approval,
+fails with `TURN_NOT_FOUND`; it never falls back to starting or queueing a turn.
+An empty payload fails with `INVALID_ARGUMENT`.
 
-内部 `agent.steeringContext` 和 `agent.steer` 只使用已存在的运行时，不执行启动配置、
-`runtimeFor` 或 `session.beginTurn`。补充指令不能改变当前模型、权限模式、工作区或
-已批准的执行；此通道中的斜杠文本按普通输入处理。
+The internal `agent.steeringContext` and `agent.steer` methods use only an
+existing runtime. They do not run launch configuration, `runtimeFor`, or
+`session.beginTurn`. Steering cannot change the active model, permission mode,
+workspace, or approved execution. Slash text is literal input on this channel.
 
-已接收的输入以普通用户消息事件回显，携带当前 `turnId`、主进程准备的附件引用和
-`UiMessage.steering: true`。这个持久标记确保渲染器重载后，Smart Stop 仍保留该输入。
-用户 `message_end` 还可携带 `precedingAssistant` 流式快照，在持久化输入前为回复预留
-位置。主进程通过可重放 outbox 写入两者；主机仅以终态快照替换该临时助手行，保留其
-id、顺序和所属回合。图像字节不进入持久消息。这是新增的桌面通道和事件字段，
-不改变 RACP、主机 RPC 版本或存储架构。见 ADR active-turn-steering。
+Accepted input is echoed as ordinary user message events with the current
+`turnId`, main-prepared attachment refs, and `UiMessage.steering: true`. This
+persisted marker protects accepted input from Smart Stop after renderer reload.
+A native Pi `message_end` may additionally carry the optional additive
+`replacesMessageId`: the provisional streaming row id whose durable SDK entry
+this event publishes. The renderer re-keys exactly that row (active, cache,
+retained) and a generic event without the field leaves every other
+row untouched. The field adds no event kind, RACP kind, or storage change.
+A user `message_end` can additionally
+carry `precedingAssistant`, a streaming snapshot that reserves the reply's
+position before the input is persisted. Main writes both through its replayable
+outbox; the host replaces only that provisional assistant row with its terminal
+snapshot, preserving its id, sequence and owning turn. No image bytes enter the
+durable message. This is an additive desktop channel and event field; it does
+not change RACP, the host RPC version, or the storage schema. See ADR active-turn-steering.
 
-### 5.2 在下一个回合边界停止
+### 5.2 stop at the next turn boundary
 
 ```ts
 type AgentStopRequest = {
@@ -227,15 +277,17 @@ type AgentStopResponse = {
 };
 ```
 
-`pi-desktop/agent/stop` 为活动运行时请求一次优雅停止。sidecar 在当前助手
-响应和已完成的工具批次之后评估这个一次性请求，也就是它本来会发起下一次
-模型请求的同一个边界。当前的持久回合随后发出 `agent_end` 并被终结为
-`completed`；该请求不会中止提供商流、取消正在运行的工具，也不会开启第二个
-并发回合。空闲会话返回 `requested: false`。
+`pi-desktop/agent/stop` requests a graceful stop for the active runtime. The
+sidecar evaluates the one-shot request after the current assistant response and
+completed tool batch, at the same boundary where it would otherwise start the
+next model request. The current durable turn then emits `agent_end` and is
+finalized as `completed`; the request does not abort the provider stream,
+cancel running tools, or open a second concurrent turn. An idle session returns
+`requested: false`.
 
-渲染器按会话持有可移除的、仅存于内存的排队提示词列表。它只在排队项的
-**立即发送** 操作时调用该渠道，并在终止事件之后通过常规的 `agent/prompt`
-流程释放该项。
+The renderer owns the removable, in-memory queued-prompt list per session. It
+calls this channel only for a queued item's **Send now** action and releases
+that item through the ordinary `agent/prompt` flow after the terminal event.
 
 ### 5.3 abort
 
@@ -246,37 +298,40 @@ type AgentAbortRequest = {
 };
 ```
 
-中止请求和响应不携带 Composer 草稿或文件参考数据。
-如果渲染器智能停止撤消未应答的用户回合，则恢复来自
-渲染器的 session/turn-scoped 预序列化快照；现有的
-转录重写会删除发送的行而不更改协议版本。该重写从完整持久转录（不带窗口的
-`session.get`）与实时行的合并结果计算，绝不使用渲染器分页且显示截断的窗口，并在
-该合并结果上重新判定：在中止与读取之间落盘的回复行会把撤销变成落定（D299）。
-发现回复已开始的停止只在渲染器内存中落定（流式助手 → `aborted`，运行中工具 →
-错误），不做任何转录重写；持久副本是运行时自己的中止最终行，若它始终未到，则是
-主机提升的进行中检查点。
+The abort request and response carry no Composer draft or file-reference data.
+If renderer smart Stop undoes an unanswered user turn, restoration comes from
+the renderer's session/turn-scoped pre-serialization snapshot; the existing
+transcript rewrite removes the sent row without changing protocol version. That
+rewrite is computed from the full durable transcript (`session.get` without a
+window) merged with the live rows, never from the renderer's paged,
+display-capped window, and it is re-evaluated on that merge: a reply row that
+landed between the abort and the read turns the undo into a settle (D299). A
+Stop that finds a started reply settles it in renderer memory only (streaming
+assistant → `aborted`, running tools → error) and performs no transcript
+rewrite; the durable copy is the runtime's own aborted final row or, if that
+never arrives, the host's promoted in-flight checkpoint.
 
-### 5.4 compact（协议 v10）
+### 5.4 compact (protocol v10)
 
 ```ts
 type AgentCompactRequest = { sessionId: string };
 type AgentCompactResponse = { accepted: boolean };
 ```
 
-`pi-desktop/agent/compact` 为空闲创建模型上下文检查点
-会话。即使自动上下文保护被禁用，它也可用。
-缺少 provider/session 配置无法通过正常的 `AppError`
-信封；主动转向或压实返回 `AGENT_BUSY`。
+`pi-desktop/agent/compact` creates a model-context checkpoint for an idle
+session. It is available even when automatic context protection is disabled.
+Missing provider/session configuration fails through the normal `AppError`
+envelope; an active turn or compaction returns `AGENT_BUSY`.
 
-### 5.5 Plan 和 Goal 检查点批准
+### 5.5 Plan and Goal checkpoint approval
 
-合同批准与工具许可是分开的。 Plan 和 Goal 分享此内容
-整个表面； `kind` 是唯一的鉴别器 (**D198**)。渲染器接收
-的
-来自同一 Agent 的主机写入的工件元数据并通过以下方式解析它
-输入 preload IPC；它永远不会乐观地改变会话模式。合同
-条目
-并且提交仍然是 Agent/host 操作，而不是渲染器 preload 方法。
+Contract approval is separate from a tool permission. Plan and Goal share this
+whole surface; `kind` is the only discriminator (**D198**). The renderer receives
+the
+host-written artifact metadata from the same Agent and resolves it through
+typed preload IPC; it never changes the session mode optimistically. Contract
+entry
+and submission remain Agent/host operations, not renderer preload methods.
 
 ```ts
 type PlanningState = "inactive" | "planning" | "awaiting_approval";
@@ -396,29 +451,29 @@ type PlanResolutionResult = {
 };
 ```
 
-预加载方法：
+Preload methods:
 
 - `pi-desktop/plans/pending({ sessionId? }) -> PlansPendingResult`
 - `pi-desktop/plans/resolve(PlanResolveRequest) -> PlanResolutionResult`
 
-Electron 将每个主机 `plans.changed` 通知原封不动地转发到
-通过稳定的共享 `IPC.event.plansChanged` 通道渲染器
-（`pi-desktop/plans/event/changed`）。这是 Plan/Goal 更改事件表面；
-的
-渲染器不会接收作为 AgentEvent 变体的合同批准转换。
-`plans.pending` 仅返回当前待批准的行。终端
-`plan_approvals` 行保留持久主机记录，但不是渲染器
-水合数据；渲染器仅保留其最新的合同快照
-当实时 `plans.changed` 事件到达时当前渲染器的生命周期。
+Electron forwards each host `plans.changed` notification unchanged to the
+renderer through the stable shared `IPC.event.plansChanged` channel
+(`pi-desktop/plans/event/changed`). This is the Plan/Goal change event surface;
+the
+renderer does not receive contract approval transitions as AgentEvent variants.
+`plans.pending` returns only currently pending approval rows. Terminal
+`plan_approvals` rows remain durable Host records, but are not renderer
+hydration data; the renderer retains its latest contract snapshot only for the
+current renderer lifetime while live `plans.changed` events arrive.
 
-对于 `approve`、host-core 和 Electron 需要显式
-`targetPermissionMode`； Electron 永远不会从存储的设置中填充它。的
-渲染器将每个批准初始化为“询问”，这仍然是产品默认值，
-并且主持人不会将选择保留为下一次批准默认值。
-`reject` 携带无权限模式。
-对错误提案、会话、回合、工具调用、版本或过期的响应
-主机拥有的截止日期失败，并出现稳定的 Plan/Goal 批准错误。没有
-请求更改操作。
+For `approve`, host-core and Electron require an explicit
+`targetPermissionMode`; Electron never fills it from stored settings. The
+renderer initializes each approval to Ask, which remains the product default,
+and the host does not persist the selection as the next approval default.
+`reject` carries no permission mode.
+Responses with a wrong proposal, session, turn, tool-call, version, or expired
+host-owned deadline fail with a stable Plan/Goal approval error. There is no
+request-changes action.
 
 ### 5.5 getStatus
 
@@ -451,92 +506,134 @@ type AgentStatus = {
 };
 ```
 
-### 5.6 回合队列（D375 / D386）
+### 5.6 Turn queue (D375 / D386)
 
-Host 拥有每会话的 prompt 队列，renderer 只做镜像。运行中发送经
-`pi-desktop/agent/queue/push` 推入，无头 Agent Host 模块负责准入、排序并释放持久
-条目（`turn_queue`，架构 v18）。每次变化都以 `pi-desktop/agent/event/queueChanged`
-扇出。
+The Host owns the per-session prompt queue; the renderer mirrors it. A
+Send-while-running pushes through `pi-desktop/agent/queue/push` and the
+headless Agent Host module admits, orders, and drains the durable entries
+(`turn_queue`, schema v18). Every change is fanned out as
+`pi-desktop/agent/event/queueChanged`.
 
 ```ts
-type AgentQueuePushRequest = { sessionId: string; content: string; attachments?: AgentPromptAttachment[]; idempotencyKey?: string };
-type QueuedTurnSummary = { id: string; sessionId: string; content: string; attachments?: AgentPromptAttachment[]; position: number; priority?: number; createdAt: string };
-// push -> QueuedTurnSummary；list -> { entries }；remove / prioritize -> { ok: true }；reorder -> { moved: boolean }；queueChanged -> { sessionId, entries }
+type AgentQueuePushRequest = {
+  sessionId: string;
+  content: string;
+  attachments?: AgentPromptAttachment[];
+  idempotencyKey?: string;
+};
+
+type QueuedTurnSummary = {
+  id: string;         // the RACP turn id, stable from admission
+  sessionId: string;
+  content: string;
+  attachments?: AgentPromptAttachment[];
+  position: number;   // 1-based queue position
+  priority?: number;  // set only for a promoted entry; the click order
+  createdAt: string;
+};
+
+// pi-desktop/agent/queue/push       -> QueuedTurnSummary
+// pi-desktop/agent/queue/list       -> { entries: QueuedTurnSummary[] }
+// pi-desktop/agent/queue/remove     -> { ok: true }   (turnId)
+// pi-desktop/agent/queue/prioritize -> { ok: true }   (turnId; "send now")
+// pi-desktop/agent/queue/reorder    -> { moved: boolean } (turnId, direction)
+// pi-desktop/agent/event/queueChanged -> { sessionId, entries }
 ```
 
-`push` 在会话已有八条时返回带 `queueFull` 的 `AGENT_BUSY`，同一 key 配不同输入时返回
-`IDEMPOTENCY_CONFLICT`。`entries` 按投递顺序返回：已优先的条目在前并按 `priority` 升序
-（即点击顺序），其余条目按 `position` 排列。`prioritize` 把条目追加到优先区块末尾而不
-触碰运行中的回合，对已经带优先级的条目返回 `CONFLICT`，对已不再排队的回合同样拒绝；
-renderer 的“立即发送”随后请求优雅停止，使该条目在下一个边界启动。`reorder` 让一个未优先
-的条目与其相邻的未优先条目互换，对已优先条目、缺失条目或区块/队列边界返回
-`moved: false`；已优先的条目永远不会被当作相邻项。`remove` 取消尚未开始的条目。恢复
-的队列在桌面以 owner 身份接入之前保持挂起，因此重启绝不无人值守地启动工作。
+`push` returns `AGENT_BUSY` with `queueFull` once a session holds eight
+entries and `IDEMPOTENCY_CONFLICT` when a key is reused with other input.
+`entries` arrive in delivery order: promoted entries first in ascending
+`priority` (the order they were promoted), then every remaining entry by
+`position`. `prioritize` appends an entry to the end of that priority block
+without touching the running turn, refuses an entry that already carries a
+priority with `CONFLICT`, and refuses a turn that is no longer queued. The
+renderer's "send now" then requests a graceful stop so the entry starts at
+the next boundary. `reorder` swaps one non-promoted entry with its adjacent
+non-promoted neighbour and reports `moved: false` for a promoted entry, a
+missing entry, or a block/queue edge; a promoted entry is never a neighbour.
+`remove` cancels an entry that has not started. A restored queue stays held
+until the desktop attaches as the owner, so a reboot never starts work
+unattended.
 
-优先区块以**相邻消息**的形式投递，而不是拆成多个回合：第一个已优先条目在边界处启动回合，
-其后每个已优先条目都通过引导通道（`pi-desktop/agent/steer`，携带运行中回合的 id）注入同一
-回合，因此转录里用户行紧挨着出现、模型只回复一次。被注入的条目离开队列，它自己的回合被标记
-为已取消，因为它从不单独运行。运行时拒绝接收的条目仍留在队列中，在下一个边界作为自己的回合
-启动。
+The promoted block is delivered as adjacent messages rather than as separate
+turns: the first promoted entry starts the turn at the boundary and every later
+promoted entry is injected into that same turn through the steering channel
+(`pi-desktop/agent/steer` with the running turn's id), so the transcript shows
+the user rows one after another and the model answers once. An injected entry
+leaves the queue and its own turn is canceled because it never runs on its own.
+An entry the runtime refuses to accept stays queued and leaves at the next
+boundary as its own turn.
 
-队列的投递契约由 ADR 0265 冻结。回合自身的结算对队列具有权威性：终态事件可能被丢弃
-（点名 Main 已不再拥有的回合的终态事件永远不会到达模块），也可能根本没发出，因此结算会在
-模块内关闭该回合并释放它持有的队列。
+The queue's delivery contract is frozen by ADR 0265. A turn's own settlement is
+authoritative for the queue: the terminal event can be dropped (a terminal event
+naming a turn Main no longer owns never reaches the module) or never emitted, so
+the settlement closes the turn inside the module and releases the queue the turn
+was holding.
 
-### 5.7 会话协作投影
+### 5.7 Session collaboration projection
 
-渲染器通过一个只读 Electron 通道为侧边栏悬浮卡片读取协作状态：
+The renderer has one read-only Electron channel for the sidebar hover card:
 
 ```ts
 // pi-desktop/session/collaboration({ sessionId }) -> SessionCollaborationSummary
 type SessionCollaborationSummary = {
- sessionId: string;
- title: string;
- status: "idle" | "waiting_permission" |
-   "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
- observedAt: string;
- modelKey?: string;
- createdBySession?: { sessionId: string; title: string; available?: boolean };
- createdSessions?: Array<{ sessionId: string; title: string; available?: boolean }>;
- currentTask?: {
-   messageId: string;
-   senderSession: { sessionId: string; title: string; available?: boolean };
-   text: string;
-   status: string;
-   turnId?: string;
-   createdAt: string;
- };
- result?: { messageId: string; turnId?: string; status: string; text?: string; error?: string };
- recentExchanges: Array<{
-   messageId: string;
-   direction: "incoming" | "outgoing";
-   peer: { sessionId: string; title: string; available?: boolean };
-   kind: "task" | "message" | "completion";
-   status: string;
-   preview: string;
-   createdAt: string;
- }>;
+  sessionId: string;
+  title: string;
+  status: "idle" | "waiting_permission" |
+    "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  observedAt: string;
+  modelKey?: string;
+  providerName?: string;
+  modelName?: string;
+  createdBySession?: { sessionId: string; title: string; available?: boolean };
+  createdSessions?: Array<{ sessionId: string; title: string; available?: boolean }>;
+  currentTask?: {
+    messageId: string;
+    senderSession: { sessionId: string; title: string; available?: boolean };
+    text: string;
+    status: string;
+    turnId?: string;
+    createdAt: string;
+  };
+  result?: { messageId: string; turnId?: string; status: string; text?: string; error?: string };
+  recentExchanges: Array<{
+    messageId: string;
+    direction: "incoming" | "outgoing";
+    peer: { sessionId: string; title: string; available?: boolean };
+    kind: "task" | "message" | "completion";
+    status: string;
+    preview: string;
+    createdAt: string;
+  }>;
 };
 ```
 
-`available` 在被引用的会话已删除或因其他原因不存在时为 `false`；此时宿主还会回退使用
-Session ID 作为标题。渲染器把不可用的引用渲染为文本，而不是可键盘聚焦的导航控件；激活
-一个会话已不存在的引用会报告可见错误，而不是提交一个空选择。独立创建的会话绝不会获得
-伪造的创建者引用。`session_collaboration_messages.source_session_id` 有意不设外键，因此
-投递记录在发送者被删除后仍然保留；此类引用报告为不可用，而不是被移除。
+`available` is `false` when the referenced session was deleted or is otherwise
+absent; the host then also falls back to the Session ID as the title. The
+renderer renders an unavailable reference as text rather than a
+keyboard-focusable navigation control, and activating a reference whose session
+no longer exists reports a visible error instead of committing an empty
+selection. Independently created sessions never receive a fabricated creator
+reference. `session_collaboration_messages.source_session_id` intentionally has
+no foreign key, so a delivery record survives deletion of its sender; such
+references are reported as unavailable rather than removed.
 
-Electron 将实时 Agent 状态叠加到宿主持久投影上，限制交换预览的大小，且只在会话行
-获得悬停或焦点时读取。渲染器不能调用宿主可变的 `session.collaboration.*` 方法。
-插件的 `desktop.control` 网关是唯一经过审查的变更入口，并将发送/取消授权绑定到
-插件当前的 Agent 工具调用。
+Electron overlays live Agent status on the durable host projection, bounds the
+exchange previews, and fetches it only while a session row is hovered or
+focused. The renderer cannot invoke the host's mutating
+`session.collaboration.*` methods. The plugin's `desktop.control` gateway is
+the sole reviewed mutation surface and binds send/cancel authorization to the
+active plugin Agent tool invocation.
 
-卡片的一次读取若未在其截止时间内完成即被放弃，迟到的结果被忽略，并安排下一次有界读取。
-卡片仍挂载但不可见时（窗口隐藏，或窗口没有焦点），循环以更慢的空闲间隔继续轮询，以便之后
-的焦点变化能被捕获。轮询仍然绝不重叠读取，并在卸载时停止。
+A hover-card read that does not settle within the card's deadline is abandoned,
+its late result is ignored, and the next bounded read is scheduled. While the
+card is mounted but not visible (a hidden window, or a window without focus) the
+loop keeps polling at a slower idle interval so a later focus change is picked
+up. Polling still never overlaps reads and stops on unmount.
 
-## 6. Agent 事件
+## 6. Agent Events
 
-从主→渲染器推送：
+Pushed from main → renderer:
 
 ```ts
 type AgentEventEnvelope = {
@@ -554,11 +651,12 @@ type AgentEvent =
  | { type: "agent_start" }
  | { type: "agent_end"; messageIds: string[] }
  | { type: "turn_start" }
- | { type: "turn_end" }
+ | { type: "turn_end"; subagentUsage?: MessageUsage }
  | { type: "message_start"; message: UiMessage }
  | { type: "message_update"; message: UiMessage;
-     deltaText?: string; deltaThinking?: string }
- | { type: "message_end"; message: UiMessage }
+     deltaText?: string; deltaThinking?: string;
+     stream?: "delta"; resetText?: boolean; resetThinking?: boolean }
+ | { type: "message_end"; message: UiMessage; replacesMessageId?: string }
  | { type: "tool_start"; toolCallId: string; toolName: string; args: unknown }
  | { type: "tool_update"; toolCallId: string; partialResult?: unknown }
   | { type: "tool_end"; toolCallId: string; result: unknown; isError?: boolean;
@@ -580,73 +678,100 @@ type AgentEvent =
  | { type: "status"; status: AgentStatus };
 ```
 
-> 这些是 **UI 标准化事件**，而不是原始 pi 事件的传递。
-> `packages/agent-runtime` 负责将 pi 事件映射到此模型。
+> These are **UI-normalized events**, not a pass-through of raw pi events.
+> `packages/agent-runtime` is responsible for mapping pi events to this model.
 
-`planning_state` 是代理运行时的本地规划投影。其可选的
-提案和执行字段镜像共享 `PlanningStateEvent` 形状
-（`proposal`、`executionId` 和 `executionState`）。完全批准执行
-描述符使用`PlanExecution`并由主机result/notification携带。
-权威主机 approval/queue 转换是单独的 `plans.changed`
-通过 `IPC.event.plansChanged` 转发的通知。
-`tools.output` 是 `packages/agent-runtime` 使用的主机通知
-当 Bash 工具运行时；它不是代理事件。
+Append-only `message_update` frames set `stream: \"delta\"` and omit growing
+`content` / `thinking` from `message`. Consumers apply `deltaText` /
+`deltaThinking` onto the live row (replace instead of append when `resetText`
+or `resetThinking` is set). The runtime coalesces those frames on an ~16ms
+interval and flushes immediately before tool, terminal, abort, error, and
+retry events. `message_start` and `message_end` still carry a full
+`UiMessage`. Snapshot replacements omit `stream`. These fields are additive
+in protocol v11 (D412).
 
-`turn_end` 关闭 model/tool 一轮但不是终端桌面运行事件：
-可能会立即提出另一个提供商的请求。 Renderer 繁忙状态和
-因此，持久回合完成仅在 `agent_end` 或 `error` 上确定。
-压缩始终是内联的：`compaction_start` 使运行保持忙碌，手册
-操作取决于其匹配的 `compaction_end` 和 threshold/overflow
-压实保留在活性剂运行内。没有预先计算的阶段
-区分（D203）。
+`status` events include an optional runtime-owned `activity` phase while a turn
+is active. `starting` is the prompt handoff; `waiting-model` is the interval
+after a provider request is issued and before the first assistant event;
+`preparing` is the gap after a tool batch and before the next provider request;
+`compacting` is an in-progress context checkpoint (threshold, overflow, or
+manual); `recovering` is the silent-turn re-run; `retrying` is an abortable
+provider backoff; and `waiting-subagents` is a parent wait on delegated work,
+with a live running count and each target's latest coarse child action (waiting
+for the model, thinking, or the current tool). The renderer keeps this status
+per session and renders it as a compact inline row. The phase is cleared when
+assistant or tool activity starts, or when the turn reaches a terminal event.
+These phases explain quiet intervals; they do not replace message/tool
+lifecycle events or imply a percentage of completion.
 
-只要安装了检查点，`compaction_end.mark` 就会出现。它是
-渲染器对该压缩的整体视图：`id`，`throughMessageId` 锚定
-转录本行位于 `generation` 之后（此会话有多少个检查点
-已安装）、`summaryTokens`（摘要的估计上下文成本）以及
-`summarized`（当窗口滚动且未向模型询问时，`false`
-总结）以及 `fallback`（摘要生成失败、检查点只带恢复说明和保留尾部时为
-`"retained_tail"`；转录行将其标为摘要生成失败，而不是 N tokens 的摘要）。记录本身不被携带——它的摘要和保留尾部被携带
-远远大于事件应有的大小——而是从
-`SessionDetail.compactions` 会话打开或分叉。
+`planning_state` is the agent-runtime's local planning projection. Its optional
+proposal and execution fields mirror the shared `PlanningStateEvent` shape
+(`proposal`, `executionId`, and `executionState`). The full approved execution
+descriptor uses `PlanExecution` and is carried by the host result/notification.
+The authoritative host approval/queue transition is the separate `plans.changed`
+notification forwarded through `IPC.event.plansChanged`.
+`tools.output` is a host notification consumed by `packages/agent-runtime`
+while a Bash tool runs; it is not an AgentEvent.
 
-自动摘要失败仍可能产生成功的生命周期事件
-`fallback: "retained_tail"`；这意味着有一个耐用的、有边界的尾巴
-检查点已安装，运行可能会继续，但历史记录会减少
-上下文。手动压实永远不会悄无声息地倒退。
+`turn_end` closes one model/tool turn but is not a terminal desktop run event:
+another provider request may follow immediately. Renderer busy state and
+durable turn completion therefore settle only on `agent_end` or `error`.
+Compaction is always inline: `compaction_start` keeps the run busy, a manual
+operation settles on its matching `compaction_end`, and threshold/overflow
+compaction stays inside the active agent run. There is no pre-computed phase to
+distinguish (D203).
 
-提供程序 `error` 事件可能包括以下中的有限诊断字段：
-`AppError.details`：`phase`（`request` 或 `stream`）、`providerStatus`、
-`providerCode`、`providerWaitMs`、`streamMs`、`retryAttempt`，以及网络故障
-时的 `networkCategory`、`networkCode`、`networkSyscall`、`networkHost`、
-`networkRoute` 和请求关联字段 `requestMessages`、`requestBytes`、`compactionGeneration`。这些字段
-都是新增且经过编辑的；它们从不携带凭据或不受限制的提供商响应，请求字段
-只有计数与字节大小。瞬时流故障可能会在内部重播
-同一回合，没有终端 `error` 事件或重复的辅助消息。
-第二次失败会发出终端标准化 `STREAM_FAILED` 错误。
+`compaction_end.mark` is present whenever a checkpoint was installed. It is the
+renderer's whole view of that compaction: `id`, the `throughMessageId` anchor the
+transcript row sits after, `generation` (how many checkpoints this session has
+installed), `summaryTokens` (the summary's estimated context cost), and
+`summarized` (`false` when the window rolled over without asking the model for a
+summary), and `fallback` (`"retained_tail"` when summary generation failed and
+the checkpoint carries only a recovery notice plus a retained tail; the row
+labels it as a failed summary, never as a summary of N tokens). The record itself is not carried — its summary and retained tail are
+far larger than an event should be — and is instead read from
+`SessionDetail.compactions` on session open or fork.
 
-## 6a. 通知 API（D117，协议 v4）
+Automatic summary failures may still produce a successful lifecycle event with
+`fallback: "retained_tail"`; this means a durable, aggressively bounded tail
+checkpoint was installed and the run may continue with reduced historical
+context. Manual compaction never silently falls back.
 
-持久收件箱请求已列入允许名单 preload 调用 Electron 转发
-到单一主机 RPC 域，无需渲染器访问 SQLite：
+Provider `error` events may include bounded diagnostic fields in
+`AppError.details`: `phase` (`request` or `stream`), `providerStatus`,
+`providerCode`, `providerWaitMs`, `streamMs`, `retryAttempt`, and, for a
+network failure, `networkCategory`, `networkCode`, `networkSyscall`,
+`networkHost` and `networkRoute` plus the request correlation fields
+`requestMessages`,
+`requestBytes` and `compactionGeneration`. These fields are additive and
+redacted; they never carry credentials or an unrestricted provider response,
+and the request fields are counts and byte sizes only. A transient stream
+failure may be replayed once inside the
+same turn without a terminal `error` event or a duplicate assistant message.
+The second failure emits the terminal normalized `STREAM_FAILED` error.
+
+## 6a. Notification API (D117, protocol v4)
+
+Durable inbox requests are allowlisted preload invokes that Electron forwards
+to the singular host RPC domain without renderer access to SQLite:
 
 - `pi-desktop/notification/list({ unreadOnly?, limit? })`
 - `pi-desktop/notification/markRead({ id })`
 - `pi-desktop/notification/markAllRead()`
 - `pi-desktop/notification/clear()`
 
-渲染器调用
-`pi-desktop/notification/setViewingSession({ sessionId })` 每当聊天时
-页面的活动会话发生变化； `sessionId: null` 清除查看上下文
-非聊天页面。渲染器发起的 `agent/prompt` 也会携带匹配的
-`viewingSessionId` 快照，Electron 会在异步回合初始化之前安装它，
-避免快速完成先于查看上下文更新。Electron 将此提示与 Main 拥有的窗口
-visibility/focus 结合起来，在终态事件边界进行判断。缺失、null 或不匹配的
-上下文都会安全地创建公告。它还调用
-`pi-desktop/notification/showNative({ id, sessionId, title, body, source? })` 之后
-本地化新记录。可选的 `source` 对终端任务结果使用 `"task"`，对 asktool、
-工具权限和 Plan 审批询问使用 `"interactive"`；省略或未知值默认为
-`"task"`。这个仅限 Electron 的请求永远不会进入主机 RPC 域。
+The renderer invokes
+`pi-desktop/notification/setViewingSession({ sessionId })` whenever the chat
+page's active session changes; `sessionId: null` clears the viewing context on
+non-chat pages. A renderer-originated `agent/prompt` also carries a matching
+`viewingSessionId` snapshot, which Electron installs before asynchronous turn
+setup so a fast completion cannot beat the viewing-context update. Electron
+combines this hint with Main-owned window visibility/focus at the terminal event
+boundary. Missing, null, or mismatched context fails safe to notification. It
+also invokes
+`pi-desktop/notification/showNative({ id, sessionId, kind, title, body })` after
+localizing a new record, where `kind` is `"task" | "interactive"`. This
+Electron-only request never crosses into the host RPC domain.
 
 ```ts
 type AppNotification = {
@@ -681,74 +806,89 @@ type SessionsChangedEvent = {
 };
 ```
 
-Main 发送两个事件：
+Main sends two events:
 
-- `session.endTurn` 返回后的 `pi-desktop/notification/event/changed`
-  新插入的记录。 Renderer 将记录合并到其有界本地列表中
-  并重新计算确切的未读计数。最终结果已经可见
-  聚焦的当前聊天、重复的终端更新和中止的回合会发出
-  什么也没有。
-- 用户点击 Electron 后的 `pi-desktop/notification/event/activated`
-  本机系统通知。 Renderer 遵循其现有的会话选择
-  路径，包括项目绑定会话的项目激活。
+- `pi-desktop/notification/event/changed` after `session.endTurn` returns a
+  newly inserted record. Renderer merges the record into its bounded local list
+  and recalculates the exact unread count. A terminal result already visible in
+  the focused current chat, repeated terminal updates, and aborted turns emit
+  nothing.
+- `pi-desktop/notification/event/activated` after the user clicks Electron's
+  native system notification. Renderer follows its existing session-selection
+  path, including project activation for a project-bound session.
 
-插件会话变更成功后还会发送
-`pi-desktop/session/event/changed`。渲染器通过现有的 `refreshSessions()` 链处理
-该宿主事件；插件不发送侧栏事件，跳过的导入也不会发送该事件。
+Plugin-owned session mutations additionally emit
+`pi-desktop/session/event/changed` after a successful write. The renderer
+handles this host-owned event by calling its existing `refreshSessions()` path;
+plugins never send a sidebar event and a skipped import does not emit one.
 
-渲染器 store 的 `refreshSessions()` 会话列表刷新路径在每个 store 实例中，
-同一时间最多执行一个请求。请求执行期间到达的调用合并为一次后续读取；
-相应 Promise 在后续响应写入状态后才完成，
-不会把较早的读取结果当作本次刷新结果。后续读取期间的新调用组成下一批。
-每批只提交一次状态，一批失败不会阻止排队或之后的刷新。导入刷新保留各自
-刷新前的会话基线和项目显示意图，即使较早的普通刷新已观察到导入的会话。
-普通刷新不会获得导入时显示项目的行为，也不会切换当前会话、项目或页面。
-因此，并行插件 worker 的突发通知会持续更新列表，而不会在该刷新路径中发出
-相互重叠的完整列表读取请求。启动初始化和提供商刷新快照仍独立读取。
+Calls to the renderer store's `refreshSessions()` action have at most one
+session-list request in flight per store instance. Calls arriving while that
+request is running share one follow-up request; their promises resolve
+after that later response is committed, rather than accepting the older read.
+Further calls during the follow-up form the next batch. Each batch commits
+once, and a failed batch does not prevent a queued or later refresh. An import
+refresh retains its own pre-refresh session baseline and project-reveal intent,
+even if an earlier ordinary refresh already observed the imported rows.
+Ordinary refreshes do not gain import-reveal behavior or change the current
+session, project, or page. Bursts from parallel plugin workers therefore remain
+current without issuing overlapping full-list reads within this refresh path.
+Bootstrap and provider-refresh snapshots remain independent reads.
 
-Electron 拥有本机表面，而渲染器则派生本地化表面
-结构化记录中的 title/body 文本。 Electron 仅接受 `showNative`
-对于有效的 notification/session 对和受支持的平台 API。`"task"` 源仍然
-只在主窗口未聚焦时投递，以保留“聚焦背景终端任务不弹横幅”的契约。
-`"interactive"` 源仅在其确切会话已在聚焦窗口中可见时抑制，因此聚焦于
-其他会话时仍可收到 ask、权限或 Plan 审批横幅。两种源都会在发出
-`activated` 之前恢复/显示并聚焦窗口。交互询问不会创建持久任务收件箱行；
-计划提醒和插件本机通知仍是独立合约。本机交付是尽力而为；耐用的
-收件箱仍是操作系统抑制横幅时的权威来源。在 Windows 上，
-Electron 主将 `net.aiuo.pi-desktop` 注册为进程 AppUserModelID
-在准备就绪之前和创建任何窗口之前。 ID 与 NSIS 匹配
-包标识所以通知属性、通知设置、任务栏
-分组，安装的快捷方式解析为 `PI-Desktop`，而不是库存
-Electron 主机。
+Electron owns the native surface while the renderer derives localized
+title/body text from the structured record. Electron accepts `showNative` only
+for a valid notification/session pair. For `kind: "task"`, it shows a native
+notification only while the main window is unfocused; for `kind: "interactive"`,
+it preserves the exact-visible-session suppression while allowing a focused
+background session to alert. In both cases the platform API is best-effort,
+and a shown notification restores/shows and focuses the window before emitting
+`activated`. No permission, scheduled-reminder, or plugin source enters the
+task notification contract. Native delivery is best-effort; the durable
+inbox remains authoritative when the OS suppresses a banner. On Windows,
+Electron Main registers `net.aiuo.pi-desktop` as the process AppUserModelID
+before readiness and before any window is created. The ID matches the NSIS
+package identity so notification attribution, notification settings, taskbar
+grouping, and installed shortcuts resolve to `PI-Desktop`, never the stock
+Electron host.
 
-查看会话提示是建议性的和自动防故障的：丢失、陈旧、隐藏或
-未聚焦的渲染器状态会创建持久通知。发生抑制
-仅当主窗口可见且聚焦且报告的聊天会话时
-与收尾阶段相匹配。窗口创建、渲染器重新加载和渲染器
-进程丢失在评估任何后续终端事件之前清除提示。
+The viewing-session hint is advisory and fail-safe: missing, stale, hidden, or
+unfocused renderer state creates the durable notification. Suppression occurs
+only when the main window is visible and focused and the reported chat session
+matches the finishing session. Window creation, renderer reload, and renderer
+process loss clear the hint before any later terminal event is evaluated.
 
-## 7. 会话 API
+## 7. Session API
 
 ```ts
 type SessionSummary = {
  id: string;
  title: string;
+ messageCount: number;
  projectPath?: string;
  modelId?: string;
  providerId?: string;
   mode: "plan" | "goal" | "agent";
- thinkingLevel: ThinkingLevel;
+ thinkingLevel: SessionThinkingLevel;
  supportsReasoning?: boolean;
  supportedThinkingLevels?: ThinkingLevel[];
  updatedAt: string;
  createdAt: string;
 };
 
+type SessionMessageOrigin = {
+ messageId: string;
+ sourceSessionId: string;
+ sourceTitle: string;
+ targetSessionId: string;
+ kind: "task" | "message" | "completion";
+ replyToMessageId?: string;
+};
+
 type UiMessage = {
  id: string;
  role: "user" | "assistant" | "system" | "tool";
  content: string;
- /** 宿主认证的会话协作来源；人类输入没有此字段。 */
+ /** Host-authenticated session collaboration origin; absent for human input. */
  sessionMessage?: SessionMessageOrigin;
  thinking?: string; // assistant reasoning, never folded into content
  usage?: MessageUsage; // provider-reported assistant usage
@@ -767,15 +907,6 @@ type UiMessage = {
  // status/tool fields omitted here
 };
 
-type SessionMessageOrigin = {
- messageId: string;
- sourceSessionId: string;
- sourceTitle: string;
- targetSessionId: string;
- kind: "task" | "message" | "completion";
- replyToMessageId?: string;
-};
-
 type ToolTokenUsage = {
  argumentTokens: number;
  resultTokens: number;
@@ -784,149 +915,244 @@ type ToolTokenUsage = {
 };
 
 type SessionDetail = SessionSummary & {
- messages: UiMessage[];
+  messages: UiMessage[];
+  /** Zero-based start offset when the renderer received a bounded page. */
+  messageStart?: number;
+  /** True when an older page can be requested with session.get. */
+  hasMoreBefore?: boolean;
 };
 ```
 
-Electron 主进程用该会话精确 provider/API URL 与 model 的本地 models.dev
-记录，丰富 session list/get/create/fork/configure 结果中的有效推理能力。
-未固定 `providerId`/`modelId` 的会话仅在此丰富步骤继承应用默认供应商/模型；
-持久化 id 保持为空，以便之后的默认模型变更仍然生效。快照中没有该 ID、或
-会话无法解析出默认目标时，得到 `supportsReasoning: false` 和 `off`；缓存/
-供应商声明不能取代目录语义。Rust 主机仅对持久化的 `thinkingLevel` 权威。
+`messageCount` is the host-authoritative count of messages in the current
+canonical transcript. The renderer uses it to distinguish an empty durable
+session from a session whose title still looks untitled; title text is not a
+session-state signal.
 
-全局插件启动器使用仅 Electron 允许的通道：
+Electron main enriches session list/get/create/fork/configure results with
+effective reasoning capability from the local models.dev record for that
+session's exact provider/API URL and model. Sessions without a pinned
+`providerId`/`modelId` inherit the app default provider/model for this
+enrichment only. Desktop session create writes the then-current default (or an
+explicit Composer draft override) into the durable ids; later default-model
+changes do not rewrite an already created session. A home draft with no session
+still follows the live default. An ID absent from the snapshot, or a session with no resolvable
+default, gets `supportsReasoning: false` and `off`; cached/provider claims do
+not replace catalog semantics. The Rust host remains authoritative only for the
+durable `thinkingLevel`.
 
-- `pi-desktop/pluginLauncher/toggle` 显示或隐藏居中的实用程序窗口
-- `pi-desktop/pluginLauncher/dismiss` 仅在被该窗口调用时才隐藏它
-- `pi-desktop/pluginLauncher/event/shown` 重置其查询，重新加载安装
-  插件，并在每次调用后恢复输入焦点
+The global plugin launcher uses Electron-only allowlisted channels:
 
-启动器重用 `plugin/list` 和 `plugin/openPanel`；它不添加 host-core
-插件 RPC。 Electron主进程还调用了附加宿主方法
-`keyboard.setGlobalShortcut({ binding })` 用于启用仅限 Windows 的回退
-用于保留的 `Alt+Space` 绑定。主机核心发出通知
-`keyboard.shortcut({ binding: "Alt+Space" })` 当其低电平时 Windows
-键盘钩子检测和弦；钩子消耗了那个和弦，所以活动的
-窗口系统菜单打不开。非 Windows 主机将该方法视为
-无操作。 `responseDurationMs` 和 `responseOutputTokens` 是可选的转录本
-元数据保留在消息元数据中，因此协议 v11 和存储架构 v16
-保持不变。
+- `pi-desktop/pluginLauncher/toggle` shows or hides the centered utility window
+- `pi-desktop/pluginLauncher/dismiss` hides it only when invoked by that window
+- `pi-desktop/pluginLauncher/event/shown` resets its query, reloads installed
+  plugins, and restores input focus after every invocation
 
-设置字体选择器（ADR 0083）通过一个仅 Electron 的允许通道读取
-系统已安装字体：
+The launcher reuses `plugin/list` and `plugin/openPanel`; it adds no host-core
+plugin RPC. The Electron main process also calls the additive host method
+`keyboard.setGlobalShortcut({ binding })` to enable the Windows-only fallback
+for the reserved `Alt+Space` binding. Host-core emits the notification
+`keyboard.shortcut({ binding: "Alt+Space" })` when its low-level Windows
+keyboard hook detects the chord; the hook consumes that chord so the active
+window system menu does not open. Non-Windows hosts treat the method as a
+no-op. `responseDurationMs` and `responseOutputTokens` are optional transcript
+  metadata persisted in message metadata, so protocol v11 and storage schema v16
+remain unchanged.
 
-- `pi-desktop/app/systemFonts` 返回 `string[]`，即系统已安装字体的
-  字体系列名称（Electron 主进程使用平台工具——macOS 用
-  `system_profiler`、Windows 用 PowerShell、Linux 用 `fc-list`），
-  去重、排序并排除隐藏的 `.` 前缀字体系列。主进程将结果缓存
-  60 秒；失败时解析为 `[]`。主机 RPC 与协议版本不变。
+The Settings font picker (ADR 0083) reads installed system font families
+through one Electron-only allowlisted channel:
 
-最小接口：
+- `pi-desktop/app/systemFonts` returns `string[]` of installed system font
+  family names (platform tooling in Electron main — `system_profiler` on
+  macOS as the fallback only, with `osascript` JXA bridging the fast CoreText
+  query `CTFontManagerCopyAvailableFontFamilyNames` as the primary path,
+  PowerShell on Windows, `fc-list` on Linux), deduplicated, sorted, with
+  hidden `.`-prefixed families excluded. The main process caches the result
+  for 60 seconds; failures resolve to `[]`. The host RPC and protocol version
+  are unchanged.
+
+Minimal interface:
 
 - `session/list`
 - `session/create`
+- `session/open(sessionId)` — validate and select an existing durable session
+  through the reviewed desktop-control path; it does not create or mutate the
+  session
 - `session/fork({ sessionId, title?, throughMessageId? }) -> { session: SessionDetail }`
-- `session/get`
+- `session/get({ id, messageBefore?, messageAround?, messageLimit?, contentLimit? })` — without
+  read-window options returns the complete UI projection; with them returns a
+  bounded newest/older page plus `messageStart` and `hasMoreBefore`. The
+  content limit applies only to display values and never changes the lossless
+  transcript or model context. `messageBefore` and `messageStart` are physical
+  message-line positions in the transcript file, not deduplicated index counts.
+  `messageAround` centers a bounded read on a stable message ID; it requires
+  `messageLimit` and cannot accompany `messageBefore`. A missing target returns
+  no session. Only the selected user/assistant text bypasses the display cap.
+  Bounded responses also include exclusive `messageEnd` and `hasMoreAfter` for
+  forward paging; reading windows never replace the live transcript cache.
+  A nested target may also return `navigationParent`, the latest capped owning
+  Task `UiMessage`. It is display context outside the physical page, not an
+  extra history line. The renderer shares one reading view between ordinary
+  paging, search navigation, and subagent details.
+- `session/search({ query, offset? }) -> SessionSearchPage` forwards to
+  `search.sessions`; host-core owns discovery, counts, filtering, and pagination.
+- `session/searchContext(SessionSearchContextRequest) -> SessionSearchContext`
+  forwards to `search.context`. This read-only text window is separate from
+  `session/get` and must never enter the renderer's live transcript cache.
+  Both channels are explicitly included in the preload IPC allowlist.
 - `session/delete`
-- `session/rename`
-- `session/importScan`
+- `session/rename({ id, title }) -> { ok: boolean }` trims the title and
+  accepts 1–80 Unicode code points. Blank or overlong titles are rejected as
+  `INVALID_PARAMS`; a successful rename changes only session metadata and does
+  not alter transcript content, message count, or activity timestamps.
+- `session/summarizeTitle({ sessionId, userPrompt, assistantReply? }) ->
+  { title }` validates the session and prompt in Electron main, resolves that
+  session's provider/model, and runs one `thinkingLevel: "off"` one-shot
+  completion. It never writes the title itself; the renderer applies the
+  result through `session/rename` only while the session still has a default or
+  first-prompt fallback title. A one-shot failure leaves that fallback intact.
+- `session/getScratchPath({ sessionId }) -> { path }` returns the session
+  scratch directory `<data_dir>/scratch/<sessionId>/` without creating it.
+- `session/openScratchPath({ sessionId }) -> { ok, path }` resolves that same
+  directory, creates it if missing, and opens it in the system file manager.
+  The renderer supplies only the session id; Main rejects a path outside the
+  scratch root.
+- `session/importScan -> { sessions, truncated? }`
 - `session/importRun(candidates) -> { imported, skipped, failed }`
+- `modelConfig/importScan -> { providers }`
+- `modelConfig/importRun(candidates) -> { imported, skipped, failed }`
 
-导入候选者携带 `projectPath: string | null` 与
-`messageCount: number | null`。扫描对每个源文件全量读取的上限为导入器的
-采样阈值；超过阈值的文件只做采样（头部 + 尾部），使多吉字节归档的扫描
-保持可交互，其 `messageCount` 为 null——导入列表对它渲染破折号，而导入
-后的会话总是在 convert 阶段计算真实的消息数。扫描标题取自第一条真实用户
-消息：已知的合成注入（仓库指令、`# Context from my IDE setup:`、
-`# Browser comments:` 等 IDE 上下文家族）会被跳过，而以 `#` 开头的真实
-粘贴内容予以保留。损坏或越界的存储时间戳回退到源文件的 mtime，绝不回退
-到导入时刻。导入成功
-刷新会话和持久项目索引。
+Import candidates carry `projectPath: string | null` and
+`messageCount: number | null`. A scan reads each source file fully up to the
+importer's sampled-scan threshold; larger files are sampled (head + tail) so
+scanning a multi-gigabyte archive stays interactive, and their `messageCount`
+is null — the import list renders an em dash for it, while imported sessions
+always compute their real message count at convert time. Codex discovery also
+caps traversal at 250 session files, walking `YYYY/MM/DD` paths newest-first
+(path date, not `updatedAt`). Hitting that cap sets `truncated.codex` to 250
+so the renderer can say the list is incomplete. Scan titles come
+from the first real user message: known synthetic injections (repo
+instructions, the IDE-context family such as `# Context from my IDE setup:`
+or `# Browser comments:`) are skipped, while pasted markdown starting with
+`#` is kept. A corrupt or out-of-range stored timestamp falls back to the
+source file's mtime, never to the import moment. A successful import
+refreshes both sessions and the durable Projects index.
 
-重新生成或编辑重发会在追加新的用户回合前截断持久转录本。`agent/prompt`
-接受 `truncateFromMessageId`，并转交给主机拥有的 `session.truncateFrom`；
-未知 id 以 `NOT_FOUND` 拒绝。保留前缀不再经过 JSON-RPC（ADR 0216 / issue #211）。
-`agent/prompt` 自身只为启动配置做有界 `session.get`。
 
-`session/fork` 是一个协议 v5 通道，可创建独立的
-来自源会话当前活动记录的会话。当可选时
-`throughMessageId` 存在，复制的快照以该消息结束；一个
-未知 ID 返回 `NOT_FOUND`。 Electron 拒绝
-当该源会话处于活动状态时，使用 `AGENT_BUSY` 发出请求。
-Electron拥有本地化并提供面向用户的分支名称；主机
-后备标题是为非 UI 调用者保留的。
-主机分配新的会话 ID、消息 ID 和工具调用 ID；它复制
-耐用的 project/provider/model/mode/thinking/permission 配置，但是
-不复制回合、通知、工件、暂存数据、权限
-授予，或重新生成修订。源会话保持不变。
-消息范围的助手 Fork/Edit 使用此选项，以便子进程收到
-新的会话 ID，因此无法重用或改变源 pi 运行时或
-它的提供商缓存。
+`modelConfig/importScan` reads Claude Code, Codex, OpenCode, Pi, and CC
+Switch config files from the user home directory and returns public provider drafts
+(`source`, `externalId`, `name`, `baseUrl`, `apiStyle`, `modelIds`,
+`hasSecret`). Secrets stay in the main-process scan cache and are written
+through `providers.create` on `modelConfig/importRun`. Re-importing a
+matching endpoint, API style, and credential is skipped; a different
+credential at the same endpoint remains independent. OAuth tokens from those
+tools are never copied. No host protocol or storage schema version bump.
 
-协议版本 9 添加检查点 Plan 合约：`SubmitPlan`，唯一
-`.pi/plan/*.md` 工件元数据、approve/reject-only 响应、绝对
-到期、`plan_approvals` 执行字段、shell catalog/identity 字段以及
-直播 stdout/stderr 事件。 v7 或更旧的主机，以及任何不兼容的 v8
-对等方，握手必须失败，以便桌面无法静默显示 Plan
-丢失工件、队列、shell 或策略边界。
-`pi-desktop/agent/compact` 和 `session.appendCompaction` 仍然是 v9 的一部分
-合同。 Goal 合约在 v9 (**D198**) 中是附加的：`kind` 是可选的
-在线且缺席意味着 `plan`，因此早于 Goal 的对等点继续工作
-并且根本不进行谈判。
+A regenerate or edit-resend truncates the durable transcript before appending
+its new user turn. `agent/prompt` accepts `truncateFromMessageId` — the identity
+of the first message to drop — and forwards it to host-owned
+`session.truncateFrom`, which resolves that identity against its own
+transcript; an unresolvable id is rejected with `NOT_FOUND` rather than cutting
+at a guessed position. The kept prefix never crosses the JSON-RPC pipe
+(ADR 0216 / issue #211). The older `truncateBefore` count remains accepted, but it
+is only correct when the caller holds the entire history: a renderer showing a
+bounded window addresses different messages than the transcript does.
+`agent/prompt` itself loads only a bounded `session.get` for launch
+configuration.
 
-协议版本 2 添加了 `thinkingLevel`、`UiMessage.thinking` 和
-`message_update.deltaThinking`。 v1 对等方必须通过版本检查
-默默地丢弃这些字段。
 
-`UiMessage.error` 是可选的附加字段。提供商失败附加
-生命周期 `error` 事件携带的相同标准化 `AppError`
-`message_end` 之前的助理消息。错误消息仍然存在
-转录本，但被排除在恢复的模型上下文之外。
+`session/fork` is a protocol-v5 channel that creates an independent
+session from the source session's current active transcript. When optional
+`throughMessageId` is present, the copied snapshot ends at that message; an
+unknown id returns `NOT_FOUND`. Electron rejects
+the request with `AGENT_BUSY` while that source session has an active turn.
+Electron owns localization and supplies the user-facing branch title; the host
+fallback title is reserved for non-UI callers.
+The host assigns a new session id, message ids, and tool-call ids; it copies
+the durable project/provider/model/mode/thinking/permission configuration but
+does not copy turns, notifications, artifacts, scratch data, permission
+grants, or regenerate revisions. The source session remains unchanged.
+Message-scoped assistant Fork/Edit uses this option so the child receives a
+new session id and therefore cannot reuse or mutate the source pi runtime or
+its provider cache.
 
-上下文检查器消耗两个附加使用信号。 `MessageUsage` 是
-提供商报告的助理使用情况，`responseDurationMs` 是已用时间
-sidecar 用于显示每秒输出令牌的流时间。 `ToolTokenUsage`
-是根据工具调用参数和结果估计的运行时间；提供商不
-报告每个工具的分配，因此渲染器将这些行标记为估计值并
-永远不会将它们合并到确切的提供商总数中。年长的同行可能会忽略所有
-这些可选字段不会破坏 v6 握手。
+Protocol version 9 adds the checkpoint Plan contract: `SubmitPlan`, unique
+`.pi/plan/*.md` artifact metadata, approve/reject-only responses, absolute
+expiry, `plan_approvals` execution fields, shell catalog/identity fields, and
+streamed stdout/stderr events. A v7 or older host, and any incompatible v8
+peer, must fail the handshake so a desktop cannot display Plan while silently
+losing the artifact, queue, shell, or policy boundary.
+`pi-desktop/agent/compact` and `session.appendCompaction` remain part of the v9
+contract. The Goal contract is additive inside v9 (**D198**): `kind` is optional
+on the wire and absent means `plan`, so a peer that predates Goal keeps working
+and simply never negotiates one.
+
+Protocol version 2 adds `thinkingLevel`, `UiMessage.thinking`, and
+`message_update.deltaThinking`. A v1 peer must fail the version check instead
+of silently discarding these fields.
+
+`UiMessage.error` is an optional additive field. Provider failures attach the
+same normalized `AppError` carried by the lifecycle `error` event to the
+assistant message before `message_end`. Error messages persist with the
+transcript but are excluded from restored model context.
+
+The context inspector consumes two additive usage signals. `MessageUsage` is
+the provider-reported assistant usage and `responseDurationMs` is the elapsed
+sidecar stream time used to display output tokens per second. `ToolTokenUsage`
+is a runtime estimate from the tool call arguments and result; providers do not
+report per-tool allocation, so the renderer labels these rows as estimates and
+never merges them into the exact provider total. Older peers may omit all of
+these optional fields without breaking the v6 handshake.
+
+`turn_end.subagentUsage` is the settled subagent total since the previous
+emitted `turn_end` of the same durable turn. Parent `message.usage` stays the
+provider-reported assistant usage (D103). Electron sums parent-message usages
+plus `subagentUsage` into `session.endTurn.usage`.
 
 ### stats
 
 - `pi-desktop/stats/getTokenUsageHistory({ startDate?, endDate?, bucket? }) -> TokenUsageHistoryResult`
 
-`bucket` 取 `day` | `week` | `month`。省略日期时使用主机默认窗口
-（53 周 / 52 周 / 24 个月），按主机本地日历计算。`week` 的键使用 ISO 周年
-（`%G-W%V`）。结果会填充范围内的空桶。此通道不是设置页面；面向用户的仪表板
-是插件 `pi.token-insights`（D335 / ADR 0173）。
+`bucket` is `day` | `week` | `month`. Omitted dates use the host default window
+(53 weeks / 52 weeks / 24 months) in the host's local calendar. `week` keys use
+ISO week year (`%G-W%V`). The result fills empty buckets in range. This channel
+is not a Settings page; the user-facing dashboard is plugin `pi.token-insights`
+(D335 / ADR 0173).
 
-## 8. 设置/秘密 API
+## 8. Settings / Secrets API
 
 ### settings
-可以返回到UI的非敏感配置：
+Non-sensitive config that can be returned to the UI:
 
-- 提供商列表（无秘密明文）
-- 默认模型
-- 从主机 shell 目录中保留 `defaultCommandShell`
-- 持久化的 `largePasteThreshold`（大段纯文本 Composer 粘贴使用）；主机将缺失值
-  读取为 600，并接受 1 至 1,000,000 的整数
-- 权限策略切换
-- UI 首选项，包括可选的 `AppSettings.keybindings` 覆盖键控
-  通过共享快捷操作 ID；值可以是 `null` 或便携式 `Mod+Shift+Key` 字符串，
-  不包含特定于平台的本机加速器字符串。缺少属性使用平台默认值，`null` 表示
-  明确禁用（未绑定）
-- 可选的 `AppSettings.developerMode`；缺席和 `false` 均保留开发人员
-  工具已禁用
+- provider list (without secret plaintext)
+- default model
+- persisted `defaultCommandShell` from the host shell catalog
+- persisted `largePasteThreshold` for oversized text-only composer pastes;
+  host reads missing values as 600 and accepts integers from 1 through 1,000,000
+- permission policy toggles
+- UI preferences, including optional `AppSettings.keybindings` overrides keyed
+  by the shared shortcut action ids; values are either `null` or portable
+  `Mod+Shift+Key` strings and contain no platform-specific native accelerator
+  strings. A missing entry uses the platform default, while `null` is an
+  explicit disabled/Unbound state
+- optional `AppSettings.developerMode`; absent and `false` both keep developer
+  tools disabled
+- optional `AppSettings.networkProxy` (`system` / `direct` / `custom` plus a
+  proxy URL and bypass list). Absent means System. Custom accepts `http`,
+  `https`, `socks5`, and `socks5h` URLs, including userinfo. Main applies
+  Chromium `session.setProxy` (credentialed URLs through a loopback SOCKS5
+  relay; issue #490) and Node env immediately; the agent sidecar is
+  reconfigured without a process restart. `pi-desktop/network/testProxy`
+  runs one bounded Chromium fetch through the supplied config and does not
+  persist it.
 
-`settings.set` 接受部分设置对象。提供主机核心合并
-字段写入存储的应用程序设置，因此省略字段，包括
-`defaultCommandShell`，均保留。只有传入的shell字段才是shell
-已验证；空闲的 Plan/configuration 门仅在其有效 shell 时运行
-会改变的。当前有效的无关写入和幂等写入
-当工作正在进行时，shell 仍然被接受。遗产
-`planApprovalPermissionMode` 被忽略并从当前读取中剥离，
-写道；它不会被暴露或重新创建。
+`settings.set` accepts a partial settings object. Host-core merges supplied
+fields into the stored app settings, so omitted fields, including
+`defaultCommandShell`, are preserved. Only an incoming shell field is shell
+validated; the idle Plan/configuration gate runs only when its effective shell
+would change. Unrelated writes and idempotent writes of the current effective
+shell remain accepted while work is active. Legacy
+`planApprovalPermissionMode` is ignored and stripped from current reads and
+writes; it is not exposed or recreated.
 
 ### shell
 
@@ -954,42 +1180,44 @@ type CommandShellCatalog = {
 };
 ```
 
-预加载方法：
+Preload methods:
 
 - `pi-desktop/commandShell/list() -> CommandShellCatalog`
 - `pi-desktop/settings/set({ defaultCommandShell }) -> { ok: true }`
 
-设置 shell 写入仅接受当前平台的可用 ID，并且
-拒绝未知、不可用或错误的平台 ID。真正有效的外壳
-仅当所有会话和 Plan/Goal 工作空闲时才接受更改。如果一个
-持久化 ID 稍后变得不可用，目录选择第一个可用的
-平台外壳并设置 `fallback: true`；如果没有可用的选择，则 Bash
-返回 `SHELL_NOT_FOUND`。
-每回合固定有效 ID 和方言。运行时传输这两个值；
-主机在权限评估之前和生成之前拒绝更改的引脚
-`COMMAND_SHELL_CHANGED`。
+Settings shell writes accept only an available ID for the current platform and
+reject unknown, unavailable, or wrong-platform IDs. A genuine effective shell
+change is accepted only while all sessions and Plan/Goal work are idle. If a
+persisted ID later becomes unavailable, the catalog selects the first available
+platform shell and sets `fallback: true`; if no choice is available, Bash
+returns `SHELL_NOT_FOUND`.
+Each turn pins the effective ID and dialect. The runtime transports both values;
+host rejects a changed pin before permission evaluation and before spawn with
+`COMMAND_SHELL_CHANGED`.
 
 ### secrets
 - `secrets/set(providerId, apiKey)`
 - `secrets/delete(providerId)`
 - `secrets/has(providerId) -> boolean`
 
-禁止：
-- 将完整的 API 密钥写入普通日志
-- 在渲染器中长期保留 API 密钥明文
+Forbidden:
+- Writing the full API key into ordinary logs
+- Holding API key plaintext long-term in the renderer
 
-### 厂商账户（OAuth，D237/D240）
+### vendor accounts (OAuth, D237/D240)
 
-用厂商订阅账户登录是 Electron 主进程内的会话，因此只走 IPC —— 主机协议
-版本不变。五条调用通道加一条事件通道：
+Signing in with a vendor subscription is an Electron-main conversation, so it
+uses IPC only — the host protocol version is unchanged. Five invoke channels
+plus one event channel:
 
 - `pi-desktop/providers/oauth/vendors() -> { vendors: OAuthVendor[] }`
 - `pi-desktop/providers/oauth/start({ vendorId }) -> { loginId }`
-- `pi-desktop/providers/oauth/respond({ loginId, promptId, value? })` ——
-  不带 `value` 表示取消该提问，从而中止整个流程
+- `pi-desktop/providers/oauth/respond({ loginId, promptId, value? })` — an
+  absent `value` cancels that prompt, which aborts the flow
 - `pi-desktop/providers/oauth/cancel({ loginId }) -> { ok: boolean }`
-- `pi-desktop/providers/oauth/logout({ vendorId }) -> { ok: true }`
-- `pi-desktop/providers/oauth/event` 推送 `OAuthLoginEvent`
+- `pi-desktop/providers/oauth/delete({ providerId }) -> { ok: true }` deletes
+  one OAuth account's provider row and its scoped credential
+- `pi-desktop/providers/oauth/event` streams `OAuthLoginEvent`
 
 ```ts
 type OAuthLoginEvent = { loginId: string; vendorId: string } & (
@@ -1006,39 +1234,58 @@ type OAuthLoginEvent = { loginId: string; vendorId: string } & (
 );
 ```
 
-流程可能在 `start` 回复之前就抛出第一个事件 —— OpenAI Codex 在登录开始的
-同一个 tick 里就询问「浏览器还是设备码」—— 因此渲染层必须**先**订阅事件通道
-再调用 `start`，把 `loginId` 未知期间到达的事件暂存下来，等回复到达后按序
-放行匹配的那些。回复之后才订阅会丢掉第一个提问，流程便会一直等待一个从未
-显示给用户的问题。
+A flow may raise its first event before `start` has replied — OpenAI Codex
+asks browser-or-device-code in the same tick the login begins — so the renderer
+must subscribe to the event channel *before* it invokes `start`, hold what
+arrives while `loginId` is unknown, and release the matching events in order
+once the reply lands. Subscribing after the reply drops that first prompt and
+the flow waits forever on a question nobody was shown.
 
-`start` 每次尝试还必须**只调用一次**，且发自用户操作而非 React effect ——
-StrictMode 会在挂载时把 effect 跑两遍，第二次尝试会再开一个浏览器，并与第一次
-争抢同一个本地回调端口。渲染层的会话对象保留它已投递的全部事件，并向后来的
-订阅者重放，因此对话框可以挂载、卸载、再挂载而不会重启任何东西。主进程从自己
-一侧守同一条不变量：对某厂商发起 `start` 时，若该厂商仍有尝试在飞行中，先取消
-它并等它完全收尾，再开始新的一次。
+`start` must also be called exactly once per attempt, from a user action rather
+than from a React effect — StrictMode runs an effect twice on mount, and a
+second attempt opens a second browser and contends for the same local callback
+port. The renderer's session object keeps every event it has delivered and
+replays it to a later subscriber, so a dialog may mount, unmount and mount
+again without restarting anything. Main defends the same invariant from its
+side: a `start` for a vendor whose attempt is still in flight cancels that
+attempt and waits for it to unwind before beginning the next one.
 
-所有登录形态 —— 浏览器回调、设备码、手动贴码、厂商选项 —— 都走这一条
-事件流，因此渲染层只渲染收到的内容，而不按厂商分支。`opened: false` 表示
-浏览器无法启动，用户需要自己复制链接。`promptCancelled` 表示流程自己回答了
-某个提问（回调赶在了贴码框前面），因此输入框必须自行消失。
+Every flow shape — browser callback, device code, a pasted code, a vendor
+choice — travels this one stream, so the renderer renders what arrived instead
+of branching per vendor. `opened: false` means the browser could not be
+launched and the user must copy the link. `promptCancelled` means the flow
+answered a question itself (a callback that beat the paste box), so the input
+must disappear on its own.
 
-同样禁止：任何事件都不携带令牌、刷新令牌或授权码。`accountLabel` 只是
-展示字符串。
+Forbidden here as well: no event carries a token, a refresh token, or an
+authorization code. `accountLabel` is a display string.
 
-## 9. 项目 API
+## 9. Project API
 
-- `project/open()`：系统目录选择器
-- `project/clone({ url })`：选择父目录，将 URL `git clone` 进去，并返回克隆后的工作区（由渲染器激活）
-- `project/cloneCheckout({ url, parentPath })`：将公共远程 `git clone` 到显式指定的父目录，返回 `{ path, name }`，不更改当前工作空间；新建项目对话框先用它克隆，再创建逻辑项目组
-- `project/openFolder(path)`：打开系统文件中已知的项目目录
-- `project/get()`：当前工作空间
-- `project/list()`：持久的项目记录，包括导入创建的条目
-- `project/set(path)`：设置工作空间
+- `project/open()`: system directory picker
+- `project/pickFolders()`: multi-select directory picker used by the
+  renderer-owned Create project dialog; returns selected absolute paths without
+  changing the active workspace
+- `project/clone({ url })`: pick a parent directory, `git clone` the URL into
+  it, and return the cloned workspace (the renderer then activates it)
+- `project/cloneCheckout({ url, parentPath })`: `git clone` a public remote
+  into an explicit parent folder and return `{ path, name }` without changing
+  the active workspace; the Create project dialog uses it before it creates the
+  logical project group
+- `project/openFolder(path)`: open a known project directory in the system file
+  manager
+- `project/get()`: current workspace
+- `project/list()`: durable project records, including import-created entries
+- `project/memory/get(path)`: read the host-owned memory for a canonical project
+  path
+- `project/memory/save(path, entries)`: replace that project's durable memory
+  entries; the host derives a readable `content` value, caps it at 32 KiB, and
+  uses it as context in the next session launch. Legacy callers may still save
+  plain `content`.
+- `project/set(path)`: set workspace
 - `project/clear()`
 
-返回：
+Returns:
 
 ```ts
 type ProjectWorkspace = {
@@ -1054,15 +1301,27 @@ type ProjectRecord = {
  createdAt: number;
  lastOpenedAt: number;
 };
+
+type ProjectMemory = {
+ content: string;
+ entries?: ProjectMemoryEntry[];
+ updatedAt?: number;
+};
+
+type ProjectMemoryEntry = {
+ id: string;
+ title: string;
+ content: string;
+};
 ```
 
-## 10. 工具权限 API
+## 10. Tool Permission API
 
-当工具需要确认时：
+When a tool requires confirmation:
 
-1.主发送`tool_permission_request`
-2. UI显示确认卡
-3.UI调用`tool/resolvePermission`
+1. main sends `tool_permission_request`
+2. UI shows a confirmation card
+3. UI calls `tool/resolvePermission`
 
 ```ts
 type ToolPermissionRequest = {
@@ -1085,60 +1344,60 @@ type ToolPermissionResolution = {
 };
 ```
 
-一旦运行并行子代理，一个会话就可以容纳多个打开的请求。
-渲染器按会话对它们进行排队，并首先回答最旧的；决议
-合约未更改，因为它已由 `requestId` 键入
-（`04-ux/03-permission-ux.md` §6a）。
+A session can hold more than one open request once it runs parallel subagents.
+The renderer queues them per session and answers the oldest first; the resolution
+contract is unchanged, because it was already keyed by `requestId`
+(`04-ux/03-permission-ux.md` §6a).
 
-Plan 不会取代此通用许可合同。 Plan `Bash` 调用
-使用正常的会话范围权限流：`ask` 和 `accept-edits` 发出
-工具权限请求，而 `auto` 执行时无需确认。 Plan
-批准是一个单独的状态转换，并且始终使用 `plan` 方法
-上面。
+Plan does not replace this generic permission contract. A Plan `Bash` call
+uses the normal session-scoped permission flow: `ask` and `accept-edits` emit a
+tool permission request, while `auto` executes without confirmation. Plan
+approval is a separate state transition and always uses the `plan` methods
+above.
 
-## 11. 版本兼容性
+## 11. Version Compatibility
 
-- IPC/host 合约版本字段：`protocolVersion: 10`
-- 重大更改必须提升版本并记录 ADR
-- 渲染器和主程序在启动时验证版本；不匹配时，提示 upgrade/reinstall
-- 协议 v4 增加了通知记录、通道和
-  带有通知的 `session.endTurn` 结果。 v3 对等点被拒绝
-  而不是默默地丢失持久的 completion/failure 事件。
-- 可选的查看会话调用和 `createNotification` 结束回合字段
-  是附加的 v4 行为。年长的调用者省略该字段并保留
-  创建通知的故障安全默认值。
-- 协议 v5 添加了所需的 `session/fork` 快照操作。 v4 对等点是
-  在聊天变得交互之前被拒绝而不是公开分支
-  只能在调用时失败的命令 (ADR 0023)。
-- 协议 v6 添加了持久上下文检查点以及 manual/lifecycle
-  渠道。 v5 对等点被拒绝，因为默默地忽略检查点可能会导致
-  使下一个提供商请求不安全（ADR 0030）。
-- 协议 v9 取代了早期的 v7 Plan 合约。它添加了 `SubmitPlan`，
-  精确独特的工件元数据，approve/reject-only 分辨率，30 分钟
-  绝对到期、`plan_approvals` 执行状态、shell 选择和
-  固定 ID/dialect，并流式传输命令输出。 v7/v8 对等点被拒绝
-  在 UI 变得交互式之前，因为它无法强制或表示这一点
-  边界（ADR 0053/0054）。 `SubmitGoal` 和可选的 `kind` 鉴别器
-  在 v9 中运行，不需要版本冲突，因为缺少 `kind` 是
-  正是目标前的行为。
+- IPC/host contract version field: `protocolVersion: 11`
+- Breaking changes must bump the version and record an ADR
+- renderer and main validate the version at startup; on mismatch, prompt to upgrade/reinstall
+- Protocol v4 adds notification records, channels, and the
+  notification-bearing `session.endTurn` result. A v3 peer is rejected rather
+  than silently losing durable completion/failure events.
+- The optional viewing-session invoke and `createNotification` end-turn field
+  are additive v4 behavior. Older callers omit the field and retain the
+  fail-safe default of creating notifications.
+- Protocol v5 adds the required `session/fork` snapshot operation. A v4 peer is
+  rejected before chat becomes interactive instead of exposing a branch
+  command that can only fail at invocation time (ADR 0023).
+- Protocol v6 added durable context checkpoints plus the manual/lifecycle
+  channels. A v5 peer is rejected because silently omitting a checkpoint can
+  make the next provider request unsafe (ADR 0030).
+- Protocol v9 supersedes the earlier v7 Plan contract. It adds `SubmitPlan`,
+  exact unique artifact metadata, approve/reject-only resolution, 30-minute
+  absolute expiry, `plan_approvals` execution states, shell selection and
+  pinned ID/dialect, and streamed command output. A v7/v8 peer is rejected
+  before the UI becomes interactive because it cannot enforce or represent this
+  boundary (ADR 0053/0054). `SubmitGoal` and the optional `kind` discriminator
+  ride along inside v9 and need no version bump, because an absent `kind` is
+  exactly the pre-Goal behavior.
 
-## 12. 插件 API（主机 UI 端）
+## 12. Plugin API (host UI side)
 
-最小接口：
+Minimal interface:
 
 - `plugin/list`
 - `plugin/loadDev(path)`
-- `plugin/reload(id)` — 从其存储中重新加载已注册的开发插件
-  路径并刷新其权限上限
+- `plugin/reload(id)` — reload a registered development plugin from its stored
+  path and refresh its permission ceiling
 - `plugin/installFromPath(path)`
 - `plugin/enable(id)`
 - `plugin/disable(id)`
 - `plugin/uninstall(id)`
 - `plugin/getPermissions(id)`
-- `plugin/setPermission(id, permission, allowed)`（可选细粒度）
+- `plugin/setPermission(id, permission, allowed)` (optional fine-grained)
 - `plugin/setScope(id, scope)` (D192)
 
-返回摘要：
+Returned summary:
 
 ```ts
 type PluginSummary = {
@@ -1154,24 +1413,47 @@ type PluginSummary = {
 }
 ```
 
-## 12a. 用户 MCP 服务器 API (D193)
+## 12a. User MCP server API (D193)
 
-用户拥有的 MCP 配置按 ID 写入以下目录中的单个 JSON 文件：
-`~/.agents/servers/<id>.json` 或 `<project>/.agents/servers/<id>.json`。
-启用状态不写入这些文件，而是存放在应用本地的
-`<data>/agent-capabilities/mcp.json`。
+User-owned MCP configuration is stored as one JSON file per id under
+`~/.agents/servers/<id>.json` or `<project>/.agents/servers/<id>.json`.
+Enablement is not written to those files; host-core stores it in the
+application-local `<data>/agent-capabilities/mcp.json` state file.
 
 - `mcp.list({ level, projectPath? })` → `{ servers: McpServerRecord[]; statuses: McpServerStatus[] }`
-- `mcp.active({ projectPath? })` → 当前项目的有效运行时列表
-- `mcp.upsert(server)` — 在请求的级别创建或替换文件
+- `mcp.active({ projectPath? })` → the effective runtime list
+- `mcp.upsert(server)` — creates or replaces the file at the requested level
 - `mcp.remove({ id, level, projectPath? })`
 - `mcp.setEnabled({ id, enabled, level, projectPath? })`
-- `mcp.setScope` 保留为兼容形状；设置页改用显式能力级别和本地状态
+- `mcp.setScope` remains a compatibility-shaped call; the Settings page uses
+  the explicit capability level and local state instead
 
-项目级请求缺少 `projectPath` 时无效。`mcp.active` 会先按 ID 或不区分大小写
-的 label 让项目记录遮蔽全局记录，再过滤关闭项；因此关闭的项目记录仍然会
-遮蔽全局项。仅桌面的 `mcp/test` IPC 操作用于强制连接测试，并把状态返回
-MCP 编辑器。
+A project-level request without `projectPath` is invalid. `mcp.active` removes
+project records from the global set by id or case-insensitive label before it
+filters disabled records, so a disabled project record still shadows a global
+one. The desktop-only `mcp/test` IPC action forces one connection test and
+returns its status to the MCP editor.
+
+Desktop-only channels scan configuration written by other agent tools on the
+same machine — Claude Desktop (`claude_desktop_config.json` on macOS, Windows
+and Linux), Claude Code (`~/.claude.json` and `~/.claude/settings.json` merged),
+Cursor global and per-project `mcp.json`, Codex (`~/.codex/config.toml`
+`[mcp_servers.*]`), opencode (`~/.config/opencode/opencode.json` `mcp` map) —
+so the user can review and batch-import into this app's MCP list. ChatGPT
+desktop is listed as a placeholder because it has no public configuration path
+yet.
+
+- `pi-desktop/mcp/importScan` — `{ projectPath? }` →
+  `{ candidates: ExternalMcpCandidate[], sources: ExternalMcpSourceReport[] }`.
+  Missing files, ENOENT and parse errors surface on `sources[].error`; one bad
+  source never fails the scan. Per-source de-duplication keeps the cross-source
+  copies so the user can pick which install to import.
+- `pi-desktop/mcp/importRun` — `{ items: ExternalMcpImportItem[] }` →
+  `{ imported, skipped, failed }`. Main calls `mcp.upsert` once per item,
+  omitting `disabled` from the server payload and following up with
+  `mcp.setEnabled({ enabled: false })` when the source marked the server
+  disabled. One failure never blocks the rest; conflicts land in `skipped`
+  and every other error lands in `failed`.
 
 ```ts
 type McpServerStatus = {
@@ -1184,56 +1466,109 @@ type McpServerStatus = {
 }
 ```
 
-工具以 `mcp_<serverId>_<toolName>` 的形式到达代理，与插件桥的
-`plugin_` 命名空间分离 (D015)。
+Tools reach the agent as `mcp_<serverId>_<toolName>`, disjoint from the plugin
+bridge's `plugin_` namespace (D015).
 
-## 12b. 用户技能 API (D194)
+## 12b. User skill API (D194)
 
-用户技能是从 `~/.agents/skills` 和 `<project>/.agents/skills` 扫描的 Markdown
-文档，同时接受直接 Markdown 文件和约定的 `<skill>/SKILL.md` 形状。启用状态
-位于 `<data>/agent-capabilities/skills.json`，绝不写回技能文档。目录 id 是
-ASCII slug：frontmatter `name` 能 slugify 时用它，否则 `SKILL.md` 用技能目录名
-（不是 `Downloads` 这类暂存目录），再否则用稳定的 `skill-<hash>`，这样非 ASCII
-标题仍会被列入。折叠 YAML `description: >` / `|` 会展平进目录里的一行摘要。
+User skills are Markdown documents scanned from `~/.agents/skills` and
+`<project>/.agents/skills`. Both direct Markdown files and the conventional
+`<skill>/SKILL.md` shape are accepted. Enablement is stored in
+`<data>/agent-capabilities/skills.json`, never in the document. Catalog ids
+are ASCII slugs: the frontmatter `name` when it slugifies, otherwise the
+skill directory name for `SKILL.md` (not a staging folder such as
+`Downloads`), otherwise a stable `skill-<hash>` so a non-ASCII title is still
+listed. Folded YAML `description: >` / `|` blocks flatten into the catalog
+one-liner.
 
 - `skills.list({ level, projectPath? })` → `{ skills: UserSkillRecord[] }`
-- `skills.active({ projectPath? })` → 当前项目的有效运行时列表
+- `skills.active({ projectPath? })` → the effective runtime list
 - `skills.create(skill)`
-- `skills.import({ path, level, projectPath? })` — 将一个源文件物理复制到选定的
-  `.agents/skills` 目录
+- `skills.import({ path, level, projectPath?, shape?, mode?, id?, name?, description? })`
+  — imports one Markdown skill. `shape` is `"file"` (default when `path` is a
+  regular file) or `"dir"` (Anthropic-style `<name>/SKILL.md` plus resources).
+  `mode` is `"copy"` (default, byte-for-byte replica so a moved or deleted
+  source cannot break the skill) or `"link"` (symlink so external edits appear
+  on the next scan; `SKILL_INVALID` if the OS or file system refuses a symlink).
 - `skills.update({ id, ...skill })`
 - `skills.read({ id, level?, projectPath? })` → `{ skill, body }`
 - `skills.remove({ id, level?, projectPath? })`
 - `skills.setEnabled({ id, enabled, level, projectPath? })`
 
-列表包含由 frontmatter 得出的 `name` 和 `description`，不包含正文。只有描述
-进入提示，模型调用 `Skill` 时才读取正文 (D174)。缺失文件会在下一次扫描时
-从列表移除，并清理其本地状态。
+The list contains frontmatter-derived `name` and `description`, not the body.
+Only the description enters the prompt, and the body is fetched when the model
+invokes `Skill` (D174). A missing file is removed from the list and its local
+state is pruned during the next scan.
 
-桌面专用技能市场通道（不是 host RPC）走 Electron IPC：
+Desktop-only channels scan skill folders written by other agent tools on this
+machine — `~/.claude/skills/`, `<project>/.claude/skills/`, and the app's own
+`~/.agents/skills/` (or `PI_DESKTOP_AGENTS_DIR/skills/`) plus its project
+equivalent — so the user can review candidates and batch-import them. Both the
+single-file (`<id>.md`) and Anthropic-style directory (`<name>/SKILL.md`)
+shapes are detected.
+
+- `pi-desktop/skill/importScan` — `{ projectPath? }` →
+  `{ candidates: ExternalSkillCandidate[], sources: ExternalSkillSourceReport[] }`.
+  Missing directories and read errors surface on `sources[].error`; one failing
+  source never aborts the scan. Candidates from `~/.agents/skills/` carry an
+  "already in current registry" warning so the UI can filter or highlight them.
+- `pi-desktop/skill/importRun` — `{ level, projectPath?, mode?, items }` →
+  `{ imported, skipped, failed }`. Main calls `skills.import` once per item,
+  passing `path = shape==="dir" ? rootDir : sourcePath` and forwarding `mode`
+  and per-item `id`/`name`/`description`. A conflict lands in `skipped` and
+  every other error lands in `failed`; one failure never blocks the rest. Batch
+  import is still bounded by `MAX_SKILLS` (128 per level).
+
+Desktop-only skill market channels (not host RPC) live on Electron IPC:
 
 - `pi-desktop/skill/market/search` — `{ query, sources[] }` →
-  `{ entries, failedSources, failureKinds, failureDetails }`。
-  主进程聚合目录 JSON 与 GitHub 仓库 SKILL.md 扫描。源 URL 必须通过公网 HTTPS 策略（ADR 0243）。单源失败只丢掉该源。
-  `failureKinds` 把 `failedSources` 中的每个名字映射到 `policy`（守卫判定了目标自身的非公网地址并拒绝）、`fake-ip`（判定的是本地代理伪造的 fake-IP 占位地址,如 Clash 默认的 `198.18.0.0/15`；在直连或读不出线路时仍被拒绝,因为守卫在那里失败关闭、这个应用会自己去连该地址,但这是本地网络的状况而不是源的问题）、`unresolved`（本地 DNS 解析没有返回答案,因此没有判定任何地址）或 `network`。`failureDetails` 以同样的键携带真正失败的主机、解析到的地址、守卫自己的 `reason`、地址类别以及判定该地址的线路（`proxied`、`direct`,或传输层读不出线路时的 `unknown`,ADR 0272）；面板据此说明**被拒的是什么**（例如「代理把 github.com 应答为 198.18.0.1」）,而不只是哪个源没出结果。
-  判定型拒绝与 fake-IP 拒绝都以 `NETWORK_POLICY_BLOCKED` 暴露（两者都是守卫作出的拒绝）,解析器无应答以 `NETWORK_RESOLVE_FAILED` 暴露（spec 08 §3.1）；安装面板正是按这些错误码与结构化 `reason` 分类。
-- `pi-desktop/skill/market/fetch` — `{ entry }` → `{ name?, description?, body, resources? }`。
-  主进程按同一策略拉取文档、拆 frontmatter，并可能附上 jsDelivr 目录中的兄弟 `.md`。渲染层通过现有 `skills.create` 安装。该策略即主进程公网网络客户端：语法 URL 防护、按承载 `net.fetch` 的会话线路判定的逐跳 DNS 分类（ADR 0272）、逐跳重定向复核与响应上限——渲染层绝不直接触网。目录 id 会净化为 host `valid_capability_id`。
+  `{ entries, failedSources, failureKinds, failureDetails }`. Main aggregates
+  builtin-safe catalog JSON and GitHub repo SKILL.md scans. Source URLs must pass
+  the public-HTTPS policy (ADR 0243). One failing source is dropped; the rest
+  still return. `failureKinds` maps each name in `failedSources` to `policy`
+  (the guard judged the target's own non-public address and refused it),
+  `fake-ip` (it judged a fake-IP placeholder the local proxy invented for the
+  name — Clash's `198.18.0.0/15`; still refused on a direct or unreadable route,
+  where the guard fails closed and this app would dial that address itself, but a
+  condition of the local network rather than a fact about the source),
+  `unresolved` (the local DNS lookup returned no answer, so no address was
+  judged), or `network`.
+  `failureDetails` carries the same keys with the host that actually failed, the
+  address it resolved to, the guard's own `reason`, that address's class, and the
+  route the guard judged it on (`proxied`, `direct`, or `unknown` when the
+  transport reported no readable route, ADR 0272), which is what lets the panel
+  name *what* was refused — "your proxy answered github.com with 198.18.0.1" —
+  instead of only which source went quiet. A judged refusal and a fake-IP refusal
+  both surface as `NETWORK_POLICY_BLOCKED` (both are refusals the guard decided),
+  and an unanswered resolver as `NETWORK_RESOLVE_FAILED` (spec 08 §3.1); the
+  install sheet classifies a failed preview on those codes together with the
+  structured `reason`.
+- `pi-desktop/skill/market/fetch` — `{ entry }` → `{ name?, description?, body, resources? }`.
+  Main fetches the document over the same policy, splits frontmatter, and may
+  attach sibling `.md` files from a jsDelivr listing. The renderer installs
+  through existing `skills.create`. That policy is the main-process
+  public-network client: syntactic URL guard, DNS classification, per-hop
+  redirect revalidation, and bounded responses — the renderer never reaches
+  the network directly. Catalog ids are sanitized to host
+  `valid_capability_id` (`[a-z0-9][a-z0-9-]{0,63}`).
 
-桌面专用 MCP 市场通道（不是 host RPC）走 Electron IPC：
+Desktop-only MCP market channels (not host RPC) live on Electron IPC:
 
 - `pi-desktop/mcp/market/search` — `{ query?, sources[], more? }` →
-  `{ entries, failedSources, exhausted }`。Main 校验源 URL，固定每个解析出的公网地址，只跟随有界的 HTTPS 重定向，并为 browse 与服务端搜索保留 cursor 状态。单个源失败不会丢弃成功源；响应和缓存均有界。
+  `{ entries, failedSources, exhausted }`. Main validates source URLs, pins
+  each resolved public address, follows only bounded HTTPS redirects, and keeps
+  cursor state for browse and server-side search. One failed source does not
+  discard successful sources; the response and caches are bounded.
 
-### MCP OAuth（ADR 0283）
+### MCP OAuth (ADR 0283)
 
-HTTP MCP 服务的基于浏览器的 OAuth 2.1 认证在 Electron 主进程中通过非阻塞 IPC 与事件流处理：
+Browser-based OAuth 2.1 authentication for HTTP MCP servers is handled in the Electron main process via non-blocking IPC invocations and an event stream:
 
 - `pi-desktop/mcp/oauth/start({ id, level?, projectPath? }) -> { ok: true, loginId }`
-  启动 OAuth 元数据发现与 PKCE 授权码流程。立即返回，用户的浏览器交互与回调交换在后台异步执行。
+  Initiates OAuth metadata discovery and PKCE authorization code flow. Returns immediately; user browser navigation and callback exchange proceed asynchronously in the background.
 - `pi-desktop/mcp/oauth/cancel({ loginId?, id? }) -> { ok: boolean }`
-  中止正在进行的授权尝试，关闭本地回环 HTTP 服务并清理定时器。
-- `pi-desktop/mcp/oauth/event` 向渲染层推送 `McpOAuthLoginEvent`：
+  Aborts an in-flight authorization attempt, tears down the local loopback HTTP server, and cancels pending timers.
+- `pi-desktop/mcp/oauth/event` streams `McpOAuthLoginEvent` to the renderer:
 
 ```ts
 type McpOAuthLoginEvent = {
@@ -1248,21 +1583,22 @@ type McpOAuthLoginEvent = {
 );
 ```
 
-#### 状态与凭证存储
-- `McpServerStatus` 包含：
-  - `hasOauth: boolean` — 服务是否在 host-core 加密凭据库存储有 OAuth 凭据（`secret:mcp:<serverId>:oauth`）。
-  - `authRequired: boolean` — 连接握手或 `tools/call` 是否收到 HTTP 401 Unauthorized，提示用户需要认证/重新授权。
-- OAuth 令牌（`accessToken`, `refreshToken`, `expiresAt`, `resource`, `clientId`, `redirectUris`）仅持久化在 host-core 的加密 secret 中（`secret:mcp:<serverId>:oauth`），绝不向渲染层暴露。授权服务器端点必须是 HTTPS（仅回环 HTTP 例外）。token 端点错误响应体只记入主进程日志，不进入渲染层事件。
+#### Status and Token Storage
+- `McpServerStatus` includes:
+  - `hasOauth: boolean` — whether the server has an encrypted OAuth secret stored in host-core (`secret:mcp:<serverId>:oauth`).
+  - `authRequired: boolean` — flags that a connection attempt or `tools/call` returned HTTP 401 Unauthorized and user re-authentication is required.
+- OAuth tokens (`accessToken`, `refreshToken`, `expiresAt`, `resource`, `clientId`, `redirectUris`) are persisted exclusively in host-core encrypted secrets under `secret:mcp:<serverId>:oauth` and never exposed to the renderer. Authorization-server endpoints must be HTTPS (loopback HTTP is the only exception). Token-endpoint error bodies stay in main-process logs and are not copied into renderer events.
 
-## 12c. 子代理 API (D202)
+## 12c. Subagent API (D202)
 
-用户拥有的子代理仅是全局 Markdown 文档：`~/.agents/subagents/<id>.md`。
-没有项目级子代理目录。启用状态写在
-`<data>/agent-capabilities/subagents.json`，绝不写入 Markdown 文件。
+User-owned subagents are global-only Markdown documents under
+`~/.agents/subagents/<id>.md`. There is no project-level subagent directory.
+Enablement is stored in `<data>/agent-capabilities/subagents.json` and is never
+written into the Markdown file.
 
 - `agents.list` → `{ subagents: UserSubagentRecord[] }`
-- `agents.active` → 已启用的全局文档
-- `agents.create(subagent)` — 重名返回 `SUBAGENT_INVALID`
+- `agents.active` → enabled global documents
+- `agents.create(subagent)` — duplicate names fail with `SUBAGENT_INVALID`
 - `agents.update(id, subagent)`
 - `agents.read(id)` → `{ subagent, body }`
 - `agents.remove(id)`
@@ -1270,32 +1606,44 @@ type McpOAuthLoginEvent = {
 - `agents.disabledBuiltins` → `{ disabled: string[] }`
 - `agents.setBuiltinEnabled(id, enabled)` → `{ id, enabled }`
 
-`agents.create` 和 `agents.update` 接受的 `thinkingLevel` 可以是规范思考档位、
-`omit` 或空字符串。空字符串清除覆盖；`omit` 持久化为
-`thinkingLevel: omit`，告诉运行时不要发送提供商思考覆盖。
+The `thinkingLevel` field accepted by `agents.create` and `agents.update` may
+be a canonical thinking level, `omit`, or the empty string. The empty string
+clears the override; `omit` is persisted as `thinkingLevel: omit` and tells the
+runtime not to send a provider thinking override.
 
-`agents.create` 和 `agents.update` 接受的 `model` 必须是 `<provider>/<model>`
-引脚。空字符串清除引脚；缺少提供商部分的值会被拒绝并返回 `SUBAGENT_INVALID`，
-而不会被存储，因为没有任何解析器能查到它。提供商部分在应用两端都按归一化别名
-匹配，因此包含空格的显示名是合法的。
+The `model` field accepted by `agents.create` and `agents.update` must be a
+`<provider>/<model>` pin. The empty string clears the pin; a value with no
+provider half is rejected with `SUBAGENT_INVALID` instead of being stored,
+because no resolver could ever look it up. The provider half is matched by a
+normalized alias at both ends of the app, so a display name containing spaces
+is valid.
 
-`agents.disabledBuiltins` 和 `agents.setBuiltinEnabled` 承载随应用发布的内置子代理的
-启用状态，这些内置项没有可切换的文档 (ADR 0270)。句柄存放在全局级别的
-`<data>/agent-capabilities/subagent-builtins.json` —— 一个独立文件：用户文档扫描会清理
-它永远看不到的 id 的状态，而内置项从不被扫描，因此共用一个文件会让所有内置项的关闭状态
-在下一次扫描时丢失。`agents.setBuiltinEnabled` 按文档名同样的规则归一化 id，空值以
-`SUBAGENT_INVALID` 拒绝；当前没有任何内置项使用的句柄也会惰性保存而不是拒绝，因为
-host-core 不携带内置清单。
+The `tools` array may include the token `inherit` (ADR 0246). `inherit` alone
+is a valid grant; host-core must not drop the document. Settings round-trips
+the token as `tools: inherit` or `tools: [inherit, Bash]`.
 
-Electron 的 `subagent/list` IPC 通道向设置 > 智能体 > 子代理暴露同一份全局
-列表。`subagent/catalog` 返回当前 `Task` 目录（已启用的用户文档与五个内置定义
-合并后，再减去被用户关闭的内置项），并额外返回 `builtins`：每个仍然赢得自己句柄的
-内置定义，各自带 `enabled`，供设置页把关闭的默认项渲染成带自己开关的行。运行时
-目录使用同一套来源并应用同样的排除；不会扫描 `.pi/agents` 或任何项目能力目录。
+`agents.disabledBuiltins` and `agents.setBuiltinEnabled` carry activation for the
+shipped builtins, which have no document to switch (ADR 0270). Handles are stored
+at the global level in `<data>/agent-capabilities/subagent-builtins.json`, a file
+of its own: the user-document scan prunes state for ids it cannot see, and a
+builtin is never scanned, so a shared file would drop every builtin exclusion on
+the next scan. `agents.setBuiltinEnabled` normalizes the id the way a document
+name is normalized and rejects an empty one with `SUBAGENT_INVALID`; a handle no
+current builtin uses is stored inertly rather than refused, because host-core
+does not ship the builtin list.
 
-## 12d. 能力级别与本地启用状态
+Electron's `subagent/list` IPC channel exposes the same global-only list to
+Settings > Agent > Subagents. `subagent/catalog` returns the effective Task
+catalog — enabled user documents merged with the five shipped builtins, minus the
+builtins the user switched off — together with `builtins`: every shipped
+definition that still wins its handle, each carrying `enabled`, so the page can
+render a switched-off default as a row with its own switch. The runtime catalog
+combines the same sources and applies the same exclusions; it does not scan
+`.pi/agents` or any project capability directory.
 
-技能和 MCP 管理调用使用：
+## 12d. Capability level and local activation
+
+Skills and MCP management calls use:
 
 ```ts
 type AgentCapabilityQuery = {
@@ -1304,71 +1652,109 @@ type AgentCapabilityQuery = {
 }
 ```
 
-全局项默认启用，并可在当前项目保存覆盖状态；项目项使用其所属项目的状态。
-扫描时会清理已删除文件的本地状态；删除全局文件会一并删除它的所有项目覆盖。
-这些记录独立于插件的 `ActivationScope`。
+Global records default to enabled and may have a per-project override. Project
+records have state for their owning project. The host prunes state for deleted
+files while scanning; deleting a global file removes all of its project
+overrides. These records are independent from plugin `ActivationScope`.
 
-## 13. 命令面板 API
+## 13. Command Palette API
 
 - `commandPalette/search(query)`
 - `commandPalette/execute(commandId)`
 
-命令来源：
-- 内置命令
-- 插件贡献.命令
+Command sources:
+- Built-in commands
+- Plugin contributes.commands
 
-## 13a. 工作面板 API
+## 13a. Work Panel APIs
 
-工作面板通道是 Electron 主要的实现。用户驱动的工作区
-操作从 `workspace.get` 解析可见根并失败关闭
-没有一个。代理驱动的 BrowserPreview 路由解析原始
-通过 `session.get` 进行对话，因此后台预览永远不会继承
-可见会话的工作区。
+Work panel channels are Electron-main implementations. User-driven workspace
+operations resolve the visible root from `workspace.get` and fail closed
+without one. Agent-driven BrowserPreview routing resolves the originating
+conversation through `session.get`, so a background preview never inherits the
+visible session's workspace.
 
 ### workspace
 
-- `workspace/diff()` → `WorkspaceDiff { repo, clean, files: DiffFile[], truncated? }`。
-  此遗留诊断通道可以检查当前工作树，但它
-  不是评论的真实来源。评论 UI 读取消息拥有的评论
-  相反，来自转录工具结果的记录，因此提交无法删除
-  记录的变化。
+- `workspace/diff()` → `WorkspaceDiff { repo, clean, files: DiffFile[], truncated? }`.
+  This legacy diagnostics channel may inspect the current working tree, but it
+  is not the Review source of truth. The Review UI reads message-owned review
+  records from transcript tool results instead, so a commit cannot erase a
+  recorded change.
 - `workspace/review/rollback({sessionId, snapshotId})` →
-  `ReviewRollbackResult`。主机在之前验证当前的后工具哈希
-  恢复快照；它返回 `rolledBack`、`alreadyRolledBack`、
-  `conflict` 或 `unavailable` 并且永远不会覆盖冲突的后续编辑。
+  `ReviewRollbackResult`. The host verifies the current post-tool hash before
+  restoring the snapshot; it returns `rolledBack`, `alreadyRolledBack`,
+  `conflict`, or `unavailable` and never overwrites a conflicting later edit.
 
 ### browser (D100, D333)
 
-Chrome 和代理 CDP 位于随应用打包的 `pi.browser` 插件中，通过 `pi.browser.*` 访问。
-渲染器 IPC 仅保留给 Plan 安全的预览门面和 URL 回退：
+Chrome and agent CDP live in bundled plugin `pi.browser` over `pi.browser.*`.
+Renderer IPC kept for the Plan-safe preview facade and URL fallback:
 
-- `browser/openExternal({url?})` — 白名单内的 http(s)/mailto，或省略时使用当前访客页 URL
-- 事件：`browser/event/state {url, title, isLoading, canGoBack, canGoForward}`
-  （同时以 `browser:state` 推送给插件视图）
-- 代理预览事件：`browser/event/preview {sessionId, path?, url?}`。
-  Electron Main 会校验工作区 `path` 位于该会话项目内，在该对话的插件视图可见时
-  加载访客页，并由渲染器在匹配的运行时面板上下文中打开
-  `plugin:pi.browser/browser`（带 `location`）。后台会话的导航不会抢走可见访客页。
+- `browser/openExternal({url?})` — allowlisted http(s)/mailto, or the current
+  guest URL when omitted
+- event: `browser/event/state {url, title, isLoading, canGoBack, canGoForward}`
+  (also pushed to plugin views as `browser:state`)
+- agent preview event: `browser/event/preview {sessionId, path?, url?}`.
+  Electron Main validates a workspace `path` inside that session's project,
+  loads the guest when that conversation's plugin view is visible, and the
+  renderer opens `plugin:pi.browser/browser` with `location` in the matching
+  runtime panel context. Navigation of a background session does not steal the
+  visible guest.
 
-### fs（只读）
+### fs (read-only)
 
-- `fs/list({path})` → 条目首先按目录排序；忽略 `.git`，
-  `node_modules`，默认忽略子集
-  [15-工作区-忽略-规则](/spec/03-runtime/15-workspace-ignore-rules)
-- `fs/read({path, mimeType?})` → 文本 (≤512KB) / 图像数据 URL (≤5MB) / 二进制 / 太大。相对路径在工作区根内解析；`attachments/<sha256>` 以及已位于工作区、`<data_dir>/scratch/` 或 `<data_dir>/attachments/` 下的绝对路径在 realpath 校验后也可读（D334 / ADR 0172）；同一项目组中其他文件夹里的绝对路径同样可读（ADR 0249 §5、ADR 0263）。已知图片扩展名优先于 `mimeType`；无扩展名 blob 只接受图片 MIME 白名单。穿越、`~` 和其他逃逸被拒绝（`INVALID_ARGUMENT`）。
-- `fs/readImageDataUrl({ref, mimeType?})` → `FsImageDataUrlResult`（`image` 带 `dataUrl`，或 `missing` / `notImage` / `tooLarge`）。包含范围与 `fs/read` 相同。从不返回非图片字节。仅渲染器使用，不是插件宿主 API。
-- `fs/reveal({path})` → 在 Finder 中显示。包含范围与 `fs/read` 相同。
-- `fs/open({path})` → 用系统默认应用打开。词法包含范围与 `fs/read` 相同（读取额外做 realpath）。
-- `fs/resolveRef({ref, sessionId?})` → `FsChatRefResolveResult`（`{ match: FsChatRefMatch | null }`，match 指出应答的 `root`（`workspace` / `scratch` / `attachments`）、相对该应答根的 `relativePath`、绝对路径 `absolutePath` 与 `matchedBy`（`exact-relative` / `exact-absolute` / `path-suffix` / `basename`），以及在 `workspace` 命中时给出的 `projectRoot`（`{ path, name, primary }`，指出是哪个文件夹应答的））；`sessionId` 决定查哪个会话的临时目录。它补全智能体在聊天里打印的文件引用，因为渲染器看不到会话自己的临时目录：已经在某个已知根内指向真实文件的绝对引用直接胜出，`attachments/<sha256>` blob 直接对附件库解析；否则按优先级顺序搜索各根——整个打开的项目、再会话自己的临时目录（`<data_dir>/scratch/<sessionId>/`，ADR 0124）、最后附件库——第一个给出结果的根胜出。项目指的是打开的工作区背后的文件夹组（ADR 0249）：主文件夹先应答，其余文件夹随后按项目组自身顺序搜索（ADR 0263），因此简写落在同级文件夹里和落在主文件夹里一样自然，命中结果也指出是哪个文件夹应答的。同一个根内精确路径优先于简写；简写之间最长匹配尾优先，其次路径更浅者。文件面板的忽略集合同样生效。什么都没匹配到时返回 `match: null`；解析本身不打开任何东西（ADR 0262）。
-- `fs/list` 仍只限工作区；外面的遍历被拒绝（`INVALID_ARGUMENT`）。
+- `fs/list({path})` → entries sorted dirs-first; ignores `.git`,
+  `node_modules`, and the default ignore subset of
+  [15-workspace-ignore-rules](15-workspace-ignore-rules.md)
+- `fs/read({path, mimeType?})` → text (≤512KB) / image data URL (≤5MB) /
+  binary / tooLarge. Relative paths resolve inside the workspace root;
+  `attachments/<sha256>` blobs and absolute paths already inside the
+  workspace, `<data_dir>/scratch/`, or `<data_dir>/attachments/` are also
+  accepted after a realpath check (D334 / ADR 0172), as is an absolute path in
+  another folder of the same project group (ADR 0249 §5, ADR 0263). A known
+  image extension wins over `mimeType`; extension-less blobs accept only the
+  image MIME allowlist. Traversal, `~`, and other escapes are rejected
+  (`INVALID_ARGUMENT`).
+- `fs/readImageDataUrl({ref, mimeType?})` → `FsImageDataUrlResult`
+  (`image` with `dataUrl`, or `missing` / `notImage` / `tooLarge`). Same
+  containment as `fs/read`. Never returns non-image bytes. Renderer-only;
+  not a plugin host API.
+- `fs/reveal({path})` → reveal in Finder. Same containment as `fs/read`.
+- `fs/open({path})` → open with the OS default application. Same lexical
+  containment as `fs/read` (without the extra realpath step used by reads).
+- `fs/resolveRef({ref, sessionId?})` → `FsChatRefResolveResult`
+  (`{ match: FsChatRefMatch | null }`, the match naming the answering `root`
+  (`workspace` / `scratch` / `attachments`), the `relativePath` relative to that
+  root, the absolute `absolutePath`, `matchedBy` (`exact-relative` /
+  `exact-absolute` / `path-suffix` / `basename`), and — for a `workspace` match
+  — `projectRoot` (`{ path, name, primary }`), which names the project folder
+  that answered); `sessionId` selects the
+  session whose scratch store is searched. Completes a file reference the agent
+  printed in chat, because the renderer cannot see the session's own scratch
+  store: an absolute reference that already names a real file inside a known
+  root wins outright, and an `attachments/<sha256>` blob resolves against the
+  attachment store directly; otherwise the roots are searched in priority order
+  — the open project first, the session's own scratch store
+  (`<data_dir>/scratch/<sessionId>/`, ADR 0124) second, the attachment store
+  last — and the first root that answers wins. The project is the folder group
+  behind the open workspace (ADR 0249): its primary folder answers before its
+  other folders, which are then searched in the group's own order (ADR 0263),
+  so a shorthand resolves in a sibling folder as readily as in the primary one,
+  and the match names the folder that answered. Inside one root an exact path
+  beats a shorthand; among shorthands the longest matching tail wins, then the
+  shallowest path. The files-panel ignore set applies. A reference that matches
+  nothing returns `match: null`; resolving never opens anything (ADR 0262).
+- `fs/list` stays workspace-only; traversal outside is rejected
+  (`INVALID_ARGUMENT`).
 
-## 13b. 桌面菜单和窗口 API
+## 13b. Desktop Menu and Window APIs
 
-preload 公开同步、只读 `platform: NodeJS.Platform`
-值，以便渲染器选择本机 macOS chrome 或无菜单 Windows/Linux
-第一次喷漆前无框镀铬。
+The preload exposes a synchronous, read-only `platform: NodeJS.Platform`
+value so the renderer chooses native macOS chrome or menu-free Windows/Linux
+frameless chrome before first paint.
 
-主渲染器应用程序命令使用一个列入白名单的事件：
+Main-to-renderer application commands use one allowlisted event:
 
 ```ts
 type AppMenuCommand =
@@ -1381,16 +1767,16 @@ event: menu/event/command { command: AppMenuCommand }
 menu/rendererReady() -> { ready: true }
 ```
 
-渲染器在调用之前订阅 `menu/event/command`
-`menu/rendererReady`。当本机菜单出现时，Main 会等待该确认
-命令创建或重新加载窗口，因此启动计时不能删除第一个
-命令。
+The renderer subscribes to `menu/event/command` before invoking
+`menu/rendererReady`. Main waits for that acknowledgement when a native menu
+command creates or reloads a window, so startup timing cannot drop the first
+command.
 
-渲染器拥有的 Windows/Linux 键盘快捷键执行缩放和全屏
-通过 `menu/nativeAction` 进行操作。保留的兼容面
-还支持编辑和窗口操作。其请求仅限于
-导出的 `NATIVE_MENU_ACTIONS` 元组；未知的价值观会失败而不是成为
-通用主进程命令界面：
+Renderer-owned Windows/Linux keyboard shortcuts execute zoom and fullscreen
+operations through `menu/nativeAction`. The retained compatibility surface
+also supports editing and window operations. Its request is restricted to the
+exported `NATIVE_MENU_ACTIONS` tuple; unknown values fail rather than becoming
+a generic main-process command surface:
 
 ```ts
 type NativeMenuAction =
@@ -1403,19 +1789,19 @@ menu/nativeAction({ action: NativeMenuAction })
   -> { maximized: boolean; fullScreen: boolean }
 ```
 
-开发人员工具使用专用的 Main 拥有的门，而不是通用的本机
-菜单操作：
+Developer tools use a dedicated Main-owned gate rather than a generic native
+menu action:
 
 ```ts
 devtools/toggle({ open?: boolean }) -> { open: boolean }
 ```
 
-当 `AppSettings.developerMode` 不是 `true` 或 no 时，Main 拒绝请求
-实时窗口存在。所有平台上存储的旗门F12相同，
-在 Windows/Linux 和 macOS 视图菜单角色上按 Ctrl+Shift+I。禁用标志
-关闭已经打开的开发人员工具窗口。
+Main rejects the request while `AppSettings.developerMode` is not `true` or no
+live window exists. The same stored flag gates F12 on all platforms,
+Ctrl+Shift+I on Windows/Linux, and the macOS View-menu role. Disabling the flag
+closes an already-open developer-tools window.
 
-`window/control` 接受导出的 `WINDOW_CONTROL_ACTIONS` 元组：
+`window/control` accepts the exported `WINDOW_CONTROL_ACTIONS` tuple:
 
 ```ts
 type WindowControlAction =
@@ -1425,11 +1811,17 @@ window/control({ action: WindowControlAction })
   -> { maximized: boolean }
 ```
 
-Windows/Linux 的关闭行为（D230、ADR 0090）通过两个附加的、由主进程拥有的
-通道读写。`closeBehavior/get` 返回持久化的偏好以及该平台是否支持它
-（macOS 保持原生 Dock 生命周期，报告 `supported: false`）；
-`closeBehavior/set` 接受一个可设置的 `CloseBehavior`（`tray` 或 `quit`）
-并将其持久化：
+On Windows/Linux, `minimize` performs the native OS minimize transition so
+the window remains represented in the taskbar and can be restored there. A
+Windows/Linux close still follows the persisted close-behavior choice below;
+it is the close path, not minimize, that can hide the window to the tray.
+macOS keeps its native Dock/tray minimize behavior.
+
+Windows/Linux close behavior (D230, ADR 0090) is read and written through
+two additive Main-owned channels. `closeBehavior/get` returns the persisted
+preference and whether the platform supports it (macOS keeps the native
+Dock lifecycle and reports `supported: false`); `closeBehavior/set`
+accepts a settable `CloseBehavior` (`tray` or `quit`) and persists it:
 
 ```ts
 type CloseBehavior = "ask" | "tray" | "quit";
@@ -1439,36 +1831,41 @@ window/closeBehavior/set({ behavior: "tray" | "quit" })
   -> { behavior: "tray" | "quit" }
 ```
 
-`ask` 是 `get` 报告的、尚未设置的过渡态，它永远不可设置 —— 首次关闭只问
-一次，一旦存在选择就只能切换，不能退回到每次询问。`ask` 和未知值以
-`INVALID_ARGUMENT` 失败而不是被强制转换；在 macOS 上 `set` 同样如此失败，
-因为那里没有可配置的关闭行为。设置行为不会触碰托盘图标：D216（ADR 0078）
-在每个平台上启动时都会创建一个，而无论存的是哪种关闭行为，最小化到托盘都
-需要它。
+`ask` is the transient unset state reported by `get`; it is never settable
+— the first close prompts once, and once a choice exists it can be switched
+but not reverted to prompting. `ask` and unknown values fail with
+`INVALID_ARGUMENT` rather than being coerced, and `set` fails the same way on
+macOS, where there is no close behavior to configure. Setting a behavior does
+not touch the tray icon: D216 (ADR 0078) creates one at startup on every
+platform, and minimize-to-tray needs it whichever close behavior is stored.
 
-Maximize/unmaximize 变化也会发出
-`window/event/maximized`。未知的操作失败。这些仅限电子的通道
-不要跨入 host-core，也不要更改主机 RPC 协议版本。
-preload 故意不公开任意的 BrowserWindow 调整大小通道。
-特定于几何形状的能力是有界的目标状态工作面板保留与聊天宽度更新
-（D163、D255，ADR 0032/0122）：
+Maximize/unmaximize changes also emit
+`window/event/maximized`. Unknown actions fail. These Electron-only channels
+do not cross into host-core and do not change the host RPC protocol version.
+The preload intentionally exposes no arbitrary BrowserWindow resize channel.
+Plugin panel chrome uses a separate Electron-local
+`pi-plugin-panel-window-control` channel with the same four semantic actions,
+but the handler resolves the target strictly from the sender's live panel
+window. The preload consumes this channel internally for its closed-Shadow-DOM
+titlebar; it is not added to `window.pluginBridge` or the shared host protocol.
+The work-panel geometry seam is retained for Electron compatibility, but the
+panel is renderer-owned and never changes native window bounds (ADR 0151):
 
 ```ts
 window/setWorkPanelReservation({ width: 0 | number })
   -> { requested: number; reserved: number }
 ```
 
-`width` 必须是等于 `0` 或在 JSON 内的有限整数
-包括 `244..720` 范围。字符串、布尔值、null、小数值和
-其他格式错误的有效负载会因 `INVALID_ARGUMENT` 而失败，而不是
-被胁迫。零是 closed/collapsed 目标，正值是
-可见面板的承诺固定宽度。 `requested` 是接受的当前目标。
-`reserved` 是当前添加的原生宽度
-到该目标的正常基本窗口，并且可以小于 `requested`
-仅当显示工作区域不足时。调用是幂等目标
-更新：重复相同的宽度不会添加另一个增量。
+`width` must be a finite integer JSON number equal to `0` or inside the
+inclusive `244..720` range. Strings, booleans, null, fractional values, and
+other malformed payloads fail with `INVALID_ARGUMENT` rather than being
+coerced. The internal dock normalizes every valid request to zero and returns
+`{ requested: 0, reserved: 0 }`; positive values are accepted only as a
+backwards-compatible no-op. Repeating a request never changes native bounds.
 
-面板打开时，两条可见的调整边界有不同的归属：
+The legacy chat-width/event shapes remain Electron-local compatibility surfaces,
+but the visible internal dock does not call them or use them to resize the
+window:
 
 ```ts
 window/setWorkPanelChatWidth({ width: number })
@@ -1478,34 +1875,14 @@ window/event/workPanelResize
   -> { phase: "preview" | "commit"; panelWidth: number }
 ```
 
-`window/setWorkPanelChatWidth` 只接受 `1040..10000` 闭区间内的安全整数。
-它是窗口内渲染器拥有的分隔条使用的有界目标状态通道；它改变基础对话
-宽度，同时保留当前生效的面板保留量。工作区紧张时，聊天目标停在仍能容纳
-该保留量的最大基础宽度上；面板绝不会作为副作用被收窄。原生右边缘（以及
-Electron 报告的右侧角）改变的是面板目标。Main 通过
-`window/event/workPanelResize` 预览该原生面板宽度，并在原生调整流稳定后
-提交给渲染器。面板目标仍限定在 `244..720px`。
-
-正常状态下，Main 向右扩展基边界并向左移动
-仅根据需要将扩展边界保留在当前显示工作范围内
-区。零目标对称地消除了增加的宽度并反转了这一点
-保留引起的转变。 Main 仍然保留基界，并且移除了这两种效果。
-来自左边缘或非右侧角的本机手势仅更新那些基边界，留下 `requested` 和
-渲染器拥有的固定面板宽度不变。外侧右边缘和右侧角更新面板目标，而基础
-对话宽度保持固定。最大化和全屏窗口
-记住最新的目标但推迟几何；恢复正常协调
-它一次针对恢复的基础边界和当前工作区域。如果窗户
-管理器首先在显示期间压缩或重新定位外部窗口，或者
-工作区转换，协调保留最后确认的基界；
-返回到更宽敞的工作区域会恢复原始的聊天宽度。该保留仅适用于
-窗口管理器的调整。用户拖动窗口期间发生的跨显示器变化归因于
-用户（D263、ADR 0132）：放下的位置成为新的基边界，仅其原点被
-规范化进目标显示器工作区域，并且这一位置会被持久化用于下次启动。
-即使目标工作区域更窄，基础尺寸也会保留，因此收缩的是 `reserved`
-而不是窗口。Main 会把这次协调推迟到本机移动流稳定之后，
-所以拖动过程中不会应用任何保留几何。 Renderer 代码
-仅针对当前可见的会话设置此目标：背景工件
-无法更改可见的保留几何形状。
+`window/setWorkPanelChatWidth` and `window/event/workPanelResize` remain
+available only to older Electron callers. The current renderer divider changes
+the persisted `244..720px` panel width locally, and native window edges resize
+the fixed application window without changing that panel target. The native
+Browser view continues to follow the renderer-measured panel rectangle.
+Window bounds persistence and display reconciliation therefore operate on the
+ordinary application bounds; there is no panel-specific width or x-offset
+reservation, and background artifacts cannot change visible window geometry.
 
 ### Tray session shortcuts (ADR tray-session-shortcuts)
 
@@ -1527,13 +1904,17 @@ Electron 报告的右侧角）改变的是面板目标。Main 通过
   successful session/inbox mutations, and combines them with the ephemeral
   organization copy. No host protocol or storage schema changes.
 
-## 13c. Composer 输入 API（D123/D124/D197、ADR 0024/0059）
+## 13c. Composer input APIs (D123/D124/D197, ADR 0024/0059)
 
-仅电子通道支持输入框自动完成和剪贴板文件
-参考。 `composer/commands` 和 `fs/index` 是只读且软故障；
-`composer/pasteFiles` 仅写入原始会话的 Electron 拥有的
-暂存目录。 None 添加主机 RPC 方法或更改主机协议
-版本。
+Electron-only channels backing composer autocomplete and file references.
+`composer/commands` and `fs/index` are read-only and fail soft;
+`composer/pickFiles` opens the unified native picker used by the Composer and
+returns a one-shot token; the legacy `composer/pickPhotos` channel remains
+available for compatibility but is not exposed by the Composer UI.
+`composer/importFiles` and `composer/pasteFiles` write only to the originating
+session's Electron-owned scratch directory. None adds a host RPC method or
+changes the host protocol version. Renderer-supplied absolute source paths are
+never accepted by the picker import channel (ADR 0181).
 
 ### composer/commands
 
@@ -1552,10 +1933,10 @@ type ComposerCommand = {
 };
 ```
 
-模板从 `<workspace>/.pi/prompts/*.md` 加载并
-`~/.pi/agent/prompts/*.md`（项目赢得名称冲突；短 TTL 缓存）。
-没有工作区，只有用户全局模板、内置函数和插件
-命令返回。
+Templates load from `<workspace>/.pi/prompts/*.md` and
+`~/.pi/agent/prompts/*.md` (project wins name conflicts; short TTL cache).
+Without a workspace only user-global templates, builtins, and plugin
+commands return.
 
 ### fs/index
 
@@ -1565,25 +1946,27 @@ fs/index() -> { entries: FsIndexEntry[]; truncated: boolean }
 type FsIndexEntry = { path: string; kind: "file" | "dir" };
 ```
 
-`@` 菜单的工作空间相对路径：`git ls-files -co
---exclude-standard`快速路径，忽略设置递归行走回退，
-从文件路径派生的目录，8000 个条目上限，`truncated: true`，
-每个根的短 TTL 缓存。无法关闭到空列表而没有
-工作区。模糊过滤发生在渲染器端。
+Workspace-rooted relative paths for the `@` menu: `git ls-files -co
+--exclude-standard` fast path, ignore-set recursive walk fallback,
+directories derived from file paths, 8000-entry cap with `truncated: true`,
+short TTL cache per root. Fails closed to an empty list without a
+workspace. Fuzzy filtering happens renderer-side.
 
-### composer/pickFiles 和 composer/pickPhotos
+### composer/pickFiles and composer/pickPhotos
 
 ```ts
 composer/pickFiles() -> { token: string | null; canceled: boolean }
 composer/pickPhotos() -> { token: string | null; canceled: boolean }
 ```
 
-两个对话框都在 Electron main 中运行。Composer 以 `pickFiles` 作为其唯一的
-file/image 入口：它接受常规文件且不带类型过滤，由导入器根据 MIME/扩展名元数据
-把每个结果分类为图片或文件。`pickPhotos` 作为兼容通道保留给较旧的渲染器客户端。
-目录不属于 MVP 选择器契约。用户选定文件后，main 会把原生路径存放在一个绑定到
-发起方 `WebContents` 的令牌之下，该令牌存活 60 秒且只能消费一次。渲染器只收到
-该令牌，绝不会收到所选的绝对路径。
+Both dialogs run in Electron main. The Composer uses `pickFiles` as its single
+file/image entry point: it accepts regular files without a type filter, and the
+importer classifies each result as an image or file from MIME/extension metadata.
+`pickPhotos` is retained as a compatibility channel for older renderer clients.
+Directories are not part of the MVP picker contract. When the user selects
+files, main stores the native paths against a token bound to the invoking
+`WebContents`, with a 60-second lifetime and one-shot consumption. The
+renderer receives the token but never receives the selected absolute paths.
 
 ### composer/importFiles
 
@@ -1593,13 +1976,14 @@ composer/importFiles({ sessionId, token }) -> {
 }
 ```
 
-Electron main 消费这个与发送方绑定的选择器令牌，通过 `realpath` 解析每条记录的
-路径，要求目标是已存在的常规文件，套用与剪贴板传输相同的 20 个文件 / 单文件
-64 MiB / 合计 128 MiB 限制，并把字节复制到
-`<data_dir>/scratch/<sessionId>/pasted/` 下一个以 UUID 支撑的净化名称。令牌在
-导入开始之前就被删除，因此无法重放。返回的 `ComposerPastedFile` 记录是渲染器
-唯一会保存或派发的路径，所以一次选择器操作不可能把外部来源路径留在提示里，也
-不可能绕过附件根边界。
+Electron main consumes the sender-bound picker token, resolves each recorded
+path through `realpath`, requires an existing regular file, applies the same
+20-file / 64 MiB per file / 128 MiB total limits as clipboard transfer, and
+copies the bytes into `<data_dir>/scratch/<sessionId>/pasted/` under a
+UUID-backed sanitized name. The token is deleted before import starts, so it
+cannot be replayed. The returned `ComposerPastedFile` records are the only
+paths the renderer stores or dispatches, so a picker selection cannot leave an
+external source path in the prompt or bypass the attachment-root boundary.
 
 ### composer/pasteFiles
 
@@ -1611,7 +1995,7 @@ composer/pasteFiles({ sessionId, files }) -> {
 type ComposerPasteFile = {
   name?: string;
   mimeType?: string;
-  /** 对生成的大文本粘贴设为 true，使主机拥有的剪贴板历史可以保留文本。 */
+  /** Set for generated large-text pastes so host-owned clipboard history can retain the text. */
   recordHistory?: boolean;
   data: ArrayBuffer;
 };
@@ -1625,12 +2009,17 @@ type ComposerPastedFile = {
 };
 ```
 
-Electron main 验证 `sessionId` 是否解析为持久主机会话，将请求限制为 20 个文件、每个文件
-64 MiB、总共 128 MiB，剥离渲染器提供的目录组件，并在具有独占创建语义的
-`<data_dir>/scratch/<sessionId>/pasted/` 下写入唯一名称。渲染器只保存返回的路径和元数据，
-显示 `name`，并通过 `AgentPromptRequest.attachments` 提交它们。剪贴板字节不会以 base64
-进入持久提示或主机代理。无效会话以及格式错误或超限负载会失败并返回 IPC 错误，操作不能
-写入工作区。
+Electron main verifies that `sessionId` resolves to a durable host session,
+limits the request to 20 files, 64 MiB per file, and 128 MiB total, strips
+renderer-provided directory components, and writes unique names below
+`<data_dir>/scratch/<sessionId>/pasted/` with exclusive-create semantics. The
+renderer holds returned paths and kind metadata in transient reference state,
+displays `name`, and submits them through `AgentPromptRequest.attachments`.
+Main persists image bytes by SHA-256 and adds a path fallback only when the
+selected model cannot receive that image as a visual block. Clipboard bytes
+never enter the persisted prompt or host agent message as base64.
+Invalid sessions and malformed/oversized payloads fail with an IPC error, and
+the operation cannot write to the workspace.
 
 ### clipboard/recordPaste
 
@@ -1638,8 +2027,10 @@ Electron main 验证 `sessionId` 是否解析为持久主机会话，将请求�
 clipboard/recordPaste({ text }) -> { ok: true }
 ```
 
-此渲染器到主进程的通道只接受主应用窗口的调用，并记录该窗口用户主动在 Composer
-粘贴事件中已经取得的文本；它不会读取系统剪贴板。空文本会被有界历史存储忽略。
+This renderer-to-main channel is accepted only from the main application window
+and records text already supplied by that window's user-initiated Composer paste
+event. It never reads the OS clipboard. Empty text is ignored by the bounded
+history store.
 
 ### prompt/enhance
 
@@ -1653,54 +2044,64 @@ prompt/enhance({
 }) -> { enhancedDraft: string }
 ```
 
-这是一次独立的一次性补全，没有会话历史、工具或附件。Electron main 负责解析
-提供商/模型和凭据，因此渲染器永远拿不到密钥。空草稿、斜杠命令草稿、缺失模型
-以及提供商失败都返回通用的 `Result` 错误包络。
+This is an independent, one-shot completion with no session history, tools, or
+attachments. Electron main resolves the provider/model and credentials, so the
+renderer never receives a secret. Empty drafts, slash-command drafts, missing
+models, and provider failures return the common `Result` error envelope.
 
-### speech/getStatus、speech/transcribe、speech/synthesize
+### speech/getStatus, speech/transcribe, speech/synthesize
+
 ```ts
 speech/getStatus() -> SpeechStatus
 speech/transcribe({ sessionId?, path, mimeType?, language? }) -> { text }
 speech/synthesize({ sessionId?, text, voice?, format? }) -> { path, mimeType, dataUrl? }
 ```
 
-宿主语音独立于聊天。绑定在 `AppSettings.speech`。音频字节不进入渲染器。见 `20-speech.md`。
+Host speech is independent of chat. Bindings live on `AppSettings.speech`.
+Audio bytes never enter the renderer. See spec `20-speech.md`.
 
-### app/openFeedback（D313）
+### app/openFeedback (D313)
 
 ```ts
 app/openFeedback() -> { ok: true }
 ```
 
-Electron Main 构造固定的 GitHub bug 表单 URL
-（`https://github.com/vastsa/PI-Desktop/issues/new?template=bug_report.yml`），
-并用 `shell.openExternal` 打开。查询字段 `app-version`、`os` 和 `environment`
-由主进程版本信息填充。渲染器不能提供 URL。离开该 origin 或模板的构造会被拒绝。
-此通道不进入 host-core，也不改变 host RPC 协议版本。
+Electron Main builds a fixed GitHub bug-form URL
+(`https://github.com/vastsa/PI-Desktop/issues/new?template=bug_report.yml`)
+and opens it with `shell.openExternal`. Query fields `app-version`, `os`, and
+`environment` are filled from Main-owned version info. The renderer cannot
+supply a URL. Construction that leaves that origin or template is rejected.
+This channel does not cross into host-core and does not change the host RPC
+protocol version.
 
-## 13d. 本地 MCP 控制 API（D370）
+## 13d. Local MCP control API (D370)
 
-PI-Desktop 可以为外部 Agent 暴露本地自动化接口，而不改变渲染器 preload
-契约或 host RPC 协议。服务默认关闭，只有 Electron 进程收到以下配置时才启动：
+PI-Desktop can expose a local automation surface for an external Agent without
+changing the renderer preload contract or host RPC protocol. The server is
+disabled by default and starts only when the Electron process receives:
 
 ```text
 PI_DESKTOP_MCP_CONTROL=1
-PI_DESKTOP_MCP_PORT=37123       # 可选；默认 37123
+PI_DESKTOP_MCP_PORT=37123       # optional; defaults to 37123
 ```
 
-Electron Main 只绑定 `127.0.0.1`，并在 `/mcp` 提供 Streamable HTTP MCP。
-测试时端口可以设为 `0` 以请求临时端口；正常桌面配置使用默认端口或显式的本地端口。
-服务使用 MCP 协议版本 `2025-06-18`，支持 `initialize`、
-`notifications/initialized`、`ping`、`tools/list`、`tools/call`、
-`resources/list` 和 `logging/setLevel`。`initialize` 只协商 `2025-06-18` 或兼容的
-`2025-03-26`，不会回显不支持的客户端版本。监听地址在 bind 后必须仍是回环。
-服务接受标准 POST 传输；由于不提供 SSE 流，GET 会返回 405。客户端通过轮询
-`pi_session_get` 或 `pi_agent_status` 观察回合进度。
+Electron Main binds `127.0.0.1` only and serves Streamable HTTP MCP at
+`/mcp`. The selected port may be `0` in tests to request an ephemeral port;
+normal desktop configuration uses the default or an explicit local port. The
+server uses MCP protocol version `2025-06-18` and supports `initialize`,
+`notifications/initialized`, `ping`, `tools/list`, `tools/call`,
+`resources/list`, and `logging/setLevel`. `initialize` negotiates `2025-06-18`
+or the compatible `2025-03-26` value and never echoes an unsupported client
+version. Listen is asserted to be loopback after bind. It accepts the standard
+POST transport; GET is handled with 405 because this server does not offer an
+SSE stream. Clients poll `pi_session_get` or `pi_agent_status` for turn
+progress.
 
-### 连接与认证
+### Connection and authentication
 
-服务首次使用时生成 256 位随机 bearer token，并将其存储在 Electron 用户数据目录的
-`mcp-control.token` 中。当前连接记录写入 `mcp-control.json`：
+The server creates a 256-bit random bearer token on first use and stores it in
+the Electron user-data directory as `mcp-control.token`. It writes the current
+connection record to `mcp-control.json`:
 
 ```json
 {
@@ -1714,32 +2115,36 @@ Electron Main 只绑定 `127.0.0.1`，并在 `/mcp` 提供 Streamable HTTP MCP�
 }
 ```
 
-在支持 POSIX 权限的平台上，两个文件都以 `0600` 模式写入。每个请求都必须包含
-`Authorization: Bearer <token>`（保留 `X-Pi-Desktop-Token` 头，方便简单的本地客户端）。
-其他路径、缺少 token 的请求，以及除 POST/DELETE/OPTIONS 以外的方法都会被拒绝。
-Electron 等待主机关闭之前会停止服务，并将清单标记为非活动。
+Both files are written with mode `0600` where the platform supports POSIX
+permissions. Every request must include `Authorization: Bearer <token>` (the
+`X-Pi-Desktop-Token` header is retained for simple local clients). Requests to
+other paths, requests without the token, and methods other than
+POST/DELETE/OPTIONS are rejected. The server is stopped before Electron waits
+for host shutdown and the manifest is marked inactive.
 
-如果请求带有 `Origin` 头，其主机名必须是 `localhost`、`127.0.0.1` 或 `::1`；
-非浏览器 MCP 客户端可以省略 `Origin`。初始化后，请求必须携带服务端发出的
-`Mcp-Session-Id`，并且可以携带 `MCP-Protocol-Version` 的 `2025-06-18` 或兼容的
-`2025-03-26`。未知会话 id 和不支持的协议版本会在 HTTP 边界被拒绝。
+When an `Origin` header is present, its hostname must be `localhost`,
+`127.0.0.1`, or `::1`; absent Origin is allowed for non-browser MCP clients.
+After initialization, requests must carry the issued `Mcp-Session-Id` and may
+carry `MCP-Protocol-Version` `2025-06-18` or the compatible `2025-03-26` value.
+Unknown session ids and unsupported protocol versions are rejected at the HTTP
+boundary.
 
-### 工具
+### Tools
 
-命名工具覆盖常见的 Agent 工作流：
+The named tools cover the common Agent workflow:
 
 - `pi_app_info`
-- `pi_project_get`、`pi_project_list`、`pi_project_open`、`pi_project_clear`
-- `pi_session_list`、`pi_session_create`、`pi_session_get`、
-  `pi_session_rename`、`pi_session_fork`、`pi_session_delete`、
+- `pi_project_get`, `pi_project_list`, `pi_project_open`, `pi_project_clear`
+- `pi_session_list`, `pi_session_create`, `pi_session_get`,
+  `pi_session_rename`, `pi_session_fork`, `pi_session_delete`,
   `pi_session_configure`
-- `pi_agent_prompt`、`pi_agent_status`、`pi_agent_stop`、`pi_agent_abort`、
+- `pi_agent_prompt`, `pi_agent_status`, `pi_agent_stop`, `pi_agent_abort`,
   `pi_agent_compact`
-- `pi_plans_pending`、`pi_plans_resolve`
-- `pi_workspace_diff`、`pi_fs_list`、`pi_fs_read`
+- `pi_plans_pending`, `pi_plans_resolve`
+- `pi_workspace_diff`, `pi_fs_list`, `pi_fs_read`
 
-`pi_control_describe` 返回经过审查的操作目录。`pi_desktop_invoke` 接受操作 id
-和位置参数形式的 IPC 参数：
+`pi_control_describe` returns the reviewed operation catalog. `pi_desktop_invoke`
+accepts an operation id and positional IPC arguments:
 
 ```json
 {
@@ -1748,22 +2153,28 @@ Electron 等待主机关闭之前会停止服务，并将清单标记为非活�
 }
 ```
 
-只有审查目录中注册到主进程的通道可用。第一版目录覆盖项目/会话/Agent/工作区流程
-和已审查的只读操作。不会暴露密钥 get/set/delete、provider/OAuth/MCP 密钥写入、
-设置写入、插件/市场安装、窗口/OS 控制，以及仅属于渲染器的原生选择器/对话框通道
-（包括 `plugin/loadDev`）。分发前会剥离参数中的密钥形态字段。每个目录项标记为
-`read`、`write` 或 `dangerous`；通用危险操作，以及命名的删除会话、配置会话和决议
-计划工具，都要求 `confirm: true`。该标志是 Agent 确认，不是桌面用户弹窗。所有调用
-仍会经过现有 IPC 处理器的校验、主机权限、工作区边界和错误模型。文本负载和
-`structuredContent` 都有大小上限。
+Only main-process channels registered in the reviewed catalog are available.
+The first-version catalog is the project/session/Agent/workspace flow plus
+reviewed reads. Secret get/set/delete channels, provider/OAuth/MCP secret-write
+paths, settings writes, plugin/marketplace install, window/OS control, and
+renderer-only native picker/dialog channels (including `plugin/loadDev`) are
+not exposed. Secret-shaped argument fields are stripped before IPC dispatch.
+Each catalog entry is tagged `read`, `write`, or `dangerous`; dangerous
+generic operations and the named session-delete, session-configure, and
+plan-resolution tools require `confirm: true`. That flag is an agent
+acknowledgement, not a desktop user prompt. All calls still pass through the
+existing IPC handler validation, host permissions, workspace boundaries, and
+error model. Both the text payload and `structuredContent` are size-bounded.
 
-六个 `session/collaboration/*` 操作仅限第一方插件：它们要求经过认证的插件工具调用上下文，
-因此会出现在 `pi.desktop.listOperations` 中并可通过 `pi.desktop.invoke` 调用，但被排除在
-MCP 可见目录（`tools/list`、`pi_control_describe` 以及 `pi_desktop_invoke` 的操作枚举）之外，
-MCP 调用方无法调用它们。
+The six `session/collaboration/*` operations are first-party-plugin-only: they
+require an authenticated plugin tool invocation context, so they appear in
+`pi.desktop.listOperations` and are callable through `pi.desktop.invoke`, but
+they are excluded from the MCP-visible catalog (`tools/list`,
+`pi_control_describe`, and the `pi_desktop_invoke` operation enum) and an MCP
+caller cannot invoke them.
 
-**变更性** 外部调用成功后，Electron Main 可以通过现有的
-`pi-desktop/session/event/changed` 事件发送附加字段：
+After successful **mutating** external calls, Electron Main may emit the existing
+`pi-desktop/session/event/changed` event with additive fields:
 
 ```ts
 {
@@ -1773,20 +2184,68 @@ MCP 调用方无法调用它们。
 }
 ```
 
-渲染器会刷新会话，并根据该事件应用项目/会话选择，因此外部 Agent 创建会话、打开
-项目或提交提示词时，可见桌面会跟随相同状态。控制服务启动失败会记录日志，但不会阻止
-桌面启动。
+The renderer refreshes sessions and applies project/session selection from that
+event, so an external Agent can create a session, open a project, or submit a
+prompt while the visible desktop follows the same state. A control-server
+startup failure is logged and does not prevent the desktop from launching.
 
-## 14. 错误代码 — 初始注册表（可扩展）
+## 14. Error Codes — Initial registry (extensible)
 
-| 代码 | 含义 |
+| code | Meaning |
 |---|---|
-| `AGENT_BUSY` | 当前会话已经有一个正在运行的轮次 |
-| `AGENT_NOT_FOUND` | 会话不存在 |
-| `MODEL_NOT_CONFIGURED` | 无可用模型 |
-| `PROVIDER_SECRET_MISSING` | 缺少 API 密钥 |
-| `TOOL_DENIED` | 权限被拒绝 |
-| `TOOL_TIMEOUT` | 工具超时 |
-| `WORKSPACE_REQUIRED` | 需要项目目录 |
-| `PATH_OUTSIDE_WORKSPACE` | 在明确的外部路径权限决策之前路径超出范围 |
-| `INTERNAL` | 未分类的内部错误 |
+| `AGENT_BUSY` | The current session already has a running turn |
+| `AGENT_NOT_FOUND` | Session does not exist |
+| `MODEL_NOT_CONFIGURED` | No available model |
+| `PROVIDER_SECRET_MISSING` | Missing API key |
+| `TOOL_DENIED` | Permission denied |
+| `TOOL_TIMEOUT` | Tool timed out |
+| `WORKSPACE_REQUIRED` | Project directory required |
+| `PATH_OUTSIDE_WORKSPACE` | Path out of bounds before an explicit outside-path permission decision |
+| `INTERNAL` | Uncategorized internal error |
+
+## Native Pi session routing (ADR 0254)
+
+`pi-desktop/session/list` returns both Desktop and native summaries. Each summary
+may carry `source: "desktop" | "pi-native"`, capability flags, and a stable
+`readOnlyReason`; clients normalize omitted source to `desktop` for backward
+compatibility. `session/get`, `session/open`, `session/fork`, `agent/prompt`,
+`agent/stop`, and `agent/abort` route opaque `native-pi:` ids to the Node
+sidecar. Native file paths never enter renderer payloads.
+
+Native rename/delete/move/revision/configuration/scratch/Plan/Goal/queue/
+collaboration operations return an explicit unsupported/invalid-argument error.
+`session/fork` for a native id returns `{ session: SessionDetail }` for one new
+child JSONL and never mutates the parent; an anchor id that is not a message on
+the active branch is `INVALID_ARGUMENT`. The fork response carries the child's
+whole projected transcript (`messageStart: 0`, `hasMoreBefore: false`) at full
+fork parity, independent of general detail paging. Forking reuses the same
+source ownership state list/detail report: an owned idle runtime keeps its
+lease, while a live/remote/malformed foreign lease rejects with
+`NATIVE_PI_SESSION_BUSY` and a changed owned source with
+`NATIVE_PI_SESSION_CHANGED`. Unexpected filesystem failures surface as a
+path-free `NATIVE_PI_FORK_IO_ERROR`.
+Native continuation refusal codes include `NATIVE_PI_SESSION_BUSY`,
+`NATIVE_PI_SESSION_CHANGED`, `NATIVE_PI_PROVIDER_UNAVAILABLE`, and
+`NATIVE_PI_PROJECT_UNTRUSTED` plus format/newline/cwd-specific codes.
+
+Native compact and queue push/list reject with `NATIVE_PI_UNSUPPORTED` before
+Desktop host/queue access. Queue remove/prioritize continue to take an opaque
+host `turnId`, not a session id: native paths never create host queue entries.
+Supporting a native queue later requires an explicit source/session contract;
+a turn-id prefix is not source authentication.
+
+Native events include `user_message_persisted` with `optimisticMessageId` and a
+projected durable `message`. The renderer replaces that submission identity in
+live/cache/retained state before normal completion refresh. Identical-text
+submissions remain distinct; SDK entry IDs are never rewritten. Desktop event
+semantics are unchanged. Native terminal completion follows SDK settlement,
+not intermediate retry/compaction loop ends. Native abort never invokes
+`replaceSessionMessages` and reloads durable detail after abort returns.
+
+### Provider ordering
+
+`pi-desktop/providers/reorder({ id, targetId, placement: "before" | "after" })`
+returns `{ ok: true }` and forwards to host `providers.reorder`. The sandboxed
+preload permits this channel through the shared IPC registry. Invalid placement
+or missing providers returns `INVALID_PARAMS`; configuration and defaults are
+unchanged. See [provider configuration](12-provider-config-schema.md).

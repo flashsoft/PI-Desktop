@@ -1,8 +1,8 @@
-# 01. 架构
+# 01. Architecture
 
-## 1. 概述
+## 1. Overview
 
-PI-Desktop 使用分层桌面架构：
+PI-Desktop uses a layered desktop architecture:
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
@@ -16,6 +16,7 @@ PI-Desktop 使用分层桌面架构：
 │ - window lifecycle │
 │ - IPC routing │
 │ - process supervision │
+│ - optional loopback MCP control │
 └───────────────▲─────────────────────────────▲────────────┘
  │ local RPC │ process bridge
 ┌───────────────┴──────────────┐ ┌──────────┴────────────┐
@@ -28,85 +29,96 @@ PI-Desktop 使用分层桌面架构：
 └──────────────────────────────┘
 ```
 
-## 2. 设计原则
+## 2. Design principles
 
-1. **UI和特权运行时是分离的**
-2. **Rust拥有host/system的能力、持久模式和审批政策**
-3. **pi 拥有 model/agent 循环语义**
-4. **Renderer 没有特权**
-5. **所有跨边界契约均已类型化**
-6. **英语是产品源语言**
-7. **Plan 是第一个 pi Agent 的状态，而不是第二个规划器**
+1. **UI and privileged runtime are separated**
+2. **Rust owns host/system capabilities, durable mode, and approval policy**
+3. **pi owns model/agent loop semantics**
+4. **Renderer is unprivileged**
+5. **All cross-boundary contracts are typed**
+6. **English is the product source language**
+7. **Plan is a state of the one pi Agent, never a second planner**
 
-## 3. 子系统
+## 3. Subsystems
 
-### 3. 1 应用程序外壳 (Electron)
+### 3.1 App Shell (Electron)
 - windows/menus
-- 应用程序生命周期
-- 固定源更新 check/download/install 生命周期
-- 处理启动顺序
+- app lifecycle
+- fixed-feed update check/download/install lifecycle
+- process boot order
 
-Electron Main 独家拥有更新客户端和修复的 GitHub 版本
-目标。渲染器可以请求白名单操作并渲染类型化状态，
-但无法提供提要 URL 或直接访问更新程序。应用程序更新可以
-不通过 Rust host-core 或代理 sidecar (D120 / ADR 0022)。
+Electron Main exclusively owns the update client and fixed GitHub Releases
+target. The renderer can request allowlisted operations and render typed state,
+but cannot supply a feed URL or access the updater directly. App updates do
+not pass through Rust host-core or the agent sidecar (D120 / ADR 0022).
 
-### 3. 2 用户界面（React）
-- 会话用户体验
-- 流媒体转录
-- 许可卡
-- 设置
-- 插件管理器用户界面
-- 命令面板
+### 3.2 UI (React)
+- session UX
+- streaming transcript
+- permission cards
+- settings
+- plugin manager UI
+- command palette
 
-### 3. 3 Rust 主机核心
-- 工作空间路径强制
-- 内置工具执行
-- 权限策略评估
-- 持久会话模式解析（`agent | plan`）
-- 计划批准记录、请求和原子 Plan → Agent 转换
-- 插件 install/registry/lifecycle 服务
-- sqlite 适配器/安全存储胶
-- 审计日志
+### 3.3 Rust Host Core
+- workspace path enforcement
+- builtin tool execution
+- permission policy evaluation
+- durable session mode resolution (`agent | plan`)
+- plan approval records, requests, and atomic Plan → Agent transition
+- plugin install/registry/lifecycle services
+- sqlite adapters / secure storage glue
+- audit logs
 
-### 3. 4 Node pi Agent 运行时
-- 模型 catalog/provider 设置
+### 3.4 Node pi Agent Runtime
+- model catalog/provider setup
 - `Agent.prompt/abort`
-- pi 事件的事件标准化
-- 向主机核心发出工具调用请求
-- 单代理规划状态、主机编写的 Plan 检查点提交，以及
-  approve/reject 执行边界
+- event normalization from pi events
+- tool call requests emitted to host core
+- one-Agent planning state, host-written Plan checkpoint submission, and
+  approve/reject execution boundary
 
-### 3. 5 插件系统
-- 清单验证
-- 捐款登记处 (commands/tools/skills)
-- 插件面板
-- 授予许可
+### 3.5 Plugin System
+- manifest validation
+- contribution registry (commands/tools/skills)
+- plugin panels
+- permission grants
 
-### 3. 6 本地 MCP 控制面
+### 3.6 Local MCP control plane
 
-设置 `PI_DESKTOP_MCP_CONTROL=1` 时，Electron Main 会在 `127.0.0.1` 启动可选的
-Streamable HTTP MCP 服务。服务提供项目/会话/Agent/工作区常用命名工具，以及经过
-审查的通用桌面操作目录。每次调用都委托给渲染器使用的同一主进程 IPC 处理器，不会
-创建第二套权限或持久化实现。
+When `PI_DESKTOP_MCP_CONTROL=1` is set, Electron Main starts an optional
+Streamable HTTP MCP server on `127.0.0.1`. The server exposes named tools for
+the common project/session/Agent/workspace flows and a reviewed catalog of
+generic desktop operations. Each call delegates to the same registered main
+process IPC handler used by the renderer; it does not create a second
+permission or persistence implementation.
 
-服务在 Electron 用户数据目录创建 bearer token 和连接清单，只绑定回环地址，不暴露
-密钥通道、provider/OAuth/MCP 密钥写入路径，或渲染器专属原生选择器。危险通用操作和
-`session/configure` 要求 `confirm: true`，这是 Agent 确认而非用户弹窗。成功的
-**变更性** 项目/会话调用复用现有会话变更事件，使外部 Agent 和可见桌面收敛到同一状态。
-这是本地自动化接口，不是延后的远程 Gateway / WebUI 架构。
+The server creates a persistent bearer token and a connection manifest in the
+Electron user-data directory. It never binds a non-loopback address, exposes
+no secret channels or secret-write provider/OAuth/MCP paths, and does not
+expose renderer-only native pickers. Dangerous generic operations and
+`session/configure` require `confirm: true` as an agent acknowledgement.
+Successful **mutating** project/session calls reuse the existing renderer
+session-change event so an external Agent and the visible desktop converge on
+the same active state. This is a local automation surface, not the deferred
+remote Gateway / WebUI architecture.
 
-### 3.7 远程 Agent Control 目标（MVP 后）
+### 3.7 Remote Agent Control target (post-MVP)
 
-远程控制在 [05-remote-agent-control](/spec/02-architecture/05-remote-agent-control)
-中单独定义。目标是在现有 sidecar 之上增加无头 Agent Host 模块，并暴露与传输无关的
-RACP 契约：WebSocket JSON-RPC 是 v1 规范绑定，HTTP/JSON + SSE 是其浏览器 profile，
-gRPC 保留（D374）。它不暴露 Electron IPC、`host.proxy` 或 host-core RPC，也不改变当前
-MVP 对远程 Gateway 的排除。首个实现把该模块放在 Electron Main 内，桌面 IPC、本地 MCP
-和 RACP 都调用它。首个远程部署（D375）把同一模块打包为另一台机器上的无头 `pi-host`，
-桌面经 SSH 隧道连接；Gateway 路由与浏览器访问保留规格但不排期。
+Remote control is specified separately in
+[05-remote-agent-control](05-remote-agent-control.md). The target introduces
+a headless Agent Host module above the existing sidecars and exposes a
+transport-neutral RACP contract: WebSocket JSON-RPC is the normative v1
+binding, HTTP/JSON + SSE is its browser profile, and gRPC is reserved (D374).
+It does not expose Electron IPC, `host.proxy`, or host-core RPC, and it does
+not change the current MVP exclusion of a remote Gateway. The first
+implementation hosts the module inside Electron Main, where desktop IPC,
+local MCP, and RACP call it. The first remote deployment (D375) packages the
+same module as a headless `pi-host` on another machine, reached from the
+desktop over an SSH tunnel; Gateway routing and browser access remain
+specified but unscheduled.
 
-## 4. 请求路径（对话+工具）
+## 4. Request path (conversation + tool)
 
 ```text
 1. UI submits prompt
@@ -125,75 +137,76 @@ MVP 对远程 Gateway 的排除。首个实现把该模块放在 Electron Main �
 6. turn ends; session persistence updates
 ```
 
-当同一个 Agent 调用 `SubmitPlan` 时，host-core 会保留确切的 Markdown
-新的不可变 `<workspaceRoot>/.pi/plan/*.md` 工件中的字节，记录其
-`plan_approvals` 中的相对 path/hash/size 和结构化 title/question，以及
-等待 `plans.resolve`。批准卡打开该工件。批准
-使用所选权限自动将持久会话更改为 Agent
-模式并排队新的执行轮次。拒绝、过期、host/sidecar 崩溃以及
-持久性失败不授予任何执行能力。启动交易
-在 RPC 之前中断待批准和 queued/running 执行字段
-服务，无重播；已批准的中断执行离开
-Agent 中的会话。
+When the same Agent calls `SubmitPlan`, host-core preserves the exact Markdown
+bytes in a new immutable `<workspaceRoot>/.pi/plan/*.md` artifact, records its
+relative path/hash/size and structured title/question in `plan_approvals`, and
+waits for `plans.resolve`. The approval card opens that artifact. Approval
+atomically changes the durable session to Agent with the selected permission
+mode and queues a fresh execution turn. Reject, expiry, host/sidecar crash, and
+persistence failure grant no execution capability. A startup transaction
+interrupts pending approvals and queued/running execution fields before RPC
+service, with no replay; an already-approved interrupted execution leaves the
+session in Agent.
 
-渲染器可能会显示 Plan 状态和批准 UI，但这只是一个投影
-当前渲染器生命周期的实时 host/runtime 事件的数量。它保留了
-渲染器内存中每个会话的最新 proposal/execution 快照；渲染器
-reload 仅通过 `plans.pending` 重新水化仍待处理的行，而不是
-终端审批或执行卡。它无法授权工具或选择模式
-通过发送冲突的请求字段来获取主机策略。
+The renderer may display Plan state and approval UI, but it is only a projection
+of live host/runtime events for the current renderer lifetime. It retains the
+latest proposal/execution snapshot per session in renderer memory; a renderer
+reload rehydrates only a still-pending row through `plans.pending`, not a
+terminal approval or execution card. It cannot authorize a tool or choose a mode
+for host policy by sending a conflicting request field.
 
-渲染器可能会保留多个项目选项卡，但这不会创建多个项目选项卡
-宿主工作区单例。一个项目提供可见的 shell 上下文；
-会话绑定的项目身份提供每个回合的特权工具根。
+The renderer may retain several project tabs, but this does not create several
+host workspace singletons. One project supplies visible shell context;
+session-bound project identity supplies each turn's privileged tool root.
 
-## 5. 为什么混合 Rust + pi
+## 5. Why hybrid Rust + pi
 
-| 方法 | 判决 |
+| Approach | Verdict |
 |---|---|
-| 纯 TS Electron 主要用于一切 | 更简单、更弱的系统边界 |
-| 代理循环的完整 Rust 重写 | 太贵了，失去了 pi 杠杆 |
-| **Rust 主机 + pi sidecar** | 选择：强大的主机+成熟的代理引擎 |
+| Pure TS Electron main for everything | simpler, weaker systems boundary |
+| Full Rust rewrite of agent loop | too expensive, loses pi leverage |
+| **Rust host + pi sidecar** | chosen: strong host + mature agent engine |
 
-## 6. 进程模型
+## 6. Process model
 
-传输：Rust sidecar + stdio JSON-RPC (NDJSON)。
+Transport: Rust sidecar + stdio JSON-RPC (NDJSON).
 
-MVP 目标进程：
+MVP target processes:
 
-1.Electron主要（包括可选的回环 MCP 控制服务）
-2.Electron渲染器
-3. Rust 主机内核 sidecar
-4. Node pi 代理 sidecar
+1. Electron main (including the optional loopback MCP control server)
+2. Electron renderer
+3. Rust host core sidecar
+4. Node pi agent sidecar
 
-开发模式可能会托管一些服务，但合同保持不变。
+Dev mode may colocate some services, but contracts stay the same.
 
-## 7. 扩展点
+## 7. Extension points
 
-- 工具提供程序（内置/插件/用户 MCP）
-- 面向已审查桌面操作的本地 MCP 控制客户端
-- 会话后端
-- 模型目录来源
-- 权限策略包
-- 语言环境包
-- 市场提供商（后 MVP）
+- Tool providers (builtin / plugin / user MCP)
+- Local MCP control clients for reviewed desktop operations
+- Session backends
+- Model catalog sources
+- Permission policy packs
+- Locale packs
+- Market providers (post-MVP)
 
-## 8. 包装影响
+## 8. Packaging implications
 
-台式机包装必须运送：
+Desktop package must ship:
 
-- Electron 应用程序
-- 一个目标本机 Rust 主机二进制文件
-- `Resources/agent-runtime/sidecar.js` 下的一个捆绑 pi sidecar 条目，运行
-  通过 Electron 二进制文件和 `ELECTRON_RUN_AS_NODE=1`
-- 英文和简体中文产品区域设置目录，仅加上
-  这些产品语言所需的 Chromium 语言环境包
-- 仅在保留的能力无法安全捆绑时，才携带目标本机运行时模块
+- Electron app
+- one target-native Rust host binary
+- one bundled pi sidecar entry under `Resources/agent-runtime/sidecar.js`, run
+  by the Electron binary with `ELECTRON_RUN_AS_NODE=1`
+- Every shipped product locale catalog, plus only the Chromium locale packs
+  needed for those product languages
+- target-native runtime modules only when a retained capability cannot be
+  bundled safely
 
-仅渲染器库是构建输入。 Vite 必须发出可执行文件
-`out/renderer` 下的代码和惰性资产；电子制造商不得也复制
-他们原来生产的`node_modules`树变成了ASAR。 Electron 主要可能
-内联纯 JS 工作区助手，同时保留本机或运行时解析的模块
-外部。发布包不包括依赖源映射、测试、示例、
-声明和非目标本机预构建，无需替换本地资产
-与网络获取。
+Renderer-only libraries are build inputs. Vite must emit their executable
+code and lazy assets under `out/renderer`; electron-builder must not also copy
+their original production `node_modules` trees into ASAR. Electron Main may
+inline pure-JS workspace helpers while native or runtime-resolved modules stay
+external. Release packages exclude dependency source maps, tests, examples,
+declarations, and non-target native prebuilds without replacing local assets
+with network fetches.

@@ -1,45 +1,48 @@
-# ADR 0190: 宿主把关的大文件与拖放文件访问
+# ADR 0190: Host-gated large-file and dropped-file access
 
-- **状态：** 已接受
-- **日期：** 2026-09-09
-- **决策者：** PI-Desktop 维护者
+- **Status:** Accepted
+- **Date:** 2026-09-09
+- **Deciders:** PI-Desktop maintainers
 
-## 背景
+## Context
 
-日志查看器插件需要字节范围读取和文件元数据来分页和跟随超大日志。其
-先前实现在插件进程中用 `node:fs` 完成这些操作，并用渲染进程 worker
-读取拖放的 `File` 快照。这把引擎拆成两半，并让文件范围路径处于宿主
-权限网关之外。
+The log-viewer plugin needs byte-range reads and file metadata to page and
+follow very large logs. Its previous implementation used `node:fs` in the
+plugin process for those operations and used a renderer worker to read dropped
+`File` snapshots. That split the engine and left the file-range path outside
+the host permission gateway.
 
-## 决策
+## Decision
 
-在现有的 `fs.read` 根目录、作用域、符号链接、受保护路径、拒绝列表、
-同意和审计检查之下，新增宿主拥有的 `fs.stat` 和有界的 `fs.readRange`
-API。一次范围调用上限为 8 MiB，返回 `{ bytes, totalSize }`。
+Add host-owned `fs.stat` and bounded `fs.readRange` APIs under the existing
+`fs.read` root, scope, symlink, protected-path, deny-list, consent, and audit
+checks. A range call is capped at 8 MiB and returns `{ bytes, totalSize }`.
 
-通过面板 preload 将 `webUtils.getPathForFile` 暴露为
-`pluginBridge.getDroppedFilePath`。面板宿主把来自真实拖放手势的路径
-记录一小段时间，并让 `fs.registerDropped` 一次性消费一个路径。运行时
-只为那个规范的常规文件签发一份仅内存的授权。该授权只读、不能用于
-其他路径、每次访问时重新检查，并随插件进程消亡。
+Expose `webUtils.getPathForFile` through the panel preload as
+`pluginBridge.getDroppedFilePath`. The panel host records paths from a real
+drop gesture for a short time and lets `fs.registerDropped` consume one path
+once. The runtime issues a memory-only grant for exactly that canonical regular
+file. The grant is read-only, cannot be used with another path, is rechecked on
+every access, and dies with the plugin process.
 
-日志查看器对选取和拖放的文件都使用宿主 API。它没有裸 `node:fs` 回退，
-也不提供导出或写入功能。
+The log viewer uses the host APIs for both picked and dropped files. It has no
+raw `node:fs` fallback and does not provide export or write functionality.
 
-## 后果
+## Consequences
 
-- 大文件索引、分页、搜索、跟随和轮转共享一个权限把关的引擎。
-- 拖放的文件在当前插件会话期间可以跟随追加。
-- 拖放文件授权不会成为 manifest 作用域，也不会被持久化。
-- 没有新 API 的旧宿主无法加载这个插件版本；它 fail-closed，而不是静默
-  绕过网关。
-- 真实的拖放流程仍需桌面手势测试；单元和集成测试覆盖授权、路径和
-  字节范围边界。
+- Large-file indexing, pagination, search, follow, and rotation share one
+  permission-gated engine.
+- Dropped files can follow appends during the current plugin session.
+- Dropped-file grants do not become manifest scope and are not persisted.
+- Older hosts without the new APIs cannot load this plugin version; it fails
+  closed instead of silently bypassing the gateway.
+- The real drag-and-drop flow still requires desktop gesture testing; unit and
+  integration tests cover the grant, path, and byte-range boundaries.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-- 在插件中保留裸 `node:fs`：否决，因为它绕过宿主策略。
-- 保留渲染进程 `Blob.slice` worker 读取：否决，因为它重复了引擎，且
-  无法观察文件增长或保持宿主文件身份。
-- 为拖放文件添加宽泛的用户选定根目录：否决，因为单个拖放的文件不应
-  授权其所在目录。
+- Keep raw `node:fs` in the plugin: rejected because it bypasses host policy.
+- Keep renderer `Blob.slice` worker reads: rejected because it duplicates the
+  engine and cannot observe file growth or preserve a host file identity.
+- Add a broad user-selected root for dropped files: rejected because a single
+  dropped file should not authorize its containing directory.

@@ -1,32 +1,37 @@
-# ADR 0287 — 宿主渲染的插件 scenic 设置界面
+# ADR 0287 — Host-rendered plugin scenic Settings surfaces
 
-- **状态：** 已接受，待实现
-- **日期：** 2026-09-17
-- **相关：** ADR 0104、ADR 0255
+- **Status:** Accepted for implementation
+- **Date:** 2026-09-17
+- **Related:** ADR 0104, ADR 0255
 
-## 背景
+## Context
 
-Electron 的 `WebContentsView` 和沙箱 iframe 各自创建一个独立的合成表面。
-尽管扩展文档可以让自己的背景透明，但它的页面画布仍然是位于根级 scenic
-背景与设置内容之间的一个不透明矩形。原生子表面还可能拦截渲染进程绘制的
-Windows/Linux 控件。
+An Electron `WebContentsView` and a sandboxed iframe each create an independent
+compositing surface. Although an extension document can make its own background
+transparent, its page canvas remains an opaque rectangle between the root scenic
+backdrop and the Settings content. Native child surfaces can also intercept the
+renderer-drawn Windows/Linux controls.
 
-## 决策
+## Decision
 
-面向外观扩展的通用插件设置文档界面被退役。`contributes.scenicThemes` 只
-提供声明式的本地化卡片元数据。Electron 主进程校验权限、同插件的主题归属、
-声明的预览图，以及 `--nexus-backdrop-blur` 变量必须是精确的 `length` 类型。
-宿主 React 设置树在其现有的透明 scenic 画布内渲染所有控件。
+The generic plugin Settings document surface is retired for appearance
+extensions. `contributes.scenicThemes` supplies declarative localized card
+metadata only. Electron main validates the permissions, same-plugin theme
+ownership, declared preview image, and the exact `--nexus-backdrop-blur`
+`length` variable. The host React Settings tree renders all controls inside its
+existing transparent scenic canvas.
 
-卡片选择立即生效。有界的 0–20 整数模糊控件在用户按下应用之前只是本地
-草稿；随后宿主使用现有的带类型主题变量持久化边界。没有 iframe、页面协议、
-桥，或第二个文档画布。
+Card selection is immediate. The bounded 0–20 integer blur control is a local
+draft until the user presses Apply; the host then uses the existing typed theme
+variable persistence boundary. There is no iframe, page protocol, bridge, or
+second document canvas.
 
-## 后果
+## Consequences
 
-- 单一的根级 scenic 背景透过设置界面保持可见。
-- 宿主拥有的布局、焦点、搜索、窄窗口行为、拖拽区域和原生控件不能被插件
-  改变或拦截。
-- 插件不能通过此能力向设置界面贡献 HTML、CSS、JavaScript、选择器、DOM
-  或任意动作。
-- 这个有意收窄的目的地不替代隔离的工作面板视图或插件面板。
+- A single root scenic backdrop remains visible through Settings surfaces.
+- Host-owned layout, focus, search, narrow-window behavior, drag regions, and
+  native controls cannot be changed or intercepted by plugins.
+- Plugins cannot contribute Settings HTML, CSS, JavaScript, selectors, DOM, or
+  arbitrary actions through this capability.
+- This deliberately narrow destination does not replace isolated work-panel
+  views or plugin panels.

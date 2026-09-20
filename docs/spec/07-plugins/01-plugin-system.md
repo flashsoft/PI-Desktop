@@ -1,84 +1,84 @@
-# 01. 插件系统
+# 01. Plugin System
 
-## 0. 冻结实现默认值
+## 0. Frozen implementation defaults
 
-- 插件工具公开名称使用强制前缀 `plugin_<pluginIdSafe>_<toolName>` (D015)
-- 启用→加载失败自动禁用插件（D017）
-- 卸载默认删除插件数据（D016）
-- MVP (D018) 中不允许使用插件设置机密
-- 运行时目标仍然是单独的进程； M4 可以使用主机管理的沙盒运行时 (D009)
-- 每个扩展都带有 `enabled` 以及激活范围；两个插件和
-  用户自己的 MCP 服务器和技能是全局的或仅限于指定项目 (D192)
-- 用户 MCP 工具使用前缀 `mcp_<serverId>_<toolName>`，与 D015 不相交
-  插件命名空间 (D193)
+- Plugin tool exposed names use forced prefix `plugin_<pluginIdSafe>_<toolName>` (D015)
+- enable→load failure auto-disables plugin (D017)
+- uninstall deletes plugin data by default (D016)
+- plugin settings secrets not allowed in MVP (D018)
+- runtime target remains separate process; M4 may use host-managed sandboxed runtime (D009)
+- every extension carries `enabled` plus an activation scope; both plugins and the
+  user's own MCP servers and skills are global or limited to named projects (D192)
+- user MCP tools use the prefix `mcp_<serverId>_<toolName>`, disjoint from D015's
+  plugin namespace (D193)
 
-Plan 策略：插件代理工具、注册工具的插件技能以及任何
-未知的插件贡献在 Plan 中不可见或可执行。这否认
-在通用插件权限评估之前由 host-core 强制执行，并且不能
-可以被低风险清单、会话授权或 `auto` 绕过。插件工具
-在批准的 Plan → Agent 转换后，对同一 Agent 仍然可用。
+Plan policy: plugin agent tools, plugin skills that register tools, and any
+unknown plugin contribution are not visible or executable in Plan. This deny
+is enforced by host-core before generic plugin permission evaluation and cannot
+be bypassed by a low-risk manifest, a session grant, or `auto`. Plugin tools
+remain available to the same Agent after an approved Plan → Agent transition.
 
-## 1. 目标
+## 1. Goals
 
-为 PI-Desktop 提供类似于已建立的桌面插件生态系统的可扩展性（例如 VS Code 扩展）：
+Give PI-Desktop extensibility similar to established desktop plugin ecosystems (e.g. VS Code extensions):
 
-- 用户可以安装/启用/禁用/卸载插件
-- 开发人员可以构建自定义插件
-- 插件可以扩展命令、面板、工具和 Agent 功能
-- 平台保持安全边界，不会将完整的系统权限直接交给任意第三方代码
+- Users can install / enable / disable / uninstall plugins
+- Developers can build custom plugins
+- Plugins can extend commands, panels, tools, and Agent capabilities
+- The platform keeps a security boundary and does not hand full system privileges directly to arbitrary third-party code
 
-用一句话来说：
+In one sentence:
 
-> **PI-Desktop 是主持人；插件是功能包。**
+> **PI-Desktop is the host; plugins are capability packs.**
 
-## 2. 设计目标
+## 2. Design goals
 
-### 从已建立的插件生态系统中采用的模式
-- 基于目录的插件安装
-- 在清单文件中声明的功能
-- 功能关键字/命令触发器
-- 专门的插件管理页面
-- 用于加载本地插件的开发者模式
+### Patterns adopted from established plugin ecosystems
+- Directory-based plugin installation
+- Capabilities declared in a manifest file
+- Feature keyword / command triggers
+- A dedicated plugin management page
+- Developer mode for loading local plugins
 
-### 差异（因为我们是 Agent 桌面）
-- 插件不仅仅是小型实用面板；他们还可以扩展：
- - Agent 工具
- - 技能
- - MCP 桥
- - 会话命令
- - 设置
-- 高风险能力必须经过权限框架
-- 插件默认无法直接获取任意Node/Electron权限
+### Differences (because we are an Agent desktop)
+- Plugins are not just small utility panels; they can also extend:
+ - Agent Tools
+ - Skills
+ - MCP bridge
+ - Session commands
+ - Settings
+- High-risk capabilities must go through the permission framework
+- Plugins cannot directly obtain arbitrary Node/Electron privileges by default
 
-## 3. 插件可以做什么
+## 3. What plugins can do
 
-### MVP-Plugin 范围（插件系统的第一次迭代）
-1. **命令插件**：注册命令面板操作
-2. **面板插件**：打开插件UI面板（iframe / webview沙盒页面）
-3. **AgentTool插件**：为代理提供新的工具
-4. **技能插件**：提供可加载的技能documents/flows
-5. **主题插件**：提供覆盖设计令牌的 CSS 文件
+### MVP-Plugin scope (first iteration of the plugin system)
+1. **Command plugins**: register command palette actions
+2. **Panel plugins**: open a plugin UI panel (iframe / webview sandboxed page)
+3. **AgentTool plugins**: provide new tools to the agent
+4. **Skill plugins**: provide loadable skill documents/flows
+5. **Theme plugins**: ship a CSS file that overrides the design tokens
 
-### 超出 MVP 范围（已实现）
-6. **工作面板视图插件**：在应用的工作面板中停靠隔离的 HTML 视图
-7. **MCP 服务器插件**：声明 stdio 或远程 HTTP MCP 服务器，其工具
-   加入代理工具集
-8. **后台服务插件**：让受监督的驻地工人保持活力
-9. **插件间消息总线**：声明主题上的 publish/subscribe
+### Beyond the MVP scope (implemented)
+6. **Work panel view plugins**: dock isolated HTML views in the app's work panel
+7. **MCP server plugins**: declare stdio or remote HTTP MCP servers whose tools
+   join the agent's tool set
+8. **Background service plugins**: keep a supervised resident worker alive
+9. **Inter-plugin message bus**: publish/subscribe over declared topics
 
-### 稍后
-- 计费/签名插件
-- 企业私有插件源
+### Later
+- Billing / signed plugins
+- Enterprise private plugin sources
 
-**当前实现：** Plugins页面可以浏览和安装包
-来自官方市场提供商。每个插件自动更新是可选的并且
-拒绝静默权限扩展。这不是功能沙盒运行时：
-插件主进程保留原始 Node 内置程序，因此市场包是
-在实施计划的沙箱之前，不受限制的用户特权代码。
+**Current implementation:** the Plugins page can browse and install packages
+from the official marketplace provider. Per-plugin auto-update is opt-in and
+refuses silent permission expansion. This is not a capability-sandboxed runtime:
+plugin main processes retain raw Node built-ins, so marketplace packages are
+unrestricted user-privileged code until the planned sandbox is implemented.
 
-## 4. 插件形状
+## 4. Plugin shape
 
-每个插件都是一个目录：
+Each plugin is a directory:
 
 ```text
 my-plugin/
@@ -96,7 +96,7 @@ my-plugin/
 └── README.md
 ```
 
-### 安装位置
+### Install location
 
 ```text
 ~/.pi-desktop/plugins/
@@ -106,9 +106,9 @@ my-plugin/
  └── cache/
 ```
 
-开发者模式可以直接加载本地路径，无需将其复制到 `installed` 中。
+Developer mode can load a local path directly, without copying it into `installed`.
 
-## 5. manifest.json（核心合约）
+## 5. manifest.json (core contract)
 
 ```json
 {
@@ -179,17 +179,17 @@ my-plugin/
 }
 ```
 
-### 字段限制
-- `schemaVersion` 为必填项，且必须为 `1`； Rust 主机 (`crates/host-core/src/plugins.rs`) 会拒绝没有它的清单
-- `id`全球独一无二；建议使用反向域名命名
-- `version` 遵循 semver
-- `permissions` 必须显式声明
-- 未声明的权限默认为无
-- 验证失败的清单将被拒绝
+### Field constraints
+- `schemaVersion` is required and must be `1`; the Rust host (`crates/host-core/src/plugins.rs`) rejects manifests without it
+- `id` is globally unique; reverse-domain naming is recommended
+- `version` follows semver
+- `permissions` must be declared explicitly
+- Undeclared permissions default to none
+- A manifest that fails validation is refused
 
-## 6. 插件运行时模型
+## 6. Plugin runtime model
 
-使用**三层隔离**：
+Uses **three-layer isolation**:
 
 ```text
 Host Main (PI-Desktop)
@@ -199,60 +199,77 @@ Host Main (PI-Desktop)
  └─ Plugin Panel (Renderer iframe/webview)
 ```
 
-### 6. 1 主机主
-- 安装/卸载/启用/禁用
-- 验证清单
-- 权限管理
-- 路由命令和工具调用
+### 6.1 Host Main
+- Install / uninstall / enable / disable
+- Validate manifest
+- Authorization management
+- Route command and tool calls
 
-### 6. 2 插件运行时（受限）
-插件逻辑在受限环境中运行；它不等同于完整的 Electron 主要权限。
+### 6.2 Plugin Runtime (restricted)
+Plugin logic runs in a restricted environment; it is not equivalent to full Electron main privileges.
 
-**今天实施（ADR 0008）：**每个插件的主模块都在自己的中运行
-`utilityProcess` (`electron/main/plugin-host-process.mjs`) 并到达主机
-仅通过 JSON RPC 到 `electron/main/plugin-runtime.ts` 中的经纪商，其中
-强制执行 API 白名单和权限网关。插件代码永远不会得到
-主机对象并且不能 `require` 主机模块。
+**Implemented today (ADR 0008):** each plugin's main module runs in its own
+`utilityProcess` (`electron/main/plugin-host-process.mjs`) and reaches the host
+only through JSON RPC to the broker in `electron/main/plugin-runtime.ts`, which
+enforces the API allowlist and the permission gateway. Plugin code never gets a
+host object and cannot `require` host modules.
 
-仍然开放：插件进程内的功能沙箱（原始 Node 内置
-可以到达）和 CPU/memory 限制。
+Still open: capability sandboxing inside the plugin process (raw Node built-ins
+are reachable there) and CPU/memory limits.
 
-### 6. 3 插件面板用户界面
-- 在专用的沙盒 `BrowserWindow` 中加载插件页面，并为每个插件使用隔离的会话分区
-- 关闭面板（胶囊关闭、禁用、卸载或崩溃拆除）不得读取已销毁的 `BrowserWindow` 或其 `webContents`。宿主必须在窗口仍存活时复制清理拖拽记录所需的 contents id，避免 `closed` 处理程序抛出 `Object has been destroyed`。
-- 在 macOS、Windows 和 Linux 上都使用无边框窗口。preload 精确保留透明的
-  46px 拖拽带，并只在右上角渲染最简胶囊：最小化、最大化/还原和关闭。
-  不显示原生交通灯或主机渲染的面板标题；胶囊之外的拖拽带不可点击，
-  开发面板会显示本地化提醒。
-- 面板标题可以继续作为旧字符串或本地化的 `{ "en": string,
-  "zh-CN": string }` 对象，用于原生窗口身份和启动器元数据，但主机不会
-  在面板内部渲染该标题。
-- 胶囊跟随插件页面计算得到的背景色和文字色。页面透明时，以当前
-  PI-Desktop 主题（`light` / `dark`，包括插件主题的基础色板）作为回退。
-- 通过 `--pi-plugin-titlebar-height: 46px` 暴露拖拽带高度；普通流内容会
-  自动偏移，固定或粘性插件界面必须使用
-  `top: var(--pi-plugin-titlebar-height, 46px)`，而不是 `top: 0`。
-  插件自己的工具栏可以使用 `-webkit-app-region: drag`，其中的交互控件
-  使用 `-webkit-app-region: no-drag`。
-- 需要全出血绘制到主机拖拽带下方的面板，可以声明
-  `<meta name="pi-plugin-chrome" content="v3">`。主机保留相同的 46px
-  胶囊几何尺寸，但只把页面空白区域切成原生拖拽片段；标准控件以及标记
-  `data-pi-plugin-no-drag` 的元素会在拖拽图中形成点击空洞，因此元素存在的
-  位置可正常接收指针，空白处仍可拖动窗口；既有面板继续使用严格的 `v2`
-  契约。
-- 稳定滚动条槽位应只放在面板实际的内容滚动容器上，不应同时放在根级
-  `html`/`body` 视口上。Windows 的经典滚动条会把重复的根级预留显示成插件
-  表面右侧额外的空白侧栏。
-- 插件负责自己的标题、工具栏以及所有其他可见面板界面
-- 在 preload 自己拥有的闭合 Shadow DOM 中渲染主机胶囊，防止插件 CSS 重写控件
-- 只能调用插件preload公开的安全API
-- 默认情况下无法访问主机 DOM/主机存储
+### 6.3 Plugin Panel UI
+- Load the plugin page in a dedicated sandboxed `BrowserWindow` and isolated
+  per-plugin session partition
+- Closing a panel (capsule close, disable, uninstall, or crash teardown) must
+  not read a destroyed `BrowserWindow` or its `webContents`. The host copies
+  any contents identity needed for drop-record cleanup while the window is
+  still alive so the `closed` handler cannot raise `Object has been destroyed`.
+- Use a frameless window on macOS, Windows, and Linux. The preload reserves
+  exactly a transparent 46px drag band and renders only a minimal fixed
+  top-right capsule with three controls: minimize, maximize/restore, and close.
+  Native traffic lights and host-rendered panel titles are not shown. The drag
+  band is not clickable outside the capsule; development panels show a
+  localized reminder.
+- Panel titles may remain a legacy string or a localized `{ "en": string,
+  "zh-CN": string }` object for the native window identity and launcher
+  metadata, but the host does not render that title inside the panel.
+- The capsule follows the loaded plugin page's computed background and text
+  colors. The active PI-Desktop theme (`light` / `dark`, including a plugin
+  theme's base palette) is the fallback while the page is transparent.
+- Expose the drag-band height as `--pi-plugin-titlebar-height: 46px`;
+  normal-flow content is offset automatically, while fixed/sticky plugin UI
+  must use `top: var(--pi-plugin-titlebar-height, 46px)` rather than `top: 0`.
+  A plugin-owned toolbar may use `-webkit-app-region: drag`, with
+  `-webkit-app-region: no-drag` on its interactive controls.
+- Current panel pages declare `<meta name="pi-plugin-chrome" content="v2">`
+  and use the published variable for their own top spacing. The host does not
+  add padding to these pages, avoiding a duplicated safe band; pages without
+  the marker retain the legacy additive offset for compatibility.
+- A panel that needs to paint a full-bleed surface beneath the host band may
+  opt into `<meta name="pi-plugin-chrome" content="v3">`. The host keeps the
+  same 46px capsule geometry but splits native dragging into empty-space
+  segments. Standard controls and elements marked with
+  `data-pi-plugin-no-drag` are holes in that map, so they can receive pointer
+  input while blank space remains draggable. The default `v2` contract remains
+  strict for existing panels.
+- Stable scrollbar gutters belong on the panel's actual content scroller, not
+  on the root `html`/`body` viewport as well. Windows' classic scrollbar
+  rendering makes a duplicated root reservation visible as an empty right-side
+  rail outside the plugin surface.
+- The host preload applies the global 6px, trackless, reveal-while-interacting
+  scrollbar contract to docked and detached plugin panel documents. External
+  pages loaded inside the Browser guest remain page-owned and are not restyled.
+- The plugin owns its title, toolbar, and every other visible panel surface.
+- Render the host capsule in a closed preload-owned Shadow DOM so plugin CSS
+  cannot restyle its controls
+- Can only call the safe APIs exposed by the plugin preload
+- Cannot access the host DOM / host store by default
 
-## 7. 托管 API（可通过插件调用）
+## 7. Host API (callable by plugins)
 
-命名空间：`pi.plugin.*`
+Namespace: `pi.plugin.*`
 
-### 基础知识
+### Basics
 - `pi.app.getVersion()`
 - `pi.plugin.getManifest()`
 - `pi.plugin.getSettings()`
@@ -265,121 +282,122 @@ Host Main (PI-Desktop)
 - `pi.ui.requestNotificationPermission()`
 - `pi.ui.showNativeNotification({ title, body? })`
 
-### 工作区（需要许可）
+### Workspace (requires permission)
 - `pi.workspace.get()`
 - `pi.fs.readText(path)`
-- `pi.fs.openDefault(path)` // 使用系统关联应用打开选中的文件
-- `pi.fs.reveal(path)` // 在系统文件管理器中显示选中的文件
-- `pi.fs.writeText(path, content)` // 高风险
+- `pi.fs.openDefault(path)` // open the selected file with the OS-associated app
+- `pi.fs.reveal(path)` // show the selected file in the OS file manager
+- `pi.fs.writeText(path, content)` // high risk
 - `pi.fs.glob(pattern)`
 
-### Agent（需要许可）
-- `pi.project.create({ path })` // `project.create`；返回持久项目 id，但不激活它
+### Agent (requires permission)
+- `pi.project.create({ path })` // `project.create`; returns a durable project id without activating it
 - `pi.agent.registerTool(tool)`
 - `pi.agent.unregisterTool(name)`
 - `pi.models.list()` // `models.list`
-- `pi.session.getLlmContext()` // `session.read`；仅限进行中的工具会话
-- `pi.session.import()` / `importBatch()` // `session.import`；仅限已声明来源
+- `pi.session.getLlmContext()` // `session.read`; in-flight tool session only
+- `pi.session.import()` / `importBatch()` // `session.import`; declared sources only
 - `pi.session.list()` / `get()` / `listMessages()` // `session.read.own`
 - `pi.session.rename()` // `session.update.own`
 - `pi.session.delete()` // `session.delete.own`
-- `pi.usage.listTurns()` // `usage.read`；只读已完成回合事实，不含消息正文
-- `pi.agent.complete(input)` // `agent.complete`；宿主代发一次性补全
+- `pi.usage.listTurns()` // `usage.read`; read-only completed-turn facts, no message bodies
+- `pi.agent.complete(input)` // `agent.complete`; host-owned one-shot
 
-技能以声明方式贡献（`contributes.skills` + `agent.prompt.inject`），
-不由插件调用：主机将目录放在系统提示符中，并且
-模型通过内置的 `Skill` 工具 (D174) 加载主体。有计划，没有
-目前曝光：`pi.agent.appendSystemHint(text)`。
+Skills are contributed declaratively (`contributes.skills` + `agent.prompt.inject`),
+not invoked by the plugin: the host puts the catalog in the system prompt and the
+model loads a body through the built-in `Skill` tool (D174). Planned, not
+currently exposed: `pi.agent.appendSystemHint(text)`.
 
-### 后台服务（需要 `background.service`）
+### Background services (requires `background.service`)
 - `pi.services.register({ id, start, stop? })`
 - `pi.services.unregister(id)`
 
-登记为本地记账；代理仅在以下情况下启动服务
-清单声明了它并授予了权限，并监督重新启动。
+Registration is local bookkeeping; the broker starts a service only when the
+manifest declared it and the permission was granted, and supervises restarts.
 
-### 消息总线（需要许可）
+### Message bus (requires permission)
 - `pi.bus.publish(topic, payload)` // `bus.publish`
 - `pi.bus.subscribe(pattern, handler)` → `unsubscribe()` // `bus.subscribe`
-- `pi.events.on(event, handler)` / `pi.events.off(event, handler)` // 主机推送，
-  包括原始 `bus.message` 流
+- `pi.events.on(event, handler)` / `pi.events.off(event, handler)` // host pushes,
+  including the raw `bus.message` stream
 
-### 剪贴板/系统（需要许可）
+### Clipboard / system (requires permission)
 - `pi.clipboard.readText()`
-- `pi.clipboard.getHistory()` // 文本和图片，最新优先
+- `pi.clipboard.getHistory()` // text and images, newest first
 - `pi.clipboard.writeText(text)`
-- `pi.shell.openExternal(url)` // 默认确认
+- `pi.shell.openExternal(url)` // confirmation by default
 - `pi.net.fetch(input)`
 
-`pi.ui.notify` 是一个应用内 Toast。本机插件通知使用
-Electron 主进程通知 API 并共享清单 `notify`
-许可。 `requestNotificationPermission()` 返回尽力而为的原生
-权限状态（`granted`、`denied`、`unknown` 或 `unsupported`）之后
-执行简短的本机探测。这些通知不是持久任务
-收件箱记录，单击时不会激活会话。
+`pi.ui.notify` is an in-app Toast. Native plugin notifications use the
+Electron main-process notification API and share the manifest `notify`
+permission. `requestNotificationPermission()` returns the best-effort native
+permission state (`granted`, `denied`, `unknown`, or `unsupported`) after
+performing a short native probe. These notifications are not durable task
+inbox records and do not activate a session when clicked.
 
-### 明确不直接提供
-- 任意主机内部 Electron 对象
-- 通过代理的 `pi.fs` API 进行任意绝对路径访问
+### Explicitly not provided directly
+- Arbitrary host-internal Electron objects
+- Arbitrary absolute-path access through the brokered `pi.fs` APIs
 
-该代理不直接提供 Node 功能。然而，当前
-实用程序进程插件运行时不是 Node 功能沙箱：插件代码可以
-独立于 `pi.*` 到达原始 Node 内置函数。下面的权限模型
-因此，在提供运行时沙箱之前，仅适用于代理 API。
+The broker does not provide Node capabilities directly. However, the current
+utility-process plugin runtime is not a Node capability sandbox: plugin code can
+reach raw Node built-ins independently of `pi.*`. The permission model below
+therefore applies only to brokered APIs until runtime sandboxing is delivered.
 
-## 8. 权限模型
+## 8. Permission model
 
-### 权限列表
+### Permission list
 
-| 许可 | 风险 | 描述 |
+| permission | Risk | Description |
 |---|---|---|
-| `ui.panel` | 低 | 显示面板 |
-| `ui.view` | 低 | 贡献工作面板视图 |
-| `ui.theme` | 低 | 贡献主题 CSS 文件 |
-| `clipboard.read` | 中等 | 读取当前剪贴板和主机保留的剪贴板历史 |
-| `clipboard.write` | 中等 | 写入剪贴板 |
-| `notify` | 低 | 系统通知 |
-| `fs.read` | 中等 | 读取 `manifest.fs.read` 列出的路径 |
-| `fs.write` | 高 | 写入 `manifest.fs.write` 列出的路径 |
-| `fs.delete` | 高 | 删除 `manifest.fs.delete` 列出的路径，进系统回收站 |
-| `agent.tool.register` | 高 | 注册代理工具 |
-| `agent.prompt.inject` | 高 | 注入提示；激活 `contributes.skills` |
-| `net.fetch` | 高 | 网络请求 |
-| `shell.openExternal` | 中等 | 打开外部链接 |
-| `mcp.server.local` | 高 | 生成 stdio MCP 服务器 |
-| `mcp.server.remote` | 高 | 连接远程 HTTP MCP 服务器 |
-| `background.service` | 中等 | 保持常驻服务运行 |
-| `bus.publish` | 中等 | 发布到已声明的总线主题 |
-| `bus.subscribe` | 中等 | 订阅已声明的总线模式 |
+| `ui.panel` | low | Show panel |
+| `ui.view` | low | Contribute work panel views |
+| `ui.theme` | low | Contribute a theme CSS file |
+| `clipboard.read` | medium | Read the current clipboard and host-retained clipboard history |
+| `clipboard.write` | medium | Write clipboard |
+| `notify` | low | System notification |
+| `fs.read` | medium | Read the paths `manifest.fs.read` lists |
+| `fs.write` | high | Write the paths `manifest.fs.write` lists |
+| `fs.delete` | high | Delete the paths `manifest.fs.delete` lists, to the OS trash |
+| `agent.tool.register` | high | Register agent tool |
+| `agent.prompt.inject` | high | Inject prompt; activates `contributes.skills` |
+| `net.fetch` | high | Network request |
+| `shell.openExternal` | medium | Open external link |
+| `mcp.server.local` | high | Spawn a stdio MCP server |
+| `mcp.server.remote` | high | Connect a remote HTTP MCP server |
+| `background.service` | medium | Keep a resident service running |
+| `bus.publish` | medium | Publish to declared bus topics |
+| `bus.subscribe` | medium | Subscribe to declared bus patterns |
 
-主题、MCP 服务器、服务和总线主题均在清单中声明，因此
-他们的权限在验证时和运行时都会受到检查 - 请参阅
-[13-插件权限-matrix.md](/spec/07-plugins/13-plugin-permissions-matrix)。
+Themes, MCP servers, services, and bus topics are declared in the manifest, so
+their permission is checked at validation time as well as at runtime — see
+[13-plugin-permissions-matrix.md](13-plugin-permissions-matrix.md).
 
-三个文件权限除了开关还带一个范围：`manifest.fs` 说明每种模式可以触碰哪些
-路径，`manifest.net.domains` 对出网做同一件事。没有声明范围的文件权限就没有
-常驻可达范围 —— 每次访问都要问用户。文件范围之前的旧权限名
-（`fs.read.workspace` 等）仍然可以加载，并会被降级为最小安全等价物（ADR 0088）。
+The three file permissions carry a range as well as a switch: `manifest.fs` says
+which paths each mode may touch, and `manifest.net.domains` does the same for
+egress. A file permission with no declared scope has no standing reach — every
+access asks the user. The pre-scope names (`fs.read.workspace` and friends) still
+load and are downgraded to the minimum safe equivalent (ADR 0088).
 
-### 授权时机
-1.安装或升级审核时显示声明的权限列表
-2. 只有授予的权限才会传递给代理运行时；缺少补助金
-   相应的 `pi.*` 调用失败
-3、用户可以在插件管理页面撤销权限；重新加载是
-   正在运行的插件需要观察更改的授权集
+### Authorization timing
+1. Show the declared permission list at install or upgrade review time
+2. Only granted permissions are passed to the brokered runtime; missing grants
+   fail the corresponding `pi.*` call
+3. Users can revoke permissions on the plugin management page; a reload is
+   required for a running plugin to observe the changed grant set
 
-未实施每次调用确认和直接 Node 访问的任何策略。
+Per-call confirmation and any policy for direct Node access are not implemented.
 
-## 9. 命令面板
+## 9. Command palette
 
-全局命令面板支持：
+The global command palette supports:
 
-- 搜索插件命令
-- 关键词触发
-- 最近使用过
-- 按类别分组
+- Searching plugin commands
+- Keyword triggers
+- Recently used
+- Grouping by category
 
-交互流程：
+Interaction flow:
 
 ```text
 User opens the command palette
@@ -389,28 +407,28 @@ User opens the command palette
  → opens a panel or triggers an agent/tool
 ```
 
-快捷方式（推荐）：
-- macOS：`Command+Shift+P` 或自定义
-- 支持稍后调用快速启动器
+Shortcut (recommended):
+- macOS: `Command+Shift+P` or custom
+- support quick launcher invocation later
 
-## 10. AgentTool插件机制
+## 10. AgentTool plugin mechanism
 
-插件注册工具后：
+After a plugin registers a tool:
 
-1.PluginManager验证schema和权限
-2. ToolHost对工具进行包装
-3、每次调用都先经过权限和审核
-4. 实际执行落在插件运行时
-5. 结果在返回给代理之前进行归一化
+1. PluginManager validates the schema and permissions
+2. ToolHost wraps the tool
+3. Every call first passes through permissions and audit
+4. Actual execution lands in the plugin runtime
+5. The result is normalized before being returned to the agent
 
-包裹层必须添加：
-- 超时
-- 参数验证
-- 误差标准化
-- 审计日志记录
-- 禁用开关
+The wrapping layer must add:
+- timeout
+- argument validation
+- error normalization
+- audit logging
+- a disable switch
 
-## 11. 插件生命周期
+## 11. Plugin lifecycle
 
 ```text
 discover → validate → install → enable → load → running
@@ -418,7 +436,7 @@ discover → validate → install → enable → load → running
  ↘ uninstall → purge
 ```
 
-挂钩：
+Hooks:
 - `onInstall`
 - `onLoad`
 - `onEnable`
@@ -426,97 +444,106 @@ discover → validate → install → enable → load → running
 - `onUnload`
 - `onUninstall`
 
-**今天实现：**运行时（`apps/desktop/electron/main/plugin-runtime.ts`）调用`onLoad`（当load/enable上加载插件时）和`onUnload`（在插件进程中，停止之前，5s预算）；卸载会删除插件注册的命令和工具。其他钩子在 API 中声明，但尚未触发。
+**Implemented today:** the runtime (`apps/desktop/electron/main/plugin-runtime.ts`) invokes `onLoad` (when a plugin is loaded on load/enable) and `onUnload` (in the plugin process, before it is stopped, 5s budget); unloading tears down the plugin's registered commands and tools. The other hooks are declared in the API but not yet fired.
 
-**计划：**一旦完整生命周期落地，钩子将按以下顺序触发：安装→启用→加载→（运行）→卸载→禁用→卸载。有关详细序列，请参阅 [05-plugin-lifecycle.md](/spec/07-plugins/05-plugin-lifecycle)。
+**Planned:** once the full lifecycle lands, hooks fire in this order: install → enable → load → (running) → unload → disable → uninstall. See [05-plugin-lifecycle.md](05-plugin-lifecycle.md) for the detailed sequence.
 
-失败政策：
-- 加载失败：标记错误，不影响主机启动
-- 工具执行失败：返回工具错误，不要使主进程崩溃
+Failure policy:
+- load failure: mark error, do not affect host startup
+- tool execution failure: return a tool error, do not crash the main process
 
-## 12. 扩展 UI
+## 12. Extensions UI
 
-应用程序外壳的专用**扩展**目标拥有用户添加的所有内容
-到应用程序。不要在“设置”中重复任何内容。
+The app shell's dedicated **Extensions** destination owns everything a user adds
+to the app. Do not duplicate any of it in Settings.
 
-扩展目标只保留两个选项卡，因为它是插件页面：
+The Extensions destination has two tabs because it is a plugin surface:
 
-| 选项卡 | 内容 |
+| Tab | Contents |
 |---|---|
-| 已安装 | 插件，分组：需要注意、更新、活动、禁用 |
-| 市场 | 浏览并安装 |
+| Installed | Plugins, grouped: needs attention, updates, active, disabled |
+| Marketplace | Browse and install |
 
-MCP、技能和子代理由设置 > 智能体下的三个独立页面管理，不再在扩展页重复。
-插件功能仍包括：
-- 本地安装（选择目录/zip）
-- 开发人员加载（路径）
-- 激活范围（关闭/本项目/各处）
-- 卸载
-- 查看权限
-- 查看日志
-- 打开插件目录
+MCP, Skills, and Subagents are managed in the three independent Settings > Agent
+pages. They are not duplicated in Extensions. Plugin features remain:
+- Local install (choose directory / zip)
+- Developer load (path)
+- Activation scope (off / this project / everywhere)
+- Uninstall
+- View permissions
+- View logs
+- Open plugin directory
 
-状态指示灯：
-- 启用
-- 禁用
-- 错误
-- 开发加载
+Status indicators:
+- enabled
+- disabled
+- error
+- dev-loaded
 
-### 12. 1 激活范围控制
-### 12. 1 激活范围控制
+### 12.1 The activation-scope control
+### 12.1 The activation-scope control
 
-一个控制器可用于所有三种类型 (D192)。这是一个三段轨道有序
-通过扩大影响范围 - **关闭 → 这些项目 → 无处不在** - 如此扩大和
-缩小是在相反方向上相同的手势，加上一个摘要芯片
-当中间段处于活动状态时打开项目选择器。
+One control serves all three kinds (D192). It is a three-segment track ordered
+by increasing reach — **Off → These projects → Everywhere** — so widening and
+narrowing are the same gesture in opposite directions, plus a summary chip that
+opens the project picker when the middle segment is active.
 
-控制编码规则：
-- 选择“这些项目”，没有任何选择，但种子当前开放
-  项目，所以常见情况是一键点击。
-- 切换到“无处不在”或“关闭”会保留项目列表，因此可以返回
-  恢复它。
-- 已确定范围但不再出现在最近列表中的项目仍会出现在
-  选择器，否则范围将永远无法撤消。
-- 具有空列表的项目范围扩展会发出警告，而不是默默执行
-  什么也没有。
+Rules the control encodes:
+- Choosing "these projects" with nothing picked yet seeds the currently open
+  project, so the common case is one click.
+- Switching to "everywhere" or "off" keeps the project list, so going back
+  restores it.
+- A project already scoped but no longer in the recent list still appears in the
+  picker, or the scope could never be undone.
+- A project-scoped extension with an empty list warns instead of silently doing
+  nothing.
 
-### 12. 2 设置 > 智能体中的 MCP 管理
+### 12.2 MCP management in Settings > Agent
 
-- MCP 页面使用全局和选中项目的独立栏，根目录为 `~/.agents/servers` 和
-  `<project>/.agents/servers`。
-- 新增和编辑复用 `McpEditorSheet`，包含 stdio/HTTP 卡片、环境变量/请求头行、
-  校验、重名拦截和测试连接。
-- 启用状态存于应用本地；运行时过滤关闭项前，项目记录先遮蔽全局记录。
-- 用户 MCP 工具在传输断开或保存的连接被编辑后仍可路由。下一次调用会
-  对当前保存的服务器重新握手，并在派发前用新列表校验该工具；不必再做
-  一次 `ToolSearch`。未知名称不会触发发现。
-- 恢复前、后都会检查启用状态和项目作用域。删除服务器或销毁运行时会丢掉
-  记住的名称；过期的进行中握手不能把它们恢复回来。并发调用共享一次握手。
-- 恢复失败报告 `UNAVAILABLE`，并沿用现有失败策略（编辑或测试连接后再试），
-  而不是每次调用都反复连接。已移除的工具返回 `TOOL_NOT_FOUND`。恢复从不
-  重放失败的 `tools/call`，因为那次调用可能已经产生过副作用。
+- The MCP page has independent global and selected-project columns rooted at
+  `~/.agents/servers` and `<project>/.agents/servers`.
+- Add and Edit reuse `McpEditorSheet`, including stdio/HTTP transport cards,
+  environment/header rows, validation, duplicate checks, and Test connection.
+- Enablement is app-local and project records shadow global records before the
+  active runtime filters disabled rows.
+- A previously advertised user MCP tool remains routable after transport loss
+  or a saved connection edit. The next call re-handshakes the current saved
+  server and validates the tool against its fresh list before dispatch; no
+  additional `ToolSearch` is required. Unknown names cannot trigger discovery.
+- Enablement and project scope are checked before and after recovery. Removing
+  a server or disposing the runtime discards its remembered names; an obsolete
+  in-flight handshake cannot restore them. Concurrent calls share a handshake.
+- A failed recovery reports `UNAVAILABLE` and retains the existing failed-server
+  policy (edit or Test connection to retry), rather than repeatedly connecting
+  on each call. Removed tools return `TOOL_NOT_FOUND`. Recovery never replays a
+  failed `tools/call`, which may already have performed a mutation.
 
-### 12. 3 设置 > 智能体中的技能管理
+### 12.3 Skills management in Settings > Agent
 
-- 技能页面使用 `~/.agents/skills` 和 `<project>/.agents/skills` 下的全局/项目栏。
-- 每栏只有一个原生单文件“导入”操作；主机会物理复制文件并扫描 frontmatter。
-- 导入或扫描 `SKILL.md` 时，若 frontmatter 名称不是 ASCII slug，则用父目录名作为
-  id；折叠 YAML 描述仍进入目录。可读文档不会因为标题是非 ASCII 而被丢掉。
-- 描述作为目录摘要，模型调用 `Skill` 时才读取正文 (D174、D194)。
+- The Skills page has independent global and selected-project columns rooted at
+  `~/.agents/skills` and `<project>/.agents/skills`.
+- Each column has one native single-file Import action; the host physically
+  copies the selected file and scans its frontmatter.
+- A `SKILL.md` import or scan uses the parent directory as the id when the
+  frontmatter name is not an ASCII slug, and folded YAML descriptions still
+  enter the catalog. A readable document is never dropped because its title is
+  non-ASCII.
+- The description is the catalog summary and the body is fetched only when the
+  model invokes `Skill` (D174, D194).
 
-## 13. 开发者经验
+## 13. Developer experience
 
-提供：
+Provide:
 
-1.插件模板：`npm create pi-desktop-plugin`
-2.清单模式验证器
-3.开发者热重载（watch目录）
-4. 插件示例：
- - 你好面板
- - 工作区欢迎工具
- - 剪贴板笔记
+1. Plugin template: `npm create pi-desktop-plugin`
+2. manifest schema validator
+3. Developer hot reload (watch directory)
+4. Example plugins:
+ - Hello Panel
+ - Workspace Greeter Tool
+ - Clipboard Note
 
-本地开发流程：
+Local development flow:
 
 ```bash
 # develop the plugin
@@ -527,79 +554,79 @@ pnpm dev
 Plugins → Load Development Plugin → choose directory
 ```
 
-## 14. 与 pi 生态系统的关系
+## 14. Relationship with the pi ecosystem
 
-| 生态系统对象 | 关系 |
+| Ecosystem object | Relationship |
 |---|---|
-| 圆周率技能 | 可以通过技能插件分发/管理 |
-| pi 扩展 | 由插件以 `contributes.agentExtensions` 加 `agent.extension` 授权贡献；pi CLI 扩展可导入为开发插件（D387 / D388、ADR 0214 / 0215、[16-trusted-extensions.md](/spec/07-plugins/16-trusted-extensions)） |
-| MCP | 插件在 `contributes.mcpServers` 中声明 MCP 服务器；他们的工具加入代理的工具集中 |
-| Agent 工具 | 最重要的插件扩展界面之一 |
+| pi Skills | Can be distributed / managed by skill plugins |
+| pi Extensions | A plugin contributes them as `contributes.agentExtensions` with the `agent.extension` grant; a pi CLI extension imports as a development plugin (D387 / D388, ADR 0214 / 0215, [16-trusted-extensions.md](16-trusted-extensions.md)) |
+| MCP | A plugin declares MCP servers in `contributes.mcpServers`; their tools join the agent's tool set |
+| Agent Tools | One of the most important plugin extension surfaces |
 
-原则：
-- 不排除 pi 原生功能
-- 但在用户方面，将一切称为“插件”
+Principles:
+- Do not exclude pi native capabilities
+- But on the user side, call everything "plugins"
 
-## 15. 安全基线（不可协商）
+## 15. Security baseline (non-negotiable)
 
-1.插件默认没有权限
-2.插件无法直接访问主机渲染器状态
-3.插件默认无法读写工作区之外的文件
-4.插件网络功能默认关闭
-5.插件更新/安装需要完整性验证（稍后签名）
-6.主机核心进程不执行插件注入的任意Electron主代码
+1. Plugins have no permissions by default
+2. Plugins cannot directly access host renderer state
+3. Plugins cannot read or write files outside the workspace by default
+4. Plugin network capability is off by default
+5. Plugin update / install requires integrity verification (signing later)
+6. The host core process does not execute arbitrary Electron main code injected by a plugin
 
-## 16. 分阶段推出
+## 16. Phased rollout
 
-### P0（先设计，可与M2/M3并行准备）
-- 清单规格
-- PluginManager 骨架
-- 本地加载/启用-禁用
-- 命令注册
-- 1 个示例插件
+### P0 (design first, can be prepared in parallel with M2/M3)
+- manifest spec
+- PluginManager skeleton
+- local load / enable-disable
+- command registration
+- 1 example plugin
 
 ### P1
-- 插件面板用户界面
-- 权限授予UX
-- AgentTool注册和调用
-- 插件设置存储
+- plugin Panel UI
+- permission-grant UX
+- AgentTool registration and invocation
+- plugin settings storage
 
 ### P2
-- 压缩安装
-- 插件日志中心
-- 开发人员热重载
-- 更多官方示例
+- zip install
+- plugin log center
+- developer hot reload
+- more official examples
 
 ### P3
-- 插件市场
-- 签名和自动更新
-- MCP 插件类型
-- 后台服务插件
+- plugin marketplace
+- signing and auto-update
+- MCP plugin type
+- background service plugins
 
-## 17. MVP产品策略调整
+## 17. MVP product strategy adjustment
 
-最初的 MVP 可以推迟开放“完整插件市场”，但应保留：
+The original MVP can hold off on opening a "full plugin marketplace", but should reserve:
 
-- 插件目录
-- 清单
-- 插件管理器界面
-- 至少一个内置/示例插件路径
+- plugin directory
+- manifest
+- PluginManager interface
+- at least one built-in / example plugin path
 
-即：
+That is:
 
-> **首先有插件架构，然后是插件生态系统。**
+> **Have the plugin architecture first, then the plugin ecosystem.**
 
-## 18. 验收（最小可用插件系统）
+## 18. Acceptance (minimal usable plugin system)
 
-1. 用户可以从本地目录加载插件
-2. 插件命令出现在命令面板中
-3.插件可以打开自己的面板页面
-4.插件可以注册低风险代理工具并成功调用
-5. 禁用插件会立即停用其命令和工具
-6.插件崩溃不会导致主机退出
+1. Users can load a plugin from a local directory
+2. Plugin commands appear in the command palette
+3. Plugins can open their own panel page
+4. Plugins can register a low-risk agent tool and invoke it successfully
+5. Disabling a plugin immediately deactivates its commands and tools
+6. A plugin crash does not cause the host to exit
 
-## 19. 示例
+## 19. Examples
 
-存储库中的示例插件：
+Example plugin in the repo:
 
 - `examples/plugins/hello`

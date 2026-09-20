@@ -1,75 +1,86 @@
-# ADR 0029: 分离原生窗口与工作面板的调整大小所有权
+# ADR 0029: Separate native-window and work-panel resize ownership
 
-- 状态: 部分被 ADR 0032 取代
-- 日期: 2026-07-28
-- 相关: [01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
+- Status: Superseded in part by ADR 0032
+- Date: 2026-07-28
+- Related: [01-ui-ia](../spec/04-ux/01-ui-ia.md) ·
   [08-component-spec §5](../spec/04-ux/08-component-spec.md) ·
   [09-interaction-patterns §8](../spec/04-ux/09-interaction-patterns.md) ·
-  [01-ipc-protocol](../spec/03-runtime/01-ipc-protocol.md) · 决策 D156
+  [01-ipc-protocol](../spec/03-runtime/01-ipc-protocol.md) · decision D156
 
-> ADR 0032 取代了在现有客户区内响应式钳制面板、以及禁止一切由面板
-> 驱动的原生几何变更的条款。主进程对 BrowserWindow 几何的所有权、
-> 渲染进程对已提交面板宽度的所有权、以及分隔条手势/提交规则仍然
-> 有效。
+> ADR 0032 supersedes the clauses that responsively clamp the panel inside the
+> existing client area and prohibit all panel-driven native geometry changes.
+> Main ownership of BrowserWindow geometry, renderer ownership of committed
+> panel width, and the divider gesture/commit rules remain in force.
 
-## 背景
+## Context
 
-工作面板的可见性和分隔条提交此前调用 `window/resizeBy`，让 Electron
-放大或缩小原生窗口。渲染进程的 `window.resize` 事件随后推断用户是否
-移动了原生右边缘，并把部分差值写回面板宽度。限时归因票据试图把这些
-程序化事件与真实的窗口手势区分开。
+Work-panel visibility and divider commits previously called
+`window/resizeBy` so Electron could grow or shrink the native window. Renderer
+`window.resize` events then inferred whether the user moved the native right
+edge and wrote part of that delta back into the panel width. Time-limited
+attribution tickets attempted to distinguish those programmatic events from
+real window gestures.
 
-这形成了循环所有权模型：面板改变原生窗口，原生窗口又改变面板。它
-产生了分隔条释放后的第二次布局跳动、快速开/关时的过期异步增长、
-靠近显示器边缘时的窗口位置漂移、平台特定行为，以及在无关原生调整
-大小期间发生变化的偏好值。
+This formed a circular ownership model: the panel changed the native window,
+and the native window changed the panel. It produced a second layout jump after
+divider release, stale asynchronous growth on rapid open/close, window-position
+drift near a display edge, platform-specific behavior, and preference values
+that changed during an unrelated native resize.
 
-## 决策
+## Decision
 
-原生窗口几何和渲染进程列几何有各自独立的所有者：
+Native window geometry and renderer column geometry have independent owners:
 
-1. Electron 主进程独占拥有 `BrowserWindow` 边界，并持久化实际的
-   normal 边界。支持的最小值为 1040x700。
-2. 渲染进程在 localStorage 中拥有一个首选工作面板宽度。有效宽度通过
-   用当前视口、可见侧边栏和 MainChat 保留量钳制该偏好得出。
-3. 原生窗口边缘手势只调整外壳大小。它们可以临时钳制有效面板宽度，
-   但绝不覆盖其偏好。
-4. 工作面板分隔条只调整内部列。指针数学锚定到手势起点；移动渲染按
-   帧合并；释放时提交一次；Escape、指针取消和捕获丢失会回滚。
-5. 在任何平台上，打开、折叠、切换会话和关闭面板都绝不改变原生边界。
-6. 渲染进程到主进程的 `window/resizeBy` IPC 方法、程序化调整大小
-   归因票据、面板增长跟踪和持久化宽度偏移都被移除。
+1. Electron Main exclusively owns `BrowserWindow` bounds and persists the
+   actual normal bounds. The supported minimum is 1040x700.
+2. The renderer owns one preferred work-panel width in localStorage. The
+   effective width is derived by clamping that preference against the current
+   viewport, visible sidebar, and MainChat reserve.
+3. Native window-edge gestures resize the shell only. They may temporarily
+   clamp the effective panel width but never overwrite its preference.
+4. The work-panel divider resizes internal columns only. Pointer math is
+   anchored to the gesture start; move rendering is frame-coalesced; release
+   commits once; Escape, pointer cancellation, and lost capture roll back.
+5. Opening, collapsing, session-switching, and closing the panel never change
+   native bounds on any platform.
+6. The renderer-to-Main `window/resizeBy` IPC method, programmatic resize
+   attribution tickets, panel growth tracking, and persisted-width offset are
+   removed.
 
-## 后果
+## Consequences
 
-- 分隔条反馈在释放前保持连续，而不是触发第二次原生调整大小。
-- 原生边缘行为是对称的，符合平台窗口惯例。
-- Windows、macOS 和 Linux 共享同一面板交互模型。
-- 暂时受限的面板在空间可用时恢复其首选宽度。
-- Preload 接口面更小，Electron 窗口状态持久化不再需要面板专属偏移。
-- Normal 边界独立于最大化/全屏状态读取，并在关闭时同步落盘，使
-  挂起的防抖不会丢失它们。
-- 打开面板会重新分配现有客户区，因此 MainChat 可能变窄，直到操作者
-  调整分隔条或原生窗口。
+- Divider feedback remains continuous through release instead of triggering a
+  second native resize.
+- Native edge behavior is symmetric and matches platform window conventions.
+- Windows, macOS, and Linux share one panel interaction model.
+- A temporarily constrained panel returns to its preferred width when space
+  becomes available.
+- The preload surface is smaller, and Electron window-state persistence no
+  longer needs a panel-specific offset.
+- Normal bounds are read independently of maximized/fullscreen state and are
+  flushed synchronously on close so a pending debounce cannot lose them.
+- Opening a panel reallocates the existing client area, so MainChat can become
+  narrower until the operator resizes either the divider or native window.
 
-## 备选方案
+## Alternatives
 
-### 保留差值 IPC 并添加请求标识符
+### Keep delta IPC and add request identifiers
 
-否决。请求标识符可以拒绝过期回复，但不能移除循环几何所有权和
-释放后的布局跳动。
+Rejected. Request identifiers can reject stale replies but do not remove the
+circular geometry ownership or the post-release layout jump.
 
-### 让 Electron 拥有完整的三列布局
+### Let Electron own the complete three-column layout
 
-否决。主进程不知道渲染进程侧边栏状态或内容约束，把分栏布局搬到
-IPC 上会增加延迟并复制 DOM 真相。
+Rejected. Main does not know renderer sidebar state or content constraints, and
+moving split-pane layout across IPC would add latency and duplicate DOM truth.
 
-### 为工作面板保留原生右边缘所有权
+### Keep native right-edge ownership for the work panel
 
-否决。边缘来源推断在无边框窗口、显示缩放、macOS 窗口外观和
-Wayland 之间不可靠。原生边缘应保留其标准含义：调整窗口大小。
+Rejected. Edge-source inference is not reliable across frameless windows,
+display scaling, macOS window chrome, and Wayland. A native edge should retain
+its standard meaning: resize the window.
 
-## 参考
+## References
 
 - `docs/spec/03-runtime/01-ipc-protocol.md`
 - `docs/spec/04-ux/01-ui-ia.md`
