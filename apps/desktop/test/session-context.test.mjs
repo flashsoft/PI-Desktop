@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  effectiveSessionBranch,
   effectiveSessionGitContext,
   effectiveSessionPath,
   elidePathHead,
@@ -15,22 +14,6 @@ test("path falls back from the session project to the workspace root", () => {
   assert.equal(effectiveSessionPath({ projectPath: "  " }, { path: "/workspace" }), "/workspace");
   assert.equal(effectiveSessionPath(null, { path: "/workspace" }), "/workspace");
   assert.equal(effectiveSessionPath(null, null), null);
-});
-
-test("branch shows only when the session works in the workspace root", () => {
-  const workspace = { path: "/repo", branch: "main" };
-  // Session without its own path inherits the workspace branch.
-  assert.equal(effectiveSessionBranch(null, workspace), "main");
-  // Same path (separator/case tolerant) keeps the branch.
-  assert.equal(effectiveSessionBranch({ projectPath: "/repo/" }, workspace), "main");
-  assert.equal(
-    effectiveSessionBranch({ projectPath: "\\repo" }, { path: "/Repo", branch: "main" }),
-    "main",
-  );
-  // A session in a different directory cannot trust the workspace branch.
-  assert.equal(effectiveSessionBranch({ projectPath: "/other" }, workspace), null);
-  // No branch resolved at all.
-  assert.equal(effectiveSessionBranch(null, { path: "/repo" }), null);
 });
 
 test("git context follows the same workspace-root trust rule as the branch", () => {

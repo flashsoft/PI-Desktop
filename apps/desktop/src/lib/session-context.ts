@@ -38,25 +38,6 @@ export function effectiveSessionPath(
   return nonEmpty(session?.projectPath) ?? nonEmpty(workspace?.path);
 }
 
-/**
- * Branch shown on the badge. `workspace.branch` is resolved from the
- * workspace root's `.git/HEAD`, so it is only trustworthy when the session
- * actually works in that root; otherwise the badge hides.
- */
-export function effectiveSessionBranch(
-  session?: SessionContextSource | null,
-  workspace?: WorkspaceContextSource | null,
-): string | null {
-  const workspacePath = nonEmpty(workspace?.path);
-  const branch = nonEmpty(workspace?.branch);
-  if (!workspacePath || !branch) return null;
-  const sessionPath = nonEmpty(session?.projectPath);
-  if (sessionPath && normalizePath(sessionPath) !== normalizePath(workspacePath)) {
-    return null;
-  }
-  return branch;
-}
-
 /** True when the session actually works in the workspace root, so the
  *  workspace-derived git context is trustworthy for its badge. */
 function sessionMatchesWorkspace(

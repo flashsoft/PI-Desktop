@@ -646,6 +646,15 @@ Electron 通道名，插件也永远拿不到 MCP bearer token。调用复用控
 `PERMISSION_DENIED` 失败。调用会连同插件 id、操作、风险等级和结果状态一起
 记入日志；参数值不会复制进审计条目。
 
+审阅能力（ADR local-002）经由同一份目录暴露给第一方插件：`review/reviewTurns`
+（read）返回按共享轮次语义（`@pi-desktop/shared` 的
+`groupReviewChangesByTurn`，与核心审阅 tab 同源）分组的会话变更记录；
+`review/checkBatch`（read）是批量快照的只读回滚预检，等价于
+`review.checkTurn`；`review/rollbackBatch`（dangerous）以
+`mode: "turn" | "rewind"` 批量恢复快照，等价于 `review.rollbackTurn`，
+同样要求 `confirm: true` 与原生用户确认，且宿主在会话有运行中轮次或排队
+输入时仍会以 `CONFLICT` 拒绝。内置插件 `pi.review` 是这份目录当前的消费者。
+
 ### 麦克风面板（需要 `ui.microphone`）
 
 只有当清单声明且用户授予了 `ui.microphone` 时，隔离面板才可以通过浏览器

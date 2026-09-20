@@ -189,6 +189,23 @@ type ToolBudgetHealth = {
 - `review.rollback({sessionId, snapshotId})` — 验证当前的后期工具
   hash，恢复会话拥有的先前字节，并返回其中之一
   `rolledBack`、`alreadyRolledBack`、`conflict` 或 `unavailable`。
+- `review.checkTurn({sessionId, snapshotIds})` — 轮次级回滚的只读预检。
+  快照按给定（时间）顺序按文件分组；逐文件将当前字节与该批次最新的活跃
+  `after_hash` 比较，且该批次最早的活跃快照必须可逆。返回 `{clean, files}`，
+  每个文件条目携带 `clean`、`reversible`，以及当字节被其他会话的快照改写时
+  的 `blockedBy` 归因。快照 meta 缺失时，该文件报告
+  `clean: false, reversible: false` 而不是失败。
+- `review.rollbackTurn({sessionId, snapshotIds, mode})` — 对调用方按序给出的
+  快照 id 做批量回滚；`mode` 为 `"turn"`（单轮）或 `"rewind"`（该轮及之后所有
+  轮次）。会话有运行中轮次或排队输入时以 `CONFLICT` 拒绝。逐文件只恢复一次
+  最早活跃的 `before` 字节（不做链式重放）；单个文件的
+  `conflict`/`unavailable` 不中止批次。每个快照报告自己的结果
+  （`rolledBack`、`alreadyRolledBack`、`conflict`、`unavailable`），被恢复的
+  快照会翻转其所属消息的 review 状态。返回 `{mode, outcomes}`。
+- 控制平面（ADR local-002）将这三个原语以无语义的批量形态复用：
+  `review/reviewTurns`（read，Electron main 按共享轮次语义分组）、
+  `review/checkBatch`（read，转发 `review.checkTurn`）、
+  `review/rollbackBatch`（dangerous + confirm，转发 `review.rollbackTurn`）。
 
 ### 项目
 - `projects.list` — 返回先固定的持久项目记录，然后返回

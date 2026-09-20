@@ -304,6 +304,8 @@ ADR 记录那些不应被静默改变的架构选择。中文入口与英文索�
 | 0296 | [已签名 macOS DMG 改为双图标安装](/adr/0296-macos-signed-dmg-two-icon-install) | 已接受（D457；修订 ADR 0232 / ADR 0204） |
 | 0297 | [提供商托管联网搜索作为适配器能力](/adr/0297-provider-hosted-web-search-adapter-capability) | 已接受 |
 | 0298 | [应用不再随包发布任何字体](/adr/0298-remove-bundled-fonts) | 已接受（D598；修订 ADR 0083 / D232） |
+| local-001 | [根打包脚本重命名为 `package`](/adr/local-001-pack-script-rename) | 已接受（仅 fork） |
+| local-002 | [审阅能力作为内置插件并共享轮次语义](/adr/local-002-review-capabilities-as-bundled-plugin) | 已接受（仅 fork；ADR 0043 / ADR 0203 / ADR 0170 / ADR 0241） |
 
 ## 什么时候看 ADR
 

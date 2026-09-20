@@ -207,6 +207,23 @@ type ToolBudgetHealth = {
 - `review.rollback({sessionId, snapshotId})` — verify the current post-tool
   hash, restore the session-owned previous bytes, and return one of
   `rolledBack`, `alreadyRolledBack`, `conflict`, or `unavailable`.
+- `review.checkTurn({sessionId, snapshotIds})` — the read-only preflight for a
+  turn-scoped rollback. Snapshots are grouped per file in the given
+  (chronological) order; each file's current bytes are compared against the
+  batch's newest active `after_hash`, and the batch's earliest active snapshot
+  must be reversible. Returns `{clean, files}`, where each file entry carries
+  `clean`, `reversible`, and — when bytes were overwritten by another
+  session's snapshot — `blockedBy` attribution. A missing snapshot meta
+  reports `clean: false, reversible: false` for that file instead of failing.
+- `review.rollbackTurn({sessionId, snapshotIds, mode})` — rolls back the
+  caller-ordered snapshot ids as one batch; `mode` is `"turn"` (single turn)
+  or `"rewind"` (that turn and every later turn). Refused with `CONFLICT`
+  while the session runs or has queued inputs. Per file only the earliest
+  active `before` bytes are restored once (no chained replay); one file's
+  `conflict`/`unavailable` does not abort the batch. Every snapshot reports
+  its own outcome (`rolledBack`, `alreadyRolledBack`, `conflict`,
+  `unavailable`), and a restored snapshot flips its owning message's review
+  state. Returns `{mode, outcomes}`.
 - Control plane (ADR local-002) reuses these three primitives in a turn-agnostic
   batch form: `review/reviewTurns` (read; Electron main groups by the shared
   turn semantics), `review/checkBatch` (read; forwards `review.checkTurn`),
