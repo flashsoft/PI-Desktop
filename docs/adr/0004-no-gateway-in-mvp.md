@@ -1,31 +1,31 @@
-# ADR 0004: MVP 不做远程 Gateway
+# ADR 0004: No remote Gateway in the MVP
 
-- 状态: 已接受
-- 日期: 2026-07-25
+- Status: Accepted
+- Date: 2026-07-25
 
-## 背景
+## Context
 
-LiveAgent 等产品提供了远程 WebUI/Gateway。PI-Desktop 是否应在第一阶段加入远程控制能力，是一个需要权衡的问题。
+Products such as LiveAgent provide a remote WebUI/Gateway. Whether PI-Desktop should add remote control capability in the first phase is a trade-off that needs to be made.
 
-## 决策
+## Decision
 
-MVP **不**构建远程 Gateway / 基于浏览器的远程控制。
+The MVP will **not** build a remote Gateway / browser-based remote control.
 
-## 理由
+## Rationale
 
-1. 与本地优先的桌面闭环目标在优先级上冲突
-2. 远程链路会显著增加认证、同步和安全复杂度
-3. 应先证明本地 agent UX 和权限模型站得住脚
+1. It conflicts in priority with the local-first desktop closed-loop goal
+2. A remote link would significantly increase authentication, synchronization, and security complexity
+3. We should first prove that the local agent UX and permission model hold up
 
-## 后果
+## Consequences
 
-### 正面
-- 范围收敛
-- 安全模型更简单
+### Positive
+- Scope convergence
+- Simpler security model
 
-### 负面
-- 短期内无法通过浏览器远程控制本地 agent
+### Negative
+- No browser-based remote control of the local agent in the short term
 
-## 后续
+## Follow-up
 
-如果将来要构建远程能力，必须新增独立的 ADR，并设立专门的里程碑。
+If remote capability is to be built, a separate ADR must be added, with its own dedicated milestone.

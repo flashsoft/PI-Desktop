@@ -1,33 +1,40 @@
-# ADR 0077: 添加交互式多问题 asktool
+# ADR 0077: Add an interactive multi-question asktool
 
-- 状态： 已接受实现
-- 日期： 2026-08-12
-- 决策者： PI-Desktop 核心
-- 相关： E2E-123
+- Status: Accepted for implementation
+- Date: 2026-08-12
+- Deciders: PI-Desktop core
+- Related: E2E-123
 
-## 背景
+## Context
 
-模型需要一种结构化的方式来收集多个用户决定，而不把它们变成聊天散文或权限
-审批。用户可以一次回答一个问题、选择多个选项、提供自定义文本、跳过问题，
-或谢绝整个提示。未作答的响应仍需要稳定的工具输出，使模型能把它与缺失的工
-具结果区分开。
+The model needs a structured way to collect several user decisions without
+turning them into chat prose or permission approvals. The user may answer one
+question at a time, choose multiple options, provide custom text, skip a
+question, or decline the complete prompt. An unanswered response still needs a
+stable tool output so the model can distinguish it from a missing tool result.
 
-## 决策
+## Decision
 
-1. 为每种运行模式添加内置 `asktool`。它发出带类型的 `asktool_request` 事
-   件，并暂停 runtime，直到渲染进程通过
-   `pi-desktop/agent/askTool/resolve` 决议该请求。
-2. 请求携带问题文本、选项标签与可选多选标志的有序数组。无论模型的选项列
-   表如何，渲染进程始终提供自定义文本输入选项。
-3. 渲染进程持有草稿选择状态，一次显示一个问题。跳过与谢绝决议为
-   `null`；答案数组携带选中的标签与自定义文本。卡片挂载在 Plan 与 Goal 审
-   批使用的共享 composer 审批界面中。asktool 没有超时或过期。
-4. runtime 把决议值格式化为普通工具内容：每行是 `question：answer`，多个
-   问题用 `\\n---\\n` 分隔，null 答案在分隔符后使用空值。
+1. Add a built-in `asktool` to every operating mode. It emits a typed
+   `asktool_request` event and pauses the runtime until the renderer resolves
+   the request through `pi-desktop/agent/askTool/resolve`.
+2. The request carries an ordered array of question text, option labels, and an
+   optional multi-select flag. The renderer always supplies a custom text-input
+   option, regardless of the model's option list.
+3. The renderer owns draft selection state and displays one question at a time.
+   Skip and decline resolve to `null`; answer arrays carry selected labels and
+   custom text. The card is mounted in the shared composer approval surface
+   used by Plan and Goal approvals. There is no asktool timeout or expiry.
+4. The runtime formats the resolved values as normal tool content: each line is
+   `question：answer`, multiple questions use `\n---\n`, and null answers use an
+   empty value after the separator.
 
-## 后果
+## Consequences
 
-- 模型收到确定性的、紧凑的工具结果，而不是 UI 状态。
-- 交互式等待在宿主权限策略之外，不能授予 workspace 能力。
-- 该请求对现有 agent 事件信封是加法式的，不需要协议版本升级。
-- 中止轮次会以跳过的值完成未决的工具调用，使待决卡片无法困住 runtime。
+- The model receives a deterministic, compact tool result rather than UI state.
+- The interactive wait is outside host permission policy and cannot grant a
+  workspace capability.
+- The request is additive to the existing agent event envelope and does not
+  require a protocol version bump.
+- Aborting a turn completes the outstanding tool call with skipped values so a
+  pending card cannot strand the runtime.

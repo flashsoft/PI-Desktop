@@ -1,4 +1,4 @@
-# ADR 0231: 顿号打开 Composer 斜杠菜单
+# ADR 0231: Ideographic Comma Opens the Composer Slash Menu
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -7,41 +7,46 @@
 
 ## Context
 
-Composer 的 `/` 菜单镜像 pi CLI 语法：触发器是作为草稿第一个字符的
-ASCII `/`。中文输入法对那个按键产生 `、`（U+3001，顿号），因此用中
-文写作的用户必须先切换到 ASCII 输入才能到达命令菜单，然后再切回
-来。菜单已经忽略进行中的 IME 组合（D139），所以缺的只是别名本身。
+The composer `/` menu mirrors the pi CLI grammar: the trigger is the ASCII `/`
+as the very first character of the draft. A Chinese IME produces `、` (U+3001,
+ideographic comma) for that keystroke, so a user writing in Chinese has to
+switch to ASCII input before they can reach the command menu, then switch back.
+The menu already ignores in-flight IME composition (D139), so the missing piece
+is only the alias itself.
 
-语法中的其他每个触发字符都是有意设计的：`@` 打开文件菜单，出现在
-第一个字符以外任何位置的 `/` 是普通散文。别名不得把合法标点变成命
-令。
+Every other trigger character in the grammar is deliberate: `@` opens the file
+menu, and a `/` anywhere but the first character is ordinary prose. The alias
+must not turn legitimate punctuation into commands.
 
 ## Decision
 
-1. 作为空 composer 草稿第一个字符提交的 `、`，在触发检测运行之前
-   被重写为 `/`。之后草稿就是一次普通的斜杠调用：打开同一个菜单，
-   应用同样的过滤，走同样的发送路径。
-2. 只有那个位置会被重写。Composer 要求草稿在按键之前为空，因此之
-   后出现的 `、`——包括出现在已经持有文本的草稿开头——保持为普通
-   标点。
-3. 该重写是共享 composer-trigger 模块中的一个纯字符串函数，与它喂
-   给的触发语法放在一起做单元测试。`@` 文件菜单不受影响。
+1. A `、` committed as the first character of an empty composer draft is
+   rewritten to `/` before trigger detection runs. Afterwards the draft is an
+   ordinary slash invocation: the same menu opens, the same filtering applies,
+   and the same send path handles it.
+2. Only that position is rewritten. The composer requires the draft to have been
+   empty before the keystroke, so a `、` that appears later — including at the
+   start of a draft that already holds text — stays ordinary punctuation.
+3. The rewrite is a pure string function in the shared composer-trigger module,
+   unit tested next to the trigger grammar it feeds. The `@` file menu is
+   unaffected.
 
 ## Consequences
 
-- 中文输入法用户无需离开输入法即可到达 `/new`、`/compact`、模式别
-  名、模板命令、插件命令和 Skill。
-- 在空 composer 中真正以 `、` 开头的消息会被重写。菜单以 `/` 打开，
-  用户可以继续输入散文，这让替换保持可见，而不是在句中静默改变文
-  本。
-- 不需要 IPC、存储或自动补全来源变更。
+- A Chinese IME user reaches `/new`, `/compact`, the mode aliases, template
+  commands, plugin commands, and Skills without leaving the input method.
+- A message that genuinely starts with `、` in an empty composer is rewritten.
+  The menu opens with `/` and the user can keep typing prose, which keeps the
+  substitution visible instead of silently altering text mid-sentence.
+- No IPC, storage, or autocomplete-source change is required.
 
 ## Alternatives considered
 
-- **在 `detectTrigger` 中接受 `、` 作为额外触发字符：** 被拒绝，因
-  为草稿会保留一个发送路径和 transcript 徽章随后必须理解的字符，且
-  菜单会在 pi CLI 语法未定义的符号上打开。
-- **对每个 `、` 都重写，而不仅仅是第一个字符：** 被拒绝，因为这会
-  破坏普通散文——`、` 是标准的列举分隔符。
-- **为命令添加工具栏按钮：** 被拒绝，因为它是已存在菜单的重复入口
-  （见 D123）。
+- **Accept `、` as an additional trigger character in `detectTrigger`:** rejected
+  because the draft would keep a character the send path and transcript chip
+  would then have to understand, and the menu would open on a mark the pi CLI
+  grammar does not define.
+- **Rewrite on every `、`, not just the first character:** rejected because it
+  would corrupt ordinary prose, where `、` is the standard list separator.
+- **A toolbar button for commands:** rejected as a duplicate entry point to a
+  menu that already exists (see D123).

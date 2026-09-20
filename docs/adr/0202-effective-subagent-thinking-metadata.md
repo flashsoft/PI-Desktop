@@ -1,4 +1,4 @@
-# ADR 0202: 暴露生效的 Subagent 思考元数据
+# ADR 0202: Expose Effective Subagent Thinking Metadata
 
 - Status: Accepted
 - Date: 2026-09-09
@@ -7,35 +7,41 @@
 
 ## Context
 
-委托卡片已经可以接收为每次 `Task` 运行选择的 provider/model，但它们
-接收不到运行时实际传给该委托的思考级别。经过继承和目标模型能力钳制
-之后，所选级别可能与定义或父级设置不同。让渲染进程去推断它，会使
-实时、恢复的和并行的委托之间出现不一致。
+Delegation cards already receive the provider/model selected for each `Task`
+run, but they do not receive the thinking level that the runtime actually
+passed to that delegate. The selected level can differ from the definition or
+parent setting after inheritance and target-model capability clamping. Making
+the renderer infer it would make live, restored, and parallel delegations
+inconsistent.
 
 ## Decision
 
-- 在构造 `SubagentRun` 之前的紧邻时刻，对委托的生效思考选择解析一次，
-  使用与控制请求相同的 provider 绑定和钳制路径。
-- 在即时 `Task` 结果、`SubagentRunResult` 和生命周期快照
-  （`TaskWait`、`TaskList` 和 `TaskStop`）中包含 `modelId` 和
-  `thinkingLevel`。`omit` 仍然是一个显式的“不覆盖 provider”取值。
-- 在每个委托节点和侧边坞身份标题中，将结果的模型与本地化的思考标签
-  一起渲染。对于 `off`、`omit` 或任何无法识别的取值，省略该标签；
-  绝不从父会话或 subagent 定义派生替代值。
+- Resolve the delegate's effective thinking selection once, immediately before
+  constructing `SubagentRun`, using the same provider binding and clamping path
+  that controls the request.
+- Include `modelId` and `thinkingLevel` in the immediate `Task` result, the
+  `SubagentRunResult`, and lifecycle snapshots (`TaskWait`, `TaskList`, and
+  `TaskStop`). `omit` remains an explicit no-provider-override value.
+- Render the result's model and a localized thinking label together on each
+  delegation node and in the side-dock identity header. Omit the label for
+  `off`, `omit`, or any unrecognized value; never derive a replacement from
+  the parent session or subagent definition.
 
-这是对现有委托结果详情的增量补充。它不改变任何宿主协议、存储
-schema、provider 请求或委托生命周期行为。
+This is additive to the existing delegation result details. It changes no host
+protocol, storage schema, provider request, or delegation lifecycle behavior.
 
 ## Consequences
 
-实时卡片和恢复的卡片拥有一个由运行时所有的单一事实来源，并行委托
-可以显示不同的生效级别而不会相互串扰。UI 可以保持窄布局有界，同时
-通过可访问名称和悬停标题暴露完整的组合标签。由 `omit` 选中的
-provider 默认值有意不表示为具体的可见级别，因为运行时并不知道那个
-由适配器拥有的默认值对应哪个规范的思考取值。
+Live and restored cards have one runtime-owned source of truth, and parallel
+delegates can show different effective levels without cross-talk. The UI can
+keep narrow layouts bounded while exposing the complete combined label through
+the accessible name and hover title. A provider default selected by `omit` is
+intentionally not represented as a concrete visible level because the runtime
+does not know that adapter-owned default as a canonical thinking value.
 
 ## Verification
 
-运行时测试覆盖结果元数据和能力钳制；渲染进程源码契约覆盖拓扑节点和
-侧边坞标题，包括 `off`/`omit` 抑制规则。E2E-219 记录了实时、窄布局
-和历史恢复的旅程。
+Runtime tests cover result metadata and capability clamping; renderer source
+contracts cover both the topology node and side-dock header, including the
+`off`/`omit` suppression rule. E2E-219 records the live, narrow-layout, and
+history-restoration journey.

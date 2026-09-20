@@ -1,39 +1,43 @@
 # 05. Rust Host Core
 
-## 1. 目的
+## 1. Purpose
 
-`host-core` 是 PI-Desktop 的特权本地后端。
+`host-core` is the privileged local backend of PI-Desktop.
 
-它**不**取代 pi。它为以下各方提供安全的宿主能力：
+It does **not** replace pi. It provides safe host capabilities to:
 
-- Electron 外壳
-- pi agent 运行时
-- 插件系统
+- Electron shell
+- pi agent runtime
+- plugin system
 
-## 2. 职责
+## 2. Responsibilities
 
-1. 工作区路径规范化、边界检查，以及经权限门控的显式外部路径
-2. 内置工具执行（Read/Glob/Grep/Write/Edit/Bash）
-3. 权威的持久会话模式与工具策略评估
-4. 权限策略评估，包括 Plan/Goal 的 Bash 提示
-5. 不可变 `.pi/plan/*.md` 与 `.pi/goal/*.md` 工件写入器、
-   `plan_approvals` broker，以及启动中断栅栏
-6. 可选 shell 目录、身份验证、流式输出与进程树关闭
-7. 插件注册/安装/生命周期服务
-8. 贡献注册记账（与 TS 侧协作）
-9. 持久化适配器（会话/设置元数据、`plan_approvals` 工件与执行字段、
-   持久通知收件箱，以及会话协作 ledger）
-10. 秘密存储集成点
-11. 敏感操作的审计日志
+1. Workspace path canonicalization, boundary checks, and permission-gated
+   explicit outside paths
+2. Builtin tool execution (Read/Glob/Grep/Write/Edit/Bash)
+3. Authoritative durable session-mode and tool-policy evaluation
+4. Permission policy evaluation, including Plan/Goal Bash prompts
+5. Immutable `.pi/plan/*.md` and `.pi/goal/*.md` artifact writer,
+   `plan_approvals` broker, and
+   startup interruption fence
+6. Selectable shell catalog, identity validation, streamed output, and process
+   tree shutdown
+7. Plugin registry/install/lifecycle services
+8. Contribution registration bookkeeping (with TS side)
+9. Persistence adapters (sessions/settings metadata, `plan_approvals` artifact
+   and execution fields, durable notification inbox, and session
+   collaboration ledger)
+10. Secrets storage integration points
+11. Audit logging for sensitive actions
 
-## 3. 非职责
+## 3. Non-responsibilities
 
-- LLM provider SDK
-- agent 回合图/编排
-- React 渲染
-- 市场 Web 前端
+- LLM provider SDKs
+- agent turn graph/orchestration
+- React rendering
+- marketplace web frontend
 
-## 4. 建议的 crate 布局
+## 4. Suggested crate layout
 
 ```text
 crates/host-core/
@@ -52,43 +56,43 @@ crates/host-core/
  util/
 ```
 
-## 5. RPC 传输
+## 5. RPC transport
 
-冻结：与 Electron main 之间使用 **stdio JSON-RPC NDJSON**
-（见 `06-host-rpc-protocol.md`）。
+Frozen: **stdio JSON-RPC NDJSON** with Electron main (see `06-host-rpc-protocol.md`).
 
-### 5a. 控制管道资源隔离
+### 5a. Control-pipe resource isolation
 
-宿主的 stdin 读取器和 stdout 写入器各自运行在一个具名的专用 OS 线程
-上。它们不得使用 Tokio 的 `tokio::io::{stdin, stdout}` 适配器：那些
-适配器会为每次操作获取一个阻塞池 worker，耗尽 OS 线程预算可能在
-结构化错误到达 Electron 之前就让宿主 panic。专用线程会以短暂延迟重试
-`EINTR` 和暂时性的 `EAGAIN`/`EWOULDBLOCK`（`errno` 11 或 35），保持
-NDJSON 分帧，并且只在 EOF 或不可恢复的管道错误时停止。任一控制线程
-创建失败都属于启动错误，而不是未处理的 panic。
+The host's stdin reader and stdout writer each run on one named, dedicated OS
+thread. They must not use Tokio's `tokio::io::{stdin, stdout}` adapters: those
+adapters obtain a blocking-pool worker for each operation, and an exhausted OS
+thread budget can otherwise panic the host before a structured error reaches
+Electron. The dedicated threads retry `EINTR` and transient `EAGAIN`/`EWOULDBLOCK`
+(`errno` 11 or 35) with a short delay, preserve NDJSON framing, and stop only
+on EOF or an unrecoverable pipe error. Failure to create either control thread
+is a startup error rather than an unhandled panic.
 
-尽力而为的 login-shell PATH 探测遵循同样的规则：探测线程创建失败返回
-`None`，Bash 因而回退到宿主环境。
+The best-effort login-shell PATH probe follows the same rule: a failed probe
+thread creation returns `None`, so Bash falls back to the host environment.
 
-## 5b. RPC 表面（逻辑）
+## 5b. RPC surface (logical)
 
-域：
+Domains:
 
 - `app.*`
 - `workspace.*`
 - `tools.*`
 - `permissions.*`
 - `plugins.*`
-- `session.*`（适配器层）
-- `notification.*`（适配器层；持久收件箱）
-- `session.collaboration.*`（宿主内部的投递 ledger 与回合绑定）
-- `plans.*`（批准 broker 与恢复）
-- `shell.*`（目录与默认选择）
-- `settings.*`（适配器层）
+- `session.*` (adapter level)
+- `notification.*` (adapter level; durable inbox)
+- `session.collaboration.*` (host-internal delivery ledger and turn binding)
+- `plans.*` (approval broker and recovery)
+- `shell.*` (catalog and default selection)
+- `settings.*` (adapter level)
 - `secrets.*`
 - `audit.*`
 
-示例：
+Example:
 
 ```text
 tools.execute
@@ -102,48 +106,57 @@ secrets.set
 notification.list
 ```
 
-## 6. 安全不变量
+## 6. Security invariants
 
-1. 工作区工具或 `.pi/plan/*.md` 都不存在未经检查的路径逃逸；显式
-   外部路径只在宿主权限评估之后才解析
-2. 宿主解析持久会话模式；请求携带的模式永远不具权威性
-3. Plan 和 Goal 在权限评估之前拒绝 Write/Edit/插件/未知工具
-4. Plan 和 Goal 的 Bash 遵循持久权限模式，并可在 Auto 下变更
-5. Plan 和 Goal 的工件字节、路径、哈希、大小和批准/执行身份由
-   宿主认证
-6. Plan/Goal 批准在进入 Agent 之前由宿主认证、持久且原子
-7. 有效 shell ID/方言在 spawn 前检查；设置拒绝不可用/错误平台的
-   ID，持久化的不可用选择只在目录选择期间回退
-8. 秘密永不返回给渲染器日志
-9. 插件、shell 或批准路径中的崩溃失败关闭，不授予也不重放执行
-10. 会话协作由宿主认证：来源身份来自活跃的插件调用，目标权限上限
-    在回合准入时重新检查，回调至多一次，重启恢复永不重放被中断的
-    投递
+1. No unchecked path escape from workspace tools or `.pi/plan/*.md`; an
+   explicit outside path is resolved only after host permission evaluation
+2. Host resolves the durable session mode; request-supplied mode is never
+   authoritative
+3. Plan and Goal deny Write/Edit/plugin/unknown tools before permission evaluation
+4. Plan and Goal Bash follow the durable permission mode and may mutate under Auto
+5. Plan and Goal artifact bytes, path, hash, size, and approval/execution identity are
+   host-authenticated
+6. Plan/Goal approval is host-authenticated, durable, and atomic before Agent entry
+7. Effective shell ID/dialect is checked before spawn; settings reject
+   unavailable/wrong-platform IDs, and a persisted unavailable choice falls
+   back only during catalog selection
+8. Secrets never returned to renderer logs
+9. Crash in plugin, shell, or approval path fails closed and does not grant or
+   replay execution
+10. Session collaboration is host-authenticated: source identity comes from
+    the active plugin invocation, target permission ceilings are rechecked at
+    turn admission, callbacks are at-most-once, and restart recovery never
+    replays an interrupted delivery
 
-## 7. 打包
+## 7. Packaging
 
-- 每个平台一个构建目标
-- 二进制随 Electron 资源一起交付
-- 与 Electron/Node 之间做带版本号的协议握手
+- build target per platform
+- ship binary next to Electron resources
+- versioned protocol handshake with Electron/Node
 
-## 8. MVP 验收
+## 8. MVP acceptance
 
-1. Electron 可以启动 Rust host sidecar
-2. healthcheck RPC 成功
-3. 至少一条工具路径经 Rust 执行
-4. 权限拒绝路径可用
-5. 未被看到的 completed/failed 回合通过 `session.endTurn` 事务恰好
-   创建一条持久通知；已在聚焦的当前聊天中可见的结果和 aborted 回合
-   不创建
-6. 持久的 Plan 或 Goal 会话无法通过冲突的请求模式授权
-   Write/Edit/插件工具，且 Plan/Goal 的 Bash 遵循解析出的权限模式
-7. SubmitPlan 把精确的 Markdown 字节写入新的 `.pi/plan/*.md` 工件，
-   并在 `plan_approvals` 中存储持久的 path/hash/size 以及结构化
-   title/question；批准仅 approve/reject，按会话/回合/版本限定作用域，
-   并在 30 个绝对分钟后以 `PLAN_APPROVAL_TIMEOUT` 过期
-8. 待处理/排队/运行中的 Plan 或 Goal 工作在宿主重启时被中断且不重放；
-   已批准的中断让会话保持 Agent
-9. shell 选择/回退、过期 ID/方言拒绝、stdout/stderr 流式、60s 超时、
-   有界覆盖以及进程树中止都由宿主强制执行
-10. 会话协作的投递、出处、幂等、回调结算、取消、权限上限、跳数限制
-    和架构 v16 恢复都是持久的并有测试覆盖，且不改变核心 `Task` 族
+1. Electron can start Rust host sidecar
+2. healthcheck RPC succeeds
+3. at least one tool path executes through Rust
+4. permission deny path works
+5. unseen completed/failed turns create exactly one durable notification
+   through the `session.endTurn` transaction; results already visible in the
+   focused current chat and aborted turns create none
+6. a durable Plan or Goal session cannot authorize Write/Edit/plugin tools through
+   a conflicting request mode, and Plan/Goal Bash follows the resolved permission
+   mode
+7. SubmitPlan writes exact Markdown bytes to a new `.pi/plan/*.md` artifact and
+   stores durable path/hash/size plus structured title/question in
+   `plan_approvals`; approval is approve/reject-only, session/turn/version
+   scoped, and expires at 30 absolute minutes with
+   `PLAN_APPROVAL_TIMEOUT`
+8. Pending/queued/running Plan or Goal work is interrupted on host restart with no
+   replay; approved interruptions leave the session Agent
+9. Shell selection/fallback, stale ID/dialect rejection, stdout/stderr
+   streaming, 60s timeout, bounded override, and process-tree abort are
+   host-enforced
+10. Session collaboration delivery, provenance, idempotency, callback
+    settlement, cancellation, permission ceilings, hop limits, and schema v16
+    recovery are durable and test-covered without changing the core `Task`
+    family

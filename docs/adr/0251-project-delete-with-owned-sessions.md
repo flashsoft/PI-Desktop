@@ -1,91 +1,107 @@
-# ADR 0251：删除项目会移除其拥有的 Session
+# ADR 0251: Deleting a Project Removes Its Owned Sessions
 
 - Status: Accepted
 - Date: 2026-09-15
 - Deciders: PI-Desktop maintainers
 
-## 背景
+## Context
 
-自 ADR 0026 把 Projects 索引移入 Settings 以来，它一直在列出持久的项目
-记录，ADR 0016 又使侧栏成为保留标签页界面。Archive、pin、close 和排序
-是刻意的渲染进程本地元数据：组件契约声明「Project close removes
-retained tab only; durable project/sessions remain」，而 `US-UI-47` 声明
-渲染进程元数据绝不隐藏或删除持久的 Project-archive 行。
+The Projects index has listed durable project records since ADR 0026 moved it
+into Settings, and ADR 0016 made the sidebar a retained-tab surface. Archive,
+pin, close, and ordering are deliberately renderer-local metadata: the component
+contract states that "Project close removes retained tab only; durable
+project/sessions remain", and `US-UI-47` states that renderer metadata never
+hides or deletes a durable Project-archive row.
 
-这导致没有面向用户的方式来移除持久的项目记录。归档了一个不应再存在的
-项目的用户，只能直接编辑 host-core 的 SQLite 文件，然后清除渲染进程
-存储，因为 Projects 索引是四个来源的并集：持久 `projects` 行的项目组
-投影、`pi.desktop.recentProjects`、从活跃 session 重新推导的项目，以及
-活跃 workspace。只删除数据库行会让其他三个来源保持原样，因此该行会
-重新出现。
+That left no user-facing way to remove a durable project record. A user who
+archived a project that should no longer exist could only edit host-core's
+SQLite file directly and clear renderer storage afterwards, because the Projects
+index is a union of four sources: project-group projections of the durable
+`projects` rows, `pi.desktop.recentProjects`, projects re-derived from live
+sessions, and the active workspace. Deleting only the database row leaves the
+other three sources in place, so the row reappears.
 
-两个完整性事实约束着修复：
+Two integrity facts constrain the fix:
 
-- `PRAGMA foreign_keys = ON` 被强制执行。`sessions.project_id` 和
-  `scheduled_tasks.project_id` 是 `ON DELETE SET NULL`，因此仅删除项目
-  行会使其 session 成为孤儿，而不是移除它们。
-- 存储的（非旧的）项目组拥有有序的根列表和一个主根。在组之下移除主根
-  会让该组失去有效的主根。
+- `PRAGMA foreign_keys = ON` is enforced. `sessions.project_id` and
+  `scheduled_tasks.project_id` are `ON DELETE SET NULL`, so deleting a project
+  row alone orphans its sessions rather than removing them.
+- A stored (non-legacy) project group owns an ordered root list and a primary
+  root. Removing the primary root underneath the group would leave the group
+  without a valid primary.
 
-## 决策
+## Decision
 
-1. Host-core 新增增量 RPC `projects.remove({ path })`，返回
-   `{ removed, sessionsRemoved }`。它是移除持久项目记录的唯一受支持
-   方式。
-2. 该 RPC 删除项目行连同每个 `project_id` 指向它的 session，复用现有
-   的 `sessions::delete_session` 路径，使 transcript、scratch 和 review
-   文件完全按照单个对话删除的方式被移除，并清除该项目的持久记忆。它
-   对未知路径是幂等的，并在任何关联 session 有运行中的 turn 时被拒绝
-   （见 7）。
-3. 该 RPC 绝不触碰磁盘上的项目文件夹。PI-Desktop 删除应用记录，绝不
-   删除用户文件；文件夹被移动或删除的项目仍可移除。
-4. 作为存储的多文件夹项目组的根的路径会被以结构化错误拒绝。用户先
-   从组中移除该文件夹，这使组的主根保持有效；旧的单根投影不受影响，
-   正常删除。
-5. 删除是渲染进程动作，位于第二次确认之后，确认中指明项目及其拥有的
-   session 数量。成功后，渲染进程在同一操作中丢弃匹配的渲染进程本地
-   记录：归档/置顶元数据、最近项目条目、保留标签页，以及——当被删除
-   的项目是活跃的时——workspace 回退到另一个打开的项目或 Temporary。
-   宿主没有持久行的路径不是失败：渲染进程本地记录仍被移除，因为陈旧
-   的最近项目条目是唯一能让这样的行保持可见的东西。
-6. 该动作保持仅渲染进程。它被有意地从 `CONTROL_OPERATION_SPECS` 中
-   排除，因此本地 MCP 控制无法删除项目。
-7. 当任何关联 session 有运行中的 turn 时，批量删除被拒绝
-   （1008 / `CONFLICT`）。活跃的 turn 仍拥有其工具和工作目录，并且仍在
-   向删除操作要移除的 transcript 追加内容，因此该操作被有意地设计得
-   比单对话删除更严格——后者保持其当前语义。渲染进程预先阻止同一
-   动作，因此用户通常看到的是一条消息而不是错误；到达对话框的拒绝以
-   相同的本地化文案显示。检查和删除在宿主单一状态锁下的同一个宿主
-   RPC 中运行，因此两者之间不会有 turn 启动。
+1. Host-core gains the additive RPC `projects.remove({ path })`, returning
+   `{ removed, sessionsRemoved }`. It is the only supported way to remove a
+   durable project record.
+2. The RPC deletes the project row together with every session whose
+   `project_id` points at it, reusing the existing `sessions::delete_session`
+   path so transcript, scratch, and review files are removed exactly as they are
+   for a single conversation delete, and it clears the project's durable memory.
+   It is idempotent for an unknown path, and it is refused while any attached
+   session has a running turn (see 7).
+3. The RPC never touches the project's folder on disk. PI-Desktop deletes
+   application records, never user files, and a project whose folder was moved
+   or deleted is still removable.
+4. A path that is a root of a stored multi-folder project group is refused with
+   a structured error. The user removes the folder from the group first, which
+   keeps the group's primary root valid; legacy single-root projections are not
+   affected and delete normally.
+5. Deleting is a renderer action behind a second confirmation that names the
+   project and the number of sessions it owns. On success the renderer drops the
+   matching renderer-local record in the same operation: the archived/pinned
+   metadata, the recent-project entry, the retained tab, and, when the deleted
+   project was active, the workspace falls back to another open project or to
+   Temporary. A path the host has no durable row for is not a failure: the
+   renderer-local record is removed anyway, because a stale recent-project entry
+   is the only thing that can keep such a row visible.
+6. The action stays renderer-only. It is deliberately absent from
+   `CONTROL_OPERATION_SPECS`, so local MCP control cannot delete projects.
+7. The bulk delete is refused while any attached session has a running turn
+   (1008 / `CONFLICT`). A live turn still owns its tools and working directory
+   and is still appending to the transcript the delete would remove, so the
+   operation is deliberately stricter than single-conversation delete, which
+   keeps its current semantics. The renderer blocks the same action up front, so
+   users normally meet a message instead of an error, and a refusal that
+   reaches the dialog is shown with the same localized copy. The check and the
+   deletes run in one host RPC under the host's single state lock, so no turn
+   can start between them.
 
-## 后果
+## Consequences
 
-- 持久项目行终于可以从 UI 中移除，并且该行在重载后不再重新出现，因为
-  持久行和渲染进程本地记录由同一动作移除。
-- 被删除项目的 session 和 transcript 永久消失。因此项目删除无法从应用
-  中恢复；磁盘上的文件夹和 PI-Desktop 之外的任何文件级历史不受影响。
-- 组结构绝不会被悄悄重写。多文件夹项目的用户看到明确的拒绝，而不是
-  损坏的组。
-- 列出项目的 Composer/侧栏代码必须一致地对待四个索引来源；未来的索引
-  来源必须由同一动作清理，否则该行会重新出现。
-- 带有运行中任务的项目必须先停止才能删除，在这种情况下多了一步；替代
-  方案是在活跃写入者之下删除，那会为用户刚移除的 transcript 复活一个
-  session 行。
+- A durable project row can finally be removed from the UI, and the row no
+  longer reappears after a reload, because the durable row and the renderer-local
+  records are removed by one action.
+- Sessions and transcripts of a deleted project are gone permanently. A project
+  delete is therefore not recoverable from the application; the folder on disk
+  and any file-level history outside PI-Desktop are unaffected.
+- Group structure is never silently rewritten. Users with multi-folder projects
+  see an explicit refusal instead of a corrupted group.
+- Composer/sidebar code that lists projects must treat the four index sources
+  consistently; a future index source has to be cleaned by the same action, or
+  the row will reappear.
+- A project with a running task must be stopped before it can be deleted, which
+  is one extra step in that case; the alternative was deleting under a live
+  writer, which can resurrect a session row for the transcript the user just
+  removed.
 
-## 替代方案
+## Alternatives
 
-- **新增仅渲染进程的「hide」标志。** 被拒绝：它保留持久行、session 和
-  磁盘占用——这正是促成此变更的抱怨——并且与 `US-UI-47` 关于渲染进程
-  元数据的承诺相矛盾。
-- **删除项目行并让 `ON DELETE SET NULL` 使 session 成为孤儿。** 被拒绝：
-  它产生无法到达的对话，仍占据 transcript 目录，并且在索引中仍看起来像
-  一个项目。
-- **连同磁盘上的项目文件夹一起删除。** 被拒绝：应用动作绝不能移除
-  用户文件。
-- **在同一调用中从多文件夹组分离根。** 暂时被拒绝：`project.group.update`
-  拒绝分离有聊天的根，而在删除期间悄悄重写组结构会让结果难以预测。
-  拒绝路径可以由后续 ADR 放宽。
-- **在同一调用中中止运行中的 turn。** 被拒绝：host-core 可以结算 turn
-  自己的簿记，但无法停止仍在向该 session 流式输出的 agent 运行时，因此
-  中止后又被删除的 session 仍可能被下一次追加重新创建为桩（D318）。
-  拒绝删除把时机决定留给用户，且不留出那样的窗口。
+- **Add a renderer-only "hide" flag.** Rejected: it keeps the durable row, the
+  sessions, and the disk usage, which is the complaint that motivated the
+  change, and it contradicts `US-UI-47`'s promise about renderer metadata.
+- **Delete the project row and let `ON DELETE SET NULL` orphan the sessions.**
+  Rejected: it produces unreachable conversations that still occupy the
+  transcript directory and still look like a project in the index.
+- **Delete the project's folder on disk too.** Rejected: an application action
+  must not remove user files.
+- **Detach the root from a multi-folder group inside the same call.** Rejected
+  for now: `project.group.update` refuses to detach a root that has chats, and
+  silently rewriting group structure during a delete makes the outcome hard to
+  predict. The refusal path can be relaxed by a later ADR.
+- **Abort the running turns inside the same call.** Rejected: host-core can
+  settle a turn's own bookkeeping but cannot stop the agent runtime that is
+  still streaming into that session, so an aborted-then-deleted session can
+  still be re-created as a stub by the next append (D318). Refusing the delete
+  keeps the timing decision with the user and leaves no window for that.

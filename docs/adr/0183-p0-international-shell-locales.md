@@ -1,38 +1,40 @@
-# ADR 0183: P0 国际化外壳 locale
+# ADR 0183: P0 international shell locales
 
-- 状态：已接受
-- 日期：2026-09-08
-- 决策负责人：PI-Desktop 桌面端/i18n 维护者
-- 相关：ADR 0160、ADR 0182、D346、E2E-091
+- Status: Accepted
+- Date: 2026-09-08
+- Decision owners: PI-Desktop desktop/i18n maintainers
+- Related: ADR 0160, ADR 0182, D346, E2E-091
 
-## 背景
+## Context
 
-locale 注册表可以在无需渲染进程专属选择器工作的情况下添加语言，但已
-发布的外壳止步于英文、简体中文、繁体中文和土耳其语。西班牙语、法语和
-德语是桌面产品的高价值国际化 locale，却在 UI 目录和应用内发布说明中
-缺失。
+The locale registry could add languages without renderer-specific picker work,
+but the shipped shell stopped at English, Simplified Chinese, Traditional
+Chinese, and Turkish. Spanish, French, and German are high-value international
+locales for the desktop product and were missing from the UI catalog and
+in-app release notes.
 
-## 决策
+## Decision
 
-1. 发布 `de`、`es` 和 `fr` 的完整外壳目录，保持英文为源目录，并保持
-   键和插值一致性。
-2. 注册本地名称 `Deutsch`、`Español` 和 `Français`；可搜索的选择器
-   继续从共享 locale 注册表派生其选项。
-3. 将 `de-*`、`es-*` 和 `fr-*` OS locale 标签解析到其已发布的基础
-   目录。持久化的 `AppSettings.language` 接受这三个新 id。
-4. 发布配套的产品变更日志目录，使发布说明跟随当前 locale。不改变宿主
-   协议、存储 schema 或 Electron IPC 版本。
+1. Ship complete shell catalogs for `de`, `es`, and `fr`, keeping English as
+   the source catalog and preserving key and interpolation parity.
+2. Register native names `Deutsch`, `Español`, and `Français`; the searchable
+   picker continues to derive its options from the shared locale registry.
+3. Resolve `de-*`, `es-*`, and `fr-*` OS locale tags to their shipped base
+   catalogs. Persisted `AppSettings.language` accepts the three new ids.
+4. Ship matching product changelog catalogs so release notes follow the active
+   locale. No host protocol, storage schema, or Electron IPC version changes.
 
-## 后果
+## Consequences
 
-- 用户无需重载渲染进程即可选择德语、西班牙语或法语。
-- Locale 一致性测试覆盖外壳字符串、两种插值风格，以及发布说明的
-  版本/亮点一致性。
-- 地区变体有意共享一个基础目录；地区特定的拼写可以以后添加，而不
-  改变选择器契约。
+- Users can select German, Spanish, or French without a renderer reload.
+- Locale parity tests cover shell strings, both interpolation styles, and
+  release-note version/highlight parity.
+- Regional variants intentionally share one base catalog; region-specific
+  spelling can be added later without changing the picker contract.
 
-## 替代方案
+## Alternatives
 
-- 只添加注册表行并回退到英文：否决，因为这会宣传未本地化外壳的语言。
-- 立即添加地区特定目录：否决，因为 P0 目标是以每种语言一个可维护的
-  目录实现广泛覆盖。
+- Add only registry rows and fall back to English: rejected because it would
+  advertise languages without localizing the shell.
+- Add region-specific catalogs immediately: rejected because the P0 goal is
+  broad coverage with one maintainable catalog per language.

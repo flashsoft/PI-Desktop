@@ -1,34 +1,36 @@
-# 02. i18n（英语优先）
+# 02. i18n (English-first)
 
-## 1. 政策
+## 1. Policy
 
-PI-Desktop 是一款全球产品。
+PI-Desktop is a global product.
 
-- **默认区域设置：** `en`
-- **源语言：** 英语
-- **specs/UI/source 字符串的创作语言：** 英语
-- 其他语言环境是英文源的翻译
+- **Default locale:** `en`
+- **Source language:** English
+- **Authoring language for specs/UI/source strings:** English
+- Other locales are translations of English sources
 
-## 2. 框架要求
+## 2. Framework requirements
 
-UI 必须使用 **i18next + React-i18next** (D012)。
+UI must use **i18next + react-i18next** (D012).
 
-规则：
+Rules:
 
-1. 没有硬编码的面向用户的英文句子长期散落无ID
-2. 每个可见的字符串都有一个稳定的密钥
-3.区域设置切换不得需要代码编辑
-4. 每个发布的语言环境都具有与英语相同的扁平化按键集
-5. 插值变量名称和集在每个语言环境中都匹配
-6. 日期和时间使用活动应用程序区域设置而不是主机默认值
-7. Electron 应用程序菜单自定义标签和渲染器窗口控件
-   消耗目录键；本机角色标签可以使用 Electron/OS 本地化
+1. No hard-coded user-facing English sentences scattered without IDs long-term
+2. Every visible string has a stable key
+3. Locale switch must not require code edits
+4. Every shipped locale has the same flattened key set as English
+5. Interpolation variable names and sets match across every locale
+6. Dates and times use the active application locale rather than the host default
+7. Electron application-menu custom labels and renderer window controls
+   consume catalog keys; native role labels may use Electron/OS localization
 
-规范的思考等级值是可见字符串规则的一个有意例外：Composer、模型配置和
-委派界面直接显示协议值 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`
-和 `max`。这些稳定的技术值不得加入语言目录或进行翻译。
+Canonical thinking-level values are an intentional exception to the visible
+string rule: Composer, model-configuration, and delegation surfaces render
+the protocol values `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
+`max` directly. These stable technical values must not be added to locale
+catalogs or translated.
 
-## 3. 目录结构
+## 3. Catalog structure
 
 ```text
 packages/i18n/src/locales/
@@ -38,18 +40,23 @@ packages/i18n/src/locales/
 ├── tr/index.ts
 ├── de/index.ts
 ├── es/index.ts
-└── fr/index.ts
+├── fr/index.ts
+└── ko/index.ts
 ```
 
-英文目录是翻译目录的源类型。`packages/i18n` 中的注册表列出每个已发布语言（id、本地名称、英文名称）。自动化测试会校验每个已发布语言的目录键和插值变量。新增语言只需加一份目录和一行注册表；语言选择器读取该注册表。
+The English catalog is the source type for translated catalogs. A registry in
+`packages/i18n` lists every shipped locale (id, native name, English name).
+Catalog parity and interpolation parity are enforced across every shipped
+locale by automated tests. Adding a locale is a catalog file plus a registry
+row; the language picker reads that registry.
 
-## 4. 关键约定
+## 4. Key conventions
 
 ```text
 domain.section.item
 ```
 
-示例：
+Examples:
 
 - `chat.composer.placeholder`
 - `settings.providers.add`
@@ -72,38 +79,43 @@ domain.section.item
 - `errors.PLAN_EXECUTION_INTERRUPTED`
 - `errors.PLAN_REQUIRES_INTERACTIVE_SESSION`
 
-## 5. 非 UI 语言界面
+## 5. Non-UI language surfaces
 
-同样是英语优先：
+Also English-first:
 
 - docs/spec
-- ADR
-- 提交消息
-- issue/PR 模板
-- 插件示例文档
-- 核心产品中的命令标题
+- ADRs
+- commit messages
+- issue/PR templates
+- plugin example docs
+- command titles in core product
 
-插件身份文案（`manifest.i18n`）由宿主解析（ADR 0267）。插件自有界面从宿主语言自行本地化（`pi.app.getLocale`，ADR 0280）。扁平身份字段仍须提供英文。
+Plugin identity (`manifest.i18n`) is host-resolved (ADR 0267). Plugin-owned UI
+localizes from the host locale (`pi.app.getLocale`, ADR 0280). English remains
+required for flat identity fields.
 
-## 6. 验收
+## 6. Acceptance
 
-1.应用程序默认以英文启动
-2. 英文源目录存在语言环境文件
-3. 切换架构支持额外的语言环境
-4. 核心UI路径无中文硬依赖
-5. 目录测试拒绝丢失键或不匹配的插值变量
-6. 导入、项目和临时会话在每个已发布语言中公开本地化的可见和无障碍标签
-7. macOS 系统菜单自定义命令和 Windows/Linux 窗口控件在每个已发布语言中公开本地化标签
-8. 启动启动画面和渲染器崩溃 chrome 使用目录键（`app.starting`、
-   `app.shellName`、`app.tagline`、`app.uiCrashed`)；空屋英雄称号是
-   在每个已发布的语言环境中进行翻译
-9. 用户可见的目录副本更喜欢简单的产品语言而不是内部语言
-   工程术语（issue/PR/Windows/Linux/macOS/`app.starting`，其中 UI
-   已经说了项目）。状态、空状态、错误和设置提示说明
-    发生了什么以及下一步该做什么 (D149)
-10. Agent/Plan/Goal 选择器、合约状态、title/artifact-opener/
-    记住批准模式操作、Bash/Auto 突变警告、
-    shell catalog/unavailable 状态、故障关闭恢复和共享
-Plan/Goal 错误代码
-    在每个已发布语言中都有匹配的键；无聊天操作模式键或命令
-    已发货
+1. App boots in English by default
+2. Locale files exist for English source catalog
+3. Switching architecture supports additional locales
+4. No Chinese hard dependency in core UI path
+5. Catalog tests reject missing keys or mismatched interpolation variables
+6. Import, Projects, and Temporary sessions expose localized visible and
+   accessible labels in every shipped locale
+7. macOS system-menu custom commands and Windows/Linux window controls expose
+   localized labels in every shipped locale
+8. Boot splash and renderer crash chrome use catalog keys (`app.starting`,
+   `app.shellName`, `app.tagline`, `app.uiCrashed`); project, temporary-session,
+   and no-session empty-home hero titles/subtitles are translated in every
+   shipped locale
+9. User-visible catalog copy prefers plain product language over internal
+   engineering terms (`host`/`backend`/`repo refresh`/`workspace` where the UI
+   already says project). Status, empty states, errors, and setup hints explain
+    what happened and what to do next (D149)
+10. Agent/Plan/Goal selector, contract states, title/artifact-opener/
+    remembered approval-mode actions, Bash/Auto mutation warning,
+    shell catalog/unavailable state, fail-closed recovery, and shared
+    Plan/Goal error codes
+    have matching keys in every shipped locale; no Chat operating-mode key or
+    command is shipped

@@ -1,85 +1,98 @@
-# ADR 0133: 使用 models.dev 作为主要模型目录，pi-ai 作为回退
+# ADR 0133: Use models.dev as the primary model catalog with pi-ai fallback
 
 - Status: Superseded by ADR 0134
 - Date: 2026-08-29
 - Deciders: PI-Desktop core
 - Amends: ADR 0027, D136, D243
 
-## 背景
+## Context
 
-PI-Desktop 锁定的 `@earendil-works/pi-ai` 包提供高质量的运行时
-适配器和一个有用的内置模型目录，但其模型覆盖面和发布节奏并不代表
-当前完整的市场。因此 provider 设置无法可靠地从目录提供用户期望的
-当前模型名称、限额、模态或能力标志。
+PI-Desktop's pinned `@earendil-works/pi-ai` package provides high-quality
+runtime adapters and a useful built-in model catalog, but its model coverage
+and release cadence do not represent the full current market. Provider settings
+therefore cannot reliably offer current model names, limits, modalities, or
+capability flags from the catalog users expect.
 
-应用已经具备主进程的模型发现路径和一个 Rust 持有的按 provider
-缓存。模型元数据必须留在渲染进程之外，provider 凭据不得发送给目录
-服务，且当没有公共目录认识自定义/本地 provider 时它们必须保持可用。
+The application already has a main-process model discovery path and a
+Rust-owned per-provider cache. Model metadata must remain outside the renderer,
+provider credentials must not be sent to a catalog service, and custom/local
+providers must remain usable when no public catalog knows them.
 
-## 决策
+## Decision
 
-使用 `https://models.dev/api.json` 作为主要远程模型目录。
+Use `https://models.dev/api.json` as the primary remote model catalog.
 
-1. Electron 主进程以有界超时获取该固定 URL，并只解析 PI-Desktop
-   需要的 provider/model 字段。渲染进程绝不获取该 URL，请求中也不
-   携带任何 API 密钥、OAuth token 或其他 provider 凭据。
-2. models.dev provider 先按配置的 `vendorKey` 匹配，其次按归一化的
-   provider API URL 匹配。精确的模型 ID 匹配提供 `ModelInfo` 和
-   运行时模型配置所使用的显示名、上下文/输出限额、输入模态、价格
-   提示、推理选项、工具调用标志和结构化输出标志。
-3. 已配置模型的目录优先级为：
-   `models.dev` → `pi-ai` → provider 端点发现 → 通用默认值。
-   锁定的 pi-ai 目录仍是 models.dev 记录不可用或缺失时的回退，并在
-   models.dev 没有等价物时提供适配器专属的兼容性数据。provider 端点
-   发现对自定义和账户专属的模型 ID 保持可用。
-4. 既有的 `ModelBinding` 仍是所选 provider/model 的显式用户配置。
-   目录数据提供默认值和能力元数据；对绑定的编辑继续控制其配置的
-   限额和启用的推理级别。
-5. 远程快照在每个 Electron 进程中最多加载一次，除非未来有显式的
-   刷新策略取代它。获取失败会保留任何成功的内存快照并直接落空，
-   而不清除 Rust 持有的 provider 缓存。既有的 provider 缓存存储其
-   当前的归一化字段；主进程用最新目录重新装饰缓存行。
-6. `ModelInfo.catalogSource` 只是面向渲染进程的标注。它记录
-   `models.dev` 或 `pi-ai`，不改变宿主 RPC/存储 schema，也不持久化
-   原始远程文档。
+1. Electron main fetches the fixed URL with a bounded timeout and parses only
+   the provider/model fields needed by PI-Desktop. The renderer never fetches
+   this URL and no API key, OAuth token, or other provider credential is sent
+   with the request.
+2. A models.dev provider is matched by configured `vendorKey` first and by a
+   normalized provider API URL second. An exact model ID match supplies the
+   display name, context/output limits, input modalities, price hints,
+   reasoning options, tool-call flag, and structured-output flag used by
+   `ModelInfo` and runtime model configuration.
+3. Catalog precedence for a configured model is:
+   `models.dev` → `pi-ai` → provider endpoint discovery → generic defaults.
+   The pinned pi-ai catalog remains the fallback for unavailable or missing
+   models.dev records and supplies adapter-specific compatibility data when
+   models.dev has no equivalent. Provider endpoint discovery remains available
+   for custom and account-specific model IDs.
+4. The existing `ModelBinding` remains the explicit user configuration for a
+   selected provider/model. Catalog data supplies defaults and capability
+   metadata; edits to a binding continue to control its configured limits and
+   enabled thinking levels.
+5. The remote snapshot is loaded at most once per Electron process unless an
+   explicit future refresh policy replaces it. A failed fetch preserves any
+   successful in-memory snapshot and falls through without clearing the
+   Rust-owned provider cache. The existing provider cache stores its current
+   normalized fields; main re-decorates cached rows from the latest catalog.
+6. `ModelInfo.catalogSource` is a renderer-facing annotation only. It records
+   `models.dev` or `pi-ai` without changing the host RPC/storage schema or
+   persisting the raw remote document.
 
-models.dev 的推理选项映射到 PI-Desktop 的规范级别：可识别的 effort
-值被保留（`none` 变为 `off`）；开关和 token 预算选项用 `off` 加
-`medium` 作为启用代表；没有级别列表的推理记录使用保守的
-`low`/`medium`/`high` 集合。输入或输出模态不是文本的条目不在文本
-agent 的模型选择器中提供。
+Models.dev reasoning options map to the canonical PI-Desktop levels: effort
+values are retained when recognized (`none` becomes `off`); toggle and token
+budget options use `off` plus `medium` as the enabled representative; a
+reasoning record without a level list uses the conservative
+`low`/`medium`/`high` set. Entries
+whose input or output modalities are not text are not offered in the text
+agent model picker.
 
-## 后果
+## Consequences
 
-- 设置和 Composer 可以使用当前的广泛 provider/model 目录，而不需要
-  在应用中携带大型静态矩阵。
-- 通过缓存的 provider 行、pi-ai 的内置目录、provider 发现和自由
-  输入的模型 ID，离线和目录不可用时的运行仍然可能。
-- 远程目录可以独立于应用发布更新名称和限额，因此需要基于 fixture
-  的解析器和优先级测试。
-- models.dev 不定义 provider 的线上适配器。所选 API 风格和 pi-ai
-  兼容性数据仍然决定请求序列化；目录条目无法为未知 ID 授予不受
-  支持的传输或图片能力。
-- 远程目录故障不是致命的，且不得抹掉用户选择的绑定或凭据。
+- Settings and Composer can use a current broad provider/model catalog without
+  shipping a large static matrix in the application.
+- Offline and unavailable-catalog operation remains possible through cached
+  provider rows, pi-ai's bundled catalog, provider discovery, and free-form
+  model IDs.
+- The remote catalog can update names and limits independently of an app
+  release, so fixture-based parser and precedence tests are required.
+- models.dev does not define provider wire adapters. The selected API style and
+  pi-ai compatibility data still govern request serialization; a catalog entry
+  cannot grant an unsupported transport or image capability to an unknown ID.
+- A remote catalog outage is non-fatal and must not erase user-selected
+  bindings or credentials.
 
-## 备选方案
+## Alternatives
 
-### 保持 pi-ai 作为唯一目录
+### Keep pi-ai as the sole catalog
 
-否决，因为其原生目录更窄，市场覆盖可能落后于 models.dev，尽管它
-仍是最好的本地回退和适配器来源。
+Rejected because its native catalog is narrower and can lag models.dev's
+market coverage, despite remaining the best local fallback and adapter source.
 
-### 在渲染进程中获取 models.dev
+### Fetch models.dev in the renderer
 
-否决，因为目录加载属于 Electron 主进程，保持一个网络边界，并避免
-把 provider 凭据或远程响应处理与渲染进程状态混在一起。
+Rejected because catalog loading belongs to Electron main, keeps one network
+boundary, and avoids mixing provider credentials or remote response handling
+with renderer state.
 
-### 完全替换 provider 发现
+### Replace provider discovery entirely
 
-否决，因为自定义/本地端点和经过认证的厂商目录可能暴露公共目录中
-没有的模型。发现机制仍是这些情况下的回退。
+Rejected because custom/local endpoints and authenticated vendor catalogs can
+expose models not present in a public catalog. Discovery remains the fallback
+for those cases.
 
-## 参考
+## References
 
 - `apps/desktop/electron/main/models-dev-catalog.ts`
 - `apps/desktop/electron/main/index.ts`

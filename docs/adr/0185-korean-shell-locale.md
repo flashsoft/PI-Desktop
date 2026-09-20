@@ -1,38 +1,44 @@
-# ADR 0185: 韩语外壳 locale
+# ADR 0185: Korean shell locale
 
-- 状态：已接受
-- 日期：2026-09-09
-- 决策负责人：PI-Desktop 桌面端/i18n 维护者
-- 相关：ADR 0160、ADR 0182、ADR 0183、D349、E2E-091
+- Status: Accepted
+- Date: 2026-09-09
+- Decision owners: PI-Desktop desktop/i18n maintainers
+- Related: ADR 0160, ADR 0182, ADR 0183, D349, E2E-091
 
-## 背景
+## Context
 
-可搜索的 locale 注册表已经支持完整的外壳目录，但韩语用户仍然只能使用
-英文或其他已发布的 locale。韩语是一门独立的语言，不应由英文回退或贴
-着韩语标签的中文目录来代表。
+The searchable locale registry already supports complete shell catalogs, but
+Korean users were still limited to English or another shipped locale. Korean
+is a distinct language and should not be represented by an English fallback or
+by a Chinese catalog with a Korean label.
 
-## 决策
+## Decision
 
-1. 在 `packages/i18n/src/locales/ko` 发布完整的韩语外壳目录，本地名称为
-   `한국어`，英文名称为 `Korean`。
-2. 将 `ko` 和地区性的 `ko-*` OS locale 标签解析到韩语目录。将 `ko`
-   加入持久化的 `AppSettings.language` 和 Electron Chromium locale 允许
-   列表。
-3. 发布韩语产品变更日志目录，与英文保持相同的稳定版本号和亮点数量
-   集合，使发布说明跟随当前外壳 locale。
-4. 保留现有的英文优先目录契约：相同的键、插值变量、可搜索选择器行为，
-   以及插件贡献标签的英文回退。不改变宿主协议、存储 schema 或 IPC
-   版本。
+1. Ship a complete Korean shell catalog at `packages/i18n/src/locales/ko`,
+   with native name `한국어` and English name `Korean`.
+2. Resolve `ko` and regional `ko-*` OS locale tags to the Korean catalog. Add
+   `ko` to persisted `AppSettings.language` and to the Electron Chromium
+   locale allowlist.
+3. Ship a Korean product changelog catalog with the same stable version and
+   highlight-count set as English so release notes follow the active shell
+   locale.
+4. Preserve the existing English-first catalog contract: identical keys,
+   interpolation variables, searchable picker behavior, and English fallback
+   for plugin-contributed labels. No host protocol, storage schema, or IPC
+   version changes.
 
-## 后果
+## Consequences
 
-- 韩语用户无需重载渲染进程即可选择韩语或使用 Auto 检测。
-- 目录和变更日志一致性测试将韩语与现有已发布 locale 一并覆盖。
-- 韩语地区变体有意共享一个基础目录；拼写差异可以以后添加，而不改变
-  选择器契约。
+- Korean users can select Korean or use Auto detection without reloading the
+  renderer.
+- Catalog and changelog parity tests cover Korean alongside the existing
+  shipped locales.
+- Regional Korean variants intentionally share one base catalog; spelling
+  differences can be added later without changing the picker contract.
 
-## 替代方案
+## Alternatives
 
-- 注册 `ko` 但回退到英文：否决，因为选择器会宣传一个未翻译的外壳。
-- 立即添加地区特定的韩语目录：否决，因为当前的 locale 契约是每种语言
-  一个可维护的目录。
+- Register `ko` while falling back to English: rejected because the picker
+  would advertise an untranslated shell.
+- Add region-specific Korean catalogs immediately: rejected because the
+  current locale contract uses one maintainable catalog per language.

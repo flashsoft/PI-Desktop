@@ -1,63 +1,74 @@
-# ADR 0013: 将设置导航整合为四个目标页
+# ADR 0013: Consolidate settings navigation into four destinations
 
-- 状态: 部分被 ADR 0026 取代
-- 日期: 2026-07-26
+- Status: Superseded in part by ADR 0026
+- Date: 2026-07-26
 
-## 背景
+## Context
 
-基线 0.4.0 在 D062–D065 中冻结了宽泛的、与 Codex 对齐的设置侧栏。
-该目录包含 Personal、Integrations 和 Coding 分组，其中有独立的
-Appearance 和 Providers 目标页以及大量占位行。已发布的本地优先
-工作流需要更少的顶层选择，同时现有的整页外壳、内容卡片、provider
-管理、会话导入和诊断功能必须保持可用。插件管理在主应用外壳中已有
-专用目标页，不需要在设置中重复出现。
+Baseline 0.4.0 froze the broad Codex-aligned settings rail in D062–D065.
+That directory exposed Personal, Integrations, and Coding groups containing
+standalone Appearance and Providers destinations plus numerous placeholder
+rows. The shipped local-first workflows need fewer top-level choices, while
+the existing full-page shell, content cards, provider management, session
+import, and diagnostics must remain available. Plugin management already has a
+dedicated destination in the primary app shell and does not need a duplicate
+Settings entry.
 
-修改这些已冻结的视觉对齐决策需要明确的基线决策，而不是悄悄改写
-历史行项。
+Changing these frozen visual-parity decisions requires an explicit baseline
+decision rather than silently rewriting the historical rows.
 
-## 决策
+## Decision
 
-保留 D063/D070 的整页设置外壳、返回应用操作、搜索控件、侧栏度量、
-内容卡片和主题行为。
+Keep the full-page settings shell, Back to app action, search control, rail
+metrics, content cards, and theme behavior from D063/D070.
 
-将宽泛的分组目录替换为恰好四个目标页，顺序如下：
+Replace the broad grouped directory with exactly four destinations in this
+order:
 
 1. General
 2. Configuration
 3. Import sessions
 4. About
 
-Appearance 变为 General 内的一张卡片。Providers 变为 Configuration
-内的一张卡片。两者都不再作为独立的侧栏目标页出现。不渲染任何
-占位设置目标页。
+Appearance becomes a card inside General. Providers becomes a card inside
+Configuration. Neither appears as a standalone rail destination. No
+placeholder settings destinations are rendered.
 
-Provider 设置的深层链接和内置命令指向 Configuration 内的 Providers
-卡片。Import sessions 保留其专用设置目标页。插件管理保留在应用外壳
-现有的 Plugins 目标页上，用户可以在那里加载、启用、禁用和卸载插件。
+Provider setup deep links and built-in commands target the Providers card
+inside Configuration. Import sessions retains its dedicated Settings
+destination. Plugin management remains on the app shell's existing Plugins
+destination, where users can load, enable, disable, and uninstall plugins.
 
-## 后果
+## Consequences
 
-- 设置侧栏更短，只包含已实现、有用的目标页。
-- 主题控件仍可在 General 下发现。
-- Provider 管理仍可从模型设置流程到达，不再占用额外的侧栏行。
-- 插件管理仍可从应用外壳到达，无需在设置中重复。
-- 整页外壳和已确立的浅色/深色视觉度量不变。
-- spec 和 E2E 场景必须断言恰好四项的顺序和两个合并的区块。
-- D090 取代 D062–D065 的导航/内容位置部分，包括其中 Plugins 的
-  Settings/Integrations 位置，以及 D070 中 Account 专属的度量。
+- The settings rail is shorter and contains only implemented, useful
+  destinations.
+- Theme controls remain discoverable under General.
+- Provider management remains reachable from model setup flows without
+  consuming another rail row.
+- Plugin management remains reachable from the app shell without duplicating
+  it in Settings.
+- The full-page shell and established light/dark visual metrics do not change.
+- Specs and E2E scenarios must assert the exact four-item order and the two
+  merged sections.
+- D090 supersedes the navigation/content-location portions of D062–D065,
+  including their Settings/Integrations placement for Plugins, plus the
+  Account-specific metric in D070.
 
-## 备选方案
+## Alternatives
 
-### 保留宽泛的 Codex 目录
+### Keep the broad Codex directory
 
-否决，因为空的和低价值的目标页会遮蔽已实现的本地工作流。
+Rejected because empty and low-value destinations obscure the implemented
+local workflows.
 
-### 完全移除 Appearance 或 Providers
+### Remove Appearance or Providers entirely
 
-否决，因为主题选择和 provider 配置是必需的产品能力；整合在保留
-它们的同时不再需要独立目标页。
+Rejected because theme selection and provider configuration are required
+product capabilities; consolidation preserves them without separate
+destinations.
 
-## 参考
+## References
 
 - `docs/spec/00-baseline.md`
 - `docs/spec/04-ux/01-ui-ia.md`

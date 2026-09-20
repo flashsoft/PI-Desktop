@@ -1,4 +1,4 @@
-# ADR 0104: 插件贡献的工作面板视图
+# ADR 0104: Plugin-contributed work panel views
 
 - Status: Accepted
 - Date: 2026-08-19
@@ -13,112 +13,127 @@
   [07-plugins](../spec/07-plugins/README.md) ·
   [04-ux/08-component-spec §5](../spec/04-ux/08-component-spec.md)
 
-## 背景
+## Context
 
-在 ADR 0108 移除交互式终端之前，右侧工作面板暴露了四项能力——
-Review、Terminal、Browser、Files（ADR 0019）——以渲染进程中硬编
-码清单的形式：一个 `HEADER_TOOLS` 常量、一个封闭的
-`WorkPanelTabKind` 联合类型，以及面板主体中按标签页种类的四路分
-支。添加任何新表面都意味着改动宿主代码。
+Before ADR 0108 removed the interactive terminal, the right work panel
+exposed four capabilities — Review, Terminal, Browser, Files (ADR 0019) — as a
+hard-coded list in the renderer: a `HEADER_TOOLS` constant, a closed
+`WorkPanelTabKind` union, and a four-way branch on tab kind in the panel body.
+Adding any new surface meant changing host code.
 
-插件已经拥有成熟且严格受限的 UI 通道，但它只能产出**独立窗
-口**：`ui.panel` 打开一个带沙箱 preload、按插件持久化会话分区和
-`net.domains` 出站白名单的无边框 `BrowserWindow`（ADR 0092）。插
-件无法把任何东西放进主窗口，因此属于会话旁边的能力——Git 历史
-浏览器、文件管理器、issue 列表——要么变成一个与应用争夺屏幕空
-间的分离窗口，要么不存在。
+Plugins already have a mature and strictly bounded UI channel, but it only
+produces a **separate window**: `ui.panel` opens a frameless `BrowserWindow`
+with a sandboxed preload, a per-plugin persisted session partition, and a
+`net.domains` egress allowlist (ADR 0092). A plugin cannot put anything inside
+the main window, so capabilities that belong next to the conversation — a Git
+history browser, a file manager, an issue list — either become a detached
+window that competes with the app for screen space, or do not exist.
 
-工作面板是这些表面的自然归宿。它已经是"检查并操控工作区"栏，
-已经是会话作用域的（ADR 0028），并且是客户区的流内部分，可见时
-带临时原生预留（ADR 0122）。
+The work panel is the natural home for those surfaces. It is already the
+"inspect and steer the workspace" column, it is already session-scoped
+(ADR 0028), and it is an in-flow part of the client area with a temporary
+native reservation while visible (ADR 0122).
 
-## 决策
+## Decision
 
-1. **插件用 `contributes.views` 声明工作面板表面。** 每个条目携带
-   `id`、`title`（纯文本或 `{ en, "zh-CN" }`）、可选的 `icon`
-   令牌、相对于插件的 HTML `entry`，以及可选的 `order`。一个插件
-   可以声明多个：Git 插件可以把"Changes"和"History"作为独立条目
-   发布。新的 `ui.view` 权限门控该贡献，与 `ui.panel` 平行；两者
-   相互独立，因此插件可以拥有停靠视图而没有分离窗口。
+1. **A plugin declares work panel surfaces with `contributes.views`.** Each
+   entry carries an `id`, a `title` (plain or `{ en, "zh-CN" }`), an optional
+   `icon` token, an HTML `entry` relative to the plugin, and an optional
+   `order`. A plugin may declare several: a Git plugin can ship "Changes" and
+   "History" as independent entries. The new `ui.view` permission gates the
+   contribution, parallel to `ui.panel`; the two are independent, so a plugin
+   may have docked views without a detached window.
 
-2. **视图渲染为主进程拥有的 `WebContentsView`**，附着到主窗口，
-   并根据渲染进程测量的矩形定位——预览浏览器自 ADR 0019/0033
-   以来使用的机制。它整体复用插件现有的隔离：相同的沙箱
-   `plugin-panel` preload、与该插件分离窗口相同的持久化
-   `persist:pi-plugin-<id>` 分区，以及相同的 `net.domains` 出站过
-   滤。出站策略和分区名被抽取到共享函数，使停靠和分离两种放置不
-   会漂移到不同的安全姿态。
+2. **A view is rendered as a `WebContentsView` owned by the main process**,
+   attached to the main window and positioned from a renderer-measured rect —
+   the mechanism the preview browser has used since ADR 0019/0033. It reuses
+   the plugin's existing isolation wholesale: the same sandboxed
+   `plugin-panel` preload, the same persisted `persist:pi-plugin-<id>`
+   partition as that plugin's detached window, and the same `net.domains`
+   egress filter. The egress policy and the partition name are extracted to
+   shared functions so the docked and detached placements cannot drift into
+   different security postures.
 
-3. **渲染进程是可见性权威。** `WebContentsView` 合成在渲染进程内
-   容之上，因此面板在它不是活动标签页、面板正在动画、分隔条正在
-   拖拽或阻塞性覆盖层打开时，会隐藏每一个原生表面——浏览器和任
-   何插件视图一视同仁。一个 `panelBlocked` 条件统管所有这些情
-   况。
+3. **The renderer is the visibility authority.** A `WebContentsView` composites
+   above renderer content, so the panel hides every native surface — the
+   browser and any plugin view alike — whenever it is not the active tab, the
+   panel is animating, the divider is being dragged, or a blocking overlay is
+   open. One `panelBlocked` condition governs all of them.
 
-4. **嵌入视图去掉窗口控制外框。** 停靠视图没有可最小化、最大化
-   或拖拽的窗口，因此 preload 跳过三按钮胶囊和 ADR 0092 定义的
-   46px 安全区，并发布 `--pi-plugin-titlebar-height: 0px` 而不是
-   `46px`。插件作者读取该变量而不是硬编码数值，因此同一个入口文
-   件在两种放置下都能正确布局。`window.pluginBridge` 逐字节相同，
-   因此视图和面板共享它们的代码。
+4. **An embedded view drops the window-control chrome.** A docked view has no
+   window to minimize, maximize, or drag, so the preload skips the three-button
+   capsule and the 46px safe area that ADR 0092 defines, and publishes
+   `--pi-plugin-titlebar-height: 0px` instead of `46px`. Plugin authors read the
+   variable rather than hard-coding a value, so one entry file lays out
+   correctly in both placements. `window.pluginBridge` is byte-for-byte the
+   same, so a view and a panel share their code.
 
-5. **图标是来自宿主拥有的封闭清单的令牌**，绝不是插件提供的标
-   记。图标绘制在第一方控件旁边的宿主外框内；在那里接受 SVG 会
-   是一个注入面，并让插件装扮成宿主。未知令牌不是错误——它降级
-   为字母瓷贴——因此针对更新宿主编写的插件在旧宿主上仍能正确列
-   出。
+5. **Icons are tokens from a host-owned closed list**, never plugin-supplied
+   markup. The icon is drawn inside host chrome next to first-party controls;
+   accepting SVG there would be an injection surface and would let a plugin
+   dress up as the host. An unknown token is not an error — it degrades to a
+   lettered tile — so a plugin written against a newer host still lists
+   correctly on an older one.
 
-6. **视图列表按激活作用域过滤。** 这刻意与 `pluginThemes` 不同，
-   后者*不*按作用域过滤，因为所选主题是一个全局应用设置。视图是
-   插件在项目内做的事情，因此项目作用域的插件不得在另一个项目中
-   提供它的视图。打开视图时会重新检查权限、作用域和入口存在性；
-   渲染进程永远不是插件可以显示什么的权威。
+6. **The view list is filtered by activation scope.** This differs deliberately
+   from `pluginThemes`, which is *not* scope-filtered because the selected theme
+   is one global app setting. A view is something a plugin does inside a
+   project, so a project-scoped plugin must not offer its view in another
+   project. Permission, scope, and entry existence are re-checked when a view is
+   opened; the renderer is never the authority on what a plugin may show.
 
-7. **视图被缓存、有界，并绑定到插件的生命周期。** 视图在标签页
-   切换后存活，使插件保持其滚动位置和页内状态，最多四个存活视
-   图，逐出最久未显示的，且绝不逐出屏幕上的那个。禁用、卸载、重
-   载和崩溃都会销毁插件的视图；标签页可能比页面活得更久，因此渲
-   染进程在生命周期事件上重新打开，而不是留下永久空白的窗格。
+7. **Views are cached, bounded, and tied to the plugin's lifetime.** A view
+   survives tab switches so a plugin keeps its scroll position and in-page
+   state, up to four live views, evicting the least recently shown and never the
+   one on screen. Disable, uninstall, reload, and crash all destroy the
+   plugin's views; the tab may outlive the page, so the renderer re-opens on the
+   lifecycle event rather than leaving a permanently blank pane.
 
-## 后果
+## Consequences
 
-- 工作面板成为扩展点，而不是固定集合。第三方插件经由第一方代码
-  在 ADR 0103 的迁移落地后将使用的同一条路径触达它，这正是使该
-  迁移成为插件 API 是否充分的真正检验的原因。
-- 无论放置方式如何，插件的存储是同一个东西，因为视图与该插件的
-  分离窗口共享一个分区。因此打开视图会继承面板窗口已有的任何会
-  话状态。
-- `windowForSender` 必须直接扫描窗口，而不是先解析插件 id：停靠
-  视图现在也会解析到一个插件 id，经由它路由窗口控制会让停靠视
-  图关闭同一插件的分离窗口。这由测试断言，而不是留给评审。
-- ADR 0019 为浏览器接受的 z 序警告现在适用于每个插件视图。顶部
-  居中的 toast 可能与视图角落重叠；阻塞性覆盖层会完全隐藏它。
-- 四个存活的 `WebContentsView` 最坏情况下是四个额外的渲染进程。
-  该上限是刻意的权衡，避免在每次标签页切换时销毁并重载插件页
-  面。
+- The work panel becomes an extension point rather than a fixed set. Third-party
+  plugins reach it through the same route first-party code will use once ADR
+  0103's migration lands, which is what makes that migration a real test of
+  whether the plugin API is sufficient.
+- A plugin's storage is one thing regardless of placement, because a view and
+  that plugin's detached window share a partition. Opening a view therefore
+  inherits any session state the panel window already had.
+- `windowForSender` must scan windows directly instead of resolving a plugin id
+  first: a docked view now also resolves to a plugin id, and routing window
+  controls through that would let a docked view close the same plugin's separate
+  window. This is asserted by a test rather than left to review.
+- The z-order caveat ADR 0019 accepted for the browser now applies to every
+  plugin view. Top-center toasts may overlap a view's corner; blocking overlays
+  hide it entirely.
+- Four live `WebContentsView`s is four extra renderer processes at worst. The
+  bound is a deliberate trade against destroying and reloading a plugin page on
+  every tab switch.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-### 宿主渲染进程内的 `<iframe>`
+### An `<iframe>` inside the host renderer
 
-被拒绝。它能正确 z 序排序且无需边界同步，但 Electron 无法给
-iframe 独立的会话分区，因此插件页面会共享宿主渲染进程的进程和
-存储。这是比插件窗口已有边界严格更弱的边界，且 `net.domains` 白
-名单无法在其上执行。与现有面板窗口的隔离对等才是要点。
+Rejected. It would z-order correctly and need no bounds syncing, but Electron
+cannot give an iframe its own session partition, so the plugin page would share
+the host renderer's process and storage. That is a strictly weaker boundary than
+the one plugin windows already have, and the `net.domains` allowlist could not
+be enforced on it. Isolation parity with the existing panel window is the point.
 
-### 由宿主渲染的插件提供 React 组件
+### Plugin-supplied React components rendered by the host
 
-直接拒绝。它会把第三方代码放进宿主渲染进程，使其能访问应用自己
-的状态和 IPC 桥接，为了渲染便利丢弃整个插件信任边界。
+Rejected outright. It would put third-party code in the host renderer with
+access to the app's own state and IPC bridge, discarding the entire plugin trust
+boundary for a rendering convenience.
 
-### 复用 `ui.panel` 并让宿主决定在哪里显示
+### Reuse `ui.panel` and let the host decide where to show it
 
-被拒绝。面板是每个插件一个表面，带窗口的尺寸和标题；视图是多个
-之一，由面板列决定尺寸，且需要自己的菜单标签、图标和顺序。重载
-同一个字段会让两者都更糟，并且无法发布一个同时提供停靠视图*和*
-分离窗口的插件。
+Rejected. A panel is one surface per plugin with a window's dimensions and
+title; a view is one of several, sized by the panel column, and needs its own
+menu label, icon, and order. Overloading one field would make both worse and
+leave no way to ship a plugin that offers a docked view *and* a detached window.
 
-### 两者兼有，由 `isolation: "process" | "inline"` manifest 字段选择
+### Both, selected by a `isolation: "process" | "inline"` manifest field
 
-本次改动拒绝。它为尚未测量的性能收益把要维护的渲染和安全路径翻
-倍，而且更弱的模式会仅仅因为更容易编写而成为默认。
+Rejected for this change. It doubles the rendering and security paths to
+maintain for a performance benefit that has not been measured, and the weaker
+mode would become the default simply because it is easier to write against.

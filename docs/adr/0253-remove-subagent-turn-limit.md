@@ -1,4 +1,4 @@
-# ADR 0253：移除子 Agent 的 turn 上限
+# ADR 0253: Remove the subagent turn limit
 
 - Status: Accepted
 - Date: 2026-09-15
@@ -7,88 +7,102 @@
   ADR 0189, ADR 0210, `03-runtime/02-agent-runtime.md` §5f,
   `04-ux/06-settings-ia.md` §7, E2E-155,
   E2E-SUBAGENT-legacy-turn-limit-frontmatter-is-ignored
-- Supersedes: ADR 0062、ADR 0063、ADR 0119、ADR 0126、ADR 0166 和 ADR 0210
-  的 `maxTurns` 条款。历史 ADR 文件保留。本记录移除那些记录所描述的
-  字段；不改变它们的其他条款。
+- Supersedes: the `maxTurns` clauses of ADR 0062, ADR 0063, ADR 0119, ADR 0126,
+  ADR 0166, and ADR 0210. Historical ADR files are retained. This record removes
+  the field those records described; it does not change their other clauses.
 
-## 背景
+## Context
 
-ADR 0062 引入子 Agent 作为有边界的 worker，并给定义一个 `maxTurns`
-frontmatter 上限。ADR 0119 使该键可选——省略、`none` 和 `0` 表示不限，
-显式值被钳制到 80。ADR 0126 和 ADR 0063 把该字段带入解析器和 Subagent
-编辑器。ADR 0166 随后撤回了空闲和时长看门狗，但刻意保留 `maxTurns`
-作为剩余的定义级终止开关，D328 记录了「显式 `maxTurns` 和 10 的并发
-上限保留」。ADR 0210 为同级的 `maxTokens` 上限复用了相同的宽松键拼写
-规则。
+ADR 0062 introduced subagents as bounded workers and gave a definition a
+`maxTurns` frontmatter cap. ADR 0119 made the key optional — omission, `none`
+and `0` meant unlimited, and an explicit value was clamped to 80. ADR 0126 and
+ADR 0063 carried the field into the parser and the Subagent editor. ADR 0166
+then withdrew the idle and duration watchdogs but deliberately kept `maxTurns`
+as the remaining definition-level kill switch, and D328 recorded that "explicit
+`maxTurns` and the concurrency cap of 10 stay". ADR 0210 reused the same loose
+key-spelling rules for the sibling `maxTokens` cap.
 
-这个上限无法被正确地推理，因为父级看不到委派者的实时工作。它无法区分
-一个再有一轮就收敛的委派者和一个永远不会收敛的委派者，因此唯一诚实的
-上限是「足够大」，而这等于没有上限。已发布的值是任意的（60、50、40、
-80），编辑器默认就是不限，而且失败模式比它解决的问题更糟：到达上限的
-委派者在任务中途被杀死，以 `truncated` 和一份部分报告浮现——这种状态
-对用户和父级模型来说都读作失败，且两者都无法恢复。
+The cap could not be reasoned about correctly, because the parent cannot see the
+delegate's live work. It cannot tell a delegate that is one turn from
+converging from one that never will, so the only honest cap would be "large
+enough", which is no cap at all. The shipped values were arbitrary (60, 50, 40,
+80), the editor defaulted to unlimited anyway, and the failure mode was worse
+than the problem it solved: a delegate that reached the cap was killed
+mid-task and surfaced as `truncated` with a partial report — a state that reads
+as a failure to the user and to the parent model, and that neither can resume.
 
-剩余的终止路径都是显式且可观察的：父级 agent 的 `TaskStop`、用户的
-Stop，以及终态父级错误中止残留项（ADR 0189）。turn 计数不属于其中任何
-一个。
+The kill paths that remain are all explicit and observable: the parent agent's
+`TaskStop`, the user's Stop, and a terminal parent error aborting leftovers
+(ADR 0189). A turn count is none of those.
 
-## 决策
+## Decision
 
-1. **删除该机制。** 委派者没有 turn 上限。它在完成时、父级调用
-   `TaskStop` 时、用户 Stop 时，或终态父级错误中止它时结束。没有
-   `truncated` 结果，也没有与 turn 相关的终止路径。
+1. **Delete the mechanism.** A delegate has no turn limit. It ends when it
+   finishes, when the parent calls `TaskStop`, when the user Stops, or when a
+   terminal parent error aborts it. There is no `truncated` outcome and no
+   turn-related termination path.
 
-2. **从契约中移除 `maxTurns`。** 该字段离开 `SubagentDefinition`、
-   frontmatter 解析器及其无效/钳制警告、`MAX_SUBAGENT_MAX_TURNS`、
-   `UserSubagentRecord` / `UserSubagentInput`、host-core 注册表（记录、
-   输入、frontmatter 解析、文档渲染、`MAX_TURNS_CEILING`）、五个内置
-   文档、`SUBAGENT_PRESETS` 和 Subagent 编辑器的 Advanced 披露区。
-   host-core 输入结构体继续忽略未知字段，因此仍发送 `maxTurns` 的渲染
-   进程不会失败。
+2. **Remove `maxTurns` from the contract.** The field leaves
+   `SubagentDefinition`, the frontmatter parser and its invalid/clamped
+   warnings, `MAX_SUBAGENT_MAX_TURNS`, `UserSubagentRecord` /
+   `UserSubagentInput`, the host-core registry (record, input, frontmatter
+   parse, document render, `MAX_TURNS_CEILING`), the five built-in documents,
+   `SUBAGENT_PRESETS`, and the Subagent editor's Advanced disclosure. The
+   host-core input struct keeps ignoring unknown fields, so a renderer that
+   still sends `maxTurns` does not fail.
 
-3. **旧文档继续加载。** `maxTurns`、`max-turns` 和 `max_turns` 变成未
-   识别的 frontmatter 键，与所有其他未知键完全一样被忽略：没有错误、
-   没有警告，定义仍解析，也没有任何东西重写用户文件。因此声明了上限
-   的定义会静默地失去它。
+3. **Legacy documents keep loading.** `maxTurns`, `max-turns` and `max_turns`
+   become unrecognized frontmatter keys and are ignored exactly like every
+   other unknown key: no error, no warning, the definition still resolves, and
+   nothing rewrites the user's file. A definition that declared a cap therefore
+   loses it silently.
 
-4. **移除 `truncated` 状态。** `SubagentRunStatus` 丢弃它，渲染进程的
-   `SubagentOutcome` 联合、每个语言环境的 `chat.subagentStatus` 目录
-   条目，以及委派拓扑的「finished with warnings」计数也随之丢弃。
-   `timed_out` 保留在类型中，尽管产生它的看门狗已被撤回（D328），因为
-   没有其他记录撤回它。
+4. **Remove the `truncated` status.** `SubagentRunStatus` drops it, and the
+   renderer's `SubagentOutcome` union, the `chat.subagentStatus` catalog entry
+   in every locale, and the delegation topology's "finished with warnings"
+   count drop it with it. `timed_out` stays in the type even though the
+   watchdogs that produced it are withdrawn (D328), because no other record
+   withdraws it.
 
-5. **不改协议，不改 schema。** `PROTOCOL_VERSION` 保持 11，
-   `SCHEMA_VERSION` 保持 16。该移除在两个方向上都被容忍：旧渲染进程
-   多出的 `maxTurns` 字段被 host-core 忽略（输入结构体不拒绝未知字段），
-   新渲染进程直接省略它，而 `truncated` 是 sidecar 无法再发出的值。
-   存储从未涉及——注册表解析 Markdown frontmatter，没有任何列存储该
-   上限。
+5. **No protocol and no schema change.** `PROTOCOL_VERSION` stays 11 and
+   `SCHEMA_VERSION` stays 16. The removal is tolerated in both directions: an
+   older renderer's extra `maxTurns` field is ignored by host-core (the input
+   struct does not deny unknown fields), a newer renderer simply omits it, and
+   `truncated` is a value the sidecar can no longer emit. Storage was never
+   involved — the registry parses Markdown frontmatter and no column stores the
+   cap.
 
-## 后果
+## Consequences
 
-- 循环的委派者现在会一直运行，直到用户 Stop 它或父级调用 `TaskStop`。
-  这种暴露对每一个省略 `maxTurns` 的定义早已存在——那是默认值和编辑器
-  自己的初始状态，D328 也带着它发布。
-- 依赖该上限的现有用户文档在没有提示的情况下失去它。迁移路径就是本
-  ADR 所记录的：用 Stop 或 `TaskStop` 停止委派者，并把停止条件写进
-  prompt 正文——委派者本来就在那里被告知它的工作何时完成。
-- Settings 不再为 turn 提供「不限」的拼写，因为已经没有上限可表达。
-  Advanced 披露区保留 model、thinking、输出上限和 scope 字段。
-- 内置定义各自失去一行 frontmatter，不再携带一个没有推导依据的数字。
-- E2E-155 步骤和拓扑的警告计数随状态和内置兜底而变化。新的忽略契约
-  由 E2E-SUBAGENT-legacy-turn-limit-frontmatter-is-ignored 以及
-  `packages/shared`、`packages/agent-runtime` 和 `crates/host-core` 中的
-  单元测试覆盖。
+- A looping delegate now runs until the user Stops it, or the parent calls
+  `TaskStop`. That exposure already existed for every definition that omitted
+  `maxTurns`, which was the default and the editor's own starting state, and
+  D328 shipped with it.
+- Existing user documents that relied on the cap lose it without a prompt. The
+  migration path is the one this ADR documents: stop the delegate with Stop or
+  `TaskStop`, and put the stopping condition in the prompt body, where a
+  delegate is already told when its work is done.
+- Settings no longer offers a "no limit" spelling for turns because there is no
+  limit left to express. The Advanced disclosure keeps the model, thinking,
+  output limit and scope fields.
+- The built-in definitions lose one frontmatter line each and no longer carry a
+  number that had no derivation.
+- E2E-155 steps and the topology's warning count change with the status and the
+  built-in backstops. The new ignore contract is covered by
+  E2E-SUBAGENT-legacy-turn-limit-frontmatter-is-ignored and by unit tests in
+  `packages/shared`, `packages/agent-runtime`, and `crates/host-core`.
 
-## 被拒绝的替代方案
+## Alternatives rejected
 
-- **提高上限，或让每个内置项不限。** 保留一个无法被正确设置的旋钮，
-  保留 `truncated` 状态及其用户可见文案，并且仍会在任意点把委派者
-  杀死在任务中途。
-- **继续解析该键并对其警告。** 未知 frontmatter 键已经被静默忽略，
-  因此警告会让 `maxTurns` 成为唯一带特殊诊断的键，而定义仍忽略它。
-  D328 的 `idle-timeout` / `max-duration` 先例是相反的情况：那些键仍
-  存在，只是不再武装，所以它们保留解析警告。
-- **保留字段但永不执行。** 什么都不做的契约字段比没有字段更糟：编辑
-  器会继续提供它，settings API 会继续往返它，`truncated` 会作为 UI 仍
-  须渲染的死界面留在状态联合中。
+- **Raise the ceiling, or make every builtin unlimited.** Keeps a knob that
+  cannot be set correctly, keeps the `truncated` state and its user-visible
+  copy, and still kills a delegate mid-task at an arbitrary point.
+- **Keep parsing the key and warn on it.** Unknown frontmatter keys are already
+  ignored silently, so a warning would make `maxTurns` the only key with a
+  special diagnostic while the definition still ignored it. D328's
+  `idle-timeout` / `max-duration` precedent is the opposite case: those keys
+  still exist, they are simply not armed, so they keep their parse warnings.
+- **Keep the field and never enforce it.** A contract field that does nothing
+  is worse than no field: the editor would keep offering it, the settings API
+  would keep round-tripping it, and `truncated` would stay in the status union
+  as dead surface the UI must still render.

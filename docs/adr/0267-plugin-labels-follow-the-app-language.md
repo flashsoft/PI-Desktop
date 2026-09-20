@@ -1,4 +1,4 @@
-# ADR 0267：插件标签跟随应用语言
+# ADR 0267: Plugin Labels Follow the App Language
 
 - **Status**: Accepted
 - **Date**: 2026-09-16
@@ -9,62 +9,74 @@
   [07-plugins/02-plugin-manifest-schema](../spec/07-plugins/02-plugin-manifest-schema.md) ·
   [07-plugins/07-plugin-marketplace](../spec/07-plugins/07-plugin-marketplace.md)
 
-## 背景
+## Context
 
-插件的显示名称和描述来自其 manifest，marketplace 卡片的来自其目录条目。
-两者都是用作者所用语言写的单一字符串，因此 Extensions 页面、插件启动
-器和 marketplace 在英文 shell 下绘制中文名称、在中文 shell 下绘制英文
-名称。插件仓库自己的校验器自首个发布以来就要求顶层 `i18n` 块——
-`{ "en": { name, description, safetyNotes }, "zh-CN": { … } }`——目录也
-在每个条目上随附相同的块。桌面 shell 完全不读它：行逐字渲染 `name` 和
-`description`，因此作者已翻译成用户语言的插件仍以错误的语言到达。
+A plugin's display name and description come from its manifest, and a
+marketplace card's from its catalog entry. Both are single strings written in
+whatever language the author used, so the Extensions page, the plugin launcher,
+and the marketplace drew Chinese names under an English shell and English names
+under a Chinese one. The plugin repository's own validator had been requiring a
+top-level `i18n` block — `{ "en": { name, description, safetyNotes }, "zh-CN": {
+… } }` — since its first release, and the catalog ships the same block on every
+entry. The desktop shell read none of it: rows rendered `name` and
+`description` verbatim, so a plugin translated by its author into the user's
+language still arrived in the wrong one.
 
-Shell 已经拥有修复所需的每一块：`@pi-desktop/i18n` 拥有已发布的
-locale 注册表，应用语言在主进程中解析（`settings.language`，或为
-`auto` 时的 OS locale），而本地化 manifest 字段（`ui.title`、视图标题、
-命令和目的地标签）已经由宿主通过 `resolvePluginLocalizedString` 以英文
-回退解析。
+The shell already has every piece the fix needs: `@pi-desktop/i18n` owns the
+shipped locale registry, the app language is resolved in the main process
+(`settings.language`, or the OS locale while it is `auto`), and localized
+manifest fields (`ui.title`, view titles, command and destination labels) are
+already resolved by the host through `resolvePluginLocalizedString` with English
+fallback.
 
-## 决策
+## Decision
 
-1. `manifest.i18n` 和 marketplace 目录条目上的相同块成为插件契约的一
-   部分，包含 `name`、`description` 和 `safetyNotes`。`en` 和 `zh-CN`
-   是契约 locale；不要求插件把自己翻译成其他已发布的 shell locale。
-2. 每个中文 shell locale 读 `zh-CN`；其他每个 locale 读 `en`。因此
-   `zh-TW` 读英文而不是半共享的 `zh-CN` 猜测，与
-   `resolvePluginLocalizedString` 一致（ADR 0182）。
-3. 解析发生在**宿主**，而不是渲染进程：行作为完成的字符串离开进程，
-   与插件视图标题完全一样。缺失的 locale、缺失的字段或空字符串按字
-   段回退到另一个契约 locale，再从那里回退到作者的扁平 `name` /
-   `description`，因此部分翻译绝不会让行变空白。
-4. 桌面 shell 在应用语言每次变化时向下推送它（`plugins.setLocale`），
-   然后发出 `pluginChanged`，使各界面重新读取。注册表保留作者自己的
-   字符串：语言变化绝不重写持久化的行，`i18n` 块既不被持久化也不通
-   过 RPC 发送。
-5. 畸形的块（不是 locale → object 的对象，或非字符串的
-   `name`/`description`/`safetyNotes`）使 `validateManifest` 失败。条目
-   内的未知 locale 和未知字段被忽略，因此发布者可以携带多于契约要求
-   的内容。
+1. `manifest.i18n` and the same block on a marketplace catalog entry become part
+   of the plugin contract, with `name`, `description`, and `safetyNotes`.
+   `en` and `zh-CN` are the contract locales; a plugin is not required to
+   translate itself into the other shipped shell locales.
+2. Every Chinese shell locale reads `zh-CN`; every other locale reads `en`.
+   `zh-TW` therefore reads English rather than a half-shared `zh-CN` guess,
+   matching `resolvePluginLocalizedString` (ADR 0182).
+3. Resolution happens in the **host**, not the renderer: rows leave the process
+3. Resolution happens in the **host**, not the renderer: rows leave the process
+   as finished strings, exactly like a plugin view title. A missing locale, a
+   missing field, or an empty string falls back per field to the other contract
+   locale, and from there to the author's flat `name` / `description`, so a
+   partial translation never blanks a row.
+4. The desktop shell pushes the app language down (`plugins.setLocale`) whenever
+   it changes and then emits `pluginChanged`, so the surfaces re-read. The
+   registry keeps the author's own strings: a language change never rewrites
+   persisted rows, and the `i18n` block is neither persisted nor sent over RPC.
+5. A malformed block (not an object of locale → object, or a non-string
+   `name`/`description`/`safetyNotes`) fails `validateManifest`. Unknown locales
+   and unknown fields inside an entry are ignored, so a publisher may carry more
+   than the contract requires.
 
-## 后果
+## Consequences
 
-- 翻译过的插件现在在 Extensions 页面、插件启动器和 marketplace 以用户
-  的语言显示，其 `safetyNotes`——解释安装能触碰什么的文本——也以该
-  语言显示。
-- 目录搜索匹配每个 locale 的名称和描述，因此用户输入他们在一种语言中
-  看到的内容，切换后仍能找到该条目。
-- 插件作者想的话可以继续发布单语言 manifest：扁平字段保持为回退，块
-  中没有任何字段是加载所必需的。
-- 宿主多持有一份状态（显示 locale）。它由 shell 推送而不是按请求读
-  取，因此行不依赖于恰好携带 locale 的那个 RPC。
+- A translated plugin now reads in the user's language on the Extensions page,
+  the plugin launcher, and the marketplace, and its `safetyNotes` — the text
+  that explains what an install can touch — reads in that language too.
+- Catalog search matches every locale's name and description, so a user who
+  types what they saw in one language still finds the entry after switching.
+- Plugin authors keep shipping a single-language manifest if they want to: the
+  flat fields remain the fallback, and no field of the block is mandatory to
+  load.
+- The host holds one more piece of state (the display locale). It is pushed by
+  the shell rather than read per request, so a row does not depend on which RPC
+  happens to carry a locale.
 
-## 替代方案
+## Alternatives
 
-- **在渲染进程解析**：渲染进程知道 `i18n.language`，会立即切换，但它
-  必须接收每个 manifest 的 `i18n` 块，这与渲染进程绝不读取 manifest
-  的规则矛盾，而且会复制宿主已经拥有的回退规则。
-- **在每个插件 RPC 上加按请求的 locale 参数**：对 `plugins.list` 可行，
-  但会让宿主自己返回的摘要（安装结果、权限变更、marketplace 更新检
-  查）不被本地化，并给每个调用点增加一个 locale。
-- **把名称留给作者的语言**：插件仓库已经要求该块，因此 shell 会继续
-  忽略其生态系统发布的数据——这正是被报告的 bug。
+- **Resolve in the renderer**: the renderer knows `i18n.language` and would
+  switch instantly, but it would have to receive every manifest's `i18n` block,
+  which contradicts the rule that the renderer never reads a manifest, and it
+  would duplicate the fallback rules the host already owns.
+- **Per-request locale parameter on every plugin RPC**: works for `plugins.list`
+  but leaves the summaries the host itself returns (install results, permission
+  changes, marketplace update checks) unlocalized, and adds a locale to every
+  call site.
+- **Leave names to the author's language**: the plugin repository already
+  requires the block, so the shell would keep ignoring data its ecosystem
+  publishes — the reported bug.

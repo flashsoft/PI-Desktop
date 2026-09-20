@@ -1,16 +1,16 @@
-# 06. 插件打包
+# 06. Plugin Packaging
 
-## 1. 目标
+## 1. Goals
 
-定义插件的打包、分发和安装方式，确保跨机器的可重复性。
+Define how plugins are packaged, distributed, and installed, ensuring reproducibility across machines.
 
-## 2. 包格式
+## 2. Package formats
 
-### 2. 1 目录包（development/local）
-包含 `manifest.json` 的普通目录。
+### 2.1 Directory package (development/local)
+A plain directory containing `manifest.json`.
 
-### 2. 2 分发包（推荐）
-扩展名：`.piplug`（本质上是一个 zip）
+### 2.2 Distribution package (recommended)
+Extension: `.piplug` (essentially a zip)
 
 ```text
 demo.hello-0.1.0.piplug
@@ -23,17 +23,17 @@ demo.hello-0.1.0.piplug
  └─ checksums.json # optional, in-package manifest
 ```
 
-> 在实施过程中，可能首先支持 `.zip`，但在产品级别，所有内容都被标识为 `.piplug`。
+> During implementation, `.zip` may be supported first, but at the product level everything is identified as `.piplug`.
 
-## 3. 包内限制
+## 3. In-package constraints
 
-1.根必须包含`manifest.json`
-2. 不允许使用绝对路径符号链接
-3. 不允许路径遍历（`../`）
-4、单个包解压后默认最大大小（建议50MB，可配置）
-5.最大文件数（建议2000，可配置）
+1. The root must contain `manifest.json`
+2. Absolute-path symlinks are not allowed
+3. Path traversal (`../`) is not allowed
+4. Default max size after extraction for a single package (recommended 50MB, configurable)
+5. Max file count (recommended 2000, configurable)
 
-## 4. checksums.json （可选但推荐）
+## 4. checksums.json (optional but recommended)
 
 ```json
 {
@@ -45,9 +45,9 @@ demo.hello-0.1.0.piplug
 }
 ```
 
-主机可以在安装时验证。
+The host can verify at install time.
 
-## 5. 安装流程
+## 5. Install flow
 
 ```text
 select package/dir
@@ -60,60 +60,61 @@ select package/dir
  → optional auto enable
 ```
 
-失败时，清理 temp 并不要留下半安装的目录。
+On failure, clean up temp and leave no half-installed directory.
 
-## 6. 版本控制和覆盖
+## 6. Versioning and overwrite
 
-- 安装具有相同 ID 的新版本：升级
-- 升级前将旧版本备份到`cache/backup/<id>/<version>`
-- 升级失败回滚（P2）
+- Installing a new version with the same id: upgrade
+- Back up the old version to `cache/backup/<id>/<version>` before upgrade
+- Rollback on upgrade failure (P2)
 
-语义：
-- `install`：id不存在
-- `upgrade`：id 存在并且版本较新
-- `reinstall`：强制重新安装相同版本
+Semantics:
+- `install`: id does not exist
+- `upgrade`: id exists and version is newer
+- `reinstall`: force reinstall of the same version
 
-## 7. 卸载和清理
+## 7. Uninstall and cleanup
 
-删除：
+Delete:
 - `plugins/installed/<id>`
-- 注册表项
+- registry entry
 
-可选择删除：
+Optionally delete:
 - `plugins/data/<id>`
-- 插件日志
+- plugin logs
 
-## 8. 开发包
+## 8. Development packages
 
-开发加载不经过`.piplug`打包；相反：
+Development loading does not go through `.piplug` packaging; instead:
 
 ```text
 Load Development Plugin → choose directory → validate → register(source=dev)
 ```
 
-## 9. 构建建议（开发人员）
+## 9. Build recommendations (developers)
 
-最低规格：
+Minimal spec:
 
-- 来源可以是 TypeScript
-- 分发前编译为可直接加载的 js/html/css
-- 不要依赖主机为普通 `.piplug` 或开发插件当场运行 `npm install`（MVP 不会在安装时拉取依赖项）。明确的“插件 → 导入 pi 扩展”流程是文档规定的例外；其有界 npm 行为见 `16-trusted-extensions.md` §3.2。
+- Source can be TypeScript
+- Compile to directly loadable js/html/css before distribution
+- Do not rely on the host to run `npm install` for ordinary `.piplug` or development plugins (MVP does not pull dependencies at install time). The explicit Plugins → Import pi extension flow is the documented exception; its bounded npm behavior is defined in `16-trusted-extensions.md` §3.2.
 
-如果插件需要第三方库：
-- 自己将它们捆绑到插件目录中
+If a plugin needs third-party libraries:
+- Bundle them into the plugin directory yourself
 
-## 10. 验收
+## 10. Acceptance
 
-1.可以从目录安装
-2. 可以从 `.piplug` / `.zip` 安装（实施期间的每个里程碑）
-3. 坏包无法安装且不留任何残留
-4.升级后id不变，新版本生效
+1. Can install from a directory
+2. Can install from `.piplug` / `.zip` (per milestone during implementation)
+3. A bad package fails to install and leaves no residue
+4. After upgrade, the id stays the same and the new version takes effect
 
-## 11. 实施情况
 
-在 host-core + 桌面 shell 中实现：
+## 11. Implementation status
 
-1.通过`plugins.installFromPath`目录安装
-2. `.piplug` / 通过 `plugins.installFromPackage` 存储压缩的 zip 安装
-3. 市场下载安装重复使用相同的软件包安装程序
-4. 在提交 `plugins/installed/<id>` 之前强制执行遍历/符号链接/大小/文件计数保护
+Implemented in host-core + desktop shell:
+
+1. Directory install via `plugins.installFromPath`
+2. `.piplug` / store-compressed zip install via `plugins.installFromPackage`
+3. Marketplace download installs reuse the same package installer
+4. Traversal / symlink / size / file-count guards are enforced before commit to `plugins/installed/<id>`

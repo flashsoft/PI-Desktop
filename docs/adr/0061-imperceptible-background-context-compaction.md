@@ -1,142 +1,177 @@
-# ADR 0061: 不可感知的前后上下文压缩
+# ADR 0061: Imperceptible background context compaction
 
-- 状态： 已接受（条款 2、4、6、7、8 经 ADR 0064 修订）
-- 日期： 2026-08-06
-- 决策者： PI-Desktop 核心
-- 修订： ADR 0030 / ADR 0049 / D158
+- Status: Accepted (clauses 2, 4, 6, 7, 8 amended by ADR 0064)
+- Date: 2026-08-06
+- Deciders: PI-Desktop core
+- Amends: ADR 0030 / ADR 0049 / D158
 
-## 背景
+## Context
 
-ADR 0030 的轮次边界守护是正确的：超过硬预算时不发出 provider 请求，且
-ADR 0049 为每次自动失败提供持久的保留尾部恢复。但它不够无感。压缩以五种
-方式向用户宣告自己：
+The turn-boundary guard from ADR 0030 is correct: no provider request is issued
+above the hard budget, and ADR 0049 gives every automatic failure a durable
+retained-tail recovery. What it is not is invisible. Compaction announced
+itself to the user in five ways:
 
-- 每次成功的自动压缩都弹出 info toast；
-- `compaction_start` 设置 `isRunning`，因此在用户没有请求任何东西运行时，
-  运行状态与 spinner 会跳动；
-- 软边界注入一条瞬态指令，要求模型调用 `CompactContext`，这会消耗一次模型
-  轮次并在 transcript 中留下一行工具活动；
-- 压缩只在 `tokens >= hardLimit` 时运行，所以它总发生在用户等待回复的时
-  刻，最坏情况下摘要输入接近整个窗口；
-- 设置暴露 `reserveTokens`、`keepRecentTokens` 与启用开关，让用户负责调优
-  一个安全机制。
+- every successful automatic compaction raised an info toast;
+- `compaction_start` set `isRunning`, so the run state and spinner jumped
+  while nothing the user asked for was running;
+- the soft boundary injected a transient instruction asking the model to call
+  `CompactContext`, which spent a model turn and left a tool-activity row in
+  the transcript;
+- compaction ran only at `tokens >= hardLimit`, so it always happened at the
+  moment the user was waiting for a reply, with a summary input close to the
+  whole window in the worst case;
+- Settings exposed `reserveTokens`, `keepRecentTokens`, and an enable switch,
+  making the user responsible for tuning a safety mechanism.
 
-Codex（`codex-rs/core/src/session/context_window.rs`、
-`state/auto_compact_window.rs`）展示了两个值得采纳的想法：给触发分级而不
-是用一条硬边，以及按当前上下文前缀之后的*增量*而不是总量来衡量触发
-（`AutoCompactTokenLimitScope::BodyAfterPrefix`）。
+Codex (`codex-rs/core/src/session/context_window.rs`,
+`state/auto_compact_window.rs`) shows two ideas worth adopting: grade the
+trigger instead of using one hard edge, and measure the trigger over the
+*increment* since the current context prefix rather than the total
+(`AutoCompactTokenLimitScope::BodyAfterPrefix`).
 
-> ADR 0064 更正：本节原本还写道"Codex 也完全没有任何模型侧压缩工具——
-> 由宿主决定并执行。"这是错的。Codex 有 `new_context`
-> （`tools/handlers/new_context_window_spec.rs`），由
-> `Feature::TokenBudget` 门控，且上述两个想法都不是 Codex 的默认：
-> `BodyAfterPrefix` 是可选的，Codex 也没有可供分级触发的预计算。
+> Corrected by ADR 0064: this section originally added "Codex also has no
+> model-side compaction tool at all — the host decides and executes." That is
+> wrong. Codex has `new_context`
+> (`tools/handlers/new_context_window_spec.rs`), gated by
+> `Feature::TokenBudget`, and neither of the two ideas above is Codex's default:
+> `BodyAfterPrefix` is opt-in and Codex has no pre-computation to grade a
+> trigger for.
 
-现有实现的一个性质让后台工作成本低廉：`entriesWithCompaction()` 通过
-`throughMessageId` 定位检查点并把它拼接进条目列表，锚点之后的一切保持不
-变。因此提前计算的检查点在尾部持续增长时仍可安装，预计算不需要新的不变
-量。
+One property of the existing implementation makes background work cheap:
+`entriesWithCompaction()` locates a checkpoint by `throughMessageId` and
+splices it into the entry list, leaving everything after the anchor intact. A
+checkpoint computed early therefore stays installable as the tail keeps
+growing, so pre-computation needs no new invariant.
 
-固定的 `reserveTokens: 16_384` / `keepRecentTokens: 20_000` 默认值也是一
-个独立于可见性的真实缺陷：它们把相同的绝对数字同时应用到 32k 窗口和 1M
-窗口。
+The fixed `reserveTokens: 16_384` / `keepRecentTokens: 20_000` defaults were
+also a real defect independent of visibility: they applied the same absolute
+numbers to a 32k window and a 1M window.
 
-## 决策
+## Decision
 
-压缩变成宿主持有的、用户无法感知的后台活动。阻塞性硬边界不变，仍是安全
-网。
+Compaction becomes a host-owned background activity that the user cannot
+perceive. The blocking hard boundary is unchanged and remains the safety net.
 
-1. **分级预算，从模型窗口推导。** `contextBudget()` 保持 ADR 0030 定义的
-   `hardLimit` 与 `requestHeadroom` 不变，并新增
-   `backgroundLimit = floor(hardLimit * 0.7)` 作为预计算触发。
-   `keepRecentTokens` 推导为 `clamp(hardLimit * 0.2, 8k, 64k)`，仍以硬预算
-   的一半封顶。软边界及其 `softGap` 被删除。
-2. **增量触发作用域。** 后台预计算同时要求 `tokens >= backgroundLimit`，
-   以及自最新检查点安装时记录的基线以来至少增长 `keepRecentTokens`。没有
-   增量测试，一个停在后台限制之上的大保留尾部会每一轮都请求新摘要却什么
-   也不减少。硬边界继续衡量总量，因为那是 provider 的真实约束。
-3. **生成与安装分离。** `buildCheckpoint()` 运行准备、预算预检与摘要请
-   求，不持久化任何东西，也不触碰 `activeCompaction`。
-   `installCheckpoint()` 重新估算，通过 host-core 追加，更新
-   `activeCompaction`，并发出 `compaction_end`。阻塞路径是两者背靠背组
-   合，因此 threshold、overflow 与手动行为不变。
-4. **仅 provider 空闲窗口。** 后台摘要请求恰好从两个地方启动：
-   `tool_execution_start`（模型流已结束且下一个请求尚未发出）与 `prompt()`
-   的 `finally`（用户正在阅读结果）。后台摘要绝不与流式轮次共享 provider
-   连接：`prepareNextTurn()` 在下一个请求之前等待任何在途构建。后台工作
-   刻意不设置 `compactionInProgress`，因为该标志喂给
-   `getStatus().isRunning`。
-5. **过期在安装时检查，失败静默。** 预计算的检查点在下一个轮次边界或用
-   户 prompt 处被消费，仅当它所基于的检查点仍然活跃、其
-   `throughMessageId` 锚点仍存在于 `fullEntries` 中、且它仍适配*当前*模型
-   的预算。任何未命中都会丢弃它并落入现有的阻塞路径。失败的后台构建被丢
-   弃，不持久化、不发事件、也不走 ADR 0049 回退：保留尾部属于硬边界，它
-   仍在那里接住后台工作遗漏的一切。
-6. **无面向模型的压缩。** `CompactContext`、`<context_management>` 提示以
-   及 host-core 免确认允许列表中的 `"CompactContext"` 条目被移除。触发完
-   全是确定性且宿主驱动的。
-7. **静默。** `compaction_start` 与 `compaction_end` 携带可选的
-   `phase?: "background" | "blocking"`（缺失表示 `blocking`；按 ADR 0047
-   的加法式原则，协议版本不变）。成功的自动压缩——后台或阻塞——不通知
-   任何人：无 toast、无运行状态变化、无 transcript 行。保留三个 toast，每
-   个都跟在用户已经看到的事情之后：`retained_tail` 回退（警告）、overflow
-   重试（警告）、手动 `/compact` 结果。
-8. **上下文检查器是唯一可见痕迹。** `compaction_end` 携带
-   `status: { generation, summaryTokens }`，持久的 `SessionDetail.compaction`
-   在会话打开或 fork 时提供相同信息。检查器渲染一行——
-   `Compacted N× · summary ≈X`——没有检查点时什么都不渲染。世代计数器乘
-   坐在检查点不透明的 `details` 值内，host-core 原样持久化它，因此无需记
-   录 schema 变更。
-9. **无设置。** 设置中的压缩卡片、其搜索关键词、其 i18n 键与主进程透传被
-   移除。持久化的 `contextCompaction` 值被刻意忽略：否则曾经关闭压缩的用
-   户将没有开关可以重新打开。`ContextCompactionSettings` 类型作为 runtime
-   的构造期覆盖保留，以便测试构建禁用压缩的会话。
+1. **Tiered budget, derived from the model window.** `contextBudget()` keeps
+   `hardLimit` and `requestHeadroom` exactly as ADR 0030 defined them, and adds
+   `backgroundLimit = floor(hardLimit * 0.7)` as the pre-computation trigger.
+   `keepRecentTokens` is derived as `clamp(hardLimit * 0.2, 8k, 64k)`, still
+   capped at half the hard budget. The soft boundary and its `softGap` are
+   deleted.
+2. **Incremental trigger scope.** Background pre-computation requires both
+   `tokens >= backgroundLimit` and growth of at least `keepRecentTokens` since
+   the baseline recorded when the newest checkpoint was installed. Without the
+   increment test a large retained tail sitting above the background limit
+   would request a fresh summary every turn while reducing nothing. The hard
+   boundary keeps measuring the total, because that is the provider's actual
+   constraint.
+3. **Generation is separated from installation.** `buildCheckpoint()` runs the
+   preparation, budget preflight, and summary request without persisting
+   anything or touching `activeCompaction`. `installCheckpoint()` re-estimates,
+   appends through host-core, updates `activeCompaction`, and emits
+   `compaction_end`. The blocking path is the two composed back to back, so
+   threshold, overflow, and manual behavior are unchanged.
+4. **Provider-idle windows only.** Background summary requests are started from
+   exactly two places: `tool_execution_start`, where the model stream has ended
+   and the next request has not been issued, and the `finally` of `prompt()`,
+   where the user is reading the result. A background summary never shares the
+   provider connection with a streaming turn: `prepareNextTurn()` awaits any
+   in-flight build before the next request. Background work deliberately does
+   not set `compactionInProgress`, because that flag feeds
+   `getStatus().isRunning`.
+5. **Staleness is checked at install, and failure is silent.** A pre-computed
+   checkpoint is consumed at the next turn boundary or user prompt only if the
+   checkpoint it was based on is still active, its `throughMessageId` anchor is
+   still present in `fullEntries`, and it still fits the *current* model's
+   budget. Any miss discards it and falls through to the existing blocking
+   path. A failed background build is discarded without persisting, without an
+   event, and without the ADR 0049 fallback: the retained tail belongs to the
+   hard boundary, which is still there to catch whatever background work
+   misses.
+6. **No model-facing compaction.** `CompactContext`, the
+   `<context_management>` nudge, and the `"CompactContext"` entry in the
+   host-core no-confirmation allowlist are removed. Triggering is entirely
+   deterministic and host-driven.
+7. **Silence.** `compaction_start` and `compaction_end` carry an optional
+   `phase?: "background" | "blocking"` (absent means `blocking`; additive per
+   ADR 0047, so the protocol version does not change). A successful automatic
+   compaction — background or blocking — notifies nobody: no toast, no run
+   state change, no transcript row. Three toasts remain, each following
+   something the user already saw: a `retained_tail` fallback (warning), an
+   overflow retry (warning), and a manual `/compact` result.
+8. **The context inspector is the only visible trace.** `compaction_end`
+   carries `status: { generation, summaryTokens }`, and the durable
+   `SessionDetail.compaction` provides the same on session open or fork. The
+   inspector renders one line — `Compacted N× · summary ≈X` — and nothing when
+   there is no checkpoint. The generation counter rides inside the checkpoint's
+   opaque `details` value, which host-core persists verbatim, so no record
+   schema change is needed.
+9. **No settings.** The Settings compaction card, its search keywords, its
+   i18n keys, and the main-process passthrough are removed. Persisted
+   `contextCompaction` values are ignored, deliberately: a user who once turned
+   compaction off would otherwise have no switch left to turn it back on. The
+   `ContextCompactionSettings` type survives as the runtime's
+   construction-time override so tests can build a compaction-disabled
+   session.
 
-手动 `/compact` 不变，仍保持快速失败。
+Manual `/compact` is unchanged and remains fail-fast.
 
-## 后果
+## Consequences
 
-- 常见情况下用户从不等待压缩。摘要请求与工具执行或空闲会话重叠，轮次边
-  界只安装已完成的检查点。
-- 摘要输入更小更便宜，因为硬限制的 0.7 是比硬限制本身小得多的历史。
-- 越过后台限制的会话为可能用不到的摘要付了费。0.7 是成本权衡：越过该点
-  之后到达硬限制几乎不可避免，所以 token 很少被浪费，而更低的比率会让短
-  会话为从不使用的摘要付费。
-- 小窗口与大窗口模型现在得到成比例的预算，而不是一对绝对 token 数。
-- 失去模型侧工具消除了一类浪费的轮次与一种 transcript 产物，也消除了模
-  型忽略、推迟或重复该请求的可能。确定性触发没有覆盖到的任何东西都没有
-  丢失。
-- 压缩不再能从 transcript 审计。检查器行、持久检查点记录与生命周期事件仍
-  在，因此诊断是可能的；随意观察则不行。这是对 ADR 0030"作为工具活动行
-  保持可见/持久"的一次被接受的反转。
-- 用户无法再从 UI 禁用自动压缩。因为禁用的守护意味着过大的 provider 请
-  求，这正是预期结果。
-- 两个 provider 空闲窗口并非全部。从不运行工具、且 prompt 之间从不空闲的
-  会话仍在硬边界同步压缩，与之前完全一样。
+- In the common case the user never waits for compaction. The summary request
+  overlaps a tool execution or an idle session, and the turn boundary only
+  installs an already-finished checkpoint.
+- Summary inputs are smaller and cheaper, because 0.7 of the hard limit is a
+  much smaller history than the hard limit itself.
+- A session that crosses the background limit pays for a summary it might not
+  have needed. 0.7 is the cost trade: past that point reaching the hard limit
+  is close to inevitable, so the tokens are rarely wasted, while a lower ratio
+  would bill short sessions for summaries they never use.
+- Small-window and large-window models now get proportionate budgets instead of
+  one pair of absolute token counts.
+- Losing the model-side tool removes a class of wasted turns and a transcript
+  artifact, and removes the possibility of the model ignoring, deferring, or
+  repeating the request. Nothing is lost that the deterministic trigger did not
+  already cover.
+- Compaction is no longer auditable from the transcript. The inspector line,
+  the durable checkpoint record, and the lifecycle events remain, so
+  diagnosis is possible; casual observation is not. This is an accepted
+  reversal of ADR 0030's "remain visible/durable as a tool activity row".
+- Users can no longer disable automatic compaction from the UI. Since a
+  disabled guard means an oversized provider request, that is the intended
+  outcome.
+- Two provider-idle windows are not all of them. A session that never runs a
+  tool and never goes idle between prompts still compacts synchronously at the
+  hard boundary, exactly as before.
 
-## 备选方案
+## Alternatives
 
-### 与流式轮次并发压缩
+### Compact concurrently with the streaming turn
 
-已拒绝。它能消除最后一点延迟，但同一 provider 连接上的两个同时请求会招
-致限流（已在 Bedrock 上观测到），并把单个用户动作的可见成本翻倍。
+Rejected. It would remove the last of the latency, but two simultaneous
+requests on one provider connection invite rate limiting (observed on Bedrock)
+and double the visible cost of a single user action.
 
-### 在后台压缩之外保留软边界提示
+### Keep the soft-boundary nudge alongside background compaction
 
-已拒绝。有了确定性预计算，该提示只增加它一直有的失败模式——一次浪费的
-轮次、一行 transcript、一个可以随意忽略它的模型。
+Rejected. With deterministic pre-computation the nudge adds only the failure
+modes it always had — a spent turn, a transcript row, and a model free to
+ignore it.
 
-### 保留设置旋钮但藏在开发者开关后面
+### Keep the settings knobs but hide them behind a developer toggle
 
-已拒绝。这些值现在从模型窗口推导；覆盖会重新引入小窗口/大窗口缺陷，而一
-个隐藏的安全守护开关比没有开关更糟。
+Rejected. The values are now derived from the model window; an override would
+be a way to reintroduce the small-window/large-window defect, and a hidden
+switch to disable a safety guard is worse than no switch.
 
-### 压缩时显示低调的内联指示器
+### Show a subtle inline indicator while compacting
 
-已拒绝。任何持久的指示器都会让用户意识到一个他们无法行动的机制。检查器
-已经为想到要问的人回答了这个问题。
+Rejected. Any persistent indicator makes the user aware of a mechanism they
+cannot act on. The inspector already answers the question for anyone who
+thinks to ask it.
 
-## 参考
+## References
 
 - `docs/spec/03-runtime/01-ipc-protocol.md`
 - `docs/spec/03-runtime/02-agent-runtime.md`
@@ -144,4 +179,4 @@ Codex（`codex-rs/core/src/session/context_window.rs`、
 - `docs/spec/04-ux/06-settings-ia.md`
 - `docs/spec/06-delivery/04-e2e-test-plan.md`
 - `docs/spec/08-meta/decisions-log.md` (D158, D200)
-- `codex-rs/core/src/session/context_window.rs`（行为参考）
+- `codex-rs/core/src/session/context_window.rs` (behavioral reference)

@@ -1,52 +1,58 @@
-# ADR 0166: 由父级判定的子 agent 生命周期
+# ADR 0166: Parent-judged subagent lifetime
 
-- 状态：已接受，进入实现阶段
-- 日期：2026-09-06
-- 决策者：PI-Desktop 核心团队
-- 相关：D328、ADR 0089、ADR 0119、ADR 0129、GitHub #44 后续 issue 讨论
-  （父级关闭会杀死未完成的委托）
+- Status: Accepted for implementation
+- Date: 2026-09-06
+- Deciders: PI-Desktop core
+- Related: D328, ADR 0089, ADR 0119, ADR 0129, issue discussion on
+  GitHub #44 follow-on (parent closing kills unfinished delegates)
 
-## 背景
+## Context
 
-ADR 0089 使 `Task` 非阻塞，并要求父级在结束轮次前调用 `TaskWait` 或
-`TaskStop`。安全网是在父级 `agent_end` 时中止遗留的委托。ADR 0119 /
-ADR 0129 随后武装了 300 秒空闲看门狗和 6 小时时长上限。
+ADR 0089 made `Task` non-blocking and told the parent to `TaskWait` or
+`TaskStop` before ending a turn. The safety net was to abort leftover
+delegates on parent `agent_end`. ADR 0119 / ADR 0129 then armed a 300-second
+idle watchdog and a 6-hour duration cap.
 
-这种组合在实践中失败了：父级看不到委托的实时工作，`TaskWait` 最多
-900 秒就返回，模型把这当作结束的许可，于是 `agent_end` 杀死了仍在
-运行的委托。长时间的编译、测试和审计之所以夭折，是因为父级关闭了，
-而不是因为工作完成了。
+That combination failed in practice: the parent cannot see the delegate's
+live work, `TaskWait` returns after at most 900 seconds, the model treats
+that as permission to finish, and `agent_end` kills the still-running
+delegate. Long compiles, tests, and audits died because the parent closed,
+not because the work was done.
 
-提示模型再次等待并不能修复这个问题。等待是事件循环；模型不是可靠的
-事件循环。
+Prompting the model to wait again does not fix this. Waiting is an event
+loop; models are not reliable event loops.
 
-## 决策
+## Decision
 
-1. **不按时间杀死委托。** 不再武装空闲和时长看门狗。`idle-timeout` /
-   `max-duration` 仍可解析以便现有文档加载，但不产生效果。显式的
-   `maxTurns` 仍然是定义级的兜底。并发仍上限为 10。
-2. **父级空闲时不中止。** 委托仍在运行时的 `agent_end` / `turn_end`
-   被吞掉。持久轮次保持打开。用户 Stop、`TaskStop`、运行时 dispose
-   以及父级致命错误（D352 / ADR 0189）会中止委托。
-3. **报告完成时投递。** 父级循环在仍有运行中委托的情况下进入空闲后，
-   运行时会等待它们并以合并的报告提示父级（不显示为用户气泡）。随后
-   由父级判定：整合、启动更多工作，或 `TaskStop`。
-4. **给父级心跳，而不是 transcript。** `TaskList` 和超时的 `TaskWait`
-   包含 agent、状态、已耗秒数、轮次、工具调用次数和最近的工具名。
-   进程行不进入父级上下文。
+1. **Do not time-kill a delegate.** Idle and duration watchdogs are not
+   armed. `idle-timeout` / `max-duration` still parse so existing documents
+   load, but they have no effect. Explicit `maxTurns` remains a definition
+   backstop. Concurrency stays capped at 10.
+2. **Do not abort on parent idle.** `agent_end` / `turn_end` while
+   delegates are running are swallowed. The durable turn stays open.
+   User Stop, `TaskStop`, runtime dispose, and a parent fatal error (D352 /
+   ADR 0189) abort a delegate.
+3. **Deliver reports when they finish.** After the parent loop idles with
+   running delegates, the runtime waits for them and prompts the parent
+   with the joined reports (not shown as a user bubble). The parent then
+   judges: integrate, start more work, or `TaskStop`.
+4. **Give the parent a heartbeat, not the transcript.** `TaskList` and a
+   timed-out `TaskWait` include agent, status, elapsed seconds, turns, tool
+   calls, and last tool name. Process rows stay out of the parent context.
 
-## 后果
+## Consequences
 
-- 长任务委托可以比父级的最后一次工具调用活得更久。用户仍会看到一个
-  存活的轮次（Stop 仍然可用），直到报告投递且父级真正结束。
-- 父级不再需要正确轮询才能让任务存活。
-- 没有 `maxTurns` 的死循环委托可以一直运行到用户 Stop。
-- ADR 0119 / ADR 0129 的看门狗策略在"杀死"方面被撤回。其"沉默与
-  缓慢"分析保留为历史。
+- A long delegate can outlive the parent's last tool call. The user still
+  sees a live turn (Stop remains available) until the reports are delivered
+  and the parent actually finishes.
+- The parent no longer has to poll correctly for the job to survive.
+- A looping delegate without `maxTurns` can run until the user Stops it.
+- ADR 0119 / ADR 0129 watchdog policy is withdrawn for killing. Their
+  "silence vs slowness" analysis remains historical.
 
-## 已否决的替代方案
+## Alternatives rejected
 
-- **父级 Read 的进度文件（Claude Code）。** 会把实时 transcript 放入
-  父级上下文，并要求模型记得轮询。
-- **保留结束时中止、只提高 TaskWait。** 模型仍会关闭。
-- **让轮次存活但不自动恢复。** 用户不得不发送"继续"。
+- **Progress file the parent Reads (Claude Code).** Puts live transcript
+  into the parent context and requires the model to remember to poll.
+- **Keep abort-on-end and only raise TaskWait.** The model still closes.
+- **Survive the turn with no auto-resume.** The user has to send 继续.

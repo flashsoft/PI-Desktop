@@ -1,57 +1,67 @@
-# ADR 0067: 受 ChatGPT 启发的空首页起始引导
+# ADR 0067: ChatGPT-inspired empty-home starter guidance
 
-- 状态： 已被 D206 取代
-- 日期： 2026-08-07
-- 决策者： PI-Desktop 核心
-- 修订： D204 与 ADR 0066 的卡片相关条款
+- Status: Superseded by D206
+- Date: 2026-08-07
+- Deciders: PI-Desktop core
+- Amends: D204 and the card-specific clause of ADR 0066
 
-> 本历史决定为可追溯性保留。起始网格在评审后被移除；D206 把空首页恢复为
-> hero、可选引导清单与直达底部 composer。
+> This historical decision is retained for traceability. The starter grid was
+> removed after review; D206 restores the empty home to the hero, optional
+> onboarding checklist, and direct bottom composer.
 
-## 背景
+## Context
 
-D204 引入的直达底部 composer 修好了空首页布局，但让会话界面中部在视觉上
-稀疏。初次使用的开发者仍必须先发明一个 prompt，才能看到 PI-Desktop 能做什
-么。所要求的方向是 ChatGPT 空会话界面那种亲切的层级，适配本地编码工作，
-而不是消费级内容或推广模板。
+The direct bottom composer introduced by D204 fixed the empty-home layout, but
+left the center of the conversation surface visually sparse. A first-time
+developer still had to invent a prompt before seeing what PI-Desktop could do.
+The requested direction is the approachable hierarchy of ChatGPT's empty
+conversation surface, adapted for local coding work rather than consumer
+content or promotional templates.
 
-## 决策
+## Decision
 
-1. 在空首页 hero 与可选引导清单之间添加四张卡片的起始网格：探索代码库、
-   构建功能、修复 bug、评审变更。
-2. 保持卡片紧凑、单色、本地化且面向开发者。它们使用共享的图标、边框、表
-   面、阴影与动效 token。
-3. 激活卡片只预填并聚焦现有的底部 composer。它从不发送 prompt、创建会话
-   轮次或改变当前会话模式。
-4. 保持 D204 的单一可滚动首页内容区域与底部预留 composer 不变。短窗口仍
-   必须滚动内容，而不是允许 composer 覆盖它。
+1. Add a four-card starter grid between the empty-home hero and optional
+   onboarding checklist: Explore a codebase, Build a feature, Fix a bug, and
+   Review a change.
+2. Keep the cards compact, monochrome, localized, and developer-specific.
+   They use the shared icon, border, surface, shadow, and motion tokens.
+3. Activating a card only prefills and focuses the existing bottom composer.
+   It never sends a prompt, creates a session turn, or changes the current
+   session mode.
+4. Keep D204's single scrollable home content region and bottom-reserved
+   composer unchanged. Short windows must still scroll the content instead of
+   allowing the composer to cover it.
 
-## 后果
+## Consequences
 
-- 空首页获得有用的视觉层级，而不移动或复制主要的 composer 操作。
-- 起始 prompt 保持可编辑，用户可以在发送前添加项目特定的上下文。
-- 四张卡片只增加渲染进程本地的呈现与本地化文案；不需要 IPC、存储或协议
-  变更。
-- 起始网格在窄窗口折叠为单列，并保留在现有首页滚动区内。
+- Empty home has useful visual hierarchy without moving or duplicating the
+  primary composer action.
+- Starter prompts remain editable, so users can add project-specific context
+  before sending.
+- The four cards add only renderer-local presentation and localized copy; no
+  IPC, storage, or protocol changes are required.
+- The starter grid collapses to one column on narrow windows and remains inside
+  the existing home scroller.
 
-## 已考虑的备选方案
+## Alternatives considered
 
-### 保留只有 hero 的空状态
+### Keep the hero-only empty state
 
-已拒绝。它保留了直达输入，但让中部界面无谓地稀疏，且不给新用户任何任务
-词汇。
+Rejected. It preserves direct entry but leaves the middle surface needlessly
+sparse and gives new users no task vocabulary.
 
-### 自动提交选中的起始项
+### Automatically submit a selected starter
 
-已拒绝。起始项是引导，不是隐式动作。预填保留用户控制，并让用户添加路
-径、约束或验收标准。
+Rejected. A starter is guidance, not an implicit action. Prefilling preserves
+user control and lets the user add paths, constraints, or acceptance criteria.
 
-### 恢复原先的氛围建议行
+### Restore the former ambient suggestion row
 
-已拒绝。原先的行太装饰性，且使用不同的 prompt 选择模型。新网格紧凑、明
-确面向开发者，并保持 composer 是唯一的发送界面。
+Rejected. The former row was too decorative and used a different prompt
+selection model. The new grid is compact, explicitly developer-focused, and
+keeps the composer as the only send surface.
 
-## 参考
+## References
 
 - `docs/adr/0066-empty-home-direct-bottom-composer.md`
 - `docs/spec/04-ux/01-ui-ia.md`

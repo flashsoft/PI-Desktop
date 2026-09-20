@@ -1,19 +1,20 @@
-# 02. Agent 运行时
+# 02. Agent Runtime
 
 ## 1. Goal
 
-应用决策：**D002/D003/D008/D158/D189/D190/D193/D194**。
+Applied decisions: **D002/D003/D008/D158/D189/D190/D193/D194/D278/D378**.
 
-将 pi 包装到桌面层可以安全使用的产品运行时中。
 
-核心包：
+Wrap pi into a product runtime that desktop layers can consume safely.
+
+Core packages:
 
 - `@earendil-works/pi-ai`
 - `@earendil-works/pi-agent-core`
 
-## 2. 运行时放置
+## 2. Runtime placement
 
-Agent 循环在 **Node/TypeScript pi sidecar** 中运行，而不是在渲染器中运行。
+Agent loop runs in a **Node/TypeScript pi sidecar**, not in renderer.
 
 ```text
 packages/agent-runtime/*
@@ -21,26 +22,26 @@ apps/desktop/electron/* (supervisor)
 crates/host-core (tool execution + permissions)
 ```
 
-## 3. 核心对象
+## 3. Core objects
 
-### 3. 1 PiRuntime (Node)
-- 初始化 models/providers
-- 创建 Agent
-- 绑定工具桥
-- subscribe/normalize pi 事件
+### 3.1 PiRuntime (Node)
+- init models/providers
+- create Agent
+- bind tool bridge
+- subscribe/normalize pi events
 
-### 3. 2 AgentHostFacade (Electron 主)
-- 会话路由
-- 过程监督
-- IPC 翻译
+### 3.2 AgentHostFacade (Electron main)
+- session routing
+- process supervision
+- IPC translation
 
-### 3. 3 主机工具桥（Rust）
-- 接收工具调用请求
-- 应用权限策略
-- 执行 builtin/plugin 工具
-- 返回标准化的工具结果
+### 3.3 Host Tool Bridge (Rust)
+- receives tool call requests
+- applies permission policy
+- executes builtin/plugin tools
+- returns normalized tool results
 
-## 4. 运行时 API（包级）
+## 4. Runtime API (package-level)
 
 ```ts
 interface AgentRuntime {
@@ -54,358 +55,468 @@ interface AgentRuntime {
 }
 ```
 
-`requestGracefulStop()` 是针对当前活动运行时的一次性请求。pi 循环会在
-`turn_end` 之后、当前助手响应与这一批工具都已完成时对它求值，并在发出下一次
-模型请求之前正常地发出 `agent_end`。它不会取消进行中的提供商流或正在运行的
-工具。空闲的运行时返回 `{ requested: false }`；立即生效的 `abort()` 仍然是另
-一条独立的取消路径。
+`requestGracefulStop()` is a one-shot request for the active runtime. The pi
+loop evaluates it after `turn_end`, once the current assistant response and
+tool batch have completed, and emits a normal `agent_end` before another model
+request. It does not cancel an active provider stream or running tool. An idle
+runtime returns `{ requested: false }`; immediate `abort()` remains the
+separate cancellation path.
 
-### 4.0 当前回合补充指令
+### 4.0 Active-turn steering
 
-`steer` 在改变任何状态之前验证当前回合标识，再通过 pi-agent-core 原生 steering 队列的
-`all` 模式加入用户输入。当前提供商请求和已启动的一批工具先完成；所有已接收输入在
-同一个持久回合的下一次模型请求边界进入上下文。进行中的请求不会被改写或中止。
-与普通提示相同，主进程负责附件验证和转录持久化。
+`steer` validates the current turn identity before changing any state, then
+queues user input through pi-agent-core's native steering queue in `all` mode.
+The current provider request and any started tool batch finish first; all
+accepted input is included at the next model-request boundary within the same
+durable turn. A live provider request is not rewritten or aborted. Main owns
+attachment validation and transcript persistence as for ordinary prompts.
 
-pi 消费排队输入时保留渲染器提供的消息 id；即使补充输入早于最初用户消息被消费，
-也遵循这一规则。如果输入在 pi 最后一次检查队列后才获准进入，运行时抑制终态事件，
-等 pi 释放执行后沿用同一回合继续，不再次公开发出 `agent_start`。现有上下文和提供商
-恢复流程优先于这次继续执行。补充指令也会唤醒正在空闲等待后台委托的父代理，
-不会取消这些委托。
+Queued input retains its renderer message id when pi consumes it, including
+when another input arrives before the initial user message has been consumed.
+An admission after pi's last queue poll suppresses the terminal event and
+continues once pi has released the run, with the same turn identity and without
+a second public `agent_start`. Existing context/provider recovery takes
+precedence over that continuation. Steering also wakes a parent that is idle
+waiting for background delegates; it does not cancel those delegates.
 
-中止、优雅停止、致命错误和终态落定都会关闭接收入口。已接收但尚未消费的输入保留在
-转录和上下文历史中，并从 pi steering 队列移除，避免在后续回合独立执行。
-普通 follow-up 仍留在独立的 Host FIFO 中，直到当前持久回合最终落定。
-补充指令失败不得终止当前运行。
+Abort, graceful stop, fatal errors and terminal settlement close admission.
+Accepted but unconsumed input remains transcript/context history and is removed
+from pi's steering queue so it cannot execute independently on a later turn.
+An ordinary follow-up stays in the separate Host-owned FIFO until durable turn
+finalization. A steering failure must not terminate the active run.
 
-## 5. 提示流程
+### 4.1 Session title summarization
 
-1. 加载持久会话，会话缺失则拒绝
-2. 解析该会话的 mode/provider/model 与项目绑定（app/当前工作区默认值仅作为
-   旧版回退）
-3. 针对该确切的 provider/API URL 与 model 解析完整的 models.dev 元数据记录，
-   并把持久会话的思考级别钳制到它最接近的受支持值；快照中不存在的 id 使用
-   显式的通用回退
-4. 验证 model/secret 可用性
-5. 会话繁忙则拒绝；渲染器会把面向用户的下一条提示排入队列，在当前会话到达
-   `agent_end` 之前不会调用这条路径
-6. 在 Electron main 的会话绑定路径边界上校验结构化附件，按 SHA-256 持久化
-   图片字节，持久用户消息中只保留附件引用。只有处于视觉模型 10 MB 内联上限
-   之内的图片才会被读进内存；更大的图片走流式哈希/复制以及既有的安全路径回退
-7. 为本回合快照有效的 shell ID 与方言
-8. 用解析出的会话配置和有效思考级别启动 pi 回合；HTTP 429 的建连与流式失败
-   使用运行时自有的静默五次重试预算，其他瞬时的 transport/provider 失败则在
-   建连与流式两个阶段之间共享一份运行时自有的四次重试有界预算
-   （D127、D186、D245、D258）
-9. 将规范化的回答与思考事件流式传输到 UI
-10. 工具调用时，携带持久的 `sessionId` 委托给 Rust 主机桥；由主机解析会话
-    绑定的工作区根
-11. 若 pi 以 `stopReason: "error"` 结束一条消息，则用结构化的
-    `UiMessage.error` 收尾任何残缺的助手气泡，将其持久化进转录，并发出一个
-    携带同一个提供商 `AppError` 的规范化生命周期 `error` 事件；即使是没有任何
-    回答文本的失败，也仍然是一条可见的助手错误消息
-12. 独立地收尾并持久化成功的 answer/thinking 块
+The renderer applies a short first-prompt fallback immediately so sending a
+prompt never waits on title generation. After the first turn emits `agent_end`,
+Electron main resolves the session's effective provider/model and invokes the
+runtime's `summarizeSessionTitle` one-shot path with thinking disabled. The
+runtime supplies the initial user prompt and an optional assistant reply,
+returns only sanitized title text, and treats an empty/failing completion as a
+non-fatal result. The renderer persists a successful title through the existing
+`session.rename` path.
 
-当一个进行中的回合还没有产生新的转录行时，运行时会发出一个规范化的 `status`
-事件来命名这段安静间隔：`starting` 表示提示交接，`waiting-model` 表示某次
-提供商请求正在等待它的第一个助手事件，`preparing` 表示工具批次结束后、下一次
-请求发出前，`compacting` 表示正在做上下文检查点，`recovering` 表示正在补救
-空回复，`retrying` 表示正处于一次有界的提供商退避中，`waiting-subagents`
-表示父级正在等待被委托出去的工作（并带上每个仍在运行的目标的粗粒度子动作）。
-渲染器把这个阶段限定在该会话内，并在助手或工具活动开始时、或回合终止时清除它。
-这纯粹是可观测性，它不会引入第二个 agent 循环，也不会给出完成百分比。
+The renderer also persists a `manualTitle` marker in its local session metadata.
+Automatic summarization is skipped for that marker and for any persisted title
+that is neither a recognized default nor the deterministic first-prompt
+fallback, which protects manual and already-summarized titles after restart.
+No host RPC or storage schema change is required.
 
-运行时为每个持久会话恰好构造一个 pi `Agent`。Plan 不会另选第二个模型、
-规划器服务、权限实现或运行时。同一个 Agent 在一次由主机确认的转换之后，
-改变它自己的规划状态与工具注册表。
+## 5. Prompt flow
 
-### 5d。有界提供商流恢复和诊断（D186、D245、D259、ADR 0091、ADR 0128）
+1. load the durable session and reject a missing session
+2. resolve that session's mode/provider/model and project binding (app/current
+   workspace defaults are legacy fallback only)
+3. resolve the complete models.dev metadata record for the exact provider/API
+   URL and model and clamp the durable session thinking level to its nearest
+   supported value; an ID absent from the snapshot uses the explicit generic
+   fallback
+4. validate model/secret availability
+5. reject if session busy; the renderer queues a user-facing next prompt and
+   does not call this path until the current session reaches `agent_end`
+6. validate structured attachments at Electron main's session-bound path
+   boundary, persist image bytes by SHA-256, and retain only attachment refs in
+   the durable user message. Only an image that is within the 10 MB inline
+   bound for a vision model is read into memory; larger images use streamed
+   hashing/copying and the existing safe path fallback
+7. snapshot the effective shell ID and dialect for the turn
+8. start pi turn with the resolved session configuration and effective
+   thinking level; HTTP 429 setup and stream failures use the runtime-owned
+   silent ten-retry budget, while other transient transport/provider failures
+   share a runtime-owned bounded ten-retry budget across the setup and stream
+   phases (D127, D186, D245, D258, D378)
+9. stream normalized answer and thinking events to UI
+10. on tool calls, delegate to Rust host bridge with the durable `sessionId`;
+    host resolves the session-bound workspace root
+11. if pi finishes a message with `stopReason: "error"`, finalize any partial
+    assistant bubble with a structured `UiMessage.error`, persist it in the
+    transcript, and emit a normalized lifecycle `error` event carrying the
+    same provider `AppError`; even a failure with no answer text remains a
+    visible assistant error message
+12. finalize and persist successful answer/thinking blocks independently
 
-提供程序请求设置和流式传输交付是两个独立的故障阶段，但
-HTTP 429 处理是一个逻辑回合策略。此路径禁用了 pi-ai 的嵌套
-适配器重试，因此运行时可以在两个阶段之间共享一个预算。
+While an active turn has no new transcript row, the runtime emits a normalized
+`status` event that names the quiet interval: `starting` for the prompt
+handoff, `waiting-model` while a provider request waits for its first assistant
+event, `preparing` after a tool batch and before the next request,
+`compacting` during a context checkpoint, `recovering` during a silent-turn
+re-run, `retrying` during a bounded provider backoff, and `waiting-subagents`
+while the parent waits for delegated work (including each running target's
+latest coarse child action). The renderer keeps the phase scoped to the session
+and clears it when assistant or tool activity starts, or when the turn
+terminates. This is observability only; it does not add a second agent loop or
+a completion percentage.
 
-`PROVIDER_RATE_LIMITED` 在初始尝试之后最多重试五次，总共六次
-提供程序尝试。设置阶段的 429 在提供程序流适配器内部重试。
-流中的 429 会从下一个模型上下文中删除失败的助手，并在同一
-回合中调用 `continue()`。两个阶段占用同一个计数器，因此设置阶段的
-429 后跟流阶段的 429 无法重置或倍增该预算。在两个阶段中，
-捕获的响应状态都会在对提供商消息进行分类之前应用，因此通用的
-429 正文仍会进入 429 预算，而已知的不可重试分类仍然是终止的。
-主会话和内置子代理使用相同的控制器和策略。
+The runtime constructs exactly one pi `Agent` per durable session. Plan does
+not select a second model, planner service, permission implementation, or
+runtime. The same Agent changes its planning state and tool registry after a
+host-confirmed transition.
 
-429 重试在转录生命周期上是静默的：没有中间助手错误、生命周期 `error`、
-`turn_end`、`agent_end` 或重复的助手气泡到达 UI。一个规范化的 `status` 事件
-会标明这次重试退避，好让用户知道该回合仍在进行。重试开始时会复用可见的
-助手消息 id，从而在一个气泡中替换任何部分内容。结束事件由最终
-成功或耗尽的那次尝试发出一次。等待期间的中止会取消计时器，并
-阻止下一次提供程序请求。
+### 5d. Bounded provider recovery and diagnostics (D186, D245, D259, D378, ADR 0091, ADR 0128, ADR 0206)
 
-延迟遵循 OpenCode 风格的顺序：`retry-after-ms`、`retry-after` 秒、
-`retry-after` HTTP 日期，然后是指数退避。回退从 2 秒开始，并以最多
-25% 的正向抖动指数增长；每个服务器值或计算值都以 30 秒为上限。
-运行时从 fetch 捕获失败的响应状态和标头，因为 pi-ai 的普通响应
-回调仅涵盖已建立的响应。
+Provider request setup and stream delivery are separate failure phases, but
+HTTP 429 handling is one logical-turn policy. pi-ai's nested adapter retry is
+disabled for this path so the runtime can share one budget across both phases.
 
-非 429 瞬时故障共享它们自己的有界逻辑回合预算：在初始尝试之后
-最多重试四次，总共五次提供程序尝试。该预算由请求设置和流式
-传输交付共享，因此在两个阶段之间移动的故障无法重置或倍增它，
-并且它与 429 预算相互独立。它只接受 `NETWORK_ERROR`、`TIMEOUT`、
-`STREAM_FAILED` 和可重试的 `PROVIDER_ERROR`——包括在标头到达之前
-或流中到达的网关 `502`/`503`/`504`。身份验证、模型选择、格式错误的
-请求、上下文以及其他不可重试的错误不会进入任何提供程序重放路径，
-并且来自格式错误的 400/422 请求的不可重试 `PROVIDER_ERROR` 仍然是
-终止的。
+`PROVIDER_RATE_LIMITED` receives at most ten retries after the initial
+attempt, for eleven provider attempts total. A setup 429 is retried inside the
+provider stream adapter. A mid-stream 429 removes the failed assistant from
+the next model context and calls `continue()` in the same turn. Both phases
+claim the same counter, so a setup 429 followed by a stream 429 cannot reset or
+multiply the budget. The captured response status is applied before classifying
+the provider message in both phases, so a generic 429 body still enters the
+429 budget while known non-retryable classifications remain terminal. The main
+session and builtin subagents use the same controller and policy.
 
-在把 HTTP 400/422 那种消息以 `(no body)` 结尾的流前 `PROVIDER_ERROR` 抛给上层
-之前，运行时最多做一次静默的修复尝试：移除生成的输出上限字段
-`max_tokens`、`max_completion_tokens` 和 `max_output_tokens`。这次修复不消耗
-瞬时重试预算，也不增加退避，调用方的 `onPayload` 改写仍然生效。第二次不透明
-的失败即为终止，而在修复开始之前发生的中止会阻止这次修复请求。
+429 retries are silent at the transcript lifecycle: no intermediate assistant
+error, lifecycle `error`, `turn_end`, `agent_end`, or duplicate assistant
+bubble reaches the UI. A normalized `status` event identifies the retry
+backoff so the user can tell that the turn is still active. The visible
+assistant message id is reused when a retry starts, replacing any partial
+content in one bubble. End events are emitted once by the final successful or
+exhausted attempt. An abort during the wait cancels the timer and prevents the
+next provider request.
 
-非 429 延迟优先遵循服务器：`retry-after-ms`、`retry-after` 秒，然后是
-`retry-after` HTTP 日期，上限为 8 秒。捕获的标头会为每个可以声明
-延迟的状态（429、408、409 和 5xx）保留，而不再仅限于 429。在没有
-可用标头时，等待是一个简单的倍增计划：1 秒、2 秒、4 秒，然后是
-8 秒；它在请求阶段和流阶段完全相同，因此在两个阶段之间移动的故障
-保持同一个可预测的节奏。该计划是确定性的——没有抖动——因为它调节
-的是一次失败的请求，而不是同步的速率限制突发。服务器声明的延迟
-一律优先，即使它比计划的等待更短。
+The delay follows the OpenCode-style order `retry-after-ms`, `retry-after`
+seconds, `retry-after` HTTP-date, then exponential backoff. The fallback starts
+at 2 seconds and grows exponentially with up to 25% positive jitter; every
+server or calculated value is capped at 30 seconds. The runtime captures the
+failed response status and headers from fetch because pi-ai's ordinary response
+callback only covers an established response.
 
-只有失败的请求会被重放。会话、它的转录本以及它的工具状态都保持
-不变：失败的助手会从下一个模型上下文中删除，并复用同一个可见的
-助手消息 id，因此重试永远不会重启该回合或重新运行已完成的工具调用。
-每次重试都可中止，并通过规范化的 status 事件报告它当前的退避。主会话、内置
-子代理和一次性 composer 提示增强使用相同的错误码、预算大小和
-优先级。
+Non-429 transient failures share their own bounded logical-turn budget of ten
+retries after the initial attempt, for eleven provider attempts total. The budget
+is shared by request setup and stream delivery, so a fault that moves between
+phases cannot reset or multiply it, and it is separate from the 429 budget. It
+admits exactly `NETWORK_ERROR`, `TIMEOUT`, `STREAM_FAILED`, and retryable
+`PROVIDER_ERROR` — including a gateway `502`/`503`/`504` that arrives before
+headers or mid-stream. Authentication, model-selection, malformed-request,
+context, and other non-retryable errors do not enter either provider replay
+path, and a non-retryable `PROVIDER_ERROR` from a malformed 400/422 request
+stays terminal.
 
-当 429 预算耗尽时，最终的助手错误和生命周期 `error` 只发出一次。
-提供程序故障在可用时于 `AppError.details` 中携带有界诊断：
-`phase`（`request` 或 `stream`）、`providerStatus`、`providerCode`、
-`providerWaitMs`、`streamMs`、`retryAttempt`、网络诊断
-（`networkCategory`、`networkCode`、`networkSyscall`、`networkHost`、
-`networkRoute`）以及请求关联字段（`requestMessages`、`requestBytes`、
-`compactionGeneration`）。
-对于持续的 429，
-`retryAttempt` 为 `5`；对于持续的非 429 瞬时故障，它为 `4`。凭据与不受限制的
-响应正文永远不会进入事件或日志。每次重试都会新建请求、流和 `AbortController`；
-重试唯一共享的状态是进程级 undici dispatcher。当同一来源在一轮内连续两次没有
-任何响应、且新尝试仍无法到达它时，下一次尝试前会重建一次传输（每 30 秒最多一次，
-`dns` 除外），避免重试继续复用连接已死的连接池。重建先安装替换、再优雅关闭旧
-的 dispatcher，并复现已配置的链路，因此其他会话正在进行的请求仍会在原连接池上
-完成，代理也不会被悄悄丢弃。
+Before surfacing a pre-stream `PROVIDER_ERROR` for HTTP 400/422 whose message
+ends in `(no body)`, the runtime makes at most one silent repair attempt with
+the generated output-limit fields removed: `max_tokens`,
+`max_completion_tokens`, and `max_output_tokens`. This repair does not consume
+the transient retry budget or add backoff, and the caller's `onPayload` rewrite
+remains active. A second opaque failure is terminal, and an abort before the
+repair starts prevents the repair request.
 
-### 5e。静默回合恢复
+The non-429 delay honors the server first: `retry-after-ms`, `retry-after`
+seconds, then `retry-after` HTTP-date, capped at 8 seconds. Captured headers are
+retained for every status that can carry a usable delay (429, 408, 409, and
+5xx), not for 429 alone. Without a usable header the wait is a plain doubling
+schedule of 1, 2, 4, then remains at the 8-second cap for later retries. The
+schedule is identical in the request and stream phases so a fault that moves
+between them keeps one predictable rhythm. It is deterministic — no jitter —
+because it paces one failed request rather than a synchronized rate-limit burst.
+A server-stated delay wins outright, including one shorter than the scheduled
+wait.
 
-以没有工具调用且没有可见辅助文本结束的普通回合是不可见的
-对用户：推理永远不会呈现，因此结论只写在那里
-没有到达。 255 个录制的会话中有 15 个以这种方式结束了一个回合，并且
-用户唯一的办法就是输入“继续”。
+Only the failed request is replayed. The session, its transcript, and its tool
+state are untouched: the failed assistant is removed from the next model context
+and the same visible message id is reused, so a retry never restarts the turn or
+re-runs a completed tool call.
+Each retry is abortable and reports its current backoff through the normalized
+status event. The `retrying` activity carries the classified error code, the
+bounded/redacted provider message, and the HTTP status when known. The main
+session, builtin subagents, and one-shot composer enhancement use the same
+codes, budget size, and precedence.
 
-运行时在 `message_end` 处检测到它：停止既不是错误也不是异常
-中止，消息不请求任何工具（没有 `toolCall` 内容部分），并且
-修剪后可见文本为空白。推理内容不免除回合
-——只思考的转变正是需要恢复的情况。
+When the retry budget is exhausted, the final assistant error and lifecycle
+`error` are emitted once. Provider failures carry bounded diagnostics in
+`AppError.details` when available: `phase` (`request` or `stream`),
+`providerStatus`, `providerCode`, `providerWaitMs`, `streamMs`,
+`retryAttempt`, the network diagnosis (`networkCategory`, `networkCode`,
+`networkSyscall`, `networkHost`, `networkRoute`) and the request correlation
+(`requestMessages`, `requestBytes`, `compactionGeneration`). For a persistent
+429 or non-429 transient failure,
+`retryAttempt` is `10`. Credentials and unrestricted response bodies never
+enter the event or log. The active-turn status shows the remaining backoff and
+the retry budget as `Retrying in 0s · attempt 9/10` in English.
 
-恢复镜像 §5d 并以相同的方式限制：每次运行最多重新运行一次。
-无声助手已从模型上下文中删除 (`continue()`
-拒绝以助理消息结尾的记录，空的则不
-值得重新发送），一条简短的无输出指令被附加到系统中
-提示继续该操作，并且重复使用气泡 ID，以便恢复
-回合后不留空行。无声尝试的 `turn_end` 和
-`agent_end` 被抑制；重新运行会发出单个终端生命周期。
+Each retry builds a new request, stream, and `AbortController`; the one piece of
+state a retry shares is the process-wide undici dispatcher. When the same origin
+fails twice in a row without any response and no fresh attempt reaches it, the
+transport is rebuilt once (throttled to one rebuild every 30 seconds, never for
+`dns`) before the next attempt, so the retry does not replay into a pool whose
+connection is already dead. The rebuild installs the replacement before closing
+the previous dispatcher and closes it gracefully, and it reproduces the
+configured route, so another session's in-flight request finishes on the pool it
+started on and a proxy is never silently dropped.
 
-恢复在 `message_end` 中装载，并在循环空闲后执行，因此它属于
-每一个驱动循环的入口——用户提示与已审批的计划或目标执行
-同样如此。每个入口在开始前清空恢复状态，并在 `waitForIdle`
-之后执行待处理的恢复，两半都走同一份共享实现。漏掉其中任何
-一半，本次运行都会在生命周期仍被抑制、且没有尝试任何恢复的
-情况下结束，用户看到的就是会话在工作中途停住，既没有错误也
-没有重试入口。§5d 的溢出与 provider 流重试遵循同一契约，而残留
-的抑制标志会吞掉*下一次*运行的终止事件。
+### 5e. Silent-turn recovery
 
-一次性指令依赖于代理的系统提示，而不是
-`prepareNextTurn` 钩子，因为该钩子仅在实时运行中形成回合
-并且本次运行已经结束。除非路径范围内的，否则它会在之后被删除
-指令重新加载同时重写了提示，在这种情况下，较新的
-重建胜利。
+An ordinary turn that ends with no tool call and no visible assistant text is invisible
+to the user: reasoning is never rendered, so a conclusion written only there
+did not arrive. 15 of 255 recorded sessions ended a turn that way, and the
+user's only recourse was typing "继续".
 
-如果重新运行也没有声音，则回合结束时会出现明显的辅助错误
-可重试的 `EMPTY_MODEL_RESPONSE`，它为转录本提供正常的重试
-行动。在这两种情况下都不会保留空的助理消息。
+The runtime detects it at `message_end`: the stop was neither an error nor an
+abort, the message requested no tools (no `toolCall` content part), and the
+visible text is blank after trimming. Reasoning content does not exempt a turn
+— a thinking-only turn is exactly the case that needs recovery.
 
-Host 账本完成通知（ADR 0239、D446）是唯一例外：其提示已经允许无需确认。
-Main 按 ID 从账本读取排队消息、检查目标会话，再构造来源元数据。只有
-`kind: completion`、目标为当前会话、消息 ID 和回复目标 ID 均非空时，运行时
-才接受静默。静默的通知回复正常发出完成消息和终止生命周期，不重试、不报告
-`EMPTY_MODEL_RESPONSE`。提供商错误和中止仍按原规则处理，同一次尝试的
-provider 重试保留例外；原任务及结果不被改写，完成通知不会要求再次回调。
+Recovery mirrors §5d and is bounded the same way: at most one re-run per run.
+The silent assistant is dropped from the model context (`continue()`
+refuses a transcript ending in an assistant message, and an empty one is not
+worth resending), a short no-output instruction is appended to the system
+prompt for that one continuation, and the bubble id is reused so a recovered
+turn leaves no empty row behind. The silent attempt's `turn_end` and
+`agent_end` are suppressed; the re-run emits the single terminal lifecycle.
 
-例外只覆盖通知自己的那条回复：本次运行第一条结算的 assistant 回复会消耗它，
-无论该回复是静默、有文本还是工具批次。因此紧随工具结果之后的回复按本节普通
-规则处理；被接受的 steering 消息一旦进入模型上下文，例外立即撤销，所以对
-用户的回复保留完整的重跑与报错路径。每次新运行都按提示的来源信息重新计算。
-普通用户输入、task/message 投递、复制的来源文本和恢复的历史记录都不能开启它。
+Recovery is armed inside `message_end` and carried out once the loop is idle,
+so it belongs to every entry point that drives the loop — a user prompt and an
+approved plan or goal execution alike. Each entry point clears the recovery
+state before it starts and runs the pending recovery after `waitForIdle`,
+through one shared implementation of each half. The shared drain also handles
+recoveries armed by a recovery attempt before it returns, so a chained failure
+cannot leave lifecycle suppression active with no recovery or terminal event.
+Skipping either half ends the run with its lifecycle still suppressed and no
+recovery attempted, which reaches the user as a session that stopped mid-work
+with no error and no retry action. §5d overflow and provider-stream retry ride
+the same contract, and a suppression flag left behind would swallow the
+*next* run's terminal events.
 
-被接受的静默回复仍然不值得重发。Main 会把它持久化为一条空的已完成行（转录
-隐藏该行，host 不存文本），但运行时不把它写入自己的条目和 pi 的转录状态，
-上下文投影也会丢弃没有内容块的 assistant，与恢复转录时的处理完全一致。因此
-下一次 provider 请求不会带上空的 assistant 消息。
+The one-shot instruction rides on the agent's system prompt rather than the
+`prepareNextTurn` hook, because that hook only shapes turns inside a live run
+and this run has already ended. It is removed afterwards unless a path-scoped
+instruction reload rewrote the prompt meanwhile, in which case the newer
+rebuild wins.
 
-决定 D193 与 D446（ADR 0239 修订段）；参见 E2E-146 与
-E2E-SESSION-completion-notice-allows-silence。
+If the re-run is silent too, the turn ends as a visible assistant error with
+retriable `EMPTY_MODEL_RESPONSE`, which gives the transcript its normal retry
+action. No empty assistant message is persisted in either case.
 
-### 5. 1 上下文检查点保护（D158/D203、ADR 0030/0049/0061/0064）
+A Host-ledger completion notice (ADR 0239, D446) is the narrow exception:
+its prompt already permits no acknowledgement. Main resolves the queued message
+by ID, verifies its target session, and constructs provenance from the ledger.
+The runtime accepts silence only for `kind: completion` targeting the current
+session with nonempty message and reply-to IDs. A silent notice reply emits its
+normal completed message and terminal lifecycle without a recovery request or
+`EMPTY_MODEL_RESPONSE`. Provider errors and aborts retain their normal handling,
+and a provider retry of the same attempt keeps the exception. The original
+task/result is not rewritten, and completion notices never request another
+callback.
 
-完整的可见记录和模型上下文是不同的视图
-同一个会话。持久检查点总结了旧模型上下文，同时
-渲染器继续显示每个原始用户、助手和工具行。
+The exception covers exactly the notice's own reply: the first settled
+assistant response of the run spends it, whether that response is silent,
+textual, or a tool batch. A reply that follows tool results is therefore
+ordinary work under this section, and the exception is revoked as soon as an
+accepted steering message enters the model context, so a reply to the user
+keeps its full re-run and error path. Every new run recomputes it from the
+prompt's provenance. Ordinary user input, task/message deliveries, copied
+source framing, and restored history cannot enable it.
 
-PI-Desktop 复用 pi-agent-core 的 `buildSessionContext`、`convertToLlm`、
-`estimateContextTokens`、`prepareCompaction` 和 `compact` 原语。桌面运行时拥有
-这些原语的运行时机，以及结果如何穿过 Rust 存储
-边界； OpenCode DCP 仅是 AGPL-3.0 行为参考，不是链接或
-复制的依赖关系。
+An accepted silent reply is still not worth resending. Main persists it as an
+empty completed row (the transcript hides it and the host stores no text), but
+the runtime keeps it out of its entries and out of pi's transcript state, and
+the context projection drops any assistant with no content blocks, exactly as
+a restored transcript already did. The next provider request therefore carries
+no empty assistant message.
 
-压缩遵循 Codex 的机制 (ADR 0064)：它总是内联发生在
-回合边界，模型可以通过`new_context`请求，每次compaction
-添加一个转录本行并提出一个警告 toast，并且没有
-任何地方的预计算。
+Decision D193 and D446 (ADR 0239 amendment); see E2E-146 and
+E2E-SESSION-completion-notice-allows-silence.
 
-pi 0.84.4+ 只在循环将要在同一次运行中开启另一个助手回合时才调用
-`prepareNextTurn`——包括在一批工具执行完毕与随后的模型请求之间。新的用户
-提示仍然会在它的第一次提供商请求之前，经由 `prompt()` 中的
-`automaticCompactionNeeded` 先行压缩。
+### 5e.1. Progress-only recovery for approved Plan/Goal execution
 
-对于每个 pi 循环：
+An approved Plan or Goal can still stop after a visible progress update when
+the model puts its narration in a text-only assistant message and emits the
+tool call in a later message. Ordinary Agent prompts do not use this recovery.
+The runtime only arms it for a successful, non-aborted message with no tool
+call whose visible text has a clear forward-looking action signal such as
+"Writing the remaining note" or "the next step is ...". A normal completion
+report such as "Implemented the approved plan" is terminal and is not nudged.
 
-1. pi 在助手消息和所有工具之后发出并等待 `turn_end`
-   该回合的结果已完成
-2. PI-Desktop 根据完整转录本和最新转录本重建上下文
-   有效的检查点并估计下一个请求预算
-3.低于硬边界，并且没有待处理的模型请求，下一回合
-   收益不变
-4. 处于或高于硬边界，或者当模型名为 `new_context` 时，
-压缩在下一个提供程序请求之前同步运行。在
-   在 summary 系列中，生成摘要是强制的；运行时会拿摘要输入对照模型窗口做
-   预检，并跳过放不下的请求。自动摘要失败时先尝试一个确定性的保留尾部
-   检查点，而手动压缩仍然报告
+The recovery is bounded to one attempt per approved execution. The progress
+text remains in the current assistant bubble, while its assistant message is
+removed from model context before `continue()` so the provider never receives
+an invalid assistant-to-assistant transcript. The first attempt's
+`agent_start`, `turn_start`, `turn_end`, and `agent_end` are suppressed; the
+continuation reuses the same bubble id and emits the single terminal lifecycle.
+The progress nudge is attached to the system prompt for that continuation and
+removed afterwards. If the continuation produces a tool call, the normal
+autonomous loop proceeds; if it produces another text-only response, that
+response is terminal and cannot trigger a second progress nudge. A silent
+recovery that already ran in the same execution also prevents the recovered
+final report from being misclassified as progress.
+
+See E2E-146a.
+
+### 5.1 Context checkpoint protection (D158/D203, ADR 0030/0049/0061/0064)
+
+The complete visible transcript and the model context are separate views of
+the same session. A durable checkpoint summarizes older model context while
+the renderer continues to show every original user, assistant, and tool row.
+
+PI-Desktop reuses pi-agent-core's `convertToLlm`, `estimateContextTokens`,
+`prepareCompaction`, and `compact` primitives, and applies the same session
+context projection pi used to export as `buildSessionContext` (slice from the
+newest compaction, then `compactionSummary` before the retained tail). pi 0.85
+moved that helper off the public package export and made the remaining
+internal builder async for custom-entry projectors; the desktop runtime keeps
+a synchronous local copy because it synthesizes only message and compaction
+entries. The desktop runtime owns when they run and how the result crosses the
+Rust storage boundary; OpenCode DCP is an AGPL-3.0 behavioral reference only,
+not a linked or copied dependency.
+
+Compaction follows Codex's mechanism (ADR 0064): it always happens inline at a
+turn boundary, the model can request it through `new_context`, every compaction
+adds a transcript row and raises one warning toast, and there is no
+pre-computation anywhere.
+
+pi 0.84.4+ invokes `prepareNextTurn` only when the loop will start another
+assistant turn in the same run — including between a completed tool batch and
+the follow-up model request. A new user prompt still compacts before its first
+provider request through `automaticCompactionNeeded` in `prompt()`.
+
+For every pi loop turn:
+
+1. pi emits and awaits `turn_end` after the assistant message and all tool
+   results for that turn are complete
+2. PI-Desktop rebuilds the context from the full transcript plus the newest
+   valid checkpoint and estimates the next request budget
+3. below the hard boundary, and with no pending model request, the next turn
+   proceeds unchanged
+4. at or above the hard boundary, or when the model called `new_context`,
+   compaction runs synchronously before the next provider request. In the
+   summary family, generation is mandatory; the runtime preflights the summary
+   input against the model window and skips a request that cannot fit. An
+   automatic summary failure first attempts a deterministic retained-tail
+   checkpoint, while manual compaction still reports
    `CONTEXT_COMPACTION_FAILED`
-5. 成功生成或确定性恢复首先追加
-   通过 host-core 检查点，然后安装其摘要 + 保留尾部为
-   下一个提供程序请求的运行时上下文；硬边界
-   检查点在持久化之前被重新估计，并且在之前再次估计
-   继续，并且不能授权下一个请求，除非它低于
-   硬预算
+5. successful generation or deterministic recovery first appends the
+   checkpoint through host-core, then installs its summary plus the applicable
+   retained tail as the runtime context for the next provider request; a
+   hard-boundary checkpoint is re-estimated before it is persisted and again
+   before continuation, and cannot authorize the next request unless it is
+   below the hard budget
 
-检查点生成和安装是单独的操作。
-`buildCheckpoint` 运行准备、预算预检和摘要请求
-无需保留任何内容或更改活动检查点；安装
-重新估计，通过 host-core 附加，更新活动检查点，以及
-发出 `compaction_end`。阻塞路径将两者背靠背组成。
+Checkpoint generation and installation are separate operations.
+`buildCheckpoint` runs the preparation, budget preflight, and summary request
+without persisting anything or changing the active checkpoint; installation
+re-estimates, appends through host-core, updates the active checkpoint, and
+emits `compaction_end`. The blocking path composes the two back to back.
 
-**在检查点中幸存下来的内容。** 压缩后的模型上下文是
-摘要以及最多一条**用户**消息；助手和工具消息是
-从模型上下文中删除并保留在可见的转录本中。圆周率
-`prepareCompaction` 仍然选择切点，因此其回合边界和
-保留分割回合处理，但运行时会折叠分割回合
-前缀和最近的尾部返回到摘要输入中，因此摘要涵盖
-整个紧凑的范围内，没有任何东西跨越边界而未被覆盖。
-保留模式由请求这次压缩的生命周期决定：
+**What survives a checkpoint.** The model context after a compaction is the
+summary plus, at most, one **user** message; assistant and tool messages are
+dropped from model context and remain in the visible transcript. pi's
+`prepareCompaction` still chooses the cut point, so its turn-boundary and
+split-turn handling are preserved, but the runtime then folds the split-turn
+prefix and the recent tail back into the summary input, so the summary covers
+the whole compacted range and nothing crosses the boundary uncovered.
 
-- 当提供商必须在工具结果、`toolUse` 回合或溢出恢复后继续当前任务时，使用
-  `active_turn`；仅保留压缩范围内最新的用户消息，最多为下面的保留限额；
-  超过该限制时截断而不是丢弃
-（`[checkpoint truncated: this message crossed the retained context budget]`），
-  并恢复为时间顺序。
-- 在终止回合边界、发送新用户提示之前或手动压缩时，使用
-  `completed_turn`；保留尾部为空。摘要是已完成工作的权威内容，检查点后的
-  下一条用户提示是唯一的新任务。
-- `fresh_window` 系列仍是 ADR 0064 规定的无摘要例外，并始终携带空尾部。
+The retention mode is selected from the lifecycle that requested compaction:
 
-`retainedTailMode` 存储在检查点不透明的 `details` 中，因此重启会保留同一任务
-边界。没有该字段的旧检查点会归一化为只保留最新的用户消息。放弃助理
-消息也会丢弃其工具调用，因此没有孤立的工具调用可以到达
-提供商。保留的尾部用持久化之前的摘要重新估计
-并且在继续之前，所以超大的请求仍然无法通过警卫。
+- An `active_turn` checkpoint is created while the provider must continue the
+  current task after a tool result, a `toolUse` turn, or overflow recovery. It
+  carries only the latest user message from the compacted range, up to the
+  retention limit below; if that message crosses the limit it is truncated
+  rather than dropped (`[checkpoint truncated: this message crossed the
+  retained context budget]`).
+- A `completed_turn` checkpoint is created at a terminal turn boundary, before
+  a new user prompt, or for manual compaction. It carries no naked historical
+  user messages. The summary is authoritative for completed work, and the next
+  user prompt is the only new task after the checkpoint.
+- The `fresh_window` family remains the deliberate no-summary exception from
+  ADR 0064 and always carries an empty tail.
 
-**两个压缩系列。** 两者运行相同的生命周期 - 预算
-重新估计、host-core 追加、`compaction_end`、转录本行、警告：
+The retained-tail mode is stored in the checkpoint's opaque `details` field so
+restart preserves the same task boundary. Checkpoints written before this
+field existed are normalized to their latest user message only. Dropping an
+assistant message also drops its tool calls, so no orphaned tool call can reach
+the provider. The retained tail is re-estimated with the summary before
+persistence and before continuation, so an oversized request still cannot pass
+the guard.
 
-- `summary`（默认）从模型请求摘要；
-- `fresh_window` 不请求任何内容并安装一个空的检查点
-  保留尾部和固定标记文本，说明历史记录已重置，无需
-  正在总结中。
+**Two compaction families.** Both run the same lifecycle — budget
+re-estimation, host-core append, `compaction_end`, transcript row, warning:
 
-压缩系列先由构造选项决定，其次才轮到
-`PI_DESKTOP_COMPACTION_STRATEGY`。它不是设置项，在 `AppSettings` 与 i18n 中
-都不存在；它之所以存在，是为了让"不做摘要"这条机制既被实现、又可被测试。
+- `summary` (the default) requests a summary from the model;
+- `fresh_window` requests nothing and installs a checkpoint with an empty
+  retained tail and a fixed marker text saying the history was reset without
+  being summarized.
 
-**面向模型的表面。** `new_context` 不带任何参数并开始一个新的
-下一回合边界处的上下文窗口；它永远不会清除或重置环境
-状态。当前回合的系统提示中附加了两条预算提醒，
-每个检查点窗口最多一次，并在检查点被重置时重置
-安装：当剩余预算降至
-`clamp(hardLimit * 0.15, 8k, 32k)`，要求模型开始平仓，并且
-一个剩余 2,000 个令牌，告诉它写下必须幸存的一切。
-这两个提醒都不会保留或显示在记录中。
+The family is resolved from a construction option, then
+`PI_DESKTOP_COMPACTION_STRATEGY`. It is not a setting, is absent from
+`AppSettings` and i18n, and exists so the no-summary mechanism is implemented
+and testable.
 
-硬边界是模型上下文窗口减去请求余量。
-Headroom 是 16,384 个代币储备底线的最大值，模型最大输出
-上限为上下文窗口的 25%，以及 5% 的安全裕度。预留楼层
-本身被限制在窗口的一半处。传递给 pi 的切点目标是
-从模型窗口得出，硬预算的 20% 被限制在
-8,000–64,000 个代币，然后上限为硬预算的一半；它决定了在哪里
-边界倒塌了，而不是幸存下来的东西。活动用户消息保留限制为
-20,000 个代币，上限为硬预算的一半，因此仅靠保留无法填补
-小窗口，没有留下摘要的空间。这些值都不是
-可配置。
+**Model-facing surface.** `new_context` takes no parameters and starts a new
+context window at the next turn boundary; it never clears or resets environment
+state. Two budget reminders are appended to the current turn's system prompt,
+each at most once per checkpoint window and reset when a checkpoint is
+installed: one when the remaining budget falls to
+`clamp(hardLimit * 0.15, 8k, 32k)`, asking the model to start closing out, and
+one at 2,000 tokens remaining, telling it to write down whatever must survive.
+Neither reminder is persisted or shown in the transcript.
 
-传入的用户提示先于第一个提供商参与预算
-请求。自动摘要请求在有界的 pi-ai 重试策略下重试瞬时的提供商失败
-（3 次重试，2s/4s/8s 退避，Stop 可取消）；配额、鉴权等确定性失败立即返回。
-预检守卫按 pi 实际序列化的提示（工具结果已截断）估算大小，而不是按原始消息；
-若该提示仍超出窗口，会恰好尝试一次缩减输入（工具结果截为短前缀、去掉思考块、
-不删除任何消息），之后才放弃摘要（ADR 0282）。如果在自动阈值或溢出期间正常压缩仍然失败
-恢复时，运行时会与之前的恢复检查点保持一个简短的恢复检查点
-摘要（如果可用）和一个适用的积极限制尾部。的
-完整的转录本保持持久且可见，而下一个模型请求
-仅接收恢复检查点和尾部。生命周期事件标记
-这作为 `fallback: "retained_tail"`，检查点的 mark 也携带同样的 `fallback`，
-因此渲染器可以显示警告并把转录行标为摘要生成失败，
-而不是虚假的成功。如果无法准备、持久或保留后备
-低于安全预算，用户行和助理错误仍然持久并且
-没有提供商请求开始。提供商报告的上下文溢出是最后一个
-恢复层：从模型上下文中省略失败的助手，压缩一次，
-并重试一次。第二次溢出仍处于终止状态。基岩的
-`prompt is too long: N tokens > M maximum` 形式映射到此路径。
+The hard boundary is the model context window minus request headroom.
+Headroom is the maximum of a 16,384-token reserve floor, model maximum output
+capped at 25% of the context window, and a 5% safety margin. The reserve floor
+is itself capped at half the window. The cut-point target passed to pi is
+derived from the model window as 20% of the hard budget clamped to
+8,000–64,000 tokens, then capped at half the hard budget; it decides where the
+boundary falls, not what survives it. The active-user retention limit is 20,000
+tokens, capped at half the hard budget so retention alone cannot fill a small
+window and leave the summary no room. None of these values are configurable.
 
-自动保护始终启用且用户不可配置。的
-运行时仍然接受禁用它的构造时覆盖，由
-测试；持久的 `contextCompaction` 设置将被忽略，因此会话无法
-失去防护，无法恢复。手动 `/compact` 仍然存在
-会话空闲时可用。检查点生成是可中止的并且
-计为运行状态，直到持久持久性完成。
+The incoming user prompt participates in budgeting before the first provider
+request. The automatic summary request retries transient provider failures
+under a bounded pi-ai retry policy (3 retries, 2s/4s/8s backoff, cancelled by
+Stop); deterministic failures such as quota or auth return at once. The
+preflight guard sizes the prompt pi actually serializes — tool results already
+capped — rather than the raw messages, and when that prompt still exceeds the
+window it tries exactly one reduced input (tool results cut to a short prefix,
+thinking dropped, no message removed) before giving up on the summary (ADR
+0282). If normal compaction still fails during an automatic threshold or
+overflow recovery, the runtime persists a short recovery checkpoint with the
+previous summary (when available) and an aggressively bounded applicable tail.
+The complete transcript remains durable and visible, while the next model
+request receives only that recovery checkpoint and applicable tail. The
+lifecycle event marks this as `fallback: "retained_tail"`, and the checkpoint's
+mark carries the same `fallback`, so the renderer shows a warning and labels
+the transcript row as a failed summary rather than a false success. If the
+fallback cannot be prepared, persisted, or kept below the safe budget, the user
+row and an assistant error remain durable and no provider request starts.
+Provider-reported context overflow is the last recovery layer: omit the failed
+assistant from model context, compact once, and retry once. A second overflow
+remains terminal. Bedrock's `prompt is too long: N tokens > M maximum` form
+maps to this path.
 
-## 5b.运营模式及规划状态
+Automatic protection is always enabled and is not user-configurable. The
+runtime still accepts a construction-time override that disables it, used by
+tests; persisted `contextCompaction` settings are ignored so a session cannot
+be left with the guard off and no way to restore it. Manual `/compact` remains
+available while the session is idle. Checkpoint generation is abortable and
+counts as running state until durable persistence completes.
 
-- 默认产品模式：**Agent**
-- 产品选择器是 **Agent | Plan | Goal**；内部对话页面
-  仍可能使用 `page = "chat"`
-- 模式是会话范围的，并与会话元数据一起保存
-- 思维水平是会话范围的，并通过会话元数据持续存在
-- 主机配置仅在会话空闲时可变。渲染器
-  保持 mode/provider/model/thinking/permission 控件在运行期间可编辑，
-  将最新选择视为下一回合状态，并刷新一个完整的
-  终端事件后的配置。
-- 更改 mode/provider/model/thinking 级别适用于下一回合，并且
-  当任何影响运行时的配置更改时重新创建 pi 运行时；
-  运行中的运行时不会观察到排队的渲染器选择。
-- 实时规划指示器跟随正在运行的回合。回合中暂存的模式选择不会把投影的
-  `planning`/`inactive` 提前翻过去；Composer 模式芯片可以立刻显示暂存模式，
-  但只有进行中的回合真正投影 `planning` 时才脉冲，紧凑的转录本规划行也是同一投影。
+## 5b. Operating mode and planning state
 
-实时计划状态的推导和预测为：
+- Default product mode: **Agent**
+- The product selector is **Agent | Plan | Goal**; the internal conversation page
+  may still use `page = "chat"`
+- Mode is session-scoped and persisted with session metadata
+- Thinking level is session-scoped and persisted with session metadata
+- Host configuration is mutable only while the session is idle. The renderer
+  keeps mode/provider/model/thinking/permission controls editable during a run,
+  treats the latest selection as next-turn state, and flushes one full
+  configuration after the terminal event.
+- Changing mode/provider/model/thinking level applies to the next turn and
+  recreates the pi runtime when any runtime-affecting configuration changes;
+  no in-flight runtime observes a queued renderer choice.
+- The live planning indicator follows the turn that is actually running. A
+  mode choice staged while a turn runs never flips the projected
+  `planning`/`inactive` state mid-turn: the renderer keeps the state of the
+  in-flight turn and only moves it to the staged contract mode after the
+  terminal event flushes the configuration, so `Plan / planning` surfaces
+  when the next prompt starts under the new mode. The Composer mode chip
+  pulse and the compact transcript Planning row are that same live
+  projection: the chip label may already show the staged mode, but it does
+  not pulse until the in-flight turn projects `planning`.
+
+The live planning state is derived and projected as:
 
 ```ts
 type OperatingMode = "agent" | "plan" | "goal";
@@ -417,368 +528,533 @@ type PlanningState =
 type PlanExecutionState = "queued" | "running" | "completed" | "interrupted";
 ```
 
-Plan 和 Goal 是两种 **合约模式** (D198)。他们共用一个耐用的
-批准表、一张投影 `PlanningState`、一张批准表面和一张
-执行队列；提案上的 `kind` 判别器 (`plan` | `goal`) 选择
-提示符、工件目录和面向用户的副本。 `Agent` 是唯一的
-没有种类的模式，并且是唯一可以自由执行的模式。因为
-投影是共享的，`planning` 和 `awaiting_approval` 始终一起读取
-可以知道会话处于哪种持久模式。
+Plan and Goal are the two **contract modes** (D198). They share one durable
+approval table, one projected `PlanningState`, one approval surface, and one
+execution queue; a `kind` discriminator (`plan` | `goal`) on the proposal selects
+the prompt, the artifact directory, and the user-facing copy. `Agent` is the only
+mode with no kind, and is the only mode that executes freely. Because the
+projection is shared, `planning` and `awaiting_approval` are always read together
+with the kind to know which durable mode a session is in.
 
-当用户选择 Plan 时，`Agent / inactive` 进入 `Plan / planning`
-空闲时或 Agent 调用 `EnterPlanMode` 时。在 Plan 中，Agent 可以
-检查、使用上下文控制、通过选定的权限模式运行 Bash，
-并调用 `SubmitPlan(title, markdown, question)`。主机核心保留
-在新的不可变中提交 Markdown 字节
-`.pi/plan/<unique-name>.md` 工件，记录其相对 path/hash/size 和
-在 `plan_approvals` 中构造 title/question，并将活动状态移至
-`awaiting_approval`。
+`Agent / inactive` enters `Plan / planning` either when the user selects Plan
+while idle or when the Agent calls `EnterPlanMode`. In Plan, the Agent can
+inspect, use context controls, run Bash through the selected permission mode,
+and call `SubmitPlan(title, markdown, question)`. Host-core preserves the
+submitted Markdown bytes in a new immutable
+`.pi/plan/<unique-name>.md` artifact, records its relative path/hash/size and
+structured title/question in `plan_approvals`, and moves the live state to
+`awaiting_approval`.
 
-仅批准 `approve` 和 `reject`。批准提交 `mode = agent`，
-显式权限模式、执行 ID 和 `execution_state = queued`
-一个主机事务中的相同 `plan_approvals` 行。的
-然后，同一个 Agent 使用 Agent 工具集进行新的模型转动。拒绝，
-绝对过期、待处理的中断、过时的响应或持久性
-失败关闭批准行并将活动状态返回为可编辑
-`Plan / planning` 不授予执行工具。后来接受的 Plan 提示
-是一个新的转折：早期的 `SubmitPlan` 调用仍然是历史不可变的
-检查点，并且 Agent 必须调用 `SubmitPlan`
-一次使用新的完整 Markdown 快照来创建新的工件。如果批准
-已提交且 queued/running 执行被中断，持久模式
-仍然是 Agent 并且不会重播执行。
+Approval has only `approve` and `reject`. Approval commits `mode = agent`, the
+explicit permission mode, an execution ID, and `execution_state = queued` on
+the same `plan_approvals` row in one host transaction. The
+same Agent then receives a fresh model turn with the Agent tool set. Reject,
+absolute expiry, a pending interruption, stale response, or persistence
+failure closes the approval row and returns the live state to editable
+`Plan / planning` without granting execution tools. A later accepted Plan prompt
+is a new turn: earlier `SubmitPlan` calls remain historical immutable
+checkpoints, and the Agent must call `SubmitPlan`
+once with a new complete Markdown snapshot to create a new artifact. If approval
+already committed and a queued/running execution is interrupted, durable mode
+remains Agent and the execution is not replayed.
 
-手动模式和配置选择可以由渲染器上演，同时
-轮运行，但主机持久性仅保持空闲状态。选择 Agent 是
-故意的用户覆盖并且不综合计划或批准。每个
-会话有 1 个活动轮次、1 个待批准轮次和 1 个 queued/running
-执行；暂存时，第二个提示或执行被拒绝
-仅在会话空闲后才提交配置。
+Manual mode and configuration selection may be staged by the renderer while a
+turn runs, but host persistence remains idle-only. Selecting Agent is an
+intentional user override and does not synthesize a plan or approval. Each
+session has one active turn, one pending approval, and one queued/running
+execution; a second prompt or execution is rejected, while staged
+configuration is submitted only after the session is idle.
 
-`Agent / inactive` 进入 `Goal / planning` 两种方式相同，由用户选择
-空闲时或通过 Agent 调用 `EnterGoalMode`。 Goal 有相同的工具
-表面为 Plan，只不过其提交工具是
-`SubmitGoal(title, markdown, question)` 及其工件被写入
-`.pi/goal/<unique-name>.md`。提交的 Markdown 是一个**目标合约**——
-要达到的结果、证明已达到的验收标准以及
-不得跨越的界限——不是实施步骤的列表。一个
-当会话处于活动状态时，提交工具会被拒绝并显示 `PLAN_KIND_MISMATCH`
-是另一种，当没有合约处于活动状态时，使用 `PLAN_NOT_ACTIVE`。
+`Agent / inactive` enters `Goal / planning` the same two ways, by user selection
+while idle or by the Agent calling `EnterGoalMode`. Goal has the identical tool
+surface as Plan, except that its submit tool is
+`SubmitGoal(title, markdown, question)` and its artifact is written to
+`.pi/goal/<unique-name>.md`. The submitted Markdown is a **goal contract** — the
+outcome to reach, the acceptance criteria that prove it was reached, and the
+boundaries that must not be crossed — not a list of implementation steps. A
+submit tool is rejected with `PLAN_KIND_MISMATCH` when the session's active kind
+is the other one, and with `PLAN_NOT_ACTIVE` when no contract is active.
 
-Goal 批准所承诺的内容与 Plan 批准所承诺的内容完全相同：`mode = agent`，
-显式权限模式、执行 ID 和 `execution_state = queued`
-同一行。排队执行指令因种类而异。批准的计划是
-重播为遵循的步骤；批准的目标指示 Agent 选择其目标
-自己的方法，通过运行检查来验证每个验收标准
-合同名称，在未满足标准和未经尝试的方法的情况下继续工作
-仍然存在，只有当边界阻挡它时才提前停止，并以
-逐个标准地报告所满足的内容和观察到的证据。
+Goal approval commits exactly what Plan approval commits: `mode = agent`, the
+explicit permission mode, an execution ID, and `execution_state = queued` on the
+same row. The queued execution instruction differs by kind. An approved plan is
+replayed as steps to follow; an approved goal instructs the Agent to choose its
+own approach, verify every acceptance criterion by running the checks the
+contract names, keep working while a criterion is unmet and an untried approach
+remains, stop early only when a boundary blocks it, and close with a
+criterion-by-criterion report of what was met and the evidence observed.
 
-## 5c。思维能力与流契约
+## 5c. Thinking capability and stream contract
 
-- 规范级别为 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、
-  和 `max`。会话（及子智能体）选择器还接受 `omit`，它不是目录/绑定能力：
-  运行时把智能体记账保持为 `off`，走低层 provider 流，不合成思考覆盖
-  （ADR 0194 / ADR 0295）。
-- 随包的 models.dev 发布快照对于已发布的推理支持具有权威性，
-  思维层面的映射、限制、输入模式、定价、标题和适配器
-  每个已解决的已知模型的兼容性。
-- 提供商配置不能覆盖已知模型语义。未知
-  自由格式的 id 仍然可以通过通用的纯文本、非推理的方式运行
-  模型，因此仅公开 `off`。
-- 不支持的请求级别采用所选 models.dev 模型的最近受支持级别规则：先向上扫描
-  先向上，然后向下。非推理提供商总是决心
-  `off`。
-- 视觉支持由同一条 models.dev 记录解析：只有 `input.includes("image")` 才启用
-  图片传输。未知/自定义模型 id 保持为保守的 text/path 模型，即使发现到的元数据
-  声称支持 `vision`。
-- 有效级别会传给 pi `Agent`；特定于提供商的请求
-  序列化仍然是 pi-ai 的责任。
-- Pi `thinking` 块变为 `UiMessage.thinking` 并且
-  `message_update.deltaThinking`。他们从不附加到 `content` 或
-  `deltaText`。
-- 恢复的助手历史重建单独的文本和思维块
-  在下一个回合之前。
-- 恢复的历史记录还可以从持久保存的工具 call/result 对中重建工具
-  工具行（`off`/`minimal`/`low`），因此重新创建了运行时
-  保持其完整的工作上下文——读取的文件内容、命令输出——
-  而不是折叠成裸露的聊天文本（D127）。中断的刀具行
-  恢复为错误结果；辅助行丢失的工具行
-  获得合成的仅呼叫辅助运营商，以便 call/result 对保留
-格式良好，适用于每个提供商 API。
-- 视觉运行时只从会话绑定的附件、scratch 与项目根目录中水合持久化的图片引用。
-  处于 10 MB 内联安全上限之内的图片会成为临时的 pi-ai 图片块；超限或不可用的
-  图片则退化为安全的 `@path` 回退。超限历史的水合会直接复制文件，不会先把内容
-  读进内存。Base64 绝不会被还原进持久的 UI 消息或转录记录。
-- 失败的助理消息仍然是持久的诊断记录条目，但
-  在以后的回合中永远不会恢复到 pi 模型上下文中。
-- 恢复的检查点可清除保留的助理消息中的提供商使用情况
-  用于预算。该用法测量了预压缩请求，并且不得
-  使摘要+尾部看起来与丢弃的上下文一样大。
-- 运行时重新创建和模型更改恢复最新的有效检查点。
-  仅当其边界保留在实时转录本中时，截断才会保留它；
-  仅当子级包含该边界时才分叉 copies/remaps。
-- 分叉会话接收新的会话 ID，并且没有共享运行时。它的第一个
-  提示创建一个新的 pi 运行时并仅从子进程恢复上下文
-  转录本，包括重新映射的工具 call/result 对。
-- 消息范围的助手 Fork/Edit 遵循相同的规则：子进程
-  转录可能会停止或替换所选的助理响应，但其
-  下一个提示无法重用源会话的 runtime/provider 缓存，因为
-  会话 ID 和重新映射的转录本身份是独立的 (D134)。
+- Canonical levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+  and `max`. Session (and subagent) selectors also accept `omit`, which is
+  not a catalog/binding capability: the runtime keeps agent bookkeeping at
+  `off` and uses the low-level provider stream so no thinking override is
+  synthesized (ADR 0194 / ADR 0295).
+- The bundled models.dev release snapshot is authoritative for published
+  reasoning support, thinking-level mapping, limits, input/output modalities,
+  pricing, and other model metadata. pi-ai remains responsible for request
+  serialization and adapter compatibility.
+- Provider configuration cannot override published reasoning, thinking,
+  limits, or other model metadata. The explicit attachment capability fields
+  are the exception: `supportsImages` and `supportsDocuments` are effective
+  binding overrides for the endpoint.
+- Unsupported requested levels use the selected models.dev model's
+  nearest-supported-level rule: scan upward first, then downward. A
+  non-reasoning provider always resolves to `off`.
+- Vision support starts from the same published model record. An absent or
+  `null` `supportsImages` follows its image input; `true` or `false` explicitly
+  enables or disables image transport for the configured binding. Unknown or
+  custom ids remain conservative text/path models unless their binding
+  explicitly enables image input.
+- The effective level is passed to the pi `Agent`; provider-specific request
+  serialization remains pi-ai's responsibility.
+- Pi `thinking` blocks become `UiMessage.thinking` and
+  `message_update.deltaThinking`. They never append to `content` or
+  `deltaText`.
+- Append-only `message_update` events set `stream: \"delta\"` and carry only the
+  new chunk. The runtime keeps the full `currentAssistant` in memory, coalesces
+  deltas every 16ms, and flushes before tool/terminal/abort/error/retry
+  boundaries. `message_end` is the authoritative snapshot (D412).
+- Restored assistant history reconstructs separate text and thinking blocks
+  before the next turn.
+- Restored history also reconstructs tool call/result pairs from persisted
+  tool rows (`toolCallId`/`toolArgs`/`toolResult`), so a recreated runtime
+  keeps its full working context — file contents read, command output —
+  instead of collapsing to bare chat text (D127). An interrupted tool row
+  restores as an errored result; a tool row whose assistant row was lost
+  gets a synthesized call-only assistant carrier so call/result pairs stay
+  well-formed for every provider API.
+- Vision runtimes hydrate persisted image refs only from the session-bound
+  attachment, scratch, and project roots. Images within the 10 MB inline
+  safety bound become transient pi-ai image blocks; oversized or unavailable
+  images become safe `@path` fallbacks. Oversized history hydration copies
+  files without first loading their contents into memory. Base64 is never
+  restored into durable UI messages or transcript records.
+- Failed assistant messages remain durable diagnostic transcript entries but
+  are never restored into pi model context on a later turn.
+- Restored checkpoints clear provider usage from retained assistant messages
+  for budgeting. That usage measured the pre-compacted request and must not
+  make the summary + tail appear as large as the discarded context.
+- Runtime recreation and model changes restore the newest valid checkpoint.
+  Truncation keeps it only when its boundary remains in the live transcript;
+  a fork copies/remaps it only when the child includes that boundary.
+- A forked session receives a new session id and no shared runtime. Its first
+  prompt creates a fresh pi runtime and restores context only from the child
+  transcript, including the remapped tool call/result pairs.
+- Message-scoped assistant Fork/Edit follows the same rule: the child
+  transcript may stop at or replace the selected assistant response, but its
+  next prompt cannot reuse the source session's runtime/provider cache because
+  the session id and remapped transcript identities are independent (D134).
 
-## 5f。子代理委托（D201、ADR 0062、ADR 0089）
+## 5f. Subagent delegation (D201, ADR 0062, ADR 0089)
 
-会话 Agent 可以把可拆分的工作交给在独立上下文中后台运行的委托，
-并按需取回报告。
+The session Agent can hand separable pieces of work to delegates that run in
+their own context, in the background, and report back on demand.
 
-**目录。** 定义是来自两个来源的 Markdown 文档：`agent-runtime` 中内嵌的五个
-内置函数（`explorer`、`code-reviewer`、`test-runner`、`fixer`、`ui-designer`），以及
-`~/.agents/subagents/*.md` 下的全局用户文档。没有项目级子代理目录，`.pi/agents`
-不会作为能力来源被扫描。用户文档在进入加载器前会根据应用本地启用状态过滤，
-内置定义则由加载器按同一份应用本地状态过滤（ADR 0270）。
-Electron main 每次启动加载全局目录，并在 sidecar 参数中传递
-`subagents` / `subagentProviders`，因此编辑定义会在下一次提示时生效。目录上限
-为 `MAX_SUBAGENT_DEFINITIONS`（16）；格式错误或不可读文档只产生启动诊断，
-不会让启动失败。
+**Catalog.** Definitions are Markdown documents from two sources: the five
+builtins shipped inline in `agent-runtime` (`explorer`, `code-reviewer`,
+`test-runner`, `fixer`, `ui-designer`) and the global user documents under
+`~/.agents/subagents/*.md`. There is no project-level subagent directory and
+`.pi/agents` is not scanned for capabilities. User documents are filtered by
+the app-local enabled state before they reach the loader, and the shipped
+builtins are filtered by that same app-local state inside it (ADR 0270).
+Electron main loads
+`subagentProviders` in the sidecar params, so editing a definition takes effect
+on the next prompt. The catalog is capped at `MAX_SUBAGENT_DEFINITIONS` (16);
+a malformed or unreadable document becomes a launch diagnostic and never fails
+the launch.
 
-Frontmatter 新增 `permission: inherit | ask | accept-edits | auto`（默认
-`inherit`）。使用默认的 `inherit`（包括所有内置定义）时，sidecar 不附加覆盖，
-委托使用会话的有效权限模式；因此父会话为 `auto` 时，明确的外部路径也不会再次
-弹出授权卡。只有内置定义和用户定义可以声明非 `inherit` 作用域；项目定义随仓库
-一起到来，声明会在解析时被丢弃并留下警告，其委托仍在会话的有效模式下运行 ——
-想要该作用域的用户把文档复制到自己的 agents 目录。可写的内置 `fixer` 与
-`ui-designer` 也默认继承父会话：`auto` 下跟随父会话自动放行，而 `ask` 和
-`accept-edits` 仍保留各自的审批边界。显式声明的内置或用户作用域仍然是一次有意的覆盖。
+Frontmatter adds `permission: inherit | ask | accept-edits | auto` (default
+`inherit`), which controls the scope the delegate's tool calls resolve under
+instead of the session mode (§5f.1). `tools: inherit` (alone or with assignable
+extras) opts a definition into the parent session's live tool catalog minus a
+deny list (ADR 0246 / D415); builtins stay on today's whitelist. `idle-timeout`
+and `max-duration` still parse for compatibility but no longer kill a run
+(D328). Only builtin and user definitions may declare a permission scope —
+both express a choice the user already made, whereas a project definition
+arrives with the repository, so honoring its scope would let cloned code grant
+itself `auto`. A project document that declares a non-`inherit` scope keeps
+loading with a warning and its delegates run under the session's effective
+mode; a user who wants the scope copies the document into their own agents
+directory. Builtins, including the write-capable `fixer` and `ui-designer`, do
+not override the parent session by default: they follow `auto` completely
+(including explicit external paths) while `ask` and `accept-edits` retain
+their normal approval behavior. An explicit builtin or user scope remains an
+intentional override.
 
-**工具（ADR 0089）。** 委托是四个工具的生命周期，仅在 Agent 模式下且目录
-非空时构建，四个工具都属于 Agent 核心集而不是第 7.1 节的按需目录：
+**Tools (ADR 0089).** Delegation is a four-tool lifecycle, built only in Agent
+mode and only when the catalog is non-empty, and all four belong to the Agent
+core set rather than the on-demand catalog of §7.1:
 
-- `Task(agent, task, description?, model?)` — 验证其参数（未知的 `agent`、空的
-  `task`、无法解析的模型引脚以及工具全部不可用的定义，各自返回一个工具
-  错误解释失败而不是抛出），**在后台**启动委托，并立即返回一个
-  `delegationId`。当会话已经在运行 `MAX_SUBAGENT_CONCURRENCY`（10）个
-  委托时，启动会以工具错误失败。
+- `Task(agent, task, description?, model?, resume?)` — validates its arguments (an
+  unknown `agent`, an empty `task`, an unresolvable model pin and a definition
+  whose tools are all unavailable each return a tool error explaining the
+  failure rather than throwing), starts the delegate **in the background**, and
+  returns immediately with a `delegationId`. Starting fails with a tool error
+  when the session already runs `MAX_SUBAGENT_CONCURRENCY` (10) delegates.
 
-  `Task` 工具接受一个可选的 `model` 参数（`"provider/modelId"`），用于在本次
-  运行中覆盖该委托的模型。解析优先级：Task.model 参数 → 定义 frontmatter 的
-  引脚 → 会话模型。父 agent 会在系统提示中看到一份模型摘要，列出提供商设置里
-  所有标记为 `availableForSubagents` 的模型。若委托目录为空，提示会告诉模型
-  省略 `model`，使用定义的固定模型，无固定模型时继承会话模型；显式给出的键如果正好就是当前会话的
-  provider/model，同样按继承处理。其他显式模型键必须已配置并已为委托启用。
-  Electron 单独传递 `subagentModelKeys` 与 `subagentProviders`：后者可含仅供定义
-  固定使用的模型，只有前者授权缓存覆盖并生成模型摘要。缺省列表为空；按需解析成功
-  写入独立覆盖缓存，不得覆盖定义固定模型或改变运行时复用判断。按需匹配使用与
-  固定模型相同的唯一 id/vendor/name 规则。许可列表变化会在下一次启动时替换空闲运行时。
-  省略 `model`，或 `Task.model` 重复该定义自己的固定模型键时，定义仍可使用未勾选自动调度的固定模型。Task 的定义目录展示
-  每项默认模型，并提示省略或重复该键以保留默认值。参见
-  [ADR subagent-model-opt-in](/adr/subagent-model-opt-in)。
-  当某个模型键没有被预先解析时，运行时会请求 Electron main 通过
-  `provider.resolveSubagentModel` RPC 按需解析。已启动的 `Task` 结果详情会记录
-  本次运行实际使用的 `modelId`。
-- `TaskWait(delegationIds?, mode?, minCompleted?, timeoutSeconds?)` — 收敛
-  正在运行的委托（默认全部）并返回它们的报告；`mode: "any"` 配合
-  `minCompleted` 可以在前 N 个完成时提前收敛。已结算的委托立即返回，
-  因此按 id 重读报告代价很低。合并结果上限为 `MAX_TASKWAIT_RESULT_CHARS`
-  （50k）。`timeoutSeconds` 默认 600 秒并被夹到 900 秒：等待会阻塞回合，
-  所以这个上限决定了会话最长能看起来卡住多久。到点不是失败，也不会停掉委托
-  （D328）—— 等待返回心跳（谁、状态、已用时、轮数、最后工具）以及已完成的
-  报告。运行时会保持父级回合打开，并在它们完成时把剩余报告交回，即使父级已经
-  停止调用工具。只有 `TaskStop` 或用户 Stop 才会中止委托。
-- `TaskList()` — 报告会话的每个委托及其状态和运行中心跳。
-- `TaskStop(delegationIds?)` — 停止正在运行的委托（默认全部）；等待每次
-  中止结算后，在 `details.stopped[]` 上持久化 `status: "stopped"` 与
-  `completedAt`。被停止的委托读作 `stopped`。
+  The `Task` tool accepts an optional `model` parameter
+  (`"provider/modelId"`) that overrides the delegate's model for that run.
+  Resolution priority: Task.model parameter → definition frontmatter pin →
+  session model. The parent agent sees a model summary in the system prompt
+  listing all models marked `availableForSubagents` in provider settings. If
+  the delegation catalog is empty, the prompt tells the model to omit `model`
+  and use the definition pin, or inherit the session model when unpinned; an
+  explicit key that exactly names the current session provider/model is treated as the same inheritance case. Other
+  explicit model keys must be configured and enabled for delegation. Electron
+  sends `subagentModelKeys` separately from `subagentProviders`: the latter may
+  include definition-only pins, while only the former authorizes cached
+  overrides and the model summary. Missing keys default to an empty list;
+  successful on-demand resolution is cached separately from launch opt-in and
+  does not rewrite definition pins or runtime reuse matching. On-demand
+  provider matching uses the same unique id/vendor/name rule as pin resolution.
+  A changed opt-in list retires the idle runtime on the next launch. Pins remain usable
+  by their own definitions when `model` is omitted or when `Task.model` repeats
+  that definition's own pin key, even without an opt-in.
+  The Task definition catalog displays each default model and treats omitting
+  or repeating that key as keeping the default. See
+  [ADR subagent-model-opt-in](../../adr/subagent-model-opt-in.md).
+  When a model key is not pre-resolved, the runtime asks Electron main to resolve it
+  on-demand via the `provider.resolveSubagentModel` RPC. The started `Task`
+  result details record the effective `modelId` and resolved `thinkingLevel`
+  used for that run. The level is resolved after inheritance and target-model
+  capability clamping; `omit` records that no provider thinking override was
+  sent.
+- `TaskWait(delegationIds?, mode?, minCompleted?, timeoutSeconds?)` — converges
+  on running delegations (defaults to all of them) and returns their reports;
+  `mode: "any"` with `minCompleted` converges as soon as the first N settle.
+  Settled delegations return immediately, so re-reading a report by id is
+  cheap. The joined result is bounded to `MAX_TASKWAIT_RESULT_CHARS` (50k); if
+  the bound omits finished reports, those reports remain undelivered and the
+  runtime sends them on the idle resume (or they can be re-read by id).
+  `timeoutSeconds` defaults to 600 and is clamped to 900: the wait blocks the
+  turn, so the ceiling is what bounds how long a session can look hung. Expiry
+  is not a failure and does not stop the delegates (D328) — the wait returns a
+  heartbeat (agent, status, elapsed, turns, last tool) plus any finished
+  reports. The runtime keeps the parent turn open and delivers remaining
+  reports when they finish, even if the parent already stopped calling tools.
+  Only `TaskStop` or user Stop aborts a delegate.
+- `TaskList()` — reports every delegation of the session with status and a
+  running heartbeat.
+- `TaskStop(delegationIds?)` — stops running delegations (defaults to all);
+  waits for each abort to settle, then persists `status: "stopped"` with
+  `completedAt` on `details.stopped[]`. Stopped delegations read as `stopped`.
 
-**委托循环。** `SubagentRun` 是同一 sidecar 进程中的第二个 pi `Agent`，
-使用该定义的系统提示、其（可能已固定的）provider/model、其声明的工具，
-以及与父级相同的主机连接，并遵循与父级相同的有界提供程序重试策略。
-委托没有轮次上限：它会在自己结束时、父级调用 `TaskStop` 时、用户 Stop 时结束，
-或因父级终态错误而被中止（ADR 0253）。仍声明 `maxTurns` 的文档会正常加载，该键
-会像其他任何无法识别的 frontmatter 键一样被忽略。
-`maxTokens` 是可选的按定义输出上限（最大 200000）；省略、`none` 或 `0` 表示跟随模型
-已发布的上限。它会覆盖为该委托构建的模型上的 `maxTokens`，因此适配器派生出的
-`max_tokens` / `max_completion_tokens` / `max_output_tokens` 都会带上它；它只约束该
-委托自身的响应 —— 会话自己的请求仍沿用模型绑定。超过天花板的值属于笔误，会被钳制
-而不会转发给 provider。
-内置的 `explorer` 声明 `Read`、
-`Glob`、`Grep` 和 `Bash`，而 `code-reviewer` 保持只读；`fixer` 与 `ui-designer`
-会在工作区内写入，`ui-designer` 另外声明 `BrowserPreview`，以便在报告前检查渲染结果。
-其状态为 `completed`、`failed`、`aborted`、`timed_out` 以及仅存在于注册表的
-`stopped`；终态通过 `TaskWait` 呈现，其文本是报告（上限为
-`MAX_SUBAGENT_REPORT_CHARS`，12k），其 details 携带 `delegationId`、`agent`、
-`status`、`startedAt`、结算后的 `completedAt`、`turns`、`toolCalls`，以及失败或
-超时时的 `error`。`startedAt` 与 `completedAt` 是以毫秒计的运行时时间戳，也是
-渲染器展示委托时长的事实来源；`Task` 那次立即返回的工具调用时长只覆盖启动
-后台工作这一段。
+**Live settlement.** When a delegate settles, the runtime refreshes its original
+`Task` transcript row with the terminal delegation summary (`status`,
+`completedAt`, counters, and failure details when present), using the existing
+full `message_end` snapshot. This does not depend on the parent calling
+`TaskWait` / `TaskList` / `TaskStop` or on other delegates finishing. The
+snapshot retains the Task call's identity, arguments, tool timing, and token
+usage; it does not execute the tool again or add usage to the parent turn.
+The initial Task result is emitted first even if the delegate settles before
+that result arrives. Electron persists the refreshed row through the normal
+message outbox so session switching and history reload preserve the outcome.
+An outbox write acknowledges only the snapshot sent to the host; a newer
+snapshot replacing the same message ID during that write remains queued.
+No new event type or storage schema is required.
 
-**委托生命周期（D328）。** 运行时不再用空闲或总时长掐死委托。
-`idle-timeout` / `max-duration` 仍会解析以便旧文档能加载，但不会被武装。
-委托一直跑到自己结束、失败、被 `TaskStop`，或用户
-Stop / 运行时销毁。主 Agent 用 `TaskStop` 判断要不要取消；运行中只能看到
-一行心跳（谁、状态、已用时、轮数、最后工具）。
+**Delegate loop.** A `SubagentRun` is a second pi `Agent` in the same sidecar
+process with the definition's system prompt, its (possibly pinned)
+provider/model, its declared tools, and the same host connection. A pinned or
+explicitly selected delegation model uses the exact provider/model binding
+saved in Settings for its effective thinking capability; models.dev supplies
+the baseline only. It runs under
+the same bounded provider retry policy as the parent. A delegate has no turn
+limit: it ends when it finishes, when the parent calls `TaskStop`, when the user
+Stops, or when a terminal parent error aborts it (ADR 0253). A document that
+still declares `maxTurns` loads normally and the key is ignored like any other
+unrecognized frontmatter key. `maxTokens` is an optional per-definition
+output cap (maximum 200000); omitted, `none`, or `0` follows the model's
+published limit. It overrides `maxTokens` on the model built for that delegate,
+so the adapter's derived `max_tokens` / `max_completion_tokens` /
+`max_output_tokens` carry it, and it binds that delegate's own responses only —
+the session's requests keep the model binding. A value past the ceiling is a
+typo and is clamped rather than forwarded to the provider.
+The built-in `explorer` declares `Read`,
+`Glob`, `Grep`, and `Bash`, while `code-reviewer` remains read-only;
+`fixer` and `ui-designer` write inside the workspace, and `ui-designer` adds
+`BrowserPreview` so it can open and inspect its rendered result before reporting.
+`BrowserPreview` only opens a live-reloading workspace HTML page; responsive,
+keyboard-focus, and reduced-motion checks require project-provided browser
+tests or other tooling. Its statuses are `completed`, `failed`,
+`aborted`, `timed_out` and the registry-only `stopped`;
+the terminal ones surface through `TaskWait`, whose text is
+the report (bounded to `MAX_SUBAGENT_REPORT_CHARS`, 12k) and whose details
+carry `delegationId`, `agent`, `modelId`, `thinkingLevel`, `status`, `startedAt`,
+`completedAt` when settled, `turns`, `toolCalls` and, on failure or timeout,
+`error`. The same effective model and thinking fields are included in the
+immediate `Task` result and in lifecycle snapshots so live and restored
+delegation views do not re-derive them from definitions or parent settings.
+`startedAt` and `completedAt` are runtime timestamps in milliseconds and are the source of
+truth for renderer delegation duration; the immediate `Task` tool-call
+duration only covers starting the background work.
 
-当父级在委托仍在跑时停止调用工具，运行时吞掉这次 `agent_end`，保持持久
-回合打开，等委托完成后再把报告塞回父级。父级收工不会中止它们。
+**Delegate lifetime (D328).** The runtime does not idle-timeout or
+duration-timeout a delegate. `idle-timeout` / `max-duration` frontmatter still
+parses so old documents load, but those values are not armed. A delegate runs
+until it finishes, fails, is `TaskStop`'d, or the user Stops / the runtime is
+disposed. The parent agent judges whether to
+cancel via `TaskStop`; a one-line heartbeat (who, status, elapsed, turns, last
+tool) is what it has to go on while the delegate is running.
 
-致命的 provider/stream 错误（包括耗尽的 HTTP 429）、父级中止，仍分别保留它们既有的
-`failed` 和 `aborted` 结果。
-父级终态错误还会中止残留委托、跳过续跑提示，并把会话恢复为空闲，这样
-“继续”不会变成 `AGENT_BUSY`（D352）。
+When the parent stops calling tools while delegates are still running, the
+runtime swallows that `agent_end`, keeps the durable turn open, waits for the
+delegates, and prompts the parent with their reports. Ending the parent loop
+does not abort them.
 
-**可恢复的委托（ADR 0279）。** `Task` 接受一个可选的 `resume` 参数，携带同一会话中
-某个已结算委托的 `delegationId`。恢复后的委托是一个新的 `SubagentRun`，以该链此前的
-消息为种子 —— 最初的 `task` 简述，加上这条链产出的每一行 —— 然后再以新的 `task`
-提示它，于是一个已经读过或改过某个文件的委托会从那份上下文继续，而不是从零开始。
-种子完全由 transcript 支撑：链的行恰好是那些 `parentToolCallId` 属于该链某个 `Task`
-调用的行，它们用委托自己的绑定（固定的委托模型未必是会话模型）转换成 provider 消息。
-不保活任何内存对象，也不引入新的事件类型、存储 schema 或工具参数。
+Fatal provider/stream errors (including exhausted HTTP 429) and parent aborts
+retain their existing `failed` and `aborted` outcomes. A terminal parent error
+also aborts leftover delegates,
+skips the resume prompt, and returns the session to idle so Continue is not
+`AGENT_BUSY` (D352).
 
-一条链是共享同一个委托会话的那些 `Task` 调用的序列：第一次调用，加上此后每一个把更早
-的 `delegationId` 当作 `resume` 传入的调用。运行时在启动时从持久化的 transcript 重建
-链索引 —— 每个 `Task` 行都在 `toolResult.details` 里带着自己的 `delegationId` 与结算
-状态、在 `toolArgs.resume` 里带着被恢复的 id，并在重建时归一化 agent 名 —— 因此可恢复性
-能挺过一次 sidecar 重启。链的身份（`delegateSessionId`）始终留在内部；父级只会传
-`delegationId`，由反向映射解析它。
+**Resumable delegations (ADR 0279).** `Task` accepts an optional `resume`
+parameter carrying the `delegationId` of a settled delegation in the same
+conversation. The resumed delegate is a new `SubagentRun` seeded with the
+chain's prior messages — the original `task` brief plus every row the chain
+produced — and then prompted with the new `task`, so a delegate that already
+read or changed a file continues from that context instead of starting cold.
+Seeding is transcript-backed: the chain's rows are exactly those carrying
+`parentToolCallId` for one of the chain's `Task` calls, and they are converted
+into provider messages with the delegate's own binding (a pinned delegation
+model is not the session model). Nothing is kept warm in memory and no new
+event type, storage schema, or tool parameter is introduced.
 
-只有 `completed` 与 `failed` 的链可恢复；`stopped` 和 `aborted` 的运行是终态，只能靠
-新建委托重来；而应用在它还在工作时被关掉的那种运行会重建成 `interrupted`，同样不可
-恢复。只读工具输出超过 `MAX_RESUMABLE_READ_LINES`（50000）的链会从可复用清单里消失，
-且不做链内裁剪，因此恢复绝不会悄悄丢掉历史。注册表按定义名最多保留
-`MAX_RESUMABLE_CHAINS_PER_AGENT`（2）条可复用链，并在每次委托结算时淘汰最久未活动的
-那些；仍在工作的链永不淘汰，所以这个上限只算可复用链，活跃链可以让它暂时超出。
+A chain is the sequence of `Task` calls that share one delegate session: the
+first call, plus every later call that passed the earlier `delegationId` as
+`resume`. The runtime rebuilds the chain index from the persisted transcript at
+launch — each `Task` row carries its own `delegationId` and settled status in
+`toolResult.details` and the resumed id in `toolArgs.resume`, with the agent
+name normalized on rebuild — so resumability survives a sidecar restart.
+Chain identity (`delegateSessionId`) stays internal; the parent only
+ever passes a `delegationId`, and the reverse map resolves it.
 
-恢复严格限定在同一会话内，且从不排队：对正在运行的委托做恢复是一个工具错误，提示父级
-先用 `TaskWait` 收敛；一条链在任何时刻最多只有一条活跃记录。`model` 与 `resume` 同时
-给出会被拒绝，而恢复后的运行会沿用该链记录的绑定：优先使用链解析出的
-`providerId/modelId` 键，从 transcript 重建的链则按模型 id 匹配；当什么都匹配不上时，
-运行会继续使用定义当前的绑定，并把先前的模型 id 记进它生命周期 details 的
-`modelChangedFrom`。有意换模型意味着新建一个委托。未知 id、属于另一个定义的 id、
-不可恢复的状态、超出读预算的链，以及行已经不在的链，各自返回一个说明原因的工具错误；
-对未知 id，还会一并列出当前可复用的 id。
+Only `completed` and `failed` chains are resumable; `stopped` and `aborted` runs
+are terminal and revive only by starting a new delegation, and a run the app
+closed while it still worked rebuilds as `interrupted`, which is not resumable
+either. A chain whose read-only tool output exceeds `MAX_RESUMABLE_READ_LINES`
+(50000) leaves the reusable list without an in-chain trim, so a resume never
+silently drops history. The registry keeps at most
+`MAX_RESUMABLE_CHAINS_PER_AGENT` (2) reusable chains per definition name and
+evicts least-recently-active ones whenever a delegation settles; a chain that is
+still working is never evicted, so the bound counts reusable chains and a live
+chain may sit above it until it settles.
 
-父级通过系统提示发现可复用的链：那里列出每条链最新的 `delegationId`、它的目标，以及它
-读过的文件最多 `MAX_RESUMABLE_LISTED_FILES`（8）个（超出部分带 `(+N more)` 后缀）。
-清单会在委托结算时围绕既有的提示段落重新组装。对 `MAX_SUBAGENT_CONCURRENCY`、
-`TaskWait`、`TaskList`、`TaskStop` 以及生命周期快照而言，恢复来的运行就是一个普通
-委托。`Task` 的立即返回结果与生命周期 details 会增加 `resumedFrom` 以便追溯；
-transcript 把一条链渲染成它最新 `Task` 卡片下的一段连续多轮对话，不带单独的
-“已恢复”标记。
+Resume is strictly same-session and never queues: resuming a running
+delegation is a tool error telling the parent to converge with `TaskWait`
+first, and a chain has at most one live record at a time. `model` and `resume`
+together are rejected, and a resumed run keeps the chain's recorded binding:
+the `providerId/modelId` key it resolved is preferred, a chain rebuilt from the
+transcript is matched by model id, and when nothing resolves it the run
+continues on the definition's current binding and records the previous model id
+as `modelChangedFrom` in its lifecycle details. Changing models on purpose means
+starting a new delegation. An unknown id, an id belonging to another definition,
+a non-resumable status, an over-budget chain, and a chain whose rows are gone
+each return a tool error naming the reason and, for an unknown id, the reusable
+ids when there are any.
 
-**模型引脚。** Frontmatter 中的 `model: <provider>/<model>` 在每次启动时于
-Electron main 里解析一次——凭据与 models.dev 快照都在那里——匹配提供商 id、
-厂商键或显示名称，且最多 `MAX_SUBAGENT_PROVIDERS`（8）个不同的提供商。无法
-解析的引脚会被有意地排除在绑定映射之外；运行时把这个缺失的条目转成一个点名
-该引脚的工具错误，绝不回退到会话模型。定义中的 `thinkingLevel` 会按第 5c 节
-同样的"就近支持"规则，对照解析出的模型做钳制；特殊值 `omit` 故意
-不发送思考覆盖，把控制权留给提供商适配器自己的默认行为。
-`agents.create` 和 `agents.update` 只接受这种 `<provider>/<model>` 形状的引脚；
-缺少提供商部分的值会被拒绝并返回 `SUBAGENT_INVALID`，而不是被写入，因为运行时
-永远无法解析它。只有斜杠是结构性字符——提供商部分按归一化别名匹配，
-因此包含空格的显示名是合法的。
+The parent discovers reusable chains through the system prompt, which lists
+each chain's latest `delegationId`, its objective, and up to
+`MAX_RESUMABLE_LISTED_FILES` (8) of the files it read (with a `(+N more)`
+suffix past that). The list is recomposed when a delegation settles, around the
+existing prompt sections. A resumed run is an ordinary delegation for
+`MAX_SUBAGENT_CONCURRENCY`, `TaskWait`, `TaskList`, `TaskStop`, and lifecycle
+snapshots. The immediate `Task` result and the lifecycle details add
+`resumedFrom` for audit; the transcript renders a chain as one continuous
+multi-turn conversation under its latest `Task` card, with no separate
+"resumed" marker.
 
-**事件与上下文。** 委托发出的每个事件都在信封上携带 `parentToolCallId` 和
-`agentName`，Electron main 会把这两者一并复制到持久化的行上。运行时重建模型
-上下文时会跳过每一条带 `parentToolCallId` 的行：父级从始至终只通过 `TaskWait`
-或运行时的完成提示（D328）看到报告，重放委托的行既与这一点相矛盾，也会重新
-引入委托机制本就是为了避免的上下文开销。
+**Model pins.** `model: <provider>/<model>` in the frontmatter is resolved once
+per launch in Electron main, where credentials and the models.dev snapshot live, against
+provider id, vendor key or display name, and capped at
+`MAX_SUBAGENT_PROVIDERS` (8) distinct providers. An unresolvable pin is omitted
+from the binding map on purpose; the runtime turns the missing entry into a tool
+error naming the pin, and never falls back to the session model. A definition's
+`thinkingLevel` is clamped against the resolved model with the same
+nearest-supported rule as §5c, except that the special `omit` value deliberately
+sends no thinking override and leaves the provider adapter's own default in
+control.
+`agents.create` and `agents.update` accept the pin only in that
+`<provider>/<model>` shape; a value without a provider half is rejected with
+`SUBAGENT_INVALID` rather than written, because the runtime could never resolve
+it. Only the slash is structural — the provider half is matched by a normalized
+alias, so a display name containing spaces is valid.
 
-**回合所有权。** 委托的生命周期永远不会轮到 Electron main
-处理。父级可以在 `Task` 之后继续自己的主线或对用户说话。如果它在委托仍在
-跑时停止调用工具，运行时保持持久回合打开，并在它们完成时交回报告。用户
-Stop、`TaskStop`、运行时销毁或父级终态错误（D352）会中止仍在运行的委托。
 
-### 5f.1 委托权限作用域（ADR 0089）
+**Ordered model fallback.** A definition may declare `fallbackModels` as an
+inline list (`fallbackModels: [provider/model, other/model]`) or a block list.
+The managed host `agents.create` / `agents.update` inputs and records expose
+`fallbackModels?: string[]`; omission preserves a list on update and `[]`
+clears it. Existing `model` pins and Task override priority remain unchanged.
+A missing primary pin still fails before launch. Alternatives are resolved in
+Electron with the definition pins and count toward the existing eight-provider
+ceiling. They authorize only that definition, including when Task overrides
+its primary, and do not enter the independent `Task.model` opt-in catalog.
 
-委托的工具调用与父级走同一条 host `tools.execute` 路径。当定义声明了
-`permission` **且其来源是 `builtin` 或 `user`** 时，sidecar 把作用域附加到
-委托的工具 RPC 上，host-core 在该模式下裁决调用，而不是使用会话的有效权限
-模式。`project` 定义声明的作用域会在解析时被丢弃并留下警告，因此打开一个
-不可信的仓库无法把它自己的委托提权到会话模式之上。两个门禁与对待会话
-模式一样始终高于作用域：契约模式的硬拒绝（委托只存在于 Agent 模式）
-和外部路径门禁 —— 带作用域的委托在触碰工作区与 scratch 根之外的任何
-东西之前仍然会询问。因此 `accept-edits` 意味着“工作区内的
-Write/Edit 免提示裁决；其余一切按会话模式行事”。
+After a provider failure exhausts that model's retries, or is non-retryable,
+the same child Agent advances through these alternatives in order. Actual
+provider-id/model-id duplicates are skipped; an unresolved alternative is
+reported and skipped. The runtime removes only the terminal failed assistant
+from model context, preserving the original user task and completed tools,
+then continues with the next provider's adapter, credentials, request headers,
+output cap, and re-clamped original thinking selection. `omit` stays omitted.
+The completed tool history is never replayed by the fallback controller.
+Host/tool failures, unexpected thrown errors, no-report outcomes, and Stop do
+not trigger fallback. The run's original owner and abort signal govern every
+attempt, and usage/counters include all attempts. No configured alternatives
+means the existing single-model behavior.
 
-周围的合约位于 `03-tools-and-permissions.md` §10.2（什么是
-代表可以致电），`04-data-storage.md` §4.7a（持久归属），
-`04-ux/03-permission-ux.md` §6a（多个待处理请求）以及
-`04-ux/08-component-spec.md` §9.9（代表团如何解读）。
+Failure diagnostics remain in the child transcript, bounded parent report,
+and additive `modelFailures` lifecycle detail. Lifecycle model/thinking fields
+track the effective alternative, including after settlement and reload. If all
+alternatives fail, the result remains `failed` with the final provider error.
+See [ADR subagent-model-fallback](../../adr/subagent-model-fallback.md).
 
-### 5f.2 不存在同级或父级之间的通道（D326、ADR 0165）
+**Events and context.** Every event a delegate emits carries
+`parentToolCallId` and `agentName` on its envelope, and Electron main copies both
+onto the persisted row. When the runtime rebuilds model context it skips every
+row with `parentToolCallId`: the parent only ever saw reports through
+`TaskWait` or the runtime's completion prompt (D328), and replaying delegate
+rows would both contradict that and reintroduce the context cost delegation
+exists to avoid.
 
-并发的受委托方之间不互发消息，父 agent 也不向其他会话发消息。进程内的
-`Peer` 邮箱（ADR 0138 / ADR 0140）与 host-core 的 A2A 代理（ADR 0147 /
-ADR 0162 / ADR 0164）均已撤销。
+**Turn ownership.** A delegate's lifecycle never reaches Electron main's turn
+handling. The parent may keep working or talk to the user after `Task`. If it
+stops calling tools while delegates still run, the runtime keeps the durable
+turn open and delivers the reports when they finish. User Stop, `TaskStop`,
+runtime dispose, or a parent fatal error (D352) abort a still-running
+delegate.
 
-协调工作仍然走既有的委托契约：父方撰写彼此独立的任务简报，启动 `Task`，
-再通过 `TaskWait` / `TaskList` / `TaskStop` 收集各自完备的报告。如果还需要
-下一轮工作，那就是一个新的 `Task`，其简报里包含先前的报告。`A2A` 与 `Peer`
-不是可分配的工具；定义中若出现这两个名字，会被当作未知工具名，并在解析时
-带警告丢弃。
+### 5f.1 Delegate permission scope (ADR 0089)
 
-## 6. 提供商和模型
+A delegate's tool calls flow through the same host `tools.execute` path as the
+parent's. When the definition declares a non-`inherit` `permission` **and its
+source is `builtin` or `user`**, the sidecar attaches the scope to the
+delegate's tool RPCs and host-core resolves the call under that mode instead of
+the session's effective permission mode. With no declared scope — the default,
+and the policy used by the builtins — no override is attached, so the delegate
+inherits the parent's effective permission mode, including `auto` for explicit
+external paths. A `project` definition's declared scope is dropped at parse
+time with a warning, so opening an untrusted repository cannot escalate its
+own delegates past the session mode. Two gates stay above any explicit scope,
+exactly as they stay above the session mode: the contract modes' hard deny
+(delegation only exists in Agent mode) and the external-path gate. An explicit
+`accept-edits` still means "Write/Edit inside the workspace resolve without a
+prompt; external paths and other tools keep their normal approval behavior";
+an explicit scope remains an intentional override.
 
-> 完整政策：`11-provider-model-system.md`、`12-provider-config-schema.md`、`13-model-catalog-and-selection.md`。
+The surrounding contracts live in `03-tools-and-permissions.md` §10.2 (what a
+delegate may call), `04-data-storage.md` §4.7a (persisted attribution),
+`04-ux/03-permission-ux.md` §6a (more than one pending request) and
+`04-ux/08-component-spec.md` §9.9 (how a delegation reads).
 
-覆盖策略：
+### 5f.2 No in-process sibling or parent-to-parent Task channel (D326, ADR 0165)
 
-1. **由 pi-ai 公开的原生提供商**（OpenAI、Anthropic、Google 以及其他可在 pin 版本上使用的提供商）
-2. **兼容OpenAI**网关和长尾供应商的一流路径
-3. **具有协议配置文件的自定义提供商**
-4. **可刷新模型目录** + **自由格式模型 ID**（无封闭许可名单）
+Concurrent `Task` delegates do not message each other, and the parent Task
+runtime does not address other conversations. The in-process `Peer` mailbox
+(ADR 0138 / ADR 0140) and the host-core A2A broker (ADR 0147 / ADR 0162 /
+ADR 0164) are withdrawn.
 
-MVP UI 始终至少包括：
+Coordination stays on the existing delegation contract: the parent writes
+independent briefs, starts `Task`s, and collects self-contained reports through
+`TaskWait` / `TaskList` / `TaskStop`. A later round of work, if needed, is a
+new `Task` whose brief includes earlier reports. `A2A` and `Peer` are not
+assignable tools; a definition that names either is treated as an unknown
+tool name and dropped with a parse warning.
+
+### 5f.3 Plugin-mediated session collaboration (D409, ADR 0239)
+
+The official `pi.session-orchestrator` plugin is the reviewed exception for
+durable cross-session communication. Its `desktop.control` calls are composed
+outside the `Task` runtime and are admitted only from the plugin's active
+Agent tool invocation. Host-core owns the source/target Session IDs, durable
+delivery ledger, permission ceiling, actual target turn, completion callback,
+cancellation, restart fence, and transcript provenance. Existing sessions keep
+their own project, model, context, and permission configuration; a newly
+spawned worker inherits the initiating session's project and permission
+ceiling.
+
+Session messages are framed as agent-provided task data and never become new
+human authorization. A completion callback is durable and at-most-once, and
+does not automatically trigger another callback. This path does not restore
+the withdrawn `A2A` or `Peer` tools and does not change `Task`, `TaskWait`,
+`TaskList`, or `TaskStop` semantics.
+
+## 6. Providers & models
+
+> Full policy: `11-provider-model-system.md`, `12-provider-config-schema.md`, `13-model-catalog-and-selection.md`.
+
+Coverage strategy:
+
+1. **Native providers** exposed by pi-ai (OpenAI, Anthropic, Google, and others available at pin version)
+2. **OpenAI-compatible** first-class path for gateways and long-tail vendors
+3. **Custom providers** with protocol profiles
+4. **Refreshable model catalog** + **free-form model IDs** (no closed allowlist)
+
+MVP UI always includes at least:
 - OpenAI
 - Anthropic
-- 谷歌 Gemini
-- OpenAI 兼容（通用）
-- 自定义提供商条目
+- Google Gemini
+- OpenAI-Compatible (generic)
+- Custom provider entry
 
-运行时职责：
-- 解决 `(providerId, modelId)`
-- 解析并序列化完整的 pi-ai 模型记录，或将模型标记为
-  未知的通用后备
-- 由此解析模型推理能力和有效思维水平
-  相同的记录
-- 通过主机获取机密（切勿在日志中缓存原始机密）
-- 将供应商故障转换为提供商 AppError 代码
-- 将 tokens/events 流式传输到协调器
-- 支持abort/cancel中流
+Runtime responsibilities:
+- resolve `(providerId, modelId)`
+- resolve and serialize the complete models.dev record, or label an absent ID
+  with the unknown generic fallback
+- resolve model reasoning capability and effective thinking level from the
+  models.dev record
+- fetch secrets via host (never cache raw secrets in logs)
+- translate vendor failures into provider AppError codes
+- stream tokens/events to orchestrator
+- support abort/cancel mid-stream
 
-本地模型通过 OpenAI 兼容端点（Ollama、LM Studio、vLLM 等）获得支持。
+Local models are supported through OpenAI-compatible endpoints (Ollama, LM Studio, vLLM, etc.).
 
-### 6.1 一次性 Composer 增强
+### 6.1 One-shot Composer enhancement
 
-Composer 增强使用与 agent 请求相同的已解析提供商绑定和重试分类，但会创建一个
-独立的补全上下文，其中恰好只有一条用户消息和那段静态的增强系统提示。它不会
-实例化会话 agent，不包含转录历史，不暴露工具，也不持久化任何回合。渲染器只
-拿到裁剪后的文本结果；API key 与厂商刷新凭据始终留在 Electron main。存在会话
-时，OpenCode Go 的一次性调用复用会话 id 作为 `x-opencode-session`；否则运行时
-会为该次调用合成一个 id，使网关接受该请求。
+Composer enhancement uses the same resolved provider binding and retry
+classification as an agent request, but creates a separate completion context
+with exactly one user message and the static enhancement system prompt. It
+does not instantiate a session agent, include transcript history, expose tools,
+or persist a turn. The renderer receives only the trimmed text result; API
+keys and vendor refresh credentials remain in Electron main. OpenCode Go
+one-shots reuse the conversation id as `x-opencode-session` when a session is
+present; otherwise the runtime synthesizes a per-call id so the gateway
+accepts the request.
 
-### 6.2 OpenCode 会话路由标头
+### 6.2 OpenCode session routing headers
 
-对话、子代理、上下文压缩摘要、提示增强以及插件的一次性补全，只要其提供商满足
-下列任一条件——`apiStyle` 为 `opencode_go`、`vendorKey` 为 `opencode` 或
-`opencode-go`、pi-ai 提供商 id 为上述值之一，或 base URL 的主机为
-`opencode.ai`——都会发送：
+Chat, subagent, context-compaction summary, prompt-enhancement, and plugin
+one-shot completions whose provider is `apiStyle: opencode_go`, whose
+`vendorKey` is `opencode` or `opencode-go`, whose pi-ai provider id is one of
+those values, or whose base URL host is `opencode.ai` send:
 
-- `x-opencode-session`：持久的对话 id；调用方没有会话时则为一个按次生成的 UUID
+- `x-opencode-session`: the durable conversation id, or a per-call UUID when
+  the caller has no session
 - `x-opencode-client: pi-desktop`
 - `User-Agent: pi-desktop/<APP_VERSION>`
 
-调用方自带的标头会覆盖 client 与 User-Agent 默认值。空的会话标头会由对话 id
-补回，使 OpenCode Go 不会返回 `MissingSessionID`。提供商行上的 `headers` 映射
-在这次合并之后应用（标头加上一层 fetch 包装），因此自定义值优先于 OpenCode
-默认值，也优先于适配器的最后写入。保留键无法冲掉 `x-opencode-session`。这属于
-agent 运行时的职责，与官方 Pi 编码 agent 的归属层保持一致；pi-ai 的 `sessionId`
-流选项并不会发出 `x-opencode-session`。
+Caller-supplied headers override the client and User-Agent defaults. An empty
+session header is restored from the conversation id so OpenCode Go cannot
+return `MissingSessionID`. A provider-row `headers` map is applied after this
+merge (headers plus a fetch wrapper) so custom values win over the OpenCode
+default and over adapter last-writes. Reserved keys cannot smash
+`x-opencode-session`. This is an agent-runtime concern, matching the
+official Pi coding-agent attribution layer; pi-ai's `sessionId` stream option
+does not emit `x-opencode-session`.
 
-上下文压缩摘要同样是这一类提供商请求，但 harness 会自行组装其流选项，不会经过
-会话的 stream 函数，因此 agent 运行时把这次标头合并应用到交给压缩的模型集合
-上。该请求携带会话自己的对话 id，而不是 harness 否则会生成的按次 id，这样摘要
-就与它所压缩的对话落在同一个网关后端。
+The context-compaction summary is a provider request of the same kind, but the
+harness assembles its own stream options and never passes the session's stream
+function, so agent-runtime applies the header merge to the model collection it
+hands to compaction. That request carries the session's conversation id rather
+than the per-call id the harness would otherwise mint, so a summary reaches the
+same gateway backend as the conversation it summarizes.
 
-## 7. 系统提示组成
+
+## 7. System prompt composition
 
 ```text
 [base product prompt in English]
@@ -789,239 +1065,306 @@ agent 运行时的职责，与官方 Pi 编码 agent 的归属层保持一致；
 + [optional user custom instructions]
 ```
 
-基本提示明确指出协作规则，因为省略它们
-是产生静默会话的原因：“更喜欢简洁、可操作的答案”
-只有相关的行，而推理模型将其执行为根本没有说什么。
-所需的行为，每一项都是观察到的相反的失败：
+The base prompt states collaboration rules explicitly, because omitting them
+is what produced silent sessions: "prefer concise, actionable answers" was the
+only relevant line, and a reasoning model executed it as saying nothing at all.
+Required behaviours, each one an observed failure inverted:
 
-- 以用户书写的语言回答
-- 每个工具批次前一句话，且沉默时间不得超过一个工具
-  批量或 60 秒的工作
-- 用户提出的任何问题都会以可见文本的形式得到答复；推理未显示
-  给他们，并不算作答案
-- 最终消息是独立的
-- 工作是从头到尾进行的，而不是停留在分析上
-- 工具调用通过本机工具调用接口；写成散文的电话
-  （特别是 OpenAI 风格的 `multi_tool_use.parallel` 包装器）不运行，并且
-  当模型发出一个模型时，运行时会记录它
+- answer in the language the user writes in
+- one sentence before each tool batch in the same assistant message as the
+  tool calls, and no silence longer than one tool batch or 60 seconds of work
+- anything the user asked is answered in visible text; reasoning is not shown
+  to them and does not count as an answer
+- the final message is self-contained
+- work is carried through end to end rather than stopping at analysis
+- tool calls go through the native tool-call interface; a call written as prose
+  (notably an OpenAI-style `multi_tool_use.parallel` wrapper) does not run, and
+  the runtime logs it when a model emits one
 
-它还说明了与主机端预算相匹配的搜索偏好
-[16-工具结果限制](/spec/03-runtime/16-tool-result-limits)：范围 `Read`、`Grep` 和
-`Glob` 用自己的参数代替手卷 `Read`/`Grep`/16-tool-result-limits.md/
-`find`。 `Read` 仅接受现有的常规文本文件。当文件名是
-不确定或必须列出目录时，Agent 会激活 `Glob`
-通过 `ToolSearch` 获取当前提示，而不是猜测名称或阅读
-目录。 `Glob.path` 是一个目录，而 `Grep.path` 可能是一个文件或一个
-目录树。调用使用 `Read.offset/limit`、`Glob.path/limit` 和
-`Grep.path/include/outputMode/headLimit`； `filesWithMatches` 或 `count` 避免
-不需要的内容。工作区相对路径仍然是可移植的默认路径，带有
-仅当本机工具不足时才在活动 shell 中使用有界命令。
-Grep 在本机装有 `rg` 时使用它，否则使用进程内搜索器；代理应调用 Grep 而不是在 Bash 里跑 `rg`。Bash 仍不得假定 `rg` 存在。代理不得重复已经在上下文中的搜索。
+It also states a search preference that matches the host-side budgets in
+[16-tool-result-limits](16-tool-result-limits.md): scope `Read`, `Grep`, and
+`Glob` with their own parameters instead of hand-rolling `cat`/`sed`/`grep`/
+`find`. `Read` accepts only an existing regular text file. When a file name is
+uncertain or a directory must be listed, an Agent activates `Glob` for the
+current prompt through `ToolSearch` instead of guessing a name or reading the
+directory. `Glob.path` is a directory, while `Grep.path` may be one file or a
+directory tree. Calls use `Read.offset/limit`, `Glob.path/limit`, and
+`Grep.path/include/outputMode/headLimit`; `filesWithMatches` or `count` avoids
+unneeded content. Workspace-relative paths remain the portable default, with a
+bounded command in the active shell only when native tools are insufficient.
+Grep uses a system `rg` when one is installed and an in-process searcher
+otherwise; the agent calls Grep rather than shelling out to `rg`. Bash must
+still not assume `rg` is present. The agent must not repeat a search whose
+answer is already in context.
 
-编辑规范块携带
-[18-line-anchored-edit-contract](/spec/03-runtime/18-line-anchored-edit-contract)
-的行锚定 `Edit` 契约：操作表、仅 `+` 正文规则、“范围只命名被改动的行”、
-“在每次成功写入后依据返回的 tag 重新定位”，以及成文的反模式。sidecar 的
-`Edit` schema 是 `{ path, tag, ops }`；`old_string` 与 `new_string` 不再存在，
-并且 sidecar 的工具描述必须在实质上与 host-core 的 `builtin_tool_defs()` 条目
-逐字一致，因为按一种语法教出来、却用另一种语法校验的模型每次调用都会失败。
+The edit-discipline block carries the line-anchored `Edit` contract of
+[18-line-anchored-edit-contract](18-line-anchored-edit-contract.md): the op
+table, the `+`-only body rule, "ranges name changed lines only", "re-ground on
+the tag returned by every successful write", and the worked anti-patterns. The
+sidecar's `Edit` schema is `{ path, tag, ops }`; `old_string` and `new_string` no
+longer exist, and the sidecar's tool description must stay byte-identical in
+substance to host-core's `builtin_tool_defs()` entry, because a model taught one
+grammar and validated against another fails every call.
 
-### 7. 1 活动工具上下文和按需加载（D185、ADR 0048）
+### 7.1 Active tool context and on-demand loading (D185, ADR 0048)
 
-sidecar 构建了一个完整的工具注册表，但它不会序列化每个工具
-将模式注册到每个提供商请求中。每个新用户提示都以
-该模式的核心集：
+The sidecar builds one complete tool registry, but it does not serialize every
+registered schema into every provider request. Each new user prompt starts with
+the mode's core set plus any deferred tools that can be restored from successful
+activation evidence still present in the effective session context:
 
-- Agent：`Read`、`Bash`、`Edit` 和 `Write`（匹配 pi 的编码代理核心）
-- Agent：只要技能目录非空，`Skill` 也在核心集中（D404、ADR 0230）——`# Skills`
-  段落与用户输入的 `/skill-id` 都要求模型调用它，而模式中缺失的工具根本无法被调用
-- Agent：当子代理目录非空时，`Task`、`TaskWait`、`TaskList` 和
-  `TaskStop` 也是如此 (§5f) — 模型必须寻找的能力是它不会使用的能力，
-  委托生命周期值得每个请求的额外模式
-- Plan：`Read`、`Glob`、`Grep`、`BrowserPreview` 和 `Bash`
-- 两种模式：`ToolSearch`（当至少存在一种延迟功能时）
+- Agent: `Read`, `Bash`, `Edit`, and `Write` (matching pi's coding-agent core)
+- Agent: `Skill` whenever the skill catalog is non-empty (D404, ADR 0230) — the
+  `# Skills` section and a user-typed `/skill-id` both ask the model to call
+  it, and a tool that is missing from the schema cannot be called at all
+- Agent: `Task`, `TaskWait`, `TaskList`, and `TaskStop` as well, whenever the
+  subagent catalog is non-empty (§5f) — a capability the model has to go
+  looking for is one it will not use, and the delegation lifecycle is worth
+  the extra schemas per request
+- Plan: `Read`, `Glob`, `Grep`, `BrowserPreview`, and `Bash`
+- both modes: `ToolSearch` when at least one deferred capability exists
 
-在Agent模式下，`Glob`和`Grep`加入`BrowserPreview`、插件工具，
-以及延迟集中的插件开发助手。两种合约模式均保留
-他们的 read/inspection 核心可用，而该类的提交工具
-（`SubmitPlan` 或 `SubmitGoal`）仅在规划状态期间公开，并且
-仅适用于主动类型。延迟工具已注册，但其名称和
-紧凑型
-一行描述出现在 `# On-demand tools` 目录中；参数
-模式则不然。目录是有限的，因此具有许多工具的插件无法
-重新创建原来的提示膨胀。
-该模型使用确切的名称或简短的功能查询调用 `ToolSearch`。
-sidecar 激活最多四场比赛，通过返回他们的名字
-pi-agent-core 的 `addedToolNames`，并用这些重建下一轮上下文
-模式。具有本机延迟工具搜索的提供商可在以下位置接收定义：
-该负载点；其他提供商通常会收到活动定义。
+In Agent mode, `Glob` and `Grep` join `BrowserPreview`, plugin tools,
+and plugin-development helpers in the deferred set. Both contract modes keep
+their read/inspection core available, while the kind's submit tool
+(`SubmitPlan` or `SubmitGoal`) is exposed only during the planning state, and
+only for the active kind. Deferred tools are registered but their names and
+compact
+one-line descriptions appear in an `# On-demand tools` catalog; parameter
+schemas do not. The catalog is bounded so a plugin with many tools cannot
+recreate the original prompt bloat.
+The model calls `ToolSearch` with an exact name or a short capability query.
+The sidecar activates up to four matches, returns their names through
+pi-agent-core's `addedToolNames`, and rebuilds the next-turn context with those
+schemas. Providers with native deferred-tool search receive the definitions at
+that load point; other providers receive the active definitions normally.
 
-延迟激活会在每个新用户提示之前重置，因此之前的任务
-无法使不相关的第一个请求携带不断增长的工具集。工具
-注册表、主机权限路径、工具超时和工作区包含规则
-保持不变。 `ToolSearch` 是 sidecar 的本地变量，不跨越
-主机 RPC 边界。其激活标记保留在持久化工具中
-结果，尽管重新启动，恢复的转录仍然是提供商有效的
-在重用延迟功能之前，运行时仍然需要重新搜索。
+At the start of each new user prompt, the sidecar clears the in-memory deferred
+activation set and rebuilds it from the effective context. Successful
+`ToolSearch` results contribute their `addedToolNames`; successful results from
+deferred tools contribute that tool's name. Only names still present in the
+current mode's deferred catalog are restored. Failed rows, interrupted or
+missing-result placeholders, and assistant/user prose never activate a tool.
+The tool registry, host permission path, tool timeout, and workspace containment
+rules remain unchanged. `ToolSearch` is local to the sidecar and does not cross
+the host RPC boundary. Its activation marker is retained in the persisted tool
+result, so a runtime restart or a new prompt can reuse an eligible capability
+while that evidence remains in the effective context; a fresh search is still
+required after the evidence is compacted away or otherwise absent.
 
-对于用户可见的 HTML 可交付成果，默认系统提示要求代理
-创建页面或创建第一个页面后激活 `BrowserPreview` 一次
-使用工作区相对路径进行有意义的可视化编辑。代理重用
-迭代时实时重新加载预览，而不是发出重复预览
-来电。生成的、仅供测试的和非可视的 HTML 文件被排除在外。当
-工具被延迟，`ToolSearch` 必须在预览调用之前激活它。
-### 7. 2 Plan 提示要求
+For user-visible HTML deliverables, the default system prompt asks the agent to
+activate `BrowserPreview` once after creating the page or making its first
+meaningful visual edit, using a workspace-relative path. The agent reuses the
+live-reloading preview while iterating instead of issuing repeated preview
+calls. Generated, test-only, and non-visual HTML files are excluded. When the
+tool is deferred, `ToolSearch` must activate it before the preview call.
+### 7.2 Plan prompt requirements
 
-Plan 提示告诉相同的 Agent 了解请求，检查
-相关 repository/specification/test 上下文，识别受影响的文件并
-风险，包括重点验证和 migration/recovery 影响、表面风险
-开放式问题。当任何初始或修订计划准备就绪时，必须调用
-`SubmitPlan` 在当前回合中立即恰好一次，并完成一个
-降价快照。已接受的新 Plan 提示没有事先等待批准；
-记录中较早提交的内容是历史上不可变的检查点。
-拒绝、过期或中断后，Agent 可能会在新一轮中修改，并且
-必须遵循相同的 one-SubmitPlan 规则。它不得声称变更是
-做了。主机写入不可变的 `.pi/plan/*.md` 工件； Agent 确实
-本身不编写或编辑它，并且不接收请求更改流。
+The Plan prompt tells the same Agent to understand the request, inspect the
+relevant repository/specification/test context, identify impacted files and
+risks, include focused validation and migration/recovery implications, surface
+open questions. When any initial or revised plan is ready, it must call
+`SubmitPlan` immediately exactly once in the current turn with one complete
+Markdown snapshot. An accepted new Plan prompt has no prior pending approval;
+earlier submissions in the transcript are historical immutable checkpoints.
+After reject, expiry, or interruption, the Agent may revise in the new turn and
+must follow the same one-SubmitPlan rule. It must not claim that changes were
+made. The host writes the immutable `.pi/plan/*.md` artifact; the Agent does
+not write or edit it itself and does not receive a request-changes flow.
 
-该提示可能会将 Bash 描述为受权限限制且可能会发生变异。它
-不得将 Plan 描述为严格的只读安全边界。
+The prompt may describe Bash as permission-gated and potentially mutating. It
+must not describe Plan as a strict read-only security boundary.
 
-### 7. 2a Goal 提示要求
+### 7.2a Goal prompt requirements
 
-Goal 提示告诉同一个 Agent 在任何事情之前协商目标合同。
-自主工作。它要求实现什么而不是如何实现：结果、结果
-验收标准和边界。它不能枚举实现
-步骤，因为 Agent 在批准后自行决定这些步骤。每一次接受
-标准必须能够在执行后由 Agent 客观地检查——命令
-那必须过去，或者是可观察到的行为。 Agent 检查工作空间并
-首先询问任何不明确的问题，然后立即准确地调用 `SubmitGoal`
-当前回合中一次，包含一个完整的 Markdown 快照。
+The Goal prompt tells the same Agent to negotiate a goal contract before any
+autonomous work. It asks for what to achieve rather than how: the outcome, the
+acceptance criteria, and the boundaries. It must not enumerate implementation
+steps, because the Agent decides those itself after approval. Every acceptance
+criterion must be objectively checkable by the Agent after execution — a command
+that must pass, or an observable behavior. The Agent inspects the workspace and
+asks about anything ambiguous first, then calls `SubmitGoal` immediately exactly
+once in the current turn with one complete Markdown snapshot.
 
-一次提交规则、历史检查点规则、关闭后修改规则、
-no-chat-confirmation 规则和 host-writes-the-artifact 规则相同
-作为 Plan，用 `SubmitGoal` 和 `.pi/goal/*.md` 代替 Plan
-等价物。提示还指出，一旦获得批准，合同即为
-Agent 所遵循的标准：自主追求目标、选择
-它自己的方法，只有当每个验收标准都得到验证或一个
-边界挡住了它。
+The one-submit rule, the historical-checkpoint rule, the revise-after-close rule,
+the no-chat-confirmation rule, and the host-writes-the-artifact rule are the same
+as Plan's, with `SubmitGoal` and `.pi/goal/*.md` in place of their Plan
+equivalents. The prompt additionally states that once approved, the contract is
+the standard the Agent works against: it pursues the goal autonomously, chooses
+its own approach, and stops only when every acceptance criterion is verified or a
+boundary blocks it.
 
-### 7. 2b 子代理提示组成（D201、ADR 0062）
+### 7.2b Subagent prompt composition (D201, ADR 0062)
 
-代表的系统提示在 sidecar 中由三部分组成，其中
-order：委托框架、定义的 Markdown 正文和工具
-其宣称的工具所获得的指导。身体位于工作空间引导前方
-所以项目自己的说明仍然具有最终决定权。
+A delegate's system prompt is composed in the sidecar from three parts, in this
+order: the delegation framing, the definition's Markdown body, and the tool
+guidance its resolved tools earn. The body sits ahead of the workspace guidance
+so a project's own instructions still have the last word.
 
-框架陈述了代表的处境的形状，这不是
-从正文中可以推断：这是一项委托任务，委托人看不到
-用户，提出问题或进一步委托，它完全具有列出的工具，并且
-它的最终消息是主代理收到的唯一消息。只读
-定义还被告知永远不要报告它无法进行的编辑；
-一个具有写入能力的人被告知只能触摸该任务所涉及的文件。
+The framing states the shape of the delegate's situation, which is not
+inferable from the body: it is one delegated task, the delegate cannot see the
+user, ask a question, or delegate further, it has exactly the listed tools, and
+its final message is the only thing the main agent receives. Listed names are
+the spawn-time resolved set when `tools: inherit` is on. A read-only
+definition is additionally told never to report an edit it could not have made;
+a write-capable one is told to touch only the files the task is about.
+Mutation framing uses the resolved set, not the raw frontmatter extras.
 
-指导块与会话提示使用的文本相同，仅在以下情况下包含：
-该定义声明了匹配工具：search/read 范围为
-Read/Grep/Glob，编辑 Edit/Write 的规则，命令 shell 合约
-Bash 以及会话具有临时目录时的临时目录规则
-代表可以写。附加项目指令链（§7.3）
-最后，因此代表遵循与其会话相同的项目规则。
+Guidance blocks are the same text the session prompt uses, included only when
+the resolved tools include the matching name: search/read scoping for
+Read/Grep/Glob, edit discipline for Edit/Write, the command shell contract for
+Bash, the `# Skills` catalog when `Skill` is present, and the scratch-directory
+rule when the session has a scratch directory and the delegate can write. The
+project instruction chain (§7.3) is appended last, so a delegate follows the
+same project rules as its session.
 
-### 7. 3 项目指令链
+### 7.3 Project instruction chain
 
-Electron主流程首先解析全局
-`~/.pi/agent/AGENTS.md`，然后将指令文件投影到
-运行时启动时的会话绑定项目根。对于每个项目目录
-按以下顺序最多使用一个非空文件：`AGENTS.override.md`、`AGENTS.md`、
-`CLAUDE.md`，然后是 `.claude/CLAUDE.md`。条目由项目串联而成
-root 到目标目录，因此最接近的文件最后出现并占用
-优先。初始链的目标是项目根。在 `Read` 之前，
-`Write`、`Edit` 或 `BrowserPreview` 调用，sidecar 要求 Electron main
-解析目标路径并用该路径替换活动指令部分
-工具执行之前路径的完整链。这使得规则变得懒惰并且
-防止代理移动到同级目录后保留同级目录规则
-不同的文件树。
+The Electron main process first resolves the global
+`~/.pi/agent/AGENTS.md`, then project instruction files inside the
+session-bound project root when a runtime starts. For each project directory it
+uses at most one non-empty file in this order: `AGENTS.override.md`, `AGENTS.md`,
+`CLAUDE.md`, then `.claude/CLAUDE.md`. Entries are concatenated from project
+root to the target directory, so the closest file appears last and takes
+precedence. The initial chain targets the project root. Before a `Read`,
+`Write`, `Edit`, or `BrowserPreview` call, the sidecar asks Electron main to
+resolve the target path and replaces the active instruction section with that
+path's complete chain before the tool executes. This keeps rules lazy and
+prevents sibling-directory rules from persisting after the agent moves to a
+different file tree.
 
-会话绑定的项目根与运行时启动元数据一起传递，并且
-在每次提示或压缩请求之前由 Electron main 注册。的
-sidecar 无法选择不同的根。在一次提示期间，路径解析
-声明由项目根目录和目标目录缓存，因此重复文件工具
-在同一目录中不要执行另一个 IPC 请求。索赔被放弃
-在下一个提示下，允许进行编辑和新创建的指令文件
-没有陈旧的跨消息缓存的效果。
+The session-bound project root is passed with the runtime launch metadata and
+registered by Electron main before each prompt or compaction request. The
+sidecar cannot select a different root. During one prompt, path-resolution
+claims are cached by project root and target directory, so repeated file tools
+in the same directory do not perform another IPC request. Claims are discarded
+at the next prompt, allowing edits and newly created instruction files to take
+effect without a stale cross-message cache.
 
-路径特定的解决方案是尽力而为的，并且有 2 秒的截止日期。如果
-解析器或其主机 RPC 不可用或超过该截止日期，该文件
-工具继续运行运行时的 base/root 链，而不是等待
-一般主机RPC超时。失败的解决方案永远不会留下以前的解决方案
-已解决同级目录链处于活动状态。
+Path-specific resolution is best-effort and has a 2-second deadline. If the
+resolver or its host RPC is unavailable or exceeds that deadline, the file
+tool continues with the runtime's base/root chain rather than waiting for the
+general host RPC timeout. A failed resolution never leaves a previously
+resolved sibling-directory chain active.
 
-所有发现都保留在会话项目根目录中。空的、不可读的、
-跳过根目录外的文件。合并的 UTF-8 内容上限为 32 KiB
-源路径标记在 `# Project instructions` 下。
-sidecar 从不直接读取工作区指令。改变的根链
-在下一个提示时重新创建空闲运行时；嵌套指令已解决
-当相关文件工具运行时再次。解析器的超时和 fallback 是运行时保护措施；
-它们不会输出独立的 timing 日志记录。
+All discovery stays within the session project root. Empty, unreadable, and
+out-of-root files are skipped. The combined UTF-8 content is capped at 32 KiB
+and source paths are labelled under `# Project instructions`.
+The sidecar never reads workspace instructions directly. A changed root chain
+recreates an idle runtime on its next prompt; nested instructions are resolved
+again when a relevant file tool runs. The resolver's timeout and fallback
+are operational safeguards; they do not emit a separate timing log record.
 
-设置为固定全局路径提供专门的管理。项目
-查看项目列表菜单为其相应的项目提供了 `AGENTS.md` 编辑器
-注册的项目根。其 IPC 不接受任意渲染器文件路径。
-保存会影响下一个提示，而无需重新启动应用程序。
+Settings provides dedicated management for the fixed global path. The Projects
+view project-list menu provides an `AGENTS.md` editor for its corresponding
+registered project root. Its IPC does not accept arbitrary renderer file paths.
+Saves affect the next prompt without restarting the application.
 
-## 8. 并发
+## 8. Concurrency
 
-| 适用范围 | MVP 政策 |
+| Scope | MVP policy |
 |---|---|
-| 同一会话 | 单圈串联 |
-| 不同的会话 | 有限并行 |
-| 工具 | 默认情况下是顺序的 |
-| `Task` 通过一条助理消息进行呼叫 | 并行，每会话 10 个运行委托 (ADR 0089) |
+| same session | single turn serial |
+| different sessions | limited parallel |
+| tools | sequential by default |
+| `Task` calls in one assistant message | parallel; 10 running delegates per session (ADR 0089) |
 
-工具并发性通过 pi 执行模式来表示：每个目录工具都是
-`sequential` 和 `Task` 单独为 `parallel`，并且 pi 按顺序运行批处理
-一旦它包含一个顺序工具。因此，全 `Task` 批次是唯一的批次
-扇出，并且所有其他订购保证均不变。代表问题
-主机独立调用，以及 host-core 的每次会话一次突变准入
-防止写入撕裂，但留下两个无序的相同路径突变，因此
-sidecar 序列化针对相同标准化路径的 IPC/`sequential` 调用
-在到达宿主之前；不同路径上的调用永远不会相互等待。
-这就是保持每个路径编辑恢复规则的原因
-`03-tools-and-permissions.md` §4d 在扇出下有意义。
+Tool concurrency is expressed through pi execution modes: every catalog tool is
+`sequential` and `Task` alone is `parallel`, and pi runs a batch sequentially as
+soon as it contains one sequential tool. So an all-`Task` batch is the only batch
+that fans out, and every other ordering guarantee is unchanged. Delegates issue
+host calls independently, and host-core's one-mutation-per-session admission
+keeps writes from tearing but leaves two same-path mutations unordered, so the
+sidecar serializes `Write`/`Edit` calls that target the same normalized path
+before they reach the host; calls on different paths never wait on each other.
+This is what keeps the per-path edit-recovery rules of
+`03-tools-and-permissions.md` §4d meaningful under fan-out.
 
-选择另一个项目选项卡仅影响可见的 shell 工作区。它
-不会处置、中止或重新启动属于另一个会话的运行时。
+Selecting another project tab affects only the visible shell workspace. It
+does not dispose, abort, or re-root a runtime belonging to another session.
 
-## 9. 中止语义
+## 9. Abort semantics
 
-- 停止模型流
-- 尝试取消可中断工具
-- 不自动回滚已完成的写入
-- 在 UI/storage 中标记回合已中止
-- 保留已过去的响应持续时间；当提供商最终使用不可用时，
-  估计可见思维以及每个 4 个 Unicode 代码点的答案输出
-  令牌并将其保留为 `responseOutputTokens`，因此停止轮吞吐量为
-  仍然可用并且明显近似
-- 渲染器智能停止转录撤消和结构化输入框恢复
-  中止后的协调；他们不会改变运行时取消或滚动
-  返回完成的工具效果
+- stop model stream
+- attempt cancel interruptible tools
+- do not auto-rollback completed writes
+- mark turn aborted in UI/storage
+- preserve elapsed response duration; when provider final usage is unavailable,
+  estimate visible thinking plus answer output at four Unicode code points per
+  token and persist it as `responseOutputTokens` so stopped-turn throughput is
+  still available and visibly approximate
+- renderer smart-stop transcript undo and structured Composer restoration are
+  reconciliation after abort; they do not change runtime cancellation or roll
+  back completed tool effects
 
-## 10. 明确的非目标
+## 10. Explicit non-goals
 
-- 没有 DOM 知识
-- 无法绕过 Rust 主机进行直接 FS 访问
-- events/logs 中没有秘密泄露
+- no DOM knowledge
+- no direct FS access bypassing Rust host
+- no secret leakage into events/logs
 
-## 11. 实施状态（M5）
+## 11. Implementation status (M5)
 
-实现：流转OpenAI兼容协议路径
-（通用逃生舱口，D024）；每个会话强制执行一个活动回合
-`AGENT_BUSY`；根据接受的提示返回真实的 `turnId`；供应商失败
-映射到 `PROVIDER_UNAUTHORIZED` / `PROVIDER_RATE_LIMITED` /
-`MODEL_NOT_CONFIGURED` / `STREAM_FAILED` / `TURN_ABORTED`（可检测）。
-桌面开发生命周期重建 `packages/agent-runtime/dist`
-在 Electron 启动之前，因此生成的 sidecar 始终执行当前的
-标准化和误差映射源。
+Implemented: streaming turns over the OpenAI-compatible protocol path
+(universal escape hatch, D024); one active turn per session enforced with
+`AGENT_BUSY`; real `turnId` returned per accepted prompt; provider failures
+mapped to `PROVIDER_UNAUTHORIZED` / `PROVIDER_RATE_LIMITED` /
+`MODEL_NOT_CONFIGURED` / `STREAM_FAILED` / `TURN_ABORTED` where detectable.
+The desktop development lifecycle rebuilds `packages/agent-runtime/dist`
+before Electron starts so the spawned sidecar always executes the current
+normalization and error-mapping source.
 
-跟踪差距（MVP 后积压）：更丰富的系统提示组成 (§7) 和
-provider/model 目录发现超出当前有线路径。
+Tracked gaps (post-MVP backlog): richer system prompt composition (§7) and
+provider/model catalog discovery beyond the currently wired paths.
+
+## 12. Native Pi continuation runtime (ADR 0254)
+
+The sidecar selects runtime by session source. Desktop-owned ids continue to use
+`DesktopAgentRuntime`, host turn rows, and the host persistence outbox unchanged.
+Opaque `native-pi:` ids use a dedicated coding-agent `AgentSession` constructed
+with the original v3 `SessionManager`, Pi `ModelRuntime`, `SettingsManager`, and
+`DefaultResourceLoader`. Native context is built by the SDK from the active tree
+leaf, compaction, model/thinking changes, and context-bearing custom messages;
+it is never reconstructed from renderer `UiMessage` rows.
+
+The first native slice supports text prompt **without model tools**, stop/abort,
+and explicit refresh. `createAgentSession` receives `noTools: "all"`; neither
+built-in nor extension tools may bypass Desktop permissions. Tool parity awaits
+an explicit permission bridge. Native extension startup/resource discovery binds
+with the SDK headless UI and unsupported session-control actions; guards and
+listeners are installed before startup appends. Binding failure disposes the
+session and releases ownership. Pi extensions remain trusted local code, not
+Desktop plugins.
+
+A native fork (`native.session.fork`) branches the parent snapshot in memory:
+the SDK extracts the anchored branch using its native label/compaction
+re-chaining rules, drops later and sibling entries, and never touches the parent
+file or its manager. When the anchored branch recorded no model, the child
+records the parent session's saved provider/model; when it recorded no
+thinking-level change, it records the parent's saved level, while an explicit
+branch value (including off) wins. The child is published as a complete new
+file whose staged and published bytes must still match the captured
+device/inode/size/hash before it is projected or registered; an altered file
+fails closed without returning a child. A fork is a data-only copy: it executes
+no model and loads no project resources, so it stays available while the parent
+is provider-unavailable or project-untrusted, without granting prompt
+
+ModelRuntime performs its public offline initialization to restore the local
+catalog and auth snapshot. Native Composer readiness uses native `canPrompt`,
+not Desktop provider or secret availability. Owned idle leases remain usable;
+active turns stay stoppable through retries/compaction, reject overlap without
+disposal, and publish exactly one terminal event after SDK prompt settlement
+and final persistence (including `agent_settled` hooks). An error rejection
+uses the error terminal path instead.
+
+The native dispatcher carries the optimistic `userMessageId`; a
+`user_message_persisted` event acknowledges the SDK-assigned durable entry ID
+after the guarded append. No caller ID is written into native JSONL. The
+renderer reconciles active, retained, and cached rows by identity, never text.
+Native abort refreshes the original transcript instead of smart-stop rewrite.
+
+The saved provider/model and configured Pi auth must resolve exactly; there is
+no Desktop provider fallback. Missing cwd, required project trust, unsupported
+format, repair-needing newline, unavailable provider/auth, active lease, or
+external byte change makes continuation fail closed while detail remains
+browseable.

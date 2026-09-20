@@ -1,4 +1,4 @@
-# ADR 0207: 允许同一路径三次变更恢复失败
+# ADR 0207: Allow Three Same-Path Mutation Recovery Failures
 
 - Status: Accepted
 - Date: 2026-09-10
@@ -6,40 +6,43 @@
 
 ## Context
 
-行锚定的变更守卫此前在同一路径两次计数失败之后就终止 prompt。第一次
-失败往往暴露了语法、范围或来源上的修正，而第二次失败可能仍然是
-agent 在应用该修正。在这一点上停止，会使一个有界的编辑错误比必要的
-更难恢复。
+The line-anchored mutation guard previously terminated a prompt after two
+counted failures for the same path. The first failure often exposes a syntax,
+range, or provenance correction, while the second failure can still be the
+agent applying that correction. Stopping at that point makes a bounded editing
+mistake harder to recover from than necessary.
 
 ## Decision
 
-修订 D186 和 ADR 0087：一个 prompt 在重复守卫终止轮次之前，可以对
-同一路径进行三次计数失败的 `Edit` 调用。被识别的 shell patch 命令在
-其 patch 命令键下使用相同的三次失败限制。第一次和第二次计数失败返
-回各自常规的错误专属恢复提示，并保持轮次运行；第三次携带
-`terminate: true`，并以 `MUTATION_RETRY_BUDGET_EXHAUSTED` 终结
-assistant 行。
+Amend D186 and ADR 0087: a prompt may make three counted failed `Edit` calls on
+one path before the repeat guard terminates the turn. A recognized shell patch
+command uses the same three-failure limit under its patch-command key. The
+first and second counted failures return their normal error-specific recovery
+hints and leave the turn running; the third carries `terminate: true` and
+finalizes the assistant row with `MUTATION_RETRY_BUDGET_EXHAUSTED`.
 
-现有规则保持不变：每个可恢复错误代码各有一次按代码的宽限，计数器
-按 prompt 和路径限定作用域，成功的变更会清除该路径的失败历史。
-provider 重试预算和其他工具并发限制不受影响。
+The existing rules remain unchanged: recoverable error codes each receive one
+per-code grace, counters are scoped to the prompt and path, and a successful
+mutation clears that path's failure history. Provider retry budgets and other
+tool concurrency limits are unaffected.
 
 ## Consequences
 
-- 模型多了一次有界的机会来修正 Edit 或被识别的 shell patch 失败。
-- 持续性或盲目猜测的变更循环仍然确定性地终止。
-- 运行时错误消息和每个已交付的 locale 必须说三次失败。
-- 不改变 IPC、存储、宿主协议或工具结果形态。
+- The model gets one additional bounded opportunity to correct an Edit or
+  recognized shell patch failure.
+- Persistent or guessing mutation loops still terminate deterministically.
+- The runtime error message and every shipped locale must say three failures.
+- No IPC, storage, host protocol, or tool result shape changes.
 
 ## Alternatives considered
 
-- 保持两次失败限制：被拒绝，因为在不同的第一次错误之后，第二次修正
-  尝试仍然可能是诚实的恢复。
-- 移除限制：被拒绝，因为格式错误或盲目的变更循环绝不能消耗无界的
-  轮次。
+- Keep the two-failure limit: rejected because the second correction attempt can
+  still be an honest recovery after a distinct first error.
+- Remove the limit: rejected because malformed or blind mutation loops must not
+  consume an unbounded turn.
 
 ## Verification
 
-- 运行时单元测试覆盖 Edit、shell patch、按代码宽限、成功变更后的重
-  置，以及可见的终止错误行。
-- E2E-140 和 E2E-141 记录了第三次失败的边界。
+- Runtime unit tests cover Edit, shell patch, per-code grace, reset after a
+  successful mutation, and the visible terminating error row.
+- E2E-140 and E2E-141 document the third-failure boundary.

@@ -1,4 +1,4 @@
-# ADR 0201: 显式插件项目 ID 与宿主拥有的会话刷新
+# ADR 0201: Explicit Plugin Project IDs and Host-Owned Session Refresh
 
 - Status: Accepted
 - Date: 2026-09-09
@@ -6,42 +6,44 @@
 
 ## Context
 
-P0/P1 插件会话 API 有意让导入的会话保持未绑定状态，但外部历史导入
-器需要一种显式的方式将会话放入一个持久项目之下。现有的
-`workspace.set` 方法既创建项目又切换活动工作区，因此将其暴露给插件
-会把导入与用户当前的 UI 上下文耦合。插件会话写入目前也没有渲染进程
-通知路径，导致侧边栏在下一次刷新之前保持过期。
+The P0/P1 plugin session API deliberately kept imported sessions unbound, but
+external-history importers need an explicit way to place a session under a
+durable project. The existing `workspace.set` method both creates a project and
+changes the active workspace, so exposing it to plugins would couple import to
+the user's current UI context. Plugin session writes also currently have no
+renderer notification path, leaving the sidebar stale until another refresh.
 
 ## Decision
 
-- 添加受权限管控的 `pi.project.create({ path })` API。它创建或复用
-  一个持久的宿主项目行，不激活工作区，并返回宿主生成的
-  `projectId`、规范路径和显示名称。
-- 允许插件导入项携带 `projectId`。该 id 必须已存在，且插件必须持有
-  `project.create` 权限；省略 id 则保持安全的未绑定行为。
-  `projectPath`、`modelId` 和 `providerId` 仍作为历史来源元数据，
-  除非提供了显式的活动绑定。
-- 让插件会话的 list/get 投影报告显式的项目绑定和 id，同时保留所有
-  权过滤和所有现有的导入限制。
-- Electron 主进程在每次成功的插件导入、批量导入、重命名或删除之后
-  发出一次 `pi-desktop/session/event/changed` 事件。渲染进程通过现有
-  的 `refreshSessions()` store action 处理它。被跳过的导入不发出该
-  事件，插件永远不会发出它，刷新也永远不会重新打开已关闭的项目
-  标签页。
+- Add the permission-gated `pi.project.create({ path })` API. It creates or
+  reuses a durable host project row without activating the workspace and
+  returns the host-generated `projectId`, canonical path, and display name.
+- Allow `projectId` on plugin import items. The id must already exist and the
+  plugin must hold `project.create`; omitted ids preserve the safe unbound
+  behavior. `projectPath`, `modelId`, and `providerId` remain historical
+  origin metadata unless an explicit active binding is supplied.
+- Make plugin session list/get projections report the explicit project binding
+  and id while retaining ownership filtering and all existing import limits.
+- Electron main emits one `pi-desktop/session/event/changed` event after each
+  successful plugin import, batch import, rename, or delete. The renderer
+  handles it through the existing `refreshSessions()` store action. Skipped
+  imports do not emit the event, plugins never emit it, and a refresh never
+  reopens a closed project tab.
 
-宿主 RPC 对协议 v11 保持增量式；新的 `projects.create` 操作只能从
-经过权限检查的插件桥接触达。
+The host RPC remains additive to protocol v11; the new `projects.create`
+operation is only reachable from the permission-checked plugin bridge.
 
 ## Consequences
 
-导入器可以显式选择加入由项目支撑的会话，而不会静默激活工作区，也
-不会把历史路径变成工具根目录。宿主拥有侧边栏同步，因此导入插件不
-需要私有事件桥。项目权限属于高风险权限，因为显式的项目 id 同时也
-是会话工具根目录的授权；用户必须在安装时批准它。
+Importers can explicitly opt into a project-backed session without silently
+activating a workspace or turning historical paths into tool roots. The host
+owns sidebar synchronization, so import plugins do not need a private event
+bridge. The project permission is high risk because an explicit project id is
+also a session tool-root authority; users must approve it at install time.
 
 ## Verification
 
-覆盖范围包括不切换工作区的项目创建、导入时的显式与未知项目 id、
-已绑定的 list/get 投影、独立的项目权限检查，以及宿主到渲染进程的
-刷新事件契约。E2E-216 记录了完整的 UI 旅程；本地 UI E2E 按策略仍
-然推迟。
+Coverage includes project creation without workspace switching, explicit and
+unknown project ids during import, bound list/get projections, independent
+project permission checks, and the host-to-renderer refresh event contract.
+E2E-216 records the full UI journey; local UI E2E remains deferred by policy.

@@ -1,4 +1,4 @@
-# ADR 0234: 保持项目记忆为宿主拥有并按路径限定作用域
+# ADR 0234: Keep project memory host-owned and path-scoped
 
 - Status: Accepted
 - Date: 2026-09-12
@@ -6,33 +6,38 @@
 
 ## Context
 
-项目需要一个类似 ChatGPT Projects 的持久记忆界面。渲染进程偏好不是
-模型上下文的安全所有者：它们是呈现状态，可以被独立重置，并且在会
-话切换项目时无法提供宿主强制的边界。
+Projects need a durable memory surface similar to ChatGPT Projects. Renderer
+preferences are not a safe owner for model context: they are presentation state,
+can be reset independently, and do not provide a host-enforced boundary when a
+session switches projects.
 
 ## Decision
 
-在现有宿主 `kv` 表的 `projectMemory` 命名空间下，为每个规范化项目路
-径存储一个由用户撰写的记忆集合。可视化编辑器以 `entries-v1` 格式存
-储规范化的条目，包含 id、可选标题和内容。宿主还派生一个可读的纯文
-本 `content` 值（限制在 32 KiB），用于运行时注入。Electron 主进程为
-会话绑定的项目路径加载该值，并把它传给 agent 运行时。运行时把它渲
-染在项目指令之后，作为显式的用户提供上下文，并在决定空闲运行时是
-否可以复用时对它进行比较。
+Store one user-authored memory collection per canonical project path in the
+existing host `kv` table under the `projectMemory` namespace. The visual editor
+stores normalized entries with an id, optional title, and content using the
+`entries-v1` format. The host also derives a readable plain-text `content`
+value, limited to 32 KiB, for runtime injection. Electron main loads the value
+for the session-bound project path and passes it to the agent runtime. The
+runtime renders it after project instructions as explicitly user-provided
+context and compares it when deciding whether an idle runtime can be reused.
 
-记忆编辑器从项目归档行菜单中暴露。创建项目时保持创建界面紧凑，并
-展示项目记忆稍后可用；不添加一个其语义并未被应用实现的记忆模式选
-择器。
+The memory editor is exposed from the Project archive row menu. Creating a
+project keeps the creation surface compact and shows that project memory is
+available later; it does not add a memory mode selector whose semantics the
+application does not implement.
 
 ## Consequences
 
-- 记忆在渲染进程重启后存活，并按规范化项目路径隔离。
-- 可视化编辑器可以添加、编辑和移除记忆条目，而运行时消费宿主派生
-  的纯文本投影。只包含 `content` 的现有遗留记录仍然可读，作为一条
-  无标题条目。
-- 修改记忆会使下一个可复用的运行时退役，因此后续 prompt 能看到新
-  值。
-- 项目记忆不能覆盖运行时安全、工具或协作规则。
-- 不需要 schema 迁移，因为 `kv` 是新配置域的现有可扩展边界。
-- ADR 0249 添加了显式的宿主拥有的逻辑项目分组身份和根成员模型。
-  按路径限定作用域的记录仍然是遗留单根项目的兼容行为。
+- Memory survives renderer restarts and is isolated by canonical project path.
+- The visual editor can add, edit, and remove memory entries while the runtime
+  consumes the host-derived plain-text projection. Existing legacy records that
+  contain only `content` remain readable as one untitled entry.
+- Changing memory retires the next reusable runtime so a follow-up prompt sees
+  the new value.
+- Project memory cannot override runtime safety, tool, or collaboration rules.
+- No schema migration is needed because `kv` is the existing extensibility
+  boundary for new configuration domains.
+- ADR 0249 adds an explicit host-owned logical project-group identity and root
+  membership model. Path-scoped records remain the compatibility behavior for
+  legacy single-root projects.

@@ -1,56 +1,64 @@
-# ADR 0100: 使内置子代理继承父会话的权限模式
+# ADR 0100: Make builtin subagents inherit the parent permission mode
 
 - Status: Accepted
 - Date: 2026-08-18
 - Deciders: PI-Desktop core
 - Related: D115, D242, ADR 0057, ADR 0089
 
-## 背景
+## Context
 
-主动委派决策给内置 `fixer` 指定了显式的
-`permission: accept-edits` 作用域。这使父会话处于 `ask` 时工作区
-内的 `Write` 和 `Edit` 调用更方便，但它也替换了父会话对其他所有
-调用的有效权限模式。因此在设为 `auto` 的父会话中，`fixer` 对会
-话工作区之外显式路径的 `Glob` 或 `Write` 调用会弹出权限卡片，尽
-管 `auto` 本应允许该路径。卡片正确地识别出请求来自 `fixer`；错
-误的部分是内置定义那个出乎意料的更窄覆盖。
+The proactive delegation decision gave the builtin `fixer` an explicit
+`permission: accept-edits` scope. That made workspace `Write` and `Edit` calls
+convenient when the parent session was in `ask`, but it also replaced the
+parent's effective permission mode for every other call. In a parent session
+set to `auto`, a `fixer` call to `Glob` or `Write` an explicit path outside the
+session workspace therefore opened a permission card even though `auto` is
+supposed to allow that path. The card correctly identified the request as
+coming from `fixer`; the incorrect part was the builtin's unexpected narrower
+override.
 
-外部路径门仍是刻意的能力边界。权限模式决定该边界是否需要卡片，
-而用户拥有的定义上的显式作用域必须保持有意义。
+The external-path gate remains an intentional capability boundary. The
+permission mode is what decides whether that boundary needs a card, and an
+explicit scope on a user-owned definition must remain meaningful.
 
-## 决策
+## Decision
 
-内置子代理定义使用默认的 `permission: inherit` 行为。内置 `fixer`
-不再声明 `permission: accept-edits`；其可用工具保持为
-`[Read, Glob, Grep, Edit, Write, Bash]`，其工作区/路径包含规则不
-变。
+Builtin subagent definitions use the default `permission: inherit` behavior.
+The builtin `fixer` no longer declares `permission: accept-edits`; its
+available tools remain `[Read, Glob, Grep, Edit, Write, Bash]` and its
+workspace/path containment rules do not change.
 
-当委派的 `tools.execute` 调用没有附加作用域时，host-core 在父会
-话的有效权限模式下解析该调用：
+With no scope attached to a delegate `tools.execute` call, host-core resolves
+the call under the parent session's effective permission mode:
 
-- `ask` 保留对高风险调用和显式外部路径调用的审批；
-- `accept-edits` 只自动允许根内的 `Write`/`Edit`，并保留其他审批
-  边界；
-- `auto` 自动允许父会话可以发起的同样调用，包括显式外部路径。
+- `ask` keeps approval for high-risk and explicit external-path calls;
+- `accept-edits` auto-allows only in-root `Write`/`Edit` and keeps the other
+  approval boundaries;
+- `auto` auto-allows the same calls the parent could make, including explicit
+  external paths.
 
-符合条件的内置或用户子代理上显式声明的非 `inherit` 作用域仍是刻
-意的覆盖。项目定义仍然不能通过权限声明提升到会话模式之上。
+An explicitly declared non-`inherit` scope on an eligible builtin or user
+subagent remains an intentional override. Project definitions still cannot
+use a permission declaration to escalate beyond the session mode.
 
-## 后果
+## Consequences
 
-- 处于 `auto` 的父会话可以使用内置 `fixer` 而不会遇到意外的子代
-  理授权卡片。
-- 处于 `ask` 或 `accept-edits` 的父会话不会因委派而被静默放宽权
-  限。
-- 内置 fixer 在 `ask` 下可能为其写入弹出提示；需要不同姿态的调
-  用方可以使用显式的用户定义作用域。
-- host-core 的外部路径包含和权限求值不需要子代理特例。
+- A parent in `auto` can use builtin `fixer` without an unexpected subagent
+  authorization card.
+- A parent in `ask` or `accept-edits` is not silently made more permissive by
+  delegation.
+- The builtin fixer may prompt for its writes in `ask`; callers that need a
+  different posture can use an explicit user definition scope.
+- Host-core's external-path containment and permission evaluation do not need a
+  special subagent exception.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- **让 `fixer` 保持 `accept-edits`：** 被拒绝，因为它复现了观察
-  到的 auto 模式弹窗，并使内置委派忽略用户选择的权限姿态。
-- **把 `fixer` 改为 `auto`：** 被拒绝，因为它会在父会话为 `ask`
-  时绕过审批。
-- **父会话为 `auto` 时忽略所有委派作用域：** 被拒绝，因为显式的
-  用户拥有的 `ask` 作用域是刻意的更严格策略，必须保持可执行。
+- **Keep `fixer` at `accept-edits`:** rejected because it reproduces the
+  observed auto-mode popup and makes a built-in delegate ignore the user's
+  selected permission posture.
+- **Change `fixer` to `auto`:** rejected because it would bypass approval even
+  when the parent session is `ask`.
+- **Ignore every delegate scope when the parent is `auto`:** rejected because
+  an explicit user-owned `ask` scope is a deliberate stricter policy and must
+  remain enforceable.

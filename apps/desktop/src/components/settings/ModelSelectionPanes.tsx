@@ -12,14 +12,18 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   THINKING_LEVELS,
+  bindingDefaultThinkingMenuLevels,
   bindingForCustomModel,
   bindingFromModelInfo,
   formatTokenCount,
   modelMatchesFilter,
+  nativeWebSearchSupportedOn,
   publishedThinkingLevels,
+  resolveBindingDefaultThinkingLevel,
   sortThinkingLevels,
   type ModelBinding,
   type ModelInfo,
+  type SessionThinkingLevel,
   type ThinkingLevel,
 } from "@pi-desktop/shared";
 import {
@@ -128,10 +132,10 @@ export function useModelSelection(
         // would save a different default than the one the user was shown.
         const thinkingLevels = sortThinkingLevels(binding.thinkingLevels);
         const enabled = thinkingLevels;
-        const defaultThinkingLevel =
-          binding.defaultThinkingLevel && enabled.includes(binding.defaultThinkingLevel)
-            ? binding.defaultThinkingLevel
-            : (enabled[0] ?? null);
+        const defaultThinkingLevel = resolveBindingDefaultThinkingLevel(
+          binding.defaultThinkingLevel,
+          enabled,
+        );
         if (
           thinkingLevels.length === binding.thinkingLevels.length &&
           defaultThinkingLevel === binding.defaultThinkingLevel
@@ -183,6 +187,12 @@ export type ModelSelectionPanesProps = {
   busy?: boolean;
   /** Probe the service's model list now, skipping the edit debounce. */
   onReload?: () => void;
+  /**
+   * Effective API style of the provider being configured. Gates the native
+   * web search opt-in: only wires that can carry a provider-hosted search
+   * tool offer the checkbox at all.
+   */
+  apiStyle?: string;
 };
 
 /**
@@ -196,6 +206,7 @@ export function ModelSelectionPanes({
   listTitle,
   busy = false,
   onReload,
+  apiStyle,
 }: ModelSelectionPanesProps) {
   const { t } = useTranslation();
   const { rows, models, publishedLevelsById, setModels } = selection;
@@ -245,6 +256,11 @@ export function ModelSelectionPanes({
   useEffect(() => {
     if (models.length === 0) setChosenQuery("");
   }, [models.length]);
+
+  // The hosted web search tool only exists on two wires; on any other
+  // style the opt-in cannot work, so the checkbox stays present but disabled
+  // with an explanatory hint instead of silently doing nothing.
+  const nativeWebSearchWireCapable = nativeWebSearchSupportedOn(apiStyle);
 
   /**
    * The chosen list narrows with the discovered list's rule plus the binding's
@@ -719,7 +735,7 @@ export function ModelSelectionPanes({
                             {t("settings.thinkingManualOverrideHint")}
                           </span>
                         ) : null}
-                        {enabledLevels.length > 1 ? (
+                        {bindingDefaultThinkingMenuLevels(enabledLevels).length > 1 ? (
                           <div className="provider-chosen-thinking-default">
                             <span className="provider-chosen-thinking-label">
                               {t("settings.defaultThinkingLevel")}
@@ -728,20 +744,22 @@ export function ModelSelectionPanes({
                               className="provider-chosen-thinking-select"
                               label={t("settings.defaultThinkingLevel")}
                               value={
-                                binding.defaultThinkingLevel &&
-                                enabledLevels.includes(binding.defaultThinkingLevel)
-                                  ? binding.defaultThinkingLevel
-                                  : (enabledLevels[0] ?? "")
+                                resolveBindingDefaultThinkingLevel(
+                                  binding.defaultThinkingLevel,
+                                  enabledLevels,
+                                ) ?? ""
                               }
                               onChange={(id) =>
                                 updateBinding(binding.id, {
-                                  defaultThinkingLevel: id as ThinkingLevel,
+                                  defaultThinkingLevel: id as SessionThinkingLevel,
                                 })
                               }
-                              options={enabledLevels.map((level) => ({
-                                id: level,
-                                label: level,
-                              }))}
+                              options={bindingDefaultThinkingMenuLevels(enabledLevels).map(
+                                (level) => ({
+                                  id: level,
+                                  label: level,
+                                }),
+                              )}
                             />
                           </div>
                         ) : null}
@@ -769,11 +787,10 @@ export function ModelSelectionPanes({
                                   : [...binding.thinkingLevels, level];
                                 updateBinding(binding.id, {
                                   thinkingLevels: next,
-                                  defaultThinkingLevel: next.includes(
-                                    binding.defaultThinkingLevel as ThinkingLevel,
-                                  )
-                                    ? binding.defaultThinkingLevel
-                                    : (sortThinkingLevels(next)[0] ?? null),
+                                  defaultThinkingLevel: resolveBindingDefaultThinkingLevel(
+                                    binding.defaultThinkingLevel,
+                                    sortThinkingLevels(next),
+                                  ),
                                 });
                               }}
                             >
@@ -822,6 +839,36 @@ export function ModelSelectionPanes({
                             className="provider-chosen-delegation-help"
                             label={t("settings.availableForSubagentsHint")}
                             ariaLabel={t("settings.availableForSubagentsHint")}
+                          >
+                            <IconHelp size={13} />
+                          </Tooltip>
+                        </span>
+                        <span className="provider-chosen-delegation">
+                          <label className="provider-chosen-capability">
+                            <input
+                              type="checkbox"
+                              checked={binding.nativeWebSearch === true}
+                              disabled={!nativeWebSearchWireCapable}
+                              onChange={(event) =>
+                                updateBinding(binding.id, {
+                                  nativeWebSearch: event.target.checked || undefined,
+                                })
+                              }
+                            />
+                            <span>{t("settings.nativeWebSearch")}</span>
+                          </label>
+                          <Tooltip
+                            className="provider-chosen-delegation-help"
+                            label={t(
+                              nativeWebSearchWireCapable
+                                ? "settings.nativeWebSearchHint"
+                                : "settings.nativeWebSearchUnsupported",
+                            )}
+                            ariaLabel={t(
+                              nativeWebSearchWireCapable
+                                ? "settings.nativeWebSearchHint"
+                                : "settings.nativeWebSearchUnsupported",
+                            )}
                           >
                             <IconHelp size={13} />
                           </Tooltip>

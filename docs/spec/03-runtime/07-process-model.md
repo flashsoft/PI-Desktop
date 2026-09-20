@@ -1,8 +1,8 @@
-# 07. 进程模型
+# 07. Process Model
 
-## 1. 流程
+## 1. Processes
 
-MVP 目标拓扑：
+MVP target topology:
 
 ```text
 PI-Desktop.app
@@ -12,212 +12,285 @@ PI-Desktop.app
 │   └── Node pi agent sidecar
 ```
 
-## 2. 所有权
+## 2. Ownership
 
-| 工艺流程 | 拥有 |
+| Process | Owns |
 |---|---|
-| Electron 主要 | 窗口生命周期、跨平台托盘集成、IPC fan-in/out、子进程监控、固定源应用程序更新生命周期 |
-| Renderer | 仅用户界面 |
-| Rust host-core | DB、工具、权限、不可变 Plan/Goal artifacts/Electron 执行字段、shell 目录、插件主机服务、机密适配器 |
-| Node pi sidecar | pi 代理循环、提供商流、工具调用规划 |
+| Electron Main | window lifecycle, cross-platform tray integration, IPC fan-in/out, child process supervision, fixed-feed app update lifecycle |
+| Renderer | UI only |
+| Rust host-core | DB, tools, permissions, immutable Plan/Goal artifacts/`plan_approvals` execution fields, shell catalog, plugin host services, secrets adapters |
+| Node pi sidecar | pi agent loop, provider streaming, tool-call planning |
 
-## 3. 启动顺序
+## 3. Boot order
 
-启动从单实例锁开始。一个数据目录只允许一个应用进程：host-core 独占
-`pi.sqlite`（D002），Electron 主进程拥有其旁边的持久化 outbox 和日志树，托盘、
-全局启动器快捷键和更新器也都是运行中桌面应用的单例。没有拿到锁的启动会在创建
-窗口、托盘、日志行或子进程之前退出；持有锁的实例通过 `second-instance` 恢复并
-聚焦自己的主窗口，若窗口已关闭或隐藏到托盘则重新创建，与托盘的“显示”操作完全
-一致。该锁是 Electron 的锁，作用域是 `userData`（由应用名派生，因此应用名在请求
-之前设置），而不是数据目录：指向自有 `PI_DESKTOP_DATA_DIR` 的运行（E2E 测试装置、
-截图装置、并行 profile）与默认安装不共享数据库、outbox 或日志，在已有实例运行时
-仍可启动（D236、ADR 0094）。
+Boot begins with a single-instance lock. One data directory admits exactly one
+app process: host-core owns `pi.sqlite` exclusively (D002), Electron main owns
+the persistence outbox and the log tree beside it, and the tray, the global
+launcher shortcut, and the updater are singletons of the running desktop. A
+launch that does not take the lock quits before it creates a window, a tray, a
+log line, or a child process; the instance that holds the lock restores and
+focuses its main window from `second-instance`, recreating a window that was
+closed or hidden into the tray, exactly as the tray's Show action does. The lock
+is Electron's, so its scope is `userData` — derived from the application name,
+which is therefore set before the request — rather than the data directory: a
+run pointed at its own `PI_DESKTOP_DATA_DIR` (E2E harnesses, the capture rig, a
+side-by-side profile) shares no database, outbox, or logs with the default
+installation and stays launchable while one is running (D236, ADR 0094).
 
-1. Electron 主启动
-2. 加载英文语言环境默认值
-3. 生成 Rust host-core
-4. `app.handshake` 与 host-core
-5. 生成 Node pi 代理 sidecar
-6. 通过 main 将代理 sidecar 工具桥连接到 host-core
-7. 创建主窗口/渲染器
-8. Renderer 通过 main 执行 `app/getVersion` 健康检查
+A development build is its own installation rather than a second process of
+the same one: it runs under `PI-Desktop Dev` in the OS application-data root
+and reads `~/.pi-desktop-dev`. `pnpm dev` therefore starts while a packaged app
+holds its lock, and the two never share a database, an outbox, or a log tree
+(D599, ADR 0094). An explicit `--user-data-dir` is honored instead, because the
+E2E harnesses point a build at a throwaway profile with it.
 
-如果步骤 3-4 失败：使用恢复消息阻止应用程序。在成功主持之前
-引导服务 RPC、host-core 以事务方式标记先前的待批准批准
-queued/running `plan_approvals` 执行状态已中断并中止它们
-跑步轮流。此内部进程纪元栅栏未序列化或发送
-协议。
+1. Electron main starts
+2. Load English locale defaults
+3. Spawn Rust host-core
+4. `app.handshake` with host-core
+5. Spawn Node pi agent sidecar
+6. Connect agent sidecar tool-bridge to host-core via main
+7. Create main window / renderer
+8. Renderer performs `app/getVersion` healthcheck through main
 
-## 4. 崩溃策略
+If step 3–4 fails: block app with recovery message. Before a successful host
+boot serves RPC, host-core transactionally marks prior pending approvals and
+queued/running `plan_approvals` execution states interrupted and aborts their
+running turns. This internal process-epoch fence is not serialized or sent over
+the protocol.
 
-| 崩溃 | 政策 |
+After host-core is up, Electron main reads `AppSettings.networkProxy` and
+applies it before spawning the agent sidecar (D340). Chromium sessions use
+`session.setProxy`; main-process `fetch` is `net.fetch`; the sidecar receives
+the same config through `sidecar.configure` and `PI_DESKTOP_PROXY_JSON`.
+HTTP(S) provider requests use undici's proxy dispatcher; SOCKS5 provider
+requests use a buffered CONNECT tunnel so a proxy may coalesce the SOCKS
+handshake response without stalling the request. Custom URLs with userinfo
+keep credentials for Node and curl; Chromium is pointed at a loopback SOCKS5
+relay that injects them, because `proxyRules` cannot carry userinfo (issue
+#490).
+host-core marketplace `curl` gets `--proxy` from the stored settings and does
+**not** inherit proxy env, so workspace Bash cannot see proxy credentials.
+Marketplace curl diagnostics prefer UTF-8 and fall back to the active Windows
+ANSI code page before crossing the UTF-8 RPC boundary, so localized Schannel
+errors remain readable instead of becoming replacement characters.
+
+## 4. Crash policy
+
+| Crash | Policy |
 |---|---|
-| Renderer 崩溃 | 重新加载窗口，保留 host/agent 进程；同一主机重新加载仅恢复实时待处理的 Plan/Goal 批准及其截止日期，而不是终端卡 |
-| Rust 主机崩溃 | 将应用程序标记为降级、中断 pending/queued/running 审批工作、将待处理会话保留在其合同模式（Plan 或 Goal）中并将已批准的会话保留在 Agent 中、尝试重新启动主机并关闭活动会话失败 |
-| Node 代理崩溃 | 中止活动轮次和实时批准 waiters/queue 条目，在合同模式下保留待处理会话，在 Rust 中保留已批准的 Agent 模式，重新启动 sidecar，并且从不重播执行 |
-| Electron 主要崩溃 | 完整的应用程序退出 |
+| Renderer crash | reload window, keep host/agent processes; same-host reload restores only live pending Plan/Goal approvals and their deadlines, not terminal cards |
+| Rust host crash | mark app degraded, interrupt pending/queued/running approval work, keep pending sessions in their contract mode (Plan or Goal) and already-approved sessions in Agent, attempt restart host, and fail active sessions closed |
+| Node agent crash | abort active turns and live approval waiters/queue entries, keep pending sessions in their contract mode, preserve already-approved Agent mode in Rust, restart sidecar, and never replay an execution |
+| Electron main crash | full app exit |
 
-断开的 stdout/stderr（`EPIPE`/`EIO`）不是主进程崩溃。Main 会忽略这些写入，
-因此 Linux AppImage 或没有活动 TTY 的 GUI 启动会继续监管 host/sidecar，而不是
-弹出 Electron 的未捕获异常对话框。
+Broken stdout/stderr (`EPIPE`/`EIO`) is not a main-process crash. Main ignores
+those writes so a Linux AppImage or GUI launch without a live TTY keeps
+supervising host/sidecar instead of showing Electron's uncaught exception
+dialog.
 
-主进程 JavaScript `uncaughtException` 同样不是 Electron 主进程崩溃（只有原生
-主进程 abort 才会退出应用）。Main 自行处理 `uncaughtException` /
-`unhandledRejection`，写入 `app/runtime` 记录并继续运行，从而抑制 Electron
-默认的 “A JavaScript error occurred in the main process” 对话框。可恢复的
-网络栈异常包括 Chromium 把非 Latin-1 HTTP 头拷进 `Headers.set`
-（`TypeError: Cannot convert argument to a ByteString`），常见于 Windows 系统
-代理或网关注入 Unicode 头。下一次 `net.fetch` 或更新检查不得再弹出该原生框。
+A main-process JavaScript `uncaughtException` is also not an Electron main
+crash (only a native main abort exits the app). Main installs its own
+`uncaughtException` / `unhandledRejection` handlers, writes `app/runtime`
+records, and keeps running. That suppresses Electron's default
+"A JavaScript error occurred in the main process" dialog. Recoverable
+network-stack throws include Chromium copying a non-Latin-1 HTTP header into
+`Headers.set` (`TypeError: Cannot convert argument to a ByteString`), which
+appears on Windows behind a system proxy or gateway that injects Unicode
+header values. The next `net.fetch` or updater request must not re-open that
+native dialog.
 
-Linux 打包的 host-core 在 Ubuntu 22.04 上构建，需要 glibc 2.35 或更高版本
-（Ubuntu 22.04、Debian 12、Fedora 36+）。更低的 glibc 是致命 host 状态，而不是
-重启循环：界面会列出这些发行版，而不是只显示“无法连接本地服务”。Linux 标签
-作业不得换用会抬高所需 glibc 的更新 runner。
+Linux packaged host-core is built on Ubuntu 22.04 and needs glibc 2.35 or newer
+(Ubuntu 22.04, Debian 12, Fedora 36+). A lower glibc is a fatal host status,
+not a restart loop: the UI names those releases instead of "Can't reach the
+local service". The Linux tag job must not use a newer runner that would raise
+the needed glibc.
 
-另有两种启动结果会被明确命名，而不是笼统地当作服务不可用（D380）：
+Two more boot outcomes are named rather than left as a generic outage (D380):
 
-- **降级安装。** 当数据目录的 SQLite schema 比当前构建支持的更新时，host-core
-  会拒绝打开（stderr 输出 `database schema version N is newer than supported
-  M`）。Electron 从退出前的最后一段 stderr 解析该行，首次失败即停止重启循环，
-  并推送 `message: "DB_SCHEMA_TOO_NEW"` 且带有两个版本号的 `hostStatus`。横幅
-  提示用户安装上次打开这些数据的更新版 PI-Desktop。不会向下迁移数据。
-- **非原生构建。** 启动时 Electron 比较 `process.arch` 与实际 CPU（macOS 通过
-  `sysctl.proc_translated` 判断，仅在 Rosetta 2 下为 `1`；其他平台用
-  `os.machine()`）。不匹配时即使启动成功，也会随启动 `hostStatus` 附带
-  `archMismatch`，渲染层显示可关闭的提示，说明当前构建（macOS 上为 Intel /
-  Apple Silicon）并指向对应下载。arm64 构建在 Intel Mac 上根本无法启动，因此
-  只能检测 Intel 构建跑在 Apple Silicon 上这一方向。
+- **Downgraded build.** host-core refuses a data directory whose SQLite schema
+  is newer than the build supports (`database schema version N is newer than
+  supported M` on stderr). Electron parses that line from the last stderr
+  before exit, stops the restart loop on the first failure, and pushes
+  `hostStatus` with `message: "DB_SCHEMA_TOO_NEW"` and both numbers. The banner
+  tells the user to install the newer PI-Desktop that last opened this data.
+  No data is migrated down.
+- **Non-native build.** At boot Electron compares `process.arch` with the CPU
+  (on macOS via `sysctl.proc_translated`, which is `1` only under Rosetta 2;
+  elsewhere via `os.machine()`). A mismatch rides on the boot `hostStatus` as
+  `archMismatch` even when boot succeeded, and the renderer shows a dismissible
+  hint naming the build (Intel / Apple Silicon on macOS) and the matching
+  download. An arm64 build on an Intel Mac never launches, so only the
+  Intel-on-Apple-Silicon direction is detectable.
 
-Windows 安装包目标为 x64。Windows host-core 使用
-`x86_64-pc-windows-msvc` 目标和 `target-feature=+crt-static` 构建，因此 NSIS
-安装包无需在启动本地服务前单独安装 Visual C++ Redistributable。Windows 11 ARM64
-系统通过操作系统的 x64 模拟运行该 x64 安装包；目前不发布原生 Windows ARM64
-工件。
+Windows packages target x64. The Windows host-core build uses the
+`x86_64-pc-windows-msvc` target with `target-feature=+crt-static`, so the NSIS
+package does not require a separately installed Visual C++ Redistributable to
+start its local service. Windows 11 ARM64 systems run this x64 package through
+the operating system's x64 emulation; native Windows ARM64 artifacts are not
+currently published.
 
-监管参数（传输、重启策略与回合生命周期位于 `packages/host-runtime`，ADR 0284；Electron main 适配它们并负责面向渲染层的状态）：
+Supervision parameters (the transports, restart policy, and turn lifecycle are
+`packages/host-runtime`, ADR 0284; Electron main adapts them and owns the
+renderer-facing status):
 
-- 子进程退出立即拒绝该子进程的所有正在进行的 RPC（无 130 秒超时等待）。
-- 超过 64 MiB 的 NDJSON 请求行以 `LIMIT_EXCEEDED` 应答，不结束 stdin 读取器（ADR 0216）。Electron 在写入 stdin 前拒绝同样大小的载荷（ADR 0217）。
-- Windows Alt+Space 钩子只保留 stdout 发送端的弱引用。stdin EOF 后 serve 丢弃最后一个强引用，host-core 退出；泄漏的发送端不能把关闭卡住超过 5 秒（ADR 0217）。
-- 使用指数退避 `0.5s → 1s → 2s` 自动重启（上限 4 秒）。
-- 每个孩子最多**每 2 分钟窗口** 3 次重新启动；除此之外，该应用程序
-  保持降级并发出 `hostStatus { ok: false, component, fatal: true }`。
-- 重新启动监督仅限于每个儿童的单次航班。宿主进程具有独特的
-  一代；过时的生成请求和通知之前被拒绝
-  他们到达了现在的桥。
-- 主机持久性追加缓冲在 Electron 主拥有的发件箱中，同时
-  主机不可用，并在新的握手后顺序刷新。
-- 主机核心的 stdin/stdout 控制路径每个使用一个专用操作系统线程
-  方向而不是 Tokio 的动态阻塞池。瞬态管道资源
-  重试错误；控制线程创建失败在启动时出现
-  错误，因此操作系统线程压力不会成为未处理的主机恐慌。的
-  login-shell PATH 探测是尽最大努力，如果满足以下条件，则回退到继承的 PATH
-  无法创建其辅助线程。
-- 每次转换时都会通过 `hostStatus` 事件通知 Renderer：
-  `{ ok, component?: "host" | "sidecar", restarting?, restarted?, fatal?, message? }`。
-- 每一次仅报告已消失的运输的拒绝 - 在它被拒绝之前被拒绝
-  已发送，或在运输关闭时在飞行中 — 携带
-  `errorCode: HOST_UNAVAILABLE`，因此调用者通过代码对例程拆卸进行分类
-  而不是通过匹配消息文本。
-- 读取主机拥有的注册表，仅将可选上下文添加到启动或
-  面板（MCP 服务器、用户技能、用户子代理）检查传输可用性
-  首先，悄悄地丢弃 `HOST_UNAVAILABLE` 拒绝，降格为空。一个
-  关机期间或重新启动之间的死传输是例行公事；将其记录在
-  `warn` 将其文件与真正无法被删除的注册表位于同一行下
-  阅读。
-- 由主机拥有的注册表支持的渲染器面板重新加载
-`hostStatus { ok: true }`，因此因拆解或失败而输掉比赛的调用
-  重新启动不会使面板显示注册表的传输错误
-  很好。
-- 有意关闭 (quit/dispose) 永远不会触发重新启动。
+- Child exit rejects all in-flight RPCs for that child immediately (no 130s timeout wait).
+- An NDJSON request line over 64 MiB is drained and answered with `LIMIT_EXCEEDED`; it does not end the stdin reader (ADR 0216). Electron rejects the same size before writing stdin (ADR 0217).
+- The Windows Alt+Space hook retains only a weak stdout sender. After stdin EOF, serve drops the last strong sender and host-core exits. A leaked sender cannot block shutdown for more than 5 s (ADR 0217).
 
-## 5. 关机命令
+- Auto-restart with exponential backoff `0.5s → 1s → 2s` (cap 4s).
+- At most **3 restarts per 2-minute window** per child; beyond that the app
+  stays degraded and emits `hostStatus { ok: false, component, fatal: true }`.
+- Restart supervision is single-flight per child. A host process has a unique
+  generation; stale generation requests and notifications are rejected before
+  they reach the current bridge.
+- Host persistence appends are buffered in an Electron-main-owned outbox while
+  the host is unavailable and flushed sequentially after a new handshake. A
+  missing sessions row is restored from the live transcript (or created as a
+  stub) before those appends apply; deleting a session drops its outbox
+  entries (D318).
+- Host-core's stdin/stdout control path uses one dedicated OS thread per
+  direction rather than Tokio's dynamic blocking pool. Transient pipe resource
+  errors are retried; control-thread creation failures are surfaced as a boot
+  error, so OS thread pressure cannot become an unhandled host panic. The
+  login-shell PATH probe is best effort and falls back to the inherited PATH if
+  its helper thread cannot be created.
+- Renderer is notified on every transition via the `hostStatus` event:
+  `{ ok, component?: "host" | "sidecar", restarting?, restarted?, fatal?, message? }`.
+- Renderer notifications are best-effort. A disposed render frame — window
+  closed while the app keeps running in the tray/Dock, or a teardown race where
+  the frame dies before `webContents.isDestroyed()` flips — is dropped, never
+  raised: supervision and restart proceed with no window attached.
+- An unexpected sidecar exit is logged together with the sidecar's last stderr
+  lines (ring-buffered in main), so a crash without a stack trace still leaves
+  its final output in the report.
+- Every rejection that only reports a gone transport — refused before it was
+  sent, or in flight when the transport closed — carries
+  `errorCode: HOST_UNAVAILABLE`, so a caller classifies routine teardown by code
+  rather than by matching message text.
+- Reads of host-owned registries that only add optional context to a launch or a
+  panel (MCP servers, user skills, user subagents) check transport availability
+  first and drop a `HOST_UNAVAILABLE` rejection quietly, degrading to empty. A
+  dead transport during shutdown or between restarts is routine; logging it at
+  `warn` files it under the same line as a registry that genuinely cannot be
+  read.
+- A renderer panel backed by a host-owned registry reloads on
+  `hostStatus { ok: true }`, so a call that lost a race with teardown or a
+  restart does not leave the panel showing a transport error for a registry that
+  is fine.
+- Intentional shutdown (quit/dispose) never triggers restart.
 
-1.拒绝新的提示
-2. 刷写进行中回复检查点，然后通过 sidecar 中止活动回合，并在 host-core 仍存活时
-   有界等待（总计 2 秒）其中止最终行经由持久化发件箱落盘（D299）。
-   空闲退出仍等待 outbox。下一次握手在渲染器能够 `session.get` 之前等待残留排空（D327）。
-3. 中断 pending/queued/running Plan 和 Goal 工作并拒绝迟到的响应
-4.卸载插件
-5. 停止 Node 代理 sidecar
-6. Flush/close Rust 主机数据库
-7. 停止 Rust 主机
-8. 处理更新轮询
-9. 关闭窗口/退出
+## 5. Shutdown order
 
-用尽预算的退出会记录 `quit before streaming replies settled` 并继续；下一次主机
-启动会提升残留的检查点。sidecar 意外退出立即走同一条恢复路径：刷写每个运行中会话
-的最后一个检查点，并要求 `session.endTurn` 执行 `recoverInflight`，这样已流式的
-文本成为该回合的 `aborted` 行，而不是随进程一起消失。
+1. Reject new prompts
+2. Flush the in-flight reply checkpoints, then abort active turns through the
+   sidecar and wait, bounded (2 s total), for their aborted final rows to
+   drain through the persistence outbox while host-core is still alive (D299).
+   An idle quit still awaits the outbox. The next handshake awaits any
+   leftover drain before the renderer can `session.get` (D327).
+3. Interrupt pending/queued/running Plan and Goal work and reject late responses
+4. Unload plugins
+5. Stop Node agent sidecar
+6. Flush/close Rust host DB
+7. Stop Rust host
+8. Dispose update polling
+9. Close windows / exit
 
-最小化主窗口是驻留 shell 操作，而不是应用程序
-shutdown: Electron Main 隐藏窗口并使进程保持活动状态
-跨平台托盘。托盘拥有 restore/focus 和显式退出
-行动。从托盘、现有关闭路径或更新安装中退出
-进入上面的正常关机顺序；破坏托盘发生在
-`before-quit` 因此关闭不能被过时的 shell 功能拦截。
+A quit that runs out of its budget logs `quit before streaming replies settled`
+and proceeds; the next host boot promotes whatever checkpoint remains. An
+unexpected sidecar exit takes the same recovery path immediately: the last
+checkpoint of every running session is flushed and `session.endTurn` is asked
+to `recoverInflight`, so the streamed text becomes the turn's `aborted` row
+instead of vanishing with the process.
 
-`updates/install` 仅在更新后调用 Electron 的退出并安装路径
-达到 `downloaded`。 Electron 仍然发出 `before-quit`，所以正常
-sidecar/host 关闭序列在更新程序替换应用程序之前运行。
+Minimizing the main window is a resident-shell action, not an application
+shutdown. On Windows/Linux, explicit application minimize actions use the
+native taskbar transition and keep the process alive; clicking the Windows
+focused taskbar button uses the same transition and keeps the taskbar entry,
+while clicking it again restores/focuses the same window. macOS native
+minimize remains tray-resident. The tray owns restore/focus for tray-hidden
+windows and an explicit Quit action. Quit from the tray, the existing close
+path, or an update install still enters the normal shutdown sequence above;
+destroying the tray happens during `before-quit` so shutdown cannot be
+intercepted by a stale shell affordance.
 
-## 6. 开发与发布
+On macOS the app runs under the regular (foreground) activation policy for its
+whole lifetime, so it is always listed in the Dock and Cmd+Tab: Main never
+transforms the process type, and the always-on-top plugin launcher joins every
+Space with `skipTransformProcessType` rather than by becoming an accessory app.
+Because macOS only emits Electron's `activate` for a Dock reopen, Main also
+restores a tray-hidden window from `did-become-active` when no window is
+visible, which covers Cmd+Tab and App Exposé without pulling the main window in
+front of the launcher or a plugin panel (ADR 0086).
 
-### 开发
-- Electron 通过 electronics-vite
-- Rust 通过 `cargo run` 二进制路径
-- Node 通过系统 Node (`>= 22.19`)
-- `desktop` `predev` 按拓扑顺序重建每个工作区依赖关系
-  （`shared`、`i18n`、`plugin-sdk` 和 `agent-runtime`）在 host-core 之前和
-  Electron 启动； Electron 绝不能编译或忽略加载过时的内容
-  来自早期源版本的软件包工件
-- Electron 43+ 不再在 `pnpm install` 期间安装其二进制文件；
-  `scripts/dev-electron.mjs` 通过 `electron` 包入口解析开发主机，
-  该入口在首次开发启动时按需下载并解压二进制文件
+`updates/install` invokes Electron's quit-and-install path only after an update
+reaches `downloaded`. Electron still emits `before-quit`, so the normal
+sidecar/host shutdown sequence runs before the updater replaces the app.
 
-### 发布
-- Electron 应用程序包
-- 在资源中发送 Rust 主机二进制文件 (`Resources/bin/pi-desktop-host-core`)
-- 代理 sidecar 在 Electron 上运行捆绑的 `agent-runtime/sidecar.js`
-  二进制文件本身与 `ELECTRON_RUN_AS_NODE=1` — 没有单独的 Node 运行时
-  已发货（解决 **D008**）
-- `Resources/agent-runtime/sidecar.js` 是 sidecar 唯一独立的
-  释放条目。 ASAR 不携带第二个完整的
-  `@pi-desktop/agent-runtime` 包树； Electron 主要可能内联
-  它调用的纯 JS 助手无需更改进程或协议所有权
-- 渲染器依赖项通过 Vite 输出传送，而不是重复原始数据
-  包树；桌面包不再携带交互式 PTY 原生模块
-- 打包版本使用 Main 拥有的更新控制器。 macOS、非 AppImage
-  Linux 和 Windows 便携版运行为手动交付模式； Windows NSIS 和
-  Linux AppImage 使用 D126 标签发布的应用内提要
+## 6. Dev vs release
 
-## 7. 远程目标拓扑（MVP 后）
+### Dev
+- Electron via electron-vite
+- Rust via `cargo run` binary path
+- Node via system Node (`>= 22.19`)
+- `desktop` `predev` rebuilds every workspace dependency in topological order
+  (`shared`, `i18n`, `plugin-sdk`, and `agent-runtime`) before host-core and
+  Electron startup; Electron must never compile against or load stale ignored
+  package artifacts from an earlier source revision
+- Electron 43+ no longer installs its binary during `pnpm install`;
+  `scripts/dev-electron.mjs` resolves the development host through the
+  `electron` package entry, which downloads and extracts the binary on demand
+  at first dev boot
 
-远程控制不会给 Rust host-core 或当前 renderer IPC 表面增加公共监听器。目标 Agent
-Host 是无头模块（`packages/agent-host`），拥有会话与回合准入、回合队列、审批代理和
-事件日志，与 Node pi sidecar、Rust host-core 一起受监督，其上是已认证的 RACP 服务
-（D374）。首个远程部署（D375）把该模块作为无头 `pi-host` 运行在远端机器上，只绑定
-loopback，桌面经 SSH 端口转发连接。未排期的 Gateway 拓扑会增加出站 Host link；
-Gateway 负责路由已认证客户，但不拥有工作区状态。
+### Release
+- package Electron app
+- ship Rust host binary in resources (`Resources/bin/pi-desktop-host-core`)
+- agent sidecar runs the bundled `agent-runtime/sidecar.js` on the Electron
+  binary itself with `ELECTRON_RUN_AS_NODE=1` — no separate Node runtime is
+  shipped (resolves **D008**)
+- `Resources/agent-runtime/sidecar.js` is the sidecar's only independent
+  release entry. ASAR does not carry a second complete
+  `@pi-desktop/agent-runtime` package tree; Electron Main may inline the
+  pure-JS helpers it calls without changing process or protocol ownership
+- renderer dependencies ship through Vite output rather than duplicate raw
+  package trees; no interactive PTY native module is packaged
+- packaged builds use the Main-owned update controller. macOS, non-AppImage
+  Linux, and Windows portable runs are manual-delivery modes; Windows NSIS and
+  Linux AppImage use the in-app feeds published by D126 tag releases
 
-详细拓扑、所有权和迁移边界见
-[`02-architecture/05-remote-agent-control.md`](/spec/02-architecture/05-remote-agent-control)。
-在 MVP 后的实现里程碑明确修订本节之前，当前四进程本地拓扑和关闭顺序保持不变。
+## 7. Remote target topology (post-MVP)
 
-## 8. 验收
+Remote control does not add a public listener to Rust host-core or the current
+renderer IPC surface. The target Agent Host is a headless module
+(`packages/agent-host`) that owns session and turn admission, the turn queue,
+the approval broker, and the event log, supervised beside the Node pi sidecar
+and Rust host-core, with an authenticated RACP server above it (D374). The
+first remote deployment (D375) runs that module as a headless `pi-host` on a
+remote machine, bound to loopback and reached from the desktop through an SSH
+port forward. The unscheduled Gateway topology would add an outbound Host
+link; the Gateway routes authenticated clients and never owns workspace
+state.
 
-1.干净启动路径记录并可编写脚本
-2. 主机崩溃不会默默地继续工具执行
-3. Agent 崩溃不会损坏 SQLite
-4. 主机崩溃不会造成持久性错误风暴或重播已完成的任务
-   留言两次。
-5. Host/sidecar 崩溃永远不会将待处理的 Plan 或 Goal 批准转变为 Agent
-   执行；
-   重新启动恢复会使其中断，并且持久会话会保留在其状态中
-   合约模式
-6. 已批准的 queued/running 执行被中断，无需
-   重播及其持久会话仍然是 Agent
-7. Bash timeout/abort 关闭完整的子进程树
+The detailed topology, ownership, and migration boundary are specified in
+[`02-architecture/05-remote-agent-control.md`](../02-architecture/05-remote-agent-control.md).
+The current four-process local topology and shutdown order remain unchanged
+until a post-MVP implementation milestone explicitly amends this section.
+
+## 8. Acceptance
+
+1. Clean boot path documented and scriptable
+2. Host crash does not silently continue tool execution
+3. Agent crash does not corrupt SQLite
+4. A host crash does not create a persistence error storm or replay a completed
+   message twice.
+5. Host/sidecar crash never turns a pending Plan or Goal approval into Agent
+   execution;
+   restart recovery leaves it interrupted and the durable session in its
+   contract mode
+6. A queued/running execution that was already approved is interrupted without
+   replay and its durable session remains Agent
+7. Bash timeout/abort shuts down the complete child process tree
+
 
 ### Native tray session projection
 

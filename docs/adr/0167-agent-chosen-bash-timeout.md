@@ -1,34 +1,39 @@
-# ADR 0167: 由 agent 选择的 Bash 超时
+# ADR 0167: Agent-chosen Bash timeout
 
-- 状态：已接受，进入实现阶段
-- 日期：2026-09-06
-- 决策者：PI-Desktop 核心团队
-- 相关：D329、D190、D273、ADR 0054、GitHub issue #44
+- Status: Accepted for implementation
+- Date: 2026-09-06
+- Deciders: PI-Desktop core
+- Related: D329, D190, D273, ADR 0054, GitHub issue #44
 
-## 背景
+## Context
 
-ADR 0054 / D190 要求 60 秒的默认 Bash 超时，并拒绝任何超出 1–300 秒的
-覆盖值。这个 5 分钟上限杀死了合法的构建、测试和审计，`timeout: 600` /
-`1800` 会立即以 `INVALID_ARGUMENT` 失败。
+ADR 0054 / D190 required a 60-second default Bash timeout and rejected any
+override outside 1–300 seconds. That 5-minute ceiling killed legitimate
+builds, tests, and audits, and `timeout: 600` / `1800` failed immediately
+with `INVALID_ARGUMENT`.
 
-D273 已经放宽了 schema，使毫秒习惯值可以通过校验，随后将其钳制到同样
-的 300 秒上限。agent 可以请求 30 分钟，却仍会在 5 分钟时被杀死。
+D273 already widened the schema so millisecond habits validate, then clamped
+them to the same 300-second ceiling. The agent could ask for 30 minutes and
+still be killed at five.
 
-超时仍然是强制的：每次 spawn 都需要有限的截止期限，超时/中止仍然会
-杀死进程树。被冻结的失效模式是无界挂起，而不是整数 300。
+A timeout remains mandatory: every spawn needs a finite deadline, and
+timeout/abort still kills the process tree. The frozen failure mode is an
+unbounded hang, not the integer 300.
 
-## 决策
+## Decision
 
-1. 省略 `timeout` 仍然意味着精确的 60 秒。
-2. 显式覆盖值为 1 到 21,600 秒（6 小时）。这是宿主安全边界，使 RPC 和
-   进程计时器保持有限，而不是期望 agent 去触及的产品上限。
-3. 超过 21,600 的值按毫秒解读（D273），换算后钳制到 21,600 秒。范围内
-   的值——包括 600 和 1800——按秒计。
-4. 超出范围的值仍然校验失败，且永不 spawn。
-5. 超时和用户中止仍然会终止完整进程树。
+1. Missing `timeout` still means exactly 60 seconds.
+2. An explicit override is 1 through 21,600 seconds (6 hours). That is a
+   host safety bound so RPC and the process timer stay finite, not a
+   product cap the agent is expected to hit.
+3. A value above 21,600 is read as milliseconds (D273), converted, and
+   clamped to 21,600 seconds. In-range values, including 600 and 1800, are
+   seconds.
+4. Out-of-range values still fail validation and never spawn.
+5. Timeout and user abort still terminate the complete process tree.
 
-## 后果
+## Consequences
 
-- `timeout: 600` / `1800` / `1800000` 能兑现 10 分钟和 30 分钟。
-- 没有超时的命令仍然在 60 秒时被终止。
-- host-core 的 `MAX_BASH_TIMEOUT_MS` 与运行时保持同步。
+- `timeout: 600` / `1800` / `1800000` honour 10 and 30 minutes.
+- A command with no timeout still dies at 60 seconds.
+- Host-core `MAX_BASH_TIMEOUT_MS` stays in lockstep with the runtime.

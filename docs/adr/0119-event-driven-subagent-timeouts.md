@@ -1,4 +1,4 @@
-# ADR 0119: 事件驱动的子代理超时
+# ADR 0119: Event-Driven Subagent Timeouts
 
 - Status: Accepted for implementation; amended by ADR 0129
 - Date: 2026-08-24
@@ -6,58 +6,60 @@
 - Related: D254, ADR 0062 (bounded subagents), ADR 0089 (background delegation),
   ADR 0129 (idle bounds silence, not slowness)
 
-> **由 ADR 0129 修订。** 决策 2 中的事件白名单已被取代：现在每个
-> `AgentEvent` 都会重置空闲计时器，且空闲默认值为 300 秒而不是
-> 600 秒。决策 4 中名为 unlimited 的内置代理现在带有轮次兜底限制。
-> 下文中对"只使用空闲时间"的否决，针对的是放弃总时长上限，而
-> ADR 0129 保留了该上限。
+> **Amended by ADR 0129.** The event allow-list in decision 2 is superseded:
+> every `AgentEvent` now re-arms the idle timer, and the idle default is 300
+> seconds rather than 600. The built-ins named in decision 4 as unlimited now
+> carry turn backstops. The rejection of "use only idle time" below concerns
+> dropping the total-duration ceiling, which ADR 0129 keeps.
 
-## 背景
+## Context
 
-最初的 delegate 循环使用默认的轮次上限。因此，一个每轮执行一到两
-次有效工具调用的 delegate 可能在它积极工作时被终止，并且无法区分
-一个真正空闲的 worker 和一个正在等待长时间运行工具的 worker。
+The original delegate loop used a default turn cap. A delegate that made one
+or two useful tool calls per turn could therefore be terminated while it was
+actively working, and there was no way to distinguish a genuinely idle worker
+from one waiting on a long-running tool.
 
-## 决策
+## Decision
 
-1. 每个 delegate 有两个独立的看门狗：600 秒无活动，以及 21,600 秒
-   的总运行时长。总计时器包含工具执行时间。
-2. 活动指任何 delegate 轮次、消息或工具生命周期事件。空闲计时器在
-   `tool_execution_start` 与匹配的 `tool_execution_end` 之间暂停，
-   因此一次长时间的 Bash 调用由工具超时约束，而不是由 delegate 空闲
-   超时约束。
-3. 看门狗以 `timed_out` 终止 delegate，并附带
-   `SUBAGENT_IDLE_TIMEOUT` 或 `SUBAGENT_DURATION_TIMEOUT` 之一。报告
-   会携带最近的部分 assistant 输出（如果存在）。provider 失败、父级
-   中止以及显式轮次上限保留其既有的结果。
-4. `maxTurns` 是可选的。省略、`none` 和 `0` 表示不限制轮次；正的
-   显式值仍然是有界的兜底，上限为 80。
-5. 定义可以覆盖 `idle-timeout` 和 `max-duration`。空闲值被钳制在
-   10–21,600 秒之间，时长值被钳制在 60–21,600 秒之间；非数值会发出
-   警告并使用默认值。
-6. 内置的 `explorer` 获得 `Bash`，用于有界的只读检查（如
-   `git log`）；`code-reviewer` 保持只读。由于 Bash 可以产生变更，
-   Explorer 继续使用既有的变更/权限分类。
-7. 共享状态契约和桌面拓扑暴露 `timed_out`；渲染进程用英文和简体
-   中文为其标注，并将其呈现为警告级结果。
+1. A delegate has two independent watchdogs: 600 seconds without activity and
+   21,600 seconds of total runtime. The total timer includes tool execution.
+2. Activity is any delegate turn, message, or tool lifecycle event. The idle
+   timer is paused between `tool_execution_start` and its matching
+   `tool_execution_end`, so a long Bash call is governed by the tool timeout,
+   not by delegate idleness.
+3. A watchdog terminates the delegate with `timed_out` and one of
+   `SUBAGENT_IDLE_TIMEOUT` or `SUBAGENT_DURATION_TIMEOUT`. The report carries
+   the latest partial assistant output when one exists. Provider failures,
+   parent aborts, and explicit turn caps retain their existing outcomes.
+4. `maxTurns` is optional. Omission, `none`, and `0` mean unlimited turns;
+   positive explicit values remain a bounded backstop, capped at 80.
+5. Definitions may override `idle-timeout` and `max-duration`. Idle values are
+   clamped to 10–21,600 seconds and duration values to 60–21,600 seconds;
+   non-numeric values warn and use the defaults.
+6. The built-in `explorer` gains `Bash` for bounded read-only inspection such
+   as `git log`; `code-reviewer` remains read-only. Because Bash can mutate,
+   Explorer continues to use the existing mutation/permission classification.
+7. The shared status contract and desktop topology expose `timed_out`; the
+   renderer labels it in English and Simplified Chinese and presents it as a
+   warning outcome.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- **提高轮次上限：** 否决，因为任何固定上限仍会终止一个正在积极
-  工作的 delegate，并且在不同模型和工具密度下扩展性差。
-- **只使用总时长：** 否决，因为 provider 或 delegate 可能在仍低于
-  总体上限的情况下无限期卡住。
-- **只使用空闲时间：** 否决，因为否则持续的模型/工具活动可能在
-  没有硬性资源上限的情况下运行。
-- **保持 Explorer 只读、不给 Bash：** 否决，因为这会阻止原生搜索
-  工具无法表达的无害仓库检查命令；既有的权限路径对 Bash 仍然具有
-  权威性。
+- **Raise the turn cap:** rejected because any fixed cap still terminates an
+  actively working delegate and scales poorly across models and tool density.
+- **Use only a total duration:** rejected because a provider or delegate can
+  remain stuck indefinitely while still below the overall ceiling.
+- **Use only idle time:** rejected because continuous model/tool activity could
+  otherwise run without a hard resource ceiling.
+- **Keep Explorer read-only without Bash:** rejected because it prevents
+  harmless repository inspection commands that the native search tools cannot
+  express; the existing permission path remains authoritative for Bash.
 
-## 后果
+## Consequences
 
-- 只要 delegate 保持活跃，就可以超过之前的 20–24 轮行为运行，同时
-  空闲和总运行时长失败仍然是有界且可诊断的。
-- 超时报告对 `TaskWait`、`TaskList` 和委派拓扑可见，包括其结构化
-  错误码和计时日志条目。
-- 显式设置 `maxTurns` 的定义保留了确定性的硬停止，适用于专门的或
-  不受信的工作负载。
+- Delegates can run past the previous 20–24 turn behavior when they remain
+  active, while idle and total-runtime failures remain bounded and diagnosable.
+- Timeout reports are visible to `TaskWait`, `TaskList`, and the delegation
+  topology, including their structured error codes and timing log entries.
+- A definition that explicitly sets `maxTurns` retains a deterministic hard
+  stop for specialized or untrusted workloads.

@@ -1,4 +1,4 @@
-# ADR 0263：暴露项目的文件夹根并跨根补全引用
+# ADR 0263: Expose a Project's Folder Roots and Complete References Across Them
 
 - **Status**: Accepted
 - **Date**: 2026-09-14 (amends [ADR 0262](0262-chat-file-refs-open-in-the-file-view.md))
@@ -8,95 +8,112 @@
   [ADR 0249](0249-chatgpt-style-logical-project-groups.md) ·
   [07-plugins/03-plugin-api](../spec/07-plugins/03-plugin-api.md)
 
-## 背景
+## Context
 
-ADR 0249 使项目成为宿主持有的逻辑组：显示名称、有序的本地文件夹根列
-表和一个主根。其中两个条款与此相关。宿主把**主根保留为内置文件工具
-的唯一可见 workspace**，而使用**另一个已注册组根**之下绝对路径的工具
-请求会被规范化，并可以该根作为其包含基座。组成员身份绝不授予任意文件
-系统访问。
+ADR 0249 made a project a host-owned logical group: a display name, an ordered
+list of local folder roots, and a primary root. Two of its clauses matter here.
+The host keeps the **primary root as the one visible workspace** for builtin file
+tools, and a tool request using an absolute path under **another registered
+group root** is canonicalized and may use that root as its containment base.
+Group membership never grants arbitrary filesystem access.
 
-这些都没有到达插件。`pi.workspace.get()` 返回 `{ path, name }`——主根
-及其叶子名——main 从单一活跃 workspace 填充它。因此贡献视图根本无法
-得知其项目还有其他文件夹。
+Nothing of that reached a plugin. `pi.workspace.get()` returned
+`{ path, name }` — the primary root and its leaf name — and main filled it from
+the single active workspace. So a contributed view could not learn that its
+project had other folders at all.
 
-ADR 0262 随后让聊天文件引用在捆绑文件视图中打开，并交给它一个**项目
-根相对**路径。单文件夹时这是无歧义的。对于组则不是：`src/a.ts` 没有
-说明它属于哪个文件夹，而视图自己的包含基座是 workspace 根，因此解析
-到兄弟文件夹的引用只能作为外部文件打开——在树之外、不高亮，并且为
-一个实际上属于项目的文件绕过了围栏。
+ADR 0262 then made a chat file reference open in the bundled file view, and
+handed it a **project-root-relative** path. With one folder that is
+unambiguous. With a group it is not: `src/a.ts` does not say which folder it
+belongs to, and the view's own containment base was the workspace root, so a
+reference that resolved into a sibling folder could only be opened as an
+external file — outside the tree, unhighlighted, and with the jail bypassed for
+a file that is in fact part of the project.
 
-## 决策
+## Decision
 
-1. **`pi.workspace.get()` 新增 `projectId` 和 `roots`。** `path` 和
-   `name` 保持其含义——主根及其叶子名——因此每个现有插件（包括今天
-   随附的文件视图）行为完全不变。`roots` 是按组顺序的
-   `{ path, name, primary }[]`，主根在前。`workspace:changed` 事件携带
-   同一对象。这是侧栏已经显示的项目元数据，因此不需要新权限和新方法。
-2. **Main 从组记录的快照应答。** host-core 拥有它们；main 保留一份副
-   本，使同步的 `workspace:changed` 广播和异步拉取不会不一致。唯一权
-   威的列表调用（`project.groups.list`）填充它，每次组变更刷新它，冷
-   快照在一次运行的第一个 workspace 上获取一次，然后事件带着文件夹
-   重复。
-3. **补全搜索整个项目。** `fs.resolveRef` 在 session scratch 存储之前
-   遍历组的文件夹——主根优先，然后是组自己的顺序——与它之前遍历
-   单一 workspace 的方式完全相同。第一个应答的根仍然直接胜出，而匹配
-   现在指明它应答自哪个文件夹。
-4. **地址形态跟随文件夹。** 主根中的匹配以项目相对路径传递，与
-   ADR 0262 逐字节一致。任何兄弟文件夹中的匹配以**绝对**路径传递——
-   scratch 和附件文件已经使用的形态——文件视图把它映射回包含它的文
-   件夹。这使载荷保持单一不透明字符串，因此视图契约不变，不在乎的插
-   件也无需理解新字段。
-5. **宿主文件标签页也能到达组。** 它的额外包含根获得项目的其他文件
-   夹——ADR 0249 §5 已经认可——因此解析到兄弟文件夹的引用在文件视
-   图缺席或禁用时仍能打开，而不是包含失败。
-6. **文件视图自己的围栏基座变成所选文件夹。** 它的读、写、列表和搜
-   索保持一次限定在一个已注册根内——绝不是整个组——具有相同的符
-   号链接和 junction 拒绝以及相同的凭据拒绝列表。是哪个文件夹，以及
-   按项目记住它，是视图自己的事。
-7. **切换是插件本地的。** 选择另一个文件夹改变该视图浏览的内容。它
-   不改变应用的可见 workspace、agent 的工具根、session 的主路径、项
-   目指令或项目记忆。ADR 0249 的单可见 workspace 模型不受影响。
+1. **`pi.workspace.get()` gains `projectId` and `roots`.** `path` and `name` keep
+   their meaning — the primary root and its leaf name — so every existing plugin,
+   including the file view shipped today, behaves exactly as before. `roots` is
+   `{ path, name, primary }[]` in group order, primary first. The
+   `workspace:changed` event carries the same object. This is project metadata
+   the sidebar already shows, so it needs no new permission and no new method.
+2. **Main answers from a snapshot of the group records.** host-core owns them;
+   main keeps a copy so the synchronous `workspace:changed` broadcast and the
+   asynchronous pull cannot disagree. The one authoritative list call
+   (`project.groups.list`) fills it, every group mutation refreshes it, and a
+   cold snapshot is fetched once on the first workspace of a run before the
+   event is repeated with the folders.
+3. **Completion searches the whole project.** `fs.resolveRef` walks the group's
+   folders — primary first, then the group's own order — before the session
+   scratch store, exactly as it walked the single workspace before. The first
+   root that answers still wins outright, and the match now names the folder it
+   answered from.
+4. **The address shape follows the folder.** A match in the primary root travels
+   as a project-relative path, byte-identical to ADR 0262. A match in any sibling
+   folder travels as an **absolute** path — the shape scratch and attachment
+   files already use — which the file view maps back to the folder that contains
+   it. This keeps the payload a single opaque string, so no view contract changes
+   and no new field has to be understood by a plugin that does not care.
+5. **The host file tab reaches the group too.** Its extra containment roots gain
+   the project's other folders, which ADR 0249 §5 already sanctions, so a
+   reference that resolves into a sibling folder still opens when the file view
+   is absent or disabled instead of failing containment.
+6. **The file view's own jail base becomes the selected folder.** Its reads,
+   writes, listing and search stay confined to one registered root at a time —
+   never the whole group — with the same symlink and junction refusals and the
+   same credential deny list. Which folder that is, and remembering it per
+   project, is the view's own business.
+7. **The switch is plugin-local.** Choosing another folder changes what that view
+   browses. It does not change the app's visible workspace, the agent's tool
+   roots, a session's primary path, project instructions or project memory.
+   ADR 0249's one-visible-workspace model is untouched.
 
-## 后果
+## Consequences
 
-- 短引用现在解析到项目中的任何位置，打开它的视图可以把文件显示在它
-  自己的文件夹中，而不是作为外部文件。
-- 多文件夹项目可以在工作面板中逐文件夹浏览，按项目记住，而用户无需
-  改变 agent 的工作对象。
-- 容器模型、权限模型和 session 模型不变：没有新权限，没有面向插件的
-  新 IPC 能力，一次一个包含基座。
-- 忽略 `roots` 的插件继续工作；无法解析组的宿主发送原始载荷，视图回
-  退到单根行为，因此该功能是降级而不是破坏。
-- `fs.resolveRef` 现在对「项目」有更宽的概念。项目组是用户编写的列表，
-  因此补全可以到达用户刻意添加的文件夹，别无其他。
+- A short reference now resolves anywhere in the project, and the view that opens
+  it can show the file in its own folder rather than as an external file.
+- A multi-folder project can be browsed folder by folder in the work panel,
+  remembered per project, without the user changing what the agent works on.
+- The container model, the permission model and the session model do not change:
+  no new permission, no new IPC capability for plugins, one containment base at a
+  time.
+- A plugin that ignores `roots` keeps working; a host that cannot resolve a group
+  sends the original payload and the view falls back to single-root behaviour, so
+  the feature degrades rather than breaking.
+- `fs.resolveRef` now has a wider notion of "the project". A project group is a
+  user-authored list, so completion can reach folders the user added deliberately
+  and nothing else.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-### 让渲染进程把组推入视图载荷
+### Let the renderer push the group into the view payload
 
-被拒绝：视图也会从启动器加载而根本不带聊天引用，而且 `location` 是一
-次性主题，不是长生命周期视图可以依赖的元数据。
+Rejected: a view also loads from the launcher with no chat reference at all, and
+`location` is a one-shot subject, not metadata a long-lived view can rely on.
 
-### 新增 `pi.project.roots()` 方法而不是扩展 `workspace.get()`
+### Add a `pi.project.roots()` method instead of extending `workspace.get()`
 
-被拒绝：`workspace.get` 已经是插件得知自己在哪个根中工作的地方。两个
-方法回答同一问题会漂移，而增量字段对忽略它们的插件毫无代价。
+Rejected: `workspace.get` is already where a plugin learns which root it is
+working in. Two methods answering the same question would drift, and the
+additive fields cost nothing to a plugin that ignores them.
 
-### 以相等权重对每个组文件夹运行补全
+### Run completion against every group folder with equal weight
 
-被拒绝：主根是 agent 工具默认使用的文件夹，因此它应该首先应答；组的
-顺序然后为其余排序。精确的绝对引用仍胜过每个简写，因此这一点不会隐
-藏真实命中。
+Rejected: the primary root is the folder the agent's tools default to, so it
+should answer first; the group's order then ranks the rest. An exact absolute
+reference still outranks every shorthand, so nothing about this hides a real hit.
 
-### 让文件夹切换把该文件夹激活为 workspace
+### Make the folder switch activate that folder as the workspace
 
-被拒绝：它会移动 agent 的工具根、session 的主路径和项目的指令，这正
-是 ADR 0233 和 ADR 0249 拒绝的多根执行。用户要的是一个能查看项目其他
-文件夹的文件浏览器，而不是让项目在对话之下变化。
+Rejected: it would move the agent's tool roots, a session's primary path and the
+project's instructions, which is exactly the multi-root execution ADR 0233 and
+ADR 0249 refused. The user asked for a file browser that can look at the project's
+other folders, not for the project to change underneath the conversation.
 
-### 把捆绑视图声明的 `fs` 根放宽到整个组
+### Widen the bundled view's declared `fs` root to the whole group
 
-被拒绝：manifest 的根模型是一个目录，放宽它会让视图常驻访问每个项目
-的每个文件夹，而不是用户正在看的那一个。一次一个包含基座是更窄的授
-权，也是视图已经在做的。
+Rejected: the manifest's root model is one directory, and widening it would give
+the view standing access to every folder of every project rather than to the one
+the user is looking at. One containment base at a time is the narrower grant and
+is what the view already does.

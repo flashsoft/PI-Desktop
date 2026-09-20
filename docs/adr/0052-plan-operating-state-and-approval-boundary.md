@@ -1,36 +1,42 @@
-# ADR 0052: Plan 运行状态与审批边界
+# ADR 0052: Plan operating state and approval boundary
 
-- 状态： 已被 ADR 0053 取代
-- 日期： 2026-07-30
-- 基线： `0.4.13`
-- 协议： v7
-- 存储 schema: v8
+- Status: Superseded by ADR 0053
+- Date: 2026-07-30
+- Baseline: `0.4.13`
+- Protocol: v7
+- Storage schema: v8
 
-ADR 0053 用不可变的、唯一的、由宿主写入的 `.pi/plan/*.md` 产物、仅
-approve/reject 的决议方式、现有的 `plan_approvals` 产物/执行字段，以及一个
-不重放的启动中断栅栏取代了本检查点。下文中结构化提案/请求修改的细节保留为
-已被取代设计的历史背景。
+ADR 0053 replaces this checkpoint with immutable unique host-written
+`.pi/plan/*.md` artifacts, approve/reject-only resolution, the existing
+`plan_approvals` artifact/execution fields, and a startup interruption fence
+with no replay. The structured proposal/request-changes details below remain
+historical context for the superseded design.
 
-## 背景
+## Context
 
-PI-Desktop 此前的产品选择器把 Chat 和 Agent 当作两个工具配置。这套词汇让规
-划工作流含义模糊：一个 plan 可以被描述为另一个 agent、一个规划器模型，或一
-种只读权限模式。这些解释会复制 pi runtime，或把授权放进渲染进程。
+PI-Desktop's former product selector treated Chat and Agent as two tool
+profiles. That vocabulary made a planning workflow ambiguous: a plan could be
+described as another agent, a planner model, or a read-only permission mode.
+Those interpretations would duplicate the pi runtime or put authorization in
+the renderer.
 
-所需的工作流是单个 pi Agent：它能检查任务、提交结构化计划、等待单独的用户
-决定、根据反馈修订，并且只在批准后继续执行。该工作流横跨持久会话模型、pi
-工具组合、Rust 授权、宿主 RPC、渲染进程 IPC、插件注册、存储恢复与计划执行。
+The required workflow is one pi Agent that can inspect a task, submit a
+structured plan, wait for a separate user decision, revise from feedback, and
+continue execution only after approval. The workflow crosses the durable
+session model, pi tool composition, Rust authorization, host RPC, renderer IPC,
+plugin registration, storage recovery, and scheduled execution.
 
-## 决策
+## Decision
 
-### 1. 一个 Agent，两个运行状态
+### 1. One Agent, two operating states
 
-产品选择器就是 `Agent | Plan`。每个会话只有一个 pi Agent。Plan 是该 Agent 进
-入规划状态之后的样子；它不是第二个 Agent、规划器服务、规划器模型或权限模
-式。Agent 仍是新会话与新计划任务的默认值。
+The product selector is exactly `Agent | Plan`. There is one pi Agent per
+session. Plan is that Agent after it enters planning state; it is not a second
+Agent, planner service, planner model, or permission mode. Agent remains the
+default for new sessions and new scheduled tasks.
 
-持久会话模式是 `agent | plan`。实时的规划状态是持久模式、runtime 与宿主审批
-记录的投影：
+The durable session mode is `agent | plan`. The live planning state is a
+projection of the durable mode, runtime, and host approval record:
 
 ```text
 Agent / inactive
@@ -39,55 +45,60 @@ Agent / inactive
   -> Agent / inactive after approval, same Agent continues
 ```
 
-用户可以在空闲时选择 Plan。同一个 Agent 也可以在执行中调用
-`EnterPlanMode`。两条路径汇聚到同一个经宿主校验的 Plan 状态。
-`ExitPlanMode` 提交结构化计划，并且是它的批次中唯一允许的 assistant 工具调
-用。
+The user may select Plan while idle. The same Agent may also call
+`EnterPlanMode` while executing. Both paths converge on the same host-validated
+Plan state. `ExitPlanMode` submits a structured plan and is the only assistant
+tool call allowed in its batch.
 
-内部渲染进程的 `page = "chat"` 值可以保留作为会话界面路由。它不是运行模
-式，且不得出现在模式选择器、模式命令或授权决策中。
+The internal renderer `page = "chat"` value may remain as the conversation
+surface route. It is not an operating mode and must not appear in mode
+selectors, mode commands, or authorization decisions.
 
-### 2. 宿主持有的持久权威
+### 2. Host-owned durable authority
 
-Rust host-core 对以下事项具有权威：
+Rust host-core is authoritative for:
 
-- 在每次工具调用上从持久的 `sessionId` 解析 `sessions.mode`；
-- 在权限模式与授权之前执行 Plan/Agent 工具策略；
-- 创建并决议持久的计划审批记录；
-- 以选定的权限模式提交 Plan → Agent 转换；
-- 发出规范化的审批/状态事件并应用超时/恢复；
-- 计划/无人值守策略与稳定的错误码。
+- resolving `sessions.mode` from the durable `sessionId` on every tool call;
+- enforcing the Plan/Agent tool policy before permission modes and grants;
+- creating and resolving durable plan approval records;
+- committing the Plan → Agent transition with the selected permission mode;
+- emitting normalized approval/state events and applying timeout/recovery;
+- scheduled/unattended policy and stable error codes.
 
-渲染进程状态与 sidecar 模式字段是投影或诊断上下文。由 Electron 或 sidecar
-提供的冲突模式不能授权工具。过期的渲染进程不能清除 Plan 或授予执行。
+Renderer state and sidecar mode fields are projections or diagnostic context.
+A conflicting mode supplied by Electron or the sidecar cannot authorize a
+tool. A stale renderer cannot clear Plan or grant execution.
 
-### 3. Plan 工具与权限策略
+### 3. Plan tool and permission policy
 
-Plan 暴露：
+Plan exposes:
 
-- `Read`、`Glob`、`Grep` 与 `BrowserPreview`；
-- `Bash`，受持久权限模式约束；
-- `ExitPlanMode`（此列表原本还携带 `CompactContext`，已被 ADR 0061 移除，
-  并由 ADR 0064 以 `new_context` 恢复）。
+- `Read`, `Glob`, `Grep`, and `BrowserPreview`;
+- `Bash`, governed by the durable permission mode;
+- `ExitPlanMode` (this list also carried `CompactContext`, removed by
+  ADR 0061 and restored by ADR 0064 as `new_context`).
 
-Plan 拒绝 `Write`、`Edit`、所有插件工具与未知工具，无论权限模式、会话授
-权、manifest 风险或过期 IPC 状态如何。Agent 保留现有的 `Read`、`Glob`、
-`Grep`、`Write`、`Edit`、`Bash` 与已注册插件策略。
+Plan denies `Write`, `Edit`, every plugin tool, and unknown tools, regardless of
+permission mode, session grant, manifest risk, or stale IPC state. Agent keeps
+the existing `Read`, `Glob`, `Grep`, `Write`, `Edit`, `Bash`, and registered
+plugin policy.
 
-Plan 保留权限模式选择。Bash 在 `ask` 与 `accept-edits` 下会提示；在 `auto`
-下的 Bash 不经确认即可运行，并可能修改 workspace 或 scratch 目录。
-BrowserPreview 是显式的只读 UI 检查例外。因此 Plan 表达的是规划意图，而不
-是严格的只读安全配置。UI 必须说明这一权衡。
+Plan retains permission-mode selection. Bash prompts under `ask` and
+`accept-edits`; Bash under `auto` runs without confirmation and may mutate the
+workspace or scratch directory. BrowserPreview is the explicit read-only UI
+inspection exception. Plan therefore expresses planning intent, not a strict
+read-only security profile. The UI must state this tradeoff.
 
-### 4. 独立的计划审批事务
+### 4. Separate plan approval transaction
 
-`ExitPlanMode` 创建一条宿主持有的 `plan_approvals` 行，包含请求、会话、轮
-次、工具调用、结构化计划、截止时间与 pending 状态。宿主发出请求并在内存
-中的一次性 channel 上等待；该行保留提案与最终结果，但不会让已死的 Agent
-可恢复。
+`ExitPlanMode` creates a host-owned `plan_approvals` row with request, session,
+turn, tool-call, structured plan, deadline, and pending status. The host emits
+the request and waits on an in-memory one-shot channel; the row preserves the
+proposal and final outcome but does not make a dead Agent resumable.
 
-审批不是通用的工具权限。`plans.resolve` 只接受匹配的实时请求/会话/轮次。
-批准要求显式的目标权限模式，UI 默认 `ask`，并原子提交：
+Approval is not a generic tool permission. `plans.resolve` accepts only a
+matching live request/session/turn. Approval requires an explicit target
+permission mode, defaults to `ask` in the UI, and commits atomically:
 
 ```text
 BEGIN
@@ -100,74 +111,84 @@ wake ExitPlanMode
 start a new model turn with Agent tools
 ```
 
-请求修改需要非空反馈，记录结果，把反馈作为 Plan 工具结果返回给同一个
-Agent，并让会话留在 Plan。拒绝记录结果，停止运行，并让 Plan 保持激活。
+Requesting changes requires non-empty feedback, records the outcome, returns
+the feedback to the same Agent as a Plan tool result, and leaves the session in
+Plan. Reject records the outcome, stops the run, and leaves Plan active.
 
-超时、中止、持久化失败、宿主崩溃、sidecar 崩溃与过期响应都按失败关闭处
-理。完整进程重启把 pending 审批标记为 `interrupted`，中止关联轮次，让会话
-留在 Plan，并拒绝旧响应。渲染进程重载只能恢复有存活宿主等待者支撑的请求。
+Timeout, abort, persistence failure, host crash, sidecar crash, and stale
+responses fail closed. Full process restart marks pending approvals
+`interrupted`, aborts associated turns, keeps sessions in Plan, and rejects
+old responses. Renderer reload may restore only a request backed by a live
+host waiter.
 
-### 5. 迁移与协议
+### 5. Migration and protocol
 
-Schema v8 是 v7 的事务性迁移。它把持久化的会话模式、应用默认模式与计划任
-务模式值从 `chat` 映射为 `plan`，保留 transcripts/turns/permissions，新增
-`plan_approvals`，并在失败时保持 schema v7 权威。新默认值仍为 Agent。协议
-v7 携带 `plan | agent` 联合、计划状态事件、结构化审批事件以及
-`plans.pending` / `plans.resolve` RPC。
+Schema v8 is a transactional v7 migration. It maps persisted session mode,
+app default mode, and scheduled task mode values from `chat` to `plan`, keeps
+transcripts/turns/permissions, adds `plan_approvals`, and leaves schema v7
+authoritative on failure. New defaults remain Agent. Protocol v7 carries the
+`plan | agent` union, plan state events, structured approval events, and
+`plans.pending` / `plans.resolve` RPCs.
 
-### 6. 计划任务与插件策略
+### 6. Scheduled and plugin policy
 
-本版本中 Plan 仅交互可用。计划任务或无人值守的 Plan 运行在 provider 请求
-之前以 `PLAN_REQUIRES_INTERACTIVE_SESSION` 失败；没有后台进程展示或自动批
-准计划。现有的计划任务 Chat 值迁移为 Plan，并在无人值守运行前要求显式切换
-到 Agent。
+Plan is interactive-only in this release. A scheduled or unattended Plan run
+fails before the provider request with `PLAN_REQUIRES_INTERACTIVE_SESSION`; no
+background process displays or auto-approves a plan. Existing scheduled Chat
+values migrate to Plan and require an explicit switch to Agent before running
+unattended.
 
-插件 agent 工具是仅 Agent 的贡献。即使其 manifest 风险低或权限已授予，Plan
-也在宿主边界隐藏并拒绝它们。插件命令与面板仍是显式的用户 UI 贡献，但不能
-成为模型可调用的 Plan 工具。
+Plugin agent tools are Agent-only contributions. Plan hides and denies them at
+the host boundary even when their manifest risk is low or permission is
+granted. Plugin commands and panels remain explicit user UI contributions, but
+cannot become model-callable Plan tools.
 
-## 后果
+## Consequences
 
-### 正面
+### Positive
 
-- 规划保留同一个 Agent 上下文，避免第二个规划器生命周期。
-- 持久的宿主授权无法被渲染进程或 sidecar 状态绕过。
-- 用户可以显式选择批准后的权限姿态。
-- 反馈、恢复、迁移、插件拒绝与计划任务行为可通过稳定的协议/存储契约观测
-  与测试。
+- Planning preserves one Agent context and avoids a second planner lifecycle.
+- Durable host authorization cannot be bypassed by renderer or sidecar state.
+- Users can choose the post-approval permission posture explicitly.
+- Feedback, recovery, migration, plugin denial, and scheduled behavior are
+  observable and testable through stable protocol/storage contracts.
 
-### 权衡
+### Tradeoffs
 
-- Plan 不是严格无变更的模式，因为 Auto Bash 可以修改。这是有意为之，且必
-  须在产品文案与审批 UX 中可见。
-- 完整进程崩溃会丢弃进行中的 Agent 等待；提案保留为中断记录，但用户必须
-  提交新计划。
-- 协议与 schema 版本升级需要宿主、sidecar、主进程、渲染进程、迁移与兼容
-  性工作同步。
+- Plan is not a strict mutation-free mode because Auto Bash can mutate. This is
+  intentional and must be visible in the product copy and approval UX.
+- A full process crash discards an in-flight Agent wait; the proposal is kept
+  as an interrupted record, but the user must submit a new plan.
+- Protocol and schema version bumps require synchronized host, sidecar, main,
+  renderer, migration, and compatibility work.
 
-## 已拒绝的备选方案
+## Alternatives rejected
 
-### 第二个规划器 Agent 或模型
+### A second planner Agent or model
 
-已拒绝，因为它复制上下文，引入第二个审批/runtime 边界，并与"反馈与批准返
-回同一个 Agent"的要求冲突。
+Rejected because it duplicates context, introduces a second approval/runtime
+boundary, and conflicts with the requirement that feedback and approval return
+to the same Agent.
 
-### 把 Plan 作为权限模式或严格只读配置
+### Plan as a permission mode or strict read-only profile
 
-已拒绝，因为规划意图与授权姿态是两回事。Plan 必须保留权限选择与 Bash 行
-为，包括 Auto 的显式变更权衡。
+Rejected because planning intent and authorization posture are distinct. Plan
+must retain permission selection and Bash behavior, including Auto's explicit
+mutation tradeoff.
 
-### 渲染进程持有的模式或审批状态
+### Renderer-owned mode or approval state
 
-已拒绝，因为过期或伪造的 IPC 可能授予执行，且渲染进程重载会丢失权威转换。
-Rust 持有持久模式、策略与审批身份。
+Rejected because stale or forged IPC could grant execution and renderer reload
+would lose the authoritative transition. Rust owns durable mode, policy, and
+approval identity.
 
-### 用命令文本分类来允许 Plan 中的 Bash
+### Command-text classification to permit Bash in Plan
 
-已拒绝，因为无法可靠地证明一般 shell 命令是只读的。现有权限模式是显式控
-制；Plan 的 Write/Edit/插件拒绝仍是精确的工具策略。
+Rejected because a general shell command cannot be proven read-only reliably.
+The existing permission mode is the explicit control; Plan's Write/Edit/plugin
+denials remain exact tool policy.
 
-## 相关文档
+## Related docs
 
 - `docs/spec/00-baseline.md`
 - `docs/spec/03-runtime/01-ipc-protocol.md`

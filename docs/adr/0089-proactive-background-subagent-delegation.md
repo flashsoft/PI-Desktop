@@ -1,4 +1,4 @@
-# ADR 0089: 主动式后台子代理委派
+# ADR 0089: Proactive Background Subagent Delegation
 
 - Status: Accepted for implementation (resumable delegations amended by
   ADR 0279)
@@ -6,111 +6,123 @@
 - Deciders: PI-Desktop core
 - Related: D201, D202, ADR 0062, ADR 0063, ADR 0048, ADR 0100, ADR 0279, E2E-142
 
-## 背景
+## Context
 
-ADR 0062 把委派作为上下文节约手段交付：`Task` 运行一个委派代理直
-到完成并返回其报告，工具描述告诉模型只有当宽泛搜索或长时间调研
-否则会填满父上下文时才委派。实践中主代理几乎从不委派：
+ADR 0062 shipped delegation as context economy: `Task` runs one delegate to
+completion and returns its report, and the tool description tells the model to
+delegate only when a wide search or long survey would otherwise fill the parent
+context. In practice the main agent almost never delegates:
 
-- 系统 prompt 对委派只字未提，因此模型只能看到工具的防御性描述
-  （"不要委派你几次工具调用就能完成的事"），没有任何可以行动的
-  正向触发模式。
-- `Task` 会阻塞父代理的工具循环直到委派完成，因此从模型视角看，
-  委派只是用一个长任务换另一个长任务；无法在委派运行时继续工
-  作。
-- 所有内置委派代理都是只读的报告机器，因此没有实现工作可以委派
-  的对象，而一个具备写能力的委派代理每碰一个文件都会触发会话的
-  权限提示。
-- 并发上限（4）和即发即弃契约没有给"提交前审查我的改动"或"并行
-  探索三个方向再收敛"这类编排模式留下空间。
+- The system prompt says nothing about delegation, so the model only ever sees
+  the tool's defensive description ("do not delegate what you can finish in a
+  couple of tool calls") with no positive trigger patterns to act on.
+- `Task` blocks the parent's tool loop until the delegate finishes, so from
+  the model's perspective delegation trades one long job for another; there is
+  no way to keep working while a delegate runs.
+- All builtin delegates are read-only report machines, so there is nothing to
+  delegate implementation work to, and a write-capable delegate would hit the
+  session's permission prompts for every file it touches.
+- The concurrency cap (4) and the fire-and-forget contract leave no room for
+  orchestration patterns like "review my change before I commit" or "explore
+  three directions in parallel, then converge".
 
-## 决策
+## Decision
 
-使委派成为一等的、主动的编排能力，同时保留 ADR 0062 建立的每一
-条遏制边界。
+Make delegation a first-class, proactive orchestration capability while
+keeping every containment boundary ADR 0062 established.
 
-### 1. 委派生命周期是非阻塞的、由工具驱动
+### 1. The delegate lifecycle is non-blocking and tool-driven
 
-`Task` 在后台启动一个委派代理并立即返回 `delegationId`。三个新的
-Agent 模式工具驱动生命周期，全部位于核心工具集中 `Task` 旁边：
+`Task` starts a delegate in the background and returns immediately with a
+`delegationId`. Three new Agent-mode tools drive the lifecycle, all in the core
+tool set beside `Task`:
 
-- `TaskWait(delegationIds?, mode?, minCompleted?, timeoutSeconds?)` 收
-  敛正在运行的委派（默认全部）并返回它们的报告；
-  `mode: "any"` + `minCompleted` 在前 N 个完成时立即收敛，已结束
-  的委派会立即返回，因此报告可以按 id 重读。
-- `TaskList()` 报告会话的委派及其状态。
-- `TaskStop(delegationIds?)` 停止正在运行的委派；被停止的显示为
-  `stopped`。
+- `TaskWait(delegationIds?, mode?, minCompleted?, timeoutSeconds?)` converges
+  on running delegations (all by default) and returns their reports;
+  `mode: "any"` + `minCompleted` converges as soon as the first N finish, and
+  settled delegations return immediately so reports can be re-read by id.
+- `TaskList()` reports the session's delegations with status.
+- `TaskStop(delegationIds?)` stops running delegations; stopped reads as
+  `stopped`.
 
-会话运行时拥有一个委派注册表（id、agent、状态、计时、结果、完成
-promise、中止句柄）。已结束的记录在会话期间保留（上限 100），使
-`TaskWait` 可以重读报告而无需重跑委派。正在运行的委派在运行结束
-（`agent_end`）、父代理中止或运行时被处置时中止；系统 prompt 指
-示模型在结束一轮之前先收敛或停止。
+The session runtime owns a delegation registry (id, agent, status, timings,
+result, completion promise, abort handle). Settled records are retained for the
+session (capped at 100) so `TaskWait` can re-read a report without re-running
+the delegate. Running delegates are aborted when the run ends (`agent_end`),
+when the parent aborts, or when the runtime is disposed; the system prompt
+instructs the model to converge or stop before ending a turn.
 
-### 2. 系统 prompt 列出正向触发模式
+### 2. The system prompt names positive trigger patterns
 
-基础 prompt 新增 `## Delegation` 一节（仅当目录非空时），列出具体
-情境：并行探索独立方向、提交前的对抗性审查、通过 `fixer` 进行多
-文件实现、上下文节约型搜索，以及批量分片——外加收敛规则
-（`Task` 之后继续工作、为用户填写 `description`、绝不在仍有运行
-中的委派时结束本轮）。`Task` 的描述被重写为先讲这些触发模式，并
-把旧的"不要"清单保留为一条边界行。
+The base prompt gains a `## Delegation` section (only when the catalog is
+non-empty) listing concrete situations: parallel exploration of independent
+directions, adversarial review before commit, multi-file implementation via
+`fixer`, context-economy searches, and batch sharding — plus the convergence
+rules (continue working after `Task`, fill `description` for the user, never
+end the turn with running delegates). The `Task` description is rewritten to
+lead with these triggers and keep the old "do not" list as a single boundary
+line.
 
-### 3. 新内置：更快的 `explorer` 和具备写能力的 `fixer`
+### 3. New builtins: a faster `explorer` and a write-capable `fixer`
 
-`explorer` 按 omo-slim explorer prompt 的风格重写：工具选择指引
-（Grep 找模式、Glob 做发现、Read 读文件）、并行搜索，以及结构化
-的 `<files>` / `<answer>` 报告形态。
+`explorer` is rewritten in the style of the omo-slim explorer prompts: tool
+selection guidance (Grep for patterns, Glob for discovery, Read for files),
+parallel searches, and a structured `<files>` / `<answer>` report shape.
 
-第四个内置 `fixer` 根据完整 spec 实现多文件改动：
-`tools: [Read, Glob, Grep, Edit, Write, Bash]`，`maxTurns: 40`，报
-告形态为 `<summary>` / `<changes>` / `<verification>`。它是唯一具
-备写能力的内置；其余三个保持只读。
+A fourth builtin, `fixer`, implements multi-file changes from a complete spec:
+`tools: [Read, Glob, Grep, Edit, Write, Bash]`, `maxTurns: 40`, with a
+`<summary>` / `<changes>` / `<verification>` report shape. It is the only
+write-capable builtin; the other three stay read-only.
 
-### 4. 定义可以声明权限作用域
+### 4. Definitions may declare a permission scope
 
-Frontmatter 新增 `permission: inherit | ask | accept-edits | auto`
-（默认 `inherit`）。声明了显式非 `inherit` 作用域的定义会使
-sidecar 把该作用域附加到委派代理的 `tools.execute` 调用上，而
-host-core 在该模式下而不是会话的有效权限模式下解析每次调用。省
-略或 `inherit` 的作用域不携带覆盖，因此调用使用父会话的有效模
-式。该覆盖仅是权限模式覆盖：契约模式的硬拒绝和外部路径门仍然有
-效，因此 `accept-edits` 会在工作区和 scratch 根内自动允许
-`Write`/`Edit`，而 Bash 和外部路径保持会话的行为。内置 `fixer`
-使用默认的 `inherit` 作用域；显式作用域仍可供符合条件的内置定义
-和用户定义使用。
+Frontmatter gains `permission: inherit | ask | accept-edits | auto` (default
+`inherit`). A definition with an explicit non-`inherit` scope causes the
+sidecar to attach that scope to the delegate's `tools.execute` calls, and
+host-core resolves each call under that mode instead of the session's effective
+permission mode. An omitted or `inherit` scope carries no override, so the
+call uses the parent session's effective mode. The override is a permission-mode
+override only: the contract modes' hard deny and the external-path gate stay in
+force, so `accept-edits` auto-allows `Write`/`Edit` inside the workspace and
+scratch roots while Bash and external paths keep the session's behavior. The
+builtin `fixer` uses the default `inherit` scope; explicit scopes remain
+available to eligible builtin and user definitions.
 
-### 5. 并发
+### 5. Concurrency
 
-`MAX_SUBAGENT_CONCURRENCY` 变为每会话运行上限 10（此前是每批次上
-限 4）。当会话已运行 10 个委派时，`Task` 以工具错误失败，告诉模
-型先等待或停止。
+`MAX_SUBAGENT_CONCURRENCY` becomes a per-session running cap of 10 (was a
+per-batch cap of 4). `Task` fails with a tool error when the session already
+runs 10 delegates, telling the model to wait or stop first.
 
-## 后果
+## Consequences
 
-- 委派不再是"一次长工具调用"，而成为后台编排：父代理可以在
-  `explorer` 搜索、`code-reviewer` 审查的同时做实现，然后用
-  `TaskWait` 收敛。
-- 模型在系统 prompt 中获得正向触发模式和完整的生命周期词汇，这
-  正是让委派变得主动而不是"被允许但无人使用"的关键。
-- 具备写能力的委派代理受其定义的 `permission` 作用域约束，而不是
-  受会话提示约束；host-core 仍是权威，外部路径门不受影响。
-- 旧 transcript 继续正常渲染：`Task` 行保留其委派分组，新工具映
-  射到相同的委派呈现。
-- 活过其轮次的委派会被停止，而不是继续运行；prompt 规则加上轮次
-  结束时的中止使这成为例外而非常态。
+- Delegation stops being "a long tool call" and becomes background
+  orchestration: the parent can implement while `explorer` searches and
+  `code-reviewer` reviews, then converge with `TaskWait`.
+- Models receive positive trigger patterns in the system prompt and a full
+  lifecycle vocabulary, which is what makes delegation proactive rather than
+  permitted-but-unused.
+- A write-capable delegate is bounded by its definition's `permission` scope,
+  not by the session's prompts; host-core stays the authority and the external
+  path gate is untouched.
+- Old transcripts keep rendering: `Task` rows keep their delegation grouping,
+  and the new tools map to the same delegate presentation.
+- A delegate that outlives its turn is stopped, not left running; the prompt
+  rule plus the turn-end abort make that the exception rather than the policy.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- **跨轮次的后台任务（Proma 风格）。** 在父轮次结束后继续运行的
-  委派，加上 UI 显示待处理的后台工作，可以最大化并行度，但需要
-  重做 Electron 主进程的轮次生命周期、完成语义和渲染进程的会话
-  空闲处理。轮次内的后台委派交付了该模式存在的意义——父代理继
-  续其主线——而现有轮次模型保持不变。
-- **让委派继承会话权限模式。** 被拒绝：一个需要 `auto` 的委派会
-  静默地重新启用提示，或迫使整个会话进入 `auto`；按定义的作用
-  域使放宽在定义文档中保持显式、可审查。
-- **保持 `Task` 阻塞并添加 `wait` 标志。** 被拒绝：一个需要模型
-  记得设置的标志就是会被遗忘的标志；由不同工具组成的生命周期使
-  "启动、工作、收敛"成为模型可以遵循、prompt 可以教授的序列。
+- **Background tasks across turns (Proma-style).** Delegates that keep running
+  after the parent turn ends, with the UI showing pending background work,
+  would maximize parallelism but requires reworking Electron main's turn
+  lifecycle, completion semantics and the renderer's session-idle handling.
+  Within-turn background delegation delivers the parent-continues-its-mainline
+  behavior the pattern exists for, with the existing turn model unchanged.
+- **Let delegates inherit the session permission mode.** Rejected: a delegate
+  that needs `auto` would silently re-enable prompting or force the whole
+  session to `auto`; the per-definition scope keeps the relaxation explicit and
+  reviewable in the definition document.
+- **Keep `Task` blocking and add a `wait` flag.** Rejected: a flag the model
+  must remember to set is a flag it forgets; a lifecycle with distinct tools
+  makes "start, work, converge" a sequence the model can follow and the prompt
+  can teach.

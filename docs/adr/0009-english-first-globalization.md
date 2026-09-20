@@ -1,34 +1,34 @@
-# ADR 0009: 英语优先的全球化
+# ADR 0009: English-first globalization
 
-- 状态: 已接受
-- 日期: 2026-07-25
+- Status: Accepted
+- Date: 2026-07-25
 
-## 背景
+## Context
 
-PI-Desktop 面向全球用户和开放贡献。仅中文的产品界面会阻碍国际化采用和插件生态的发展。
+PI-Desktop targets global users and open contribution. Chinese-only product surfaces would block international adoption and plugin ecosystem growth.
 
-## 决策
+## Decision
 
-PI-Desktop 采用**英语优先**：
+PI-Desktop is **English-first**:
 
-1. 产品 UI 默认语言：**英语**
-2. spec、ADR、代码注释、提交信息、issue、插件文档：**以英语为主**
-3. 从早期 UI 工作起就必须引入 i18n 框架
-4. 其他语言（包括中文）是可选语言包，而不是事实来源
+1. Product UI default language: **English**
+2. Specs, ADRs, code comments, commits, issues, plugin docs: **English primary**
+3. i18n framework is required from early UI work
+4. Additional locales (including Chinese) are optional packs, not the source of truth
 
-## 本地化规则
+## Localization Rules
 
-- 源字符串以英语维护
-- 核心代码中不得硬编码非英文 UI 文案
-- 语言包使用稳定的消息 ID
-- 插件 manifest/文档建议使用英语；本地化字段后续可选
+- Source strings live in English
+- No hard-coded non-English UI copy in core code
+- Locale packs use stable message IDs
+- Plugin manifests/docs recommended in English; localized fields optional later
 
-## 后果
+## Consequences
 
-### 正面
-- 面向全球的基线
-- 外部贡献更容易
-- 插件生态的语言默认更清晰
+### Positive
+- Global-ready baseline
+- Easier external contribution
+- Cleaner plugin ecosystem language default
 
-### 负面
-- 中文文案成为翻译层，而不是主要撰写格式
+### Negative
+- Chinese copy becomes a translation layer, not primary authoring format

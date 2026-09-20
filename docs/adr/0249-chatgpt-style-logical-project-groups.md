@@ -1,57 +1,71 @@
-# ADR 0249：ChatGPT 风格的逻辑项目组
+# ADR 0249: ChatGPT-Style Logical Project Groups
 
 - Status: Accepted
 - Date: 2026-09-13
 - Deciders: PI-Desktop maintainers
 - Amends: ADR 0233, ADR 0234, ADR 0016
 
-## 背景
+## Context
 
-第一个多文件夹项目流程选择了多个目录，但把第一个之后的每个目录都当作
-独立的侧栏项目。这不符合 ChatGPT Project 面向用户的含义：一个命名的
-容器应该拥有它的聊天、指令、记忆和附加来源。
+The first multi-folder project flow selected several directories but treated
+every directory after the first as an independent sidebar project. That does
+not match the user-facing meaning of a ChatGPT Project: one named container
+should own its chats, instructions, memory, and attached sources.
 
-PI-Desktop 仍有一条冻结的安全边界：host-core 一次只向 agent 暴露一个
-可见 workspace。因此逻辑项目组绝不能通过让渲染进程或 sidecar 拥有多根
-安全策略来实现。
+PI-Desktop still has a frozen security boundary in which host-core exposes one
+visible workspace to the agent at a time. A logical project group must therefore
+not be implemented by making the renderer or sidecar own a multi-root security
+policy.
 
-## 决策
+## Decision
 
-1. 项目组是宿主持有的逻辑身份，具有显示名称、有序的本地文件夹根列表和
-   一个主根。第一个选中的文件夹始终是主根。
-2. 组记录和组级指令/记忆通过宿主持有的 `kv` 扩展边界存储。现有的路径
-   项目仍可作为旧的单根组读取，因此不需要用户数据库重置或迁移。
-3. 为组创建的 session 继续携带其主项目路径以保持兼容。运行时在启动
-   agent 之前从该路径解析组指令和记忆，因此逻辑组中的所有聊天看到相同
-   的项目上下文。
-4. 侧栏和 Project archive 为每个逻辑组渲染一行。展开一行显示所有根和
-   该组的 session；额外的根不会作为独立项目标签页打开。
-5. 宿主把主根保留为内置文件工具的默认可见 workspace。使用另一个已注册
-   组根之下绝对路径的工具请求会被规范化，并可以该根作为其包含基座；
-   组成员身份绝不授予任意外部文件系统访问。
-6. 项目溢出动作命名为 **Edit project**。编辑器可以通过增量的
-   `project.group.update` 能力更改组名并调整其根列表。主根保持第一位且
-   不能移除；已有聊天的根不能被分离。
-7. 组创建、编辑、共享指令编辑和共享记忆编辑是增量的 IPC 能力。旧的
-   路径作用域指令和记忆 API 对旧的单根组保持可用。
+1. A project group is a host-owned logical identity with a display name, an
+   ordered list of local folder roots, and a primary root. The first selected
+   folder is always primary.
+2. Group records and group-level instructions/memory are stored through the
+   host-owned `kv` extension boundary. Existing path projects remain readable
+   as legacy single-root groups, so no user database reset or migration is
+   required.
+3. Sessions created for a group continue to carry their primary project path
+   for compatibility. The runtime resolves group instructions and memory from
+   that path before launching the agent, so all chats in the logical group see
+   the same project context.
+4. The sidebar and Project archive render one row per logical group. Expanding
+   a row shows all roots and the group's sessions; additional roots are not
+   opened as independent project tabs.
+5. The host keeps the primary root as the default visible workspace for builtin
+   file tools. A tool request using an absolute path under another registered
+   group root is canonicalized and may use that root as its containment base;
+   group membership never grants arbitrary external filesystem access.
+6. The project overflow action is named **Edit project**. The editor can change
+   the group name and adjust its root list through the additive
+   `project.group.update` capability. The primary root remains first and cannot
+   be removed; a root with existing chats cannot be detached.
+7. Group creation, editing, shared instruction editing, and shared memory editing
+   are additive IPC capabilities. Legacy path-scoped instruction and memory
+   APIs remain available for legacy single-root groups.
 
-## 后果
+## Consequences
 
-- 命名组在 UI 中表现得像一个 ChatGPT 风格的项目：它的聊天、指令和记忆
-  在所选根之间共享。
-- 现有项目保留其路径、session、transcript 和渲染进程呈现元数据。
-- 第一个文件夹作为默认执行根仍有意义，且本次迭代中不能重新排序。额外
-  的根可以从 Edit project 调整，但受聊天保留和宿主所有权检查约束，并且
-  只能通过宿主规范包含校验的显式绝对路径使用。
-- 选择另一个组仍会改变那一个可见的宿主 workspace；后台 session 仍绑定
-  到它自己的主路径。
-- 原生选择器保持仅本地。不隐含远程项目来源。
+- A named group behaves like one ChatGPT-style project in the UI: its chats,
+  instructions, and memory are shared across the selected roots.
+- Existing projects retain their paths, sessions, transcripts, and renderer
+  presentation metadata.
+- The first folder remains meaningful as the default execution root and cannot
+  be reordered in this iteration. Additional roots can be adjusted from Edit
+  project, subject to chat-preservation and host ownership checks, and are
+  available only through explicit absolute paths that pass host canonical
+  containment.
+- Selecting another group still changes the one visible host workspace; a
+  background session remains bound to its own primary path.
+- The native picker remains local-only. Remote project sources are not implied.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-- **把额外文件夹保留为独立标签页：** 被拒绝，因为它丢失逻辑项目关系，
-  并复制 ChatGPT Project 身份。
-- **把多根执行移入渲染进程或 sidecar：** 被拒绝，因为它绕过宿主持有的
-  文件系统和权限边界。
-- **立即新增关系 schema：** 被拒绝，因为现有的宿主 `kv` 扩展边界可以在
-  不改变 schema 版本的情况下持久存储此配置。
+- **Keep additional folders as independent tabs:** rejected because it loses the
+  logical project relationship and duplicates the ChatGPT Project identity.
+- **Move multi-root execution into the renderer or sidecar:** rejected because it
+  bypasses the host-owned filesystem and permission boundary.
+- **Add a new relational schema immediately:** rejected because the existing
+  host `kv` extension boundary can durably store this configuration without
+  changing the schema version.

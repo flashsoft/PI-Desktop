@@ -1,191 +1,223 @@
-# 隐私政策
+# Privacy Policy
 
-**生效日期：2026-09-10**
+**Effective date: 2026-09-10**
 
-本隐私政策说明当你使用 PI-Desktop 桌面应用时，PI-Desktop 如何处理信息。
-PI-Desktop 是一个本地优先的开源项目，由
-[vastsa/PI-Desktop](https://github.com/vastsa/PI-Desktop) 的贡献者维护。
+This Privacy Policy describes how PI-Desktop handles information when you use
+the PI-Desktop desktop application. PI-Desktop is a local-first, open-source
+project maintained by contributors to [vastsa/PI-Desktop](https://github.com/vastsa/PI-Desktop).
 
-本政策描述应用当前的行为。它不是法律意见；分发修改版构建或提供额外
-托管服务的运营者，有责任为该服务提供所需的告知。
+This policy describes the current application behavior. It is not legal advice;
+operators who distribute a modified build or offer an additional hosted service
+are responsible for providing any notices required for that service.
 
-文档网站是一个独立的静态服务。其当前配置会从 Google Fonts 加载字体，
-因此访问页面可能向 Google 发送请求和网络元数据。网站托管方也可能
-处理常规的服务器访问日志。这些处理适用对应服务方自己的隐私政策。
+The documentation website is a separate static service. Its current
+configuration loads fonts from Google Fonts, so a page visit can send a request
+and network metadata to Google. The website host may also process ordinary
+server access logs. Those providers' own privacy policies apply to that
+processing.
 
-## 1. 隐私速览
+## 1. Privacy at a glance
 
-- PI-Desktop 不要求注册 PI-Desktop 账号。
-- 项目、会话、设置、transcript 和应用日志默认存储在本地。
-- PI-Desktop 目前没有运营远程遥测管道或云端崩溃分析服务。
-- 你的 prompt、文件、工具结果和其他内容，可能被发送给你选择或调用
-  的模型 Provider、网关、本地模型服务、插件或 MCP 服务器。
-- API key 和 OAuth 凭据存储在应用本地的加密密钥库中。当前宿主实现
-  使用 AES-256-GCM 加密文件和机器本地密钥。
+- PI-Desktop does not require a PI-Desktop account.
+- Projects, sessions, settings, transcripts, and application logs are stored
+  locally by default.
+- PI-Desktop does not currently operate a remote telemetry pipeline or cloud
+  crash-analytics service.
+- Your prompts, files, tool results, and other content may be sent to the model
+  provider, gateway, local model server, plugin, or MCP server that you choose
+  or invoke.
+- API keys and OAuth credentials are stored in the application's local
+  encrypted secret store. The current host implementation uses AES-256-GCM
+  encrypted files and a machine-local key.
 
-## 2. 本地存储的信息
+## 2. Information stored locally
 
-根据你使用的功能，PI-Desktop 可能在你的计算机上存储以下内容：
+Depending on the features you use, PI-Desktop may store the following on your
+computer:
 
-- 项目路径和项目 / 会话元数据；
-- prompt、模型响应、thinking 块、附件、工具调用、工具结果，以及
-  Plan 或 Goal 产物；
-- Provider、模型、界面和应用设置；
-- API key 和 OAuth 凭据的元数据（原始凭据保留在加密的本地密钥库中，
-  不会显示在 UI 上）；
-- 插件代码、插件设置、插件自有数据和插件日志；
-- 应用、宿主、Agent 和审计日志；
-- 临时文件、缓存、Review 快照和其他运行数据；以及
-- 一段有界的内存剪贴板历史，包含显式的剪贴板写入和用户发起的粘贴
-  事件。它最多保留 500 条或 256 MB，最长保留 30 天；拥有剪贴板
-  权限的插件可以读取它。
+- project paths and project/session metadata;
+- prompts, model responses, thinking blocks, attachments, tool calls, tool
+  results, and Plan or Goal artifacts;
+- provider, model, interface, and application settings;
+- API-key and OAuth-credential metadata, while raw credentials remain in the
+  encrypted local secret store and are not shown in the UI;
+- plugin code, plugin settings, plugin-owned data, and plugin logs;
+- application, host, agent, and audit logs;
+- temporary files, caches, review snapshots, and other operational data; and
+- a bounded in-memory clipboard history containing explicit clipboard writes
+  and user-initiated paste events. It may retain up to 500 entries or 256 MB for
+  up to 30 days, and plugins with clipboard permission may read it.
 
-其中一些信息可能包含个人数据或机密源代码。PI-Desktop 将其视为用户
-数据，不会仅仅因为它存储在本地就把它上传到 PI-Desktop。
+Some of this information can contain personal data or confidential source code.
+PI-Desktop treats it as user data and does not upload it to PI-Desktop merely
+because it is stored locally.
 
-## 3. 发送给其他服务的信息
+## 3. Information sent to other services
 
-PI-Desktop 是一个客户端。网络目的地取决于你的配置和操作。
+PI-Desktop is a client. Network destinations depend on your configuration and
+actions.
 
-### 3.1 模型 Provider 与网关
+### 3.1 Model providers and gateways
 
-当你发送 prompt 或启动一个 Agent 轮次时，应用会把该请求所需的内容
-发送给你选择的 Provider、网关或本地模型服务。视请求而定，这可能
-包括对话历史、项目片段、工具结果、附件、Provider / 模型元数据，
-以及从你的工作区加载的指令。
+When you send a prompt or start an agent turn, the application sends the
+content needed for that request to the provider, gateway, or local model server
+selected by you. Depending on the request, this can include conversation
+history, project excerpts, tool results, attachments, provider/model metadata,
+and instructions loaded from your workspace.
 
-你选择的 Provider 的隐私政策和数据保留做法适用于它收到的数据。
-即使通过 OpenAI 兼容端点配置，Provider 也可能由第三方托管。在发送
-机密信息之前，请先审查端点和 Provider 条款。
+The selected provider's privacy policy and retention practices apply to data it
+receives. A provider may be hosted by a third party even when it is configured
+through an OpenAI-compatible endpoint. Review the endpoint and provider terms
+before sending confidential information.
 
-### 3.2 插件与 MCP 服务器
+### 3.2 Plugins and MCP servers
 
-插件和 MCP 服务器可以是本地的，也可以是远程的。通过 PI-Desktop
-宿主 API，插件或 MCP 服务器会收到你调用或授权的操作所涉及的数据，
-但它自己的代码和服务可能会按照自己的条款处理这些数据。远程 MCP
-服务器还可能在任何工具被调用之前收到协议初始化和工具目录请求
-（包括 `initialize` 和 `tools/list`）。在安装或启用之前，请审查
-其权限、来源和隐私做法。
+Plugins and MCP servers can be local or remote. Through PI-Desktop host APIs,
+a plugin or MCP server receives data involved in an operation you invoke or
+authorize, but its own code and service may process that data under its own
+terms. A remote MCP server may also receive protocol initialization and tool
+catalog requests (including `initialize` and `tools/list`) before any tool is
+called. Review permissions, source, and privacy practices before installing or
+enabling one.
 
-PI-Desktop 不会通过其文档化的插件 API 刻意暴露宿主密钥库。但是，
-插件代码当前以用户的操作系统权限在本地运行，并未被完整的能力沙箱
-隔离。请把所有插件——尤其是市场安装包——视为拥有用户权限的第三方
-代码。市场安装包和远程 MCP 服务器是第三方软件和服务。
+PI-Desktop does not intentionally expose the host secret store through its
+documented plugin APIs. However, plugin code currently runs locally with the
+user's operating-system privileges and is not fully capability-sandboxed. Treat
+all plugins, especially marketplace packages, as user-privileged third-party
+code. Marketplace packages and remote MCP servers are third-party software and
+services.
 
-### 3.3 目录、更新、链接与媒体
+### 3.3 Catalogs, updates, links, and media
 
-应用可能会访问你配置的模型目录、插件市场端点、GitHub 发布 / 更新
-端点、Provider OAuth 端点，以及你所启用功能所需的其他服务。这些
-服务可能会收到你的 IP 地址、user agent 等网络元数据。
+The application may contact configured model catalogs, plugin marketplace
+endpoints, GitHub release/update endpoints, provider OAuth endpoints, and
+other services required by features you enable. Those services may receive
+network metadata such as your IP address and user agent.
 
-通过官方插件渠道安装或更新插件，还会访问该渠道使用的插件市场端点，
-即插件中心 `https://plugins.aiuo.net/api/v1/download/resolve`。该请求
-携带一个设备标识符：由操作系统暴露的机器标识符派生的 SHA-256
-摘要；当无法读取机器标识符时，则使用一次性生成并存储在应用数据
-目录中的随机标识符。发送的是摘要而不是机器码本身，机器码无法从
-摘要中还原。该服务使用该标识符对下载去重和限速，并且只保留设备
-维度的计数，而不是其背后的身份。两个备用渠道和自定义来源不会发送
-该标识符。
+Installing or updating a plugin through the official plugin channel also
+contacts the plugin marketplace endpoint used by that channel, the plugin
+center at `https://plugins.aiuo.net/api/v1/download/resolve`. That request
+carries a device identifier: a SHA-256 digest derived from a machine identifier
+the operating system exposes, or, when no machine identifier can be read, a
+random identifier generated once and stored in the application data directory.
+The value sent is the digest, not the machine code, and the machine code cannot
+be recovered from it. The service uses the identifier to de-duplicate and
+rate-limit a download, and it keeps counts for a device rather than the identity
+behind it. The two backup channels and a custom source do not send it.
 
-通过应用打开的链接由操作系统或外部浏览器处理。模型生成的 Markdown
-可能包含远程图片、音频或视频；渲染时，对应的主机可能会收到来自你
-计算机的请求。不要在 URL 或远程媒体请求中包含敏感数据。
+Links opened through the application are handled by the operating system or an
+external browser. Markdown written by a model may include remote images,
+audio, or video; when rendered, the relevant host may receive a request from
+your computer. Do not include sensitive data in URLs or remote media requests.
 
-### 3.4 本地控制接口
+### 3.4 Local control interfaces
 
-可选的本地 MCP 控制面默认关闭，启用时仅绑定 loopback 接口。它面向
-受信任的本地客户端，不面向远程访问或不受信任的本地用户。请保护好
-本地用户数据目录及其 bearer token。
+The optional local MCP control plane is disabled by default and binds to the
+loopback interface when enabled. It is intended for trusted local clients, not
+for remote access or untrusted local users. Protect the local user-data
+directory and its bearer token.
 
-## 4. PI-Desktop 不会做的事
+## 4. What PI-Desktop does not do
 
-PI-Desktop 目前不会：
+PI-Desktop does not currently:
 
-- 出售个人信息或将其用于广告；
-- 要求注册 PI-Desktop 账号才能使用桌面应用；
-- 把应用遥测发送到 PI-Desktop 运营的远程分析服务；或
-- 把原始 Provider 凭据发送给渲染进程、应用日志或插件。
+- sell personal information or use it for advertising;
+- require registration with PI-Desktop to use the desktop application;
+- send application telemetry to a PI-Desktop-operated remote analytics service;
+  or
+- send raw provider credentials to the renderer, application logs, or plugins.
 
-修改版构建、第三方插件、你配置的 Provider、插件市场、MCP 服务器或
-托管服务商可能有不同的做法。
+A modified build, third-party plugin, configured provider, marketplace, MCP
+server, or hosting provider may have different practices.
 
-## 5. 信息如何使用
+## 5. How information is used
 
-信息用于：
+Information is used to:
 
-- 运行 Agent 会话并提供你请求的功能；
-- 保存和恢复本地会话、项目、设置和 Review 历史；
-- 按权限策略执行和审计工具；
-- 存储、加载、更新和移除插件及其本地数据；
-- 通过本地日志诊断故障；以及
-- 检查应用、模型目录或插件更新。打包构建可能在启动后、以及运行
-  期间大约每六小时，检查一次所配置的 GitHub 发布端点。
+- run agent sessions and provide the features you request;
+- save and restore local sessions, projects, settings, and review history;
+- execute and audit tools according to the permission policy;
+- store, load, update, and remove plugins and their local data;
+- diagnose failures through local logs; and
+- check for application, model-catalog, or plugin updates. Packaged builds
+  may check the configured GitHub release endpoint after startup and roughly
+  every six hours while running.
 
-PI-Desktop 不会把你的本地项目或 transcript 内容用于自己的模型训练。
-模型 Provider 或其他服务可能有自己的训练和保留政策；使用前请咨询
-对应服务。
+PI-Desktop does not use your local project or transcript content for its own
+model training. A model provider or other service may have its own training and
+retention policy; consult that service before using it.
 
-## 6. 保留与删除
+## 6. Retention and deletion
 
-在正常的文件系统、备份和操作系统行为约束下，PI-Desktop 会一直保留
-本地数据，直到你删除它。
+PI-Desktop keeps local data until you remove it, subject to normal filesystem,
+backup, and operating-system behavior.
 
-- 会话和 transcript 不会按时间自动删除。在应用中删除会话即可移除
-  其会话记录和 transcript 文件。
-- 应用、宿主和 Agent 日志有大小上限并会轮转。审计记录保留在本地，
-  通常在 90 天后清理。
-- 会话的临时暂存数据随会话一并删除；一次性缓存可能在维护期间被
-  重建或移除。
-- Provider 凭据会一直保留，直到你移除该 Provider 或凭据，或移除
-  应用的本地数据。常规的应用卸载可能会留下本地数据目录；文件系统
-  和备份副本需要单独删除。
-- 插件代码、插件数据和插件专属日志按卸载流程移除。写入共享应用
-  日志的插件诊断信息可能保留到日志轮转或应用数据删除时。如果插件
-  自己的代码在 PI-Desktop 之外创建了数据，它也可能在 PI-Desktop
-  之外维护这些数据。
+- Sessions and transcripts are not automatically deleted by age. Delete a
+  session from the application to remove its session records and transcript
+  files.
+- Application, host, and agent logs are size-capped and rotated. Audit records
+  are retained locally and normally pruned after 90 days.
+- Temporary session scratch data is removed with the session, and disposable
+  caches may be recreated or removed during maintenance.
+- Provider credentials remain until you remove the provider or credential,
+  or remove the application's local data. Ordinary application uninstall may
+  leave the local data directory behind; filesystem and backup copies require
+  separate removal.
+- Plugin code, plugin data, and plugin-specific logs are removed according to
+  the uninstall flow. Plugin diagnostics written to shared application logs
+  may remain until log rotation or application-data deletion. A plugin may also
+  maintain data outside PI-Desktop if its own code creates it there.
 
-删除本地数据不会删除已经发送给 Provider、插件、MCP 服务器、更新
-服务或其他第三方的副本。请按照对应服务自己的政策向其请求删除。
+Deleting local data does not delete copies already sent to a provider, plugin,
+MCP server, update service, or other third party. Request deletion from that
+service under its own policy.
 
-## 7. 安全
+## 7. Security
 
-PI-Desktop 使用本地进程边界、渲染进程沙箱、工作区路径检查、权限
-提示、密钥脱敏和加密的本地密钥文件。插件能力沙箱尚不完整。没有任何
-安全措施是完美的。你有责任保护好自己的计算机、项目文件、凭据、
-本地用户数据目录和任何本地控制令牌。
+PI-Desktop uses local process boundaries, renderer sandboxing, workspace path
+checks, permission prompts, secret redaction, and encrypted local secret files.
+Plugin capability sandboxing is not complete. No security measure is perfect.
+You are responsible for protecting your computer, project files, credentials,
+local user-data directory, and any local control token.
 
-Agent 工具和 shell 命令在被允许时以用户的操作系统权限运行。请把
-prompt、模型输出、插件、MCP 服务器和远程内容视为不可信。不要向
-你不信任的软件授予权限。
+Agent tools and shell commands run with the user's operating-system privileges
+when allowed. Treat prompts, model output, plugins, MCP servers, and remote
+content as untrusted. Do not grant permissions to software you do not trust.
 
-## 8. 你的选择与隐私请求
+## 8. Your choices and privacy requests
 
-你可以通过以下方式控制数据的收集与暴露：
+You can control data collection and exposure by:
 
-- 选择本地模型或你信任的 Provider；
-- 在使用前审查 Provider、插件、MCP 和 shell 权限；
-- 禁用插件和可选的网络功能；
-- 在本地删除会话、凭据、日志、插件和应用数据；以及
-- 避免在 prompt、公开 issue、URL 和远程媒体中包含个人或机密信息。
+- choosing a local model or a provider you trust;
+- reviewing provider, plugin, MCP, and shell permissions before use;
+- disabling plugins and optional network features;
+- deleting sessions, credentials, logs, plugins, and application data locally;
+  and
+- avoiding personal or confidential information in prompts, public issue
+  reports, URLs, and remote media.
 
-如果适用法律赋予你访问、更正、导出、限制或删除个人信息的权利，
-请先联系维护者。由于 PI-Desktop 是本地优先的，维护者通常并不持有
-你的本地项目、transcript 或凭据数据，可能无法替你检索或删除它们。
-你可以通过 [GitHub 仓库](https://github.com/vastsa/PI-Desktop)联系
-项目；请勿在公开 issue 中发布个人或机密信息。
+Where applicable law gives you rights to access, correct, export, restrict, or
+delete personal information, contact the maintainers first. Because PI-Desktop
+is local-first, the maintainers generally do not possess your local project,
+transcript, or credential data and may be unable to retrieve or delete it for
+you. You can contact the project through the
+[GitHub repository](https://github.com/vastsa/PI-Desktop); do not post personal
+or confidential information in a public issue.
 
-## 9. 儿童
+## 9. Children
 
-PI-Desktop 是通用开发者工具，不面向儿童。我们不会通过 PI-Desktop
-运营的服务故意收集儿童的个人信息。
+PI-Desktop is a general-purpose developer tool and is not directed to children.
+We do not knowingly collect personal information from children through a
+PI-Desktop-operated service.
 
-## 10. 本政策的变更
+## 10. Changes to this policy
 
-当应用的数据处理做法发生变化时，本政策可能会更新。顶部的生效日期
-标识当前版本。重大变更会在可行时通过仓库或发布说明告知。
+This policy may be updated when the application's data practices change. The
+effective date at the top will identify the current version. Material changes
+will be communicated through the repository or release notes when practical.
 
-## 11. 联系方式
+## 11. Contact
 
-隐私相关问题，请使用 [PI-Desktop GitHub 仓库](https://github.com/vastsa/PI-Desktop)。
-安全漏洞请遵循仓库的安全报告指引，而不是在公开 issue 中披露敏感
-细节。
+For privacy questions, use the [PI-Desktop GitHub repository](https://github.com/vastsa/PI-Desktop).
+For security vulnerabilities, follow the repository's security reporting
+instructions rather than disclosing sensitive details in a public issue.

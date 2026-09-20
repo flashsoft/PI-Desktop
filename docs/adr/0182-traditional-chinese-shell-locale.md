@@ -1,40 +1,47 @@
-# ADR 0182: 繁体中文外壳 locale
+# ADR 0182: Traditional Chinese shell locale
 
-- 状态：已接受
-- 日期：2026-09-08
-- 决策负责人：PI-Desktop 桌面端/i18n 维护者
-- 相关：ADR 0160、D314、E2E-091
+- Status: Accepted
+- Date: 2026-09-08
+- Decision owners: PI-Desktop desktop/i18n maintainers
+- Related: ADR 0160, D314, E2E-091
 
-## 背景
+## Context
 
-locale 注册表已经让语言选择器可扩展，但每个繁体中文 OS 标签仍然解析到
-简体中文目录。这使繁体中文用户的 Auto 选择不正确，并让外壳和应用内
-发布说明停留在简体中文术语上。
+The locale registry already made the language picker extensible, but every
+Traditional Chinese OS tag still resolved to the Simplified Chinese catalog.
+That made Auto selection incorrect for Traditional Chinese users and left
+the shell and in-app release notes with Simplified Chinese terminology.
 
-## 决策
+## Decision
 
-1. 发布 `zh-TW` 作为独立的完整外壳目录，本地名称为 `繁體中文`，包括
-   宿主拥有的插件面板外壳。可搜索的语言选择器继续读取共享的 locale
-   注册表，因此无需任何 locale 专属的 UI 代码。
-2. 将 `zh-TW`、`zh-Hant`、`zh-HK` 和 `zh-MO` 标签解析到 `zh-TW`，包括
-   下划线分隔形式。通用的 `zh` 和简体中文地区继续解析到 `zh-CN`。
-3. 将 `zh-TW` 加入 `AppSettings.language`，并同时打包 `zh-TW` 和 `zh_TW`
-   Electron locale 目录。不改变宿主协议或存储 schema 版本。
-4. 增加配套的 `zh-TW` 产品变更日志目录，并将繁体中文发布说明请求解析
-   到它。插件 manifest 保持现有的 `en` + `zh-CN` 契约；没有繁体中文字段
-   的插件按 ADR 0160 的规定回退到英文。
+1. Ship `zh-TW` as an independent full shell catalog with the native name
+   `繁體中文`, including the host-owned plugin-panel chrome. The searchable
+   language picker continues to read the shared locale registry and therefore
+   needs no locale-specific UI code.
+2. Resolve `zh-TW`, `zh-Hant`, `zh-HK`, and `zh-MO` tags to `zh-TW`, including
+   underscore-separated forms. Generic `zh` and Simplified Chinese regions
+   continue to resolve to `zh-CN`.
+3. Add `zh-TW` to `AppSettings.language` and package both `zh-TW` and
+   `zh_TW` Electron locale directories. No host protocol or storage schema
+   version changes.
+4. Add a matching `zh-TW` product changelog catalog and resolve Traditional
+   Chinese release-note requests to it. Plugin manifests keep their existing
+   `en` + `zh-CN` contract; a plugin without a Traditional Chinese field
+   falls back to English, as specified by ADR 0160.
 
-## 后果
+## Consequences
 
-- 繁体中文用户获得独立的外壳、正确的 Auto 检测、可搜索的语言选择、
-  感知 locale 的日期格式和繁体中文发布说明。
-- i18n 和变更日志目录一致性测试多覆盖一个发布的 locale。
-- 新的外壳 locale 仍遵循 ADR 0160：添加目录、注册表行、设置联合类型
-  成员、Electron locale 包和相关校验。
+- Traditional Chinese users get an independent shell, correct Auto detection,
+  searchable language selection, locale-aware date formatting, and
+  Traditional Chinese release notes.
+- The i18n and changelog catalog parity tests cover one additional shipped
+  locale.
+- New shell locales still follow ADR 0160: add a catalog, registry row,
+  settings union member, Electron locale pack, and relevant validation.
 
-## 替代方案
+## Alternatives
 
-- 继续把繁体中文标签映射到 `zh-CN`：否决，因为文字系统和常用 UI 术语
-  不同。
-- 只添加 `zh-TW` 而让发布说明留在 `zh-CN`：否决，因为更新界面是活跃
-  产品外壳的一部分。
+- Continue mapping Traditional Chinese tags to `zh-CN`: rejected because the
+  script and common UI terminology are different.
+- Add only `zh-TW` while leaving release notes on `zh-CN`: rejected because
+  the update surface is part of the active product shell.

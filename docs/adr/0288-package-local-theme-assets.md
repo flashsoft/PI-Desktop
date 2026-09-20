@@ -1,36 +1,43 @@
-# ADR 0288: 包内主题资产保持可用
+# ADR 0288: Package-local theme assets remain available
 
-- 状态：已接受，待实现
-- 日期：2026-09-17
-- 决策：D445
-- 修订：ADR 0255
+- Status: Accepted for implementation
+- Date: 2026-09-17
+- Decision: D445
+- Amends: ADR 0255
 
-## 背景
+## Context
 
-ADR 0255 让外部绝对路径可用于主题贡献。这支持主题插件拥有用户在其包外
-选择的图片，但绝对路径无法在另一台机器上标识已安装市场归档中的图片。
+ADR 0255 made external absolute paths available to theme contributions. That
+supports a theme whose plugin owns a user-selected image outside its package,
+but an absolute path cannot identify an image in an installed marketplace
+archive on another machine.
 
-宿主渲染的 scenic 设置目的地需要随主题包一起传播的预览图和背景图。要求
-绝对路径会让打包主题要么不可移植，要么依赖一个单独的文件选择能力。
+Host-rendered scenic Settings destinations need preview images and background
+images that travel with their theme package. Requiring an absolute path would
+make a packaged theme either non-portable or dependent on a separate file
+selection capability.
 
-## 决策
+## Decision
 
-1. 声明的主题资产可以是扩展白名单内的绝对路径，也可以是扩展白名单内的
-   包相对路径。
-2. 宿主用 `resolveInsidePlugin` 解析包相对路径，拒绝路径穿越和
-   `node_modules`，校验存在性和共享资产预算，然后把解析出的文件按其包
-   相对键记录。
-3. 绝对路径资产保留 ADR 0255 现有的校验、百分号编码 URL 键和运行时注册
-   行为。
-4. `plugin-asset:` 协议仍是渲染进程的唯一访问路径。它只服务已加载插件的
-   资产注册表中记录的文件，使用扩展 MIME 允许名单、no-store、nosniff，
-   并在禁用、卸载或崩溃时吊销注册表。
-5. scenic 卡片预览必须指定同一插件拥有的一个已声明资产。它们不增加文件
-   系统、网络、渲染进程 DOM 或图片上传的权限。
+1. A declared theme asset may be either an extension-whitelisted absolute path
+   or an extension-whitelisted package-relative path.
+2. The host resolves a package-relative path with `resolveInsidePlugin`, rejects
+   traversal and `node_modules`, verifies existence and the shared asset budget,
+   then records the resolved file under its package-relative key.
+3. Absolute assets retain ADR 0255's existing validation, percent-encoded URL
+   keys, and runtime registration behavior.
+4. The `plugin-asset:` protocol remains the sole renderer access path. It only
+   serves a file recorded by the loaded plugin's asset registry, uses the
+   extension MIME allowlist, no-store, nosniff, and revokes the registry on
+   disable, unload, or crash.
+5. Scenic card previews must name one declared asset owned by the same plugin.
+   They do not add filesystem, network, renderer-DOM, or image-upload authority.
 
-## 后果
+## Consequences
 
-- 市场主题包可以随包附带可移植的本地美术资源，而不暴露任意文件系统读取。
-- 有意使用外部绝对路径的现有主题继续工作。
-- 主题作者必须声明每一张图片和每一个字体；未声明的 CSS `url()` 在到达
-  渲染进程之前被拒绝。
+- Marketplace theme packs can ship portable local art without exposing arbitrary
+  filesystem reads.
+- Existing themes that intentionally name an external absolute path keep
+  working.
+- Theme authors must declare every image and font; an undeclared CSS `url()` is
+  rejected before it reaches the renderer.

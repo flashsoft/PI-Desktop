@@ -1,4 +1,4 @@
-# ADR 0226: 为 Composer 控件预留聊天宽度
+# ADR 0226: Reserve Chat Width for Composer Controls
 
 - Status: Accepted
 - Date: 2026-09-11
@@ -8,40 +8,44 @@
 
 ## Context
 
-侧边栏和流内工作面板都可以从 MainChat 分走 flex 空间。当剩余的聊天列
-变得太窄时，浮动 composer 工具栏会挤压其本地化徽章或让其控件组换
-行。与侧边坞的视觉重叠不是输入界面可以接受的回退。
+The sidebar and in-flow work panel can both take flex space from MainChat.
+When the remaining chat column becomes too narrow, the floating composer
+toolbar squeezes its localized chips or wraps its control groups. A visual
+overlap with a side dock is not an acceptable fallback for an input surface.
 
 ## Decision
 
-MainPane 及其聊天界面预留 515px 最小宽度。该预留属于聊天 flex 项，
-因此侧边栏和工作面板的调整大小手势无法消耗或覆盖 composer 所需的空
-间。
+MainPane and its chat surface reserve a 515px minimum width. This reservation
+belongs to the chat flex item, so sidebar and work-panel resize gestures cannot
+consume or paint over the space needed by the composer.
 
-Composer 工具栏以 `flex-wrap: nowrap` 保持单行，其左右控件组是不可压
-缩的 flex 项。模式和权限标签保持单行，并在其本地化文本超过可用标签
-槽位时使用徽章内的省略号。
+The composer toolbar stays single-row with `flex-wrap: nowrap`, and its left and
+right control groups are non-shrinking flex items. Mode and permission labels
+remain single-line and use chip-local ellipsis when their localized text is
+longer than the available label slot.
 
-工作面板保持为流内的、渲染进程拥有的列，不请求正数的原生窗口预留；
-本决策只改变 MainChat 在渲染进程外壳内保留的最小空间。
+The work panel remains an in-flow renderer-owned column and does not request a
+positive native window reservation; this decision only changes the minimum
+space MainChat retains inside the renderer shell.
 
 ## Consequences
 
-- 侧边栏和工作面板调整大小时，composer 控件行保持可读。
-- 在受限的客户端宽度下，外壳可能需要比原生最小值更多的水平空间才能
-  同时显示每个固定宽度列；composer 预留优先于 flex 压缩和重叠。
-- 515px 最小值是 MainPane 布局的共享渲染进程/测试契约。
+- Sidebar and work-panel resizing preserve a readable composer control row.
+- At a constrained client width, the shell may need more horizontal space than
+  the native minimum to show every fixed-width column simultaneously; the
+  composer reservation takes priority over flex compression and overlap.
+- The 515px minimum is the shared renderer/test contract for MainPane layout.
 
 ## Alternatives rejected
 
-### 在窄于阈值时让工具栏换行
+### Wrap the toolbar below a narrow threshold
 
-被拒绝，因为工具栏在侧边坞手势期间会变高，底部控件不再呈现为一个稳
-定的动作行。
+Rejected because the toolbar becomes taller during a side-dock gesture and the
+bottom controls stop presenting as one stable action row.
 
-### 允许侧边坞与 composer 重叠
+### Allow side docks to overlap the composer
 
-被拒绝，因为它隐藏输入动作，并造成指针/焦点歧义。
+Rejected because it hides input actions and creates pointer/focus ambiguity.
 
 ## References
 

@@ -1,164 +1,206 @@
-# ADR 0062: Task 工具之后的有界 Subagent
+# ADR 0062: Bounded Subagents Behind a Task Tool
 
-- 状态： 已接受实现（定义根经 ADR 0112 修订；超时策略经 ADR 0119 修订；委派
-  呈现经 D265 修订；选择性父工具继承经 ADR 0246 修订；可恢复委派经
-  ADR 0279 修订）
-- 日期： 2026-08-06
-- 决策者： PI-Desktop 核心
-- 相关： D201、ADR 0041（持久化 outbox）、ADR 0048（惰性逐轮工具激活）、
-  ADR 0053（plan 检查点与执行世代）、D123（prompt 模板文档）、D138（会话作用
-  域内联权限请求）、D198（契约模式）、ADR 0112（能力根与设置 IA）、
-  ADR 0119（事件驱动的 subagent 超时）、D265（单个委派也读作卡片）、
-  ADR 0246（选择性 `tools: inherit`）、ADR 0279（可恢复委派）
 
-## 背景
+- Status: Accepted for implementation (definition roots amended by ADR 0112;
+  timeout policy amended by ADR 0119; delegation presentation amended by D265;
+  opt-in parent-tool inherit amended by ADR 0246; resumable delegations amended
+  by ADR 0279)
+- Date: 2026-08-06
+- Deciders: PI-Desktop core
+- Related: D201, ADR 0041 (persistence outbox), ADR 0048 (lazy per-turn tool
+  activation), ADR 0053 (plan checkpoint and execution epoch), D123 (prompt
+  template documents), D138 (session-scoped inline permission requests),
+  D198 (contract modes), ADR 0112 (capability roots and Settings IA), ADR 0119
+  (event-driven subagent timeouts), D265 (one delegation reads as a card too),
+  ADR 0246 (opt-in `tools: inherit`), ADR 0279 (resumable delegations)
 
-单个 agent 循环为它读到的一切付费。宽泛搜索、长构建日志与多文件巡查是可分
-离的工作，一旦结论已知，其中间输出就毫无价值，但它们全部落入会话的上下文
-窗口，并在任务的剩余时间里留在那里。自动压缩（ADR 0049）事后回收空间；它
-无法避免花费空间。
+## Context
 
-委派是标准答案：在自己的上下文中运行可分离的部分，只返回报告。把它加入
-PI-Desktop 触及每一层，而未决问题不在于循环本身，而在于边界——定义从哪
-里来、委派可以对 workspace 做什么、委派的行与父级模型上下文及 transcript
-的关系，以及多个委派同时需要用户注意时会发生什么。
+A single agent loop pays for everything it reads. Wide searches, long build
+logs and multi-file surveys are separable work whose intermediate output is
+worthless once the conclusion is known, yet all of it lands in the session's
+context window and stays there for the rest of the task. Automatic compaction
+(ADR 0049) recovers space after the fact; it cannot avoid spending it.
 
-## 决策
+Delegation is the standard answer: run the separable piece in its own context
+and return only a report. Adding it to PI-Desktop touches every layer, and the
+open questions are not about the loop itself but about the boundaries — where
+definitions come from, what a delegate may do to the workspace, how a delegate's
+rows relate to the parent's model context and to the transcript, and what
+happens when several delegates want the user's attention at once.
 
-### 1. 定义是 Markdown 文档，内置加全局用户文档
+## Decision
 
-subagent 定义是 frontmatter 加 Markdown 正文，正文成为委派的系统 prompt，
-与 prompt 模板（D123）镜像：
+### 1. Definitions are Markdown documents, builtin plus global user documents
+
+A subagent definition is frontmatter plus a Markdown body that becomes the
+delegate's system prompt, mirroring prompt templates (D123):
 
 ```text
 ~/.agents/subagents/<name>.md
 ```
 
-PI-Desktop 在 `agent-runtime` 中内联发布三个内置（`explorer`、
-`code-reviewer`、`test-runner`）。`~/.agents/subagents` 下的用户文档按名称与
-内置合并。没有项目级 subagent 能力来源；全局用户目录是唯一的用户管理层。
-目录在每次会话启动时重新读取，以 `MAX_SUBAGENT_DEFINITIONS`（16）封顶，且
-格式错误的文档降级为启动诊断——它绝不会让会话付出其他委派或其轮次的代
-价。
+PI-Desktop ships three builtins inline in `agent-runtime` (`explorer`,
+`code-reviewer`, `test-runner`). User documents under `~/.agents/subagents`
+are combined with the builtins by name. There is no project-level subagent
+capability source; the global user catalog is the only user-managed layer.
+The catalog is re-read
+on every session launch, capped at `MAX_SUBAGENT_DEFINITIONS` (16), and a
+malformed document degrades to a launch diagnostic — it never costs the session
+its other delegates or its turn.
 
-Frontmatter 键：`name`、`description`、`tools`、`model`、`thinkingLevel`、
-`maxTurns`、`idle-timeout` 与 `max-duration`。键拼写宽松匹配（`max-turns`、
-`max_turns`、`maxTurns`）。`maxTurns` 可选；省略、`none` 与 `0` 表示不限轮
-次。超时默认值与边界由 ADR 0119 定义。
+Frontmatter keys: `name`, `description`, `tools`, `model`, `thinkingLevel`,
+`maxTurns`, `idle-timeout`, and `max-duration`. Key spelling is matched
+loosely (`max-turns`, `max_turns`, `maxTurns`). `maxTurns` is optional;
+omission, `none`, and `0` mean unlimited turns. The timeout defaults and
+bounds are defined by ADR 0119.
 
-### 2. 定义声明其工具，不声明则只读
+### 2. A definition declares its tools, and is read-only when it does not
 
-`tools` 只能命名文件、搜索与 shell 工具（`SUBAGENT_ASSIGNABLE_TOOLS`：
-Read、Glob、Grep、BrowserPreview、Bash、Edit、Write）。插件、skill、模式与
-元工具不可达：委派是有界 worker，不是第二个完整会话。省略 `tools` 的定义
-得到 `Read, Glob, Grep`，而 `tools: "*"` 展开为可分配集合，而不是会话拥有
-的一切。委派绝不从父会话继承变更权限——写能力只来自它自己的声明。
+`tools` may only name file, search and shell tools
+(`SUBAGENT_ASSIGNABLE_TOOLS`: Read, Glob, Grep, BrowserPreview, Bash, Edit,
+Write). Plugin, skill, mode and meta tools are out of reach: a delegate is a
+bounded worker, not a second full session. A definition that omits `tools` gets
+`Read, Glob, Grep`, and `tools: "*"` expands to the assignable set rather than to
+everything the session has. A delegate never inherits mutation rights from the
+parent session — write capability comes only from its own declaration.
 
-每个委派工具调用都经过与父级相同的 `tools.execute` 宿主路径，因此收容、权
-限模式与硬拒绝不变。委派不能问父级能问的面向模型的问题：不能提交 plan 或
-goal，不能模式转换，不能嵌套 `Task`。
+Every delegate tool call goes through the same `tools.execute` host path as the
+parent's, so containment, permission modes and hard denies are unchanged. A
+delegate cannot ask the model-facing questions the parent can: no plan or goal
+submission, no mode transition, no nested `Task`.
 
-### 3. 定义可以固定自己的 provider 与模型
+### 3. A definition may pin its own provider and model
 
-`model: <provider>/<model>` 把委派绑定到特定模型，无论会话使用什么。固定
-在 Electron 主进程中每次启动解析一次（凭据与 pi 模型目录在那里），并以
-`MAX_SUBAGENT_PROVIDERS`（8）个不同 provider 封顶。因为存储的 provider id
-是 UUID，固定按 id、供应商键或显示名匹配。
+`model: <provider>/<model>` binds a delegate to a specific model regardless of
+the session's. Pins are resolved once per launch in Electron main, where
+credentials and the pi model catalog live, and are capped at
+`MAX_SUBAGENT_PROVIDERS` (8) distinct providers. Because stored provider ids are
+UUIDs, a pin matches on id, vendor key or display name.
 
-无法解析的固定（无匹配 provider、无 API key）被排除在绑定映射之外，而不是
-回退到会话 provider，且 `Task` 调用以指明该固定的工具错误失败。要求便宜模
-型的定义绝不能静默地花掉贵的那个。
+An unresolvable pin (no matching provider, no API key) is left out of the
+binding map instead of falling back to the session provider, and the `Task` call
+fails with a tool error naming the pin. A definition that asks for a cheap model
+must never silently spend the expensive one.
 
-### 4. 委派是一个 Agent 模式工具，且构造上并行
+### 4. Delegation is one Agent-mode tool, and parallel by construction
 
-`Task` 工具接收 `agent`、`task` 与可选的短 `description`。可用委派的目录乘
-坐在工具描述中而不是系统 prompt 中，因为两者一起变化。
+The `Task` tool takes `agent`, `task` and an optional short `description`. The
+catalog of available delegates rides in the tool description rather than the
+system prompt, because the two change together.
 
-`Task` 只在 Agent 模式提供。Plan 与 Goal 是只读契约协商（D198），带 Bash
-或 Edit 的委派会直接碾过其中一个。
+`Task` is offered only in Agent mode. Plan and Goal are read-only contract
+negotiations (D198), and a delegate with Bash or Edit would drive straight
+through one.
 
-并发通过 pi 的执行模式表达：会话 Agent 以 `toolExecution: "parallel"` 运
-行，每个目录工具携带 `executionMode: "sequential"`，只有 `Task` 携带
-`"parallel"`。pi 在批次包含一个顺序工具时就顺序运行该批次，因此唯一会扇
-出的批次是只含 `Task` 调用的批次。现有工具顺序保证不受影响。扇出由信号量
-以 `MAX_SUBAGENT_CONCURRENCY`（4）封顶。委派运行时边界是 ADR 0119 中事件
-驱动的空闲与总时长看门狗；显式的按定义 `maxTurns` 仍是可选的硬性后盾，最
-大 80。
+Concurrency is expressed through pi's execution modes: the session Agent runs
+with `toolExecution: "parallel"`, every catalog tool carries
+`executionMode: "sequential"`, and `Task` alone carries `"parallel"`. pi runs a
+batch sequentially as soon as it contains one sequential tool, so the only batch
+that fans out is a batch of nothing but `Task` calls. Existing tool ordering
+guarantees are untouched. Fan-out is capped at `MAX_SUBAGENT_CONCURRENCY` (4)
+by a semaphore. Delegate runtime bounds are the event-driven idle and
+total-duration watchdogs in ADR 0119; an explicit per-definition `maxTurns`
+remains an optional hard backstop with a maximum of 80.
 
-扇出让一个同进程顺序问题变成现实，由 sidecar 持有。host-core 每个会话一次
-接纳一个变更，所以并发写入不会撕裂，但它不定义同路径变更之间的顺序——而
-sidecar 的编辑恢复契约允许每路径三次计数失败才终止 prompt，这只有在尝试有
-序时才意味着"重新读取并重试"。sidecar 中的 `PathMutex` 按规范化路径串行
-化变更调用；不同路径互不等待，这正是目的。委派也在与父级相同的有界
-provider 重试策略下运行（一次重试，8s 延迟封顶），因此扇出无法把一个失败
-的 provider 变成重试风暴。
+Fan-out makes one same-process ordering problem real, and the sidecar owns it.
+host-core admits one mutation per session at a time, so concurrent writes cannot
+tear, but it defines no order between same-path mutations — and the sidecar's
+edit-recovery contract allows three counted failures per path before terminating
+the prompt, which only means "re-read and retry" if the attempts were ordered. A
+`PathMutex` in the sidecar serializes mutating calls per normalized path;
+different paths never wait on each other, which is the point.
+Delegates also run under the same bounded provider retry policy as the parent
+(one retry, 8s delay cap), so a fan-out cannot turn one failing provider into a
+retry storm.
 
-### 5. 父级上下文获得报告，且只有报告
+### 5. The parent's context gains the report, and only the report
 
-`SubagentRun` 是同一 sidecar 进程中的第二个 pi `Agent`。它的最终消息以
-`MAX_SUBAGENT_REPORT_CHARS`（12k）为界，成为 `Task` 工具结果，
-`agent`、`status`、`turns`、`toolCalls` 与 `usage` 作为结构化 details。
+A `SubagentRun` is a second pi `Agent` in the same sidecar process. Its final
+message, bounded to `MAX_SUBAGENT_REPORT_CHARS` (12k), becomes the `Task` tool
+result, with `agent`, `status`, `turns`, `toolCalls` and `usage` as structured
+details.
 
-委派消息与工具行仍被发出并持久化——它们是让委派可评审的东西——但每行
-携带 `parentToolCallId` 与 `agentName`，runtime 在重建模型上下文时跳过这些
-行。重放它们既会与父级实际看到的东西矛盾，也会重新引入委派存在所要避免
-的上下文成本。
+Delegate messages and tool rows are still emitted and persisted — they are what
+makes a delegation reviewable — but every row carries `parentToolCallId` and
+`agentName`, and the runtime skips those rows when it rebuilds model context.
+Replaying them would both contradict what the parent actually saw and reintroduce
+the context cost delegation exists to avoid.
 
-委派的终结——成功、上限、超时、失败、中止——折叠进工具结果。它从不到达
-Electron 主进程的轮次处理，因此父轮次仍是唯一能结束轮次的东西。超时策略
-与 `timed_out` 结果见 ADR 0119。
+A delegate's termination — success, cap, timeout, failure, abort — collapses
+into the tool result. It never reaches Electron main's turn handling, so the
+parent turn remains the only thing that can end a turn. See ADR 0119 for the
+timeout policy and `timed_out` outcome.
 
-### 6. 归属被持久化，transcript 从中推导拓扑
+### 6. Attribution is persisted, and the transcript derives its topology from it
 
-host-core 把 `parentToolCallId` 与 `agentName` 存储在消息 `meta` 对象中，因
-此重载的会话与实时会话嵌套方式相同。渲染进程把每个带归属的行分组在产生它
-的 `Task` 行之下，并缩进一级渲染；轮次流与 minimap 只看到父级的行。报告只
-打印一次：委派没有产生回答行时在 `Task` 正文中，否则作为嵌套的回答行。
+host-core stores `parentToolCallId` and `agentName` in the message `meta`
+object, so a reloaded session nests identically to a live one. The renderer
+groups every attributed row under the `Task` row that spawned it and renders
+them one level in; the turn stream and the minimap see only the parent's rows.
+The report is printed once: in the `Task` body when the delegate produced no
+answer row, as the nested answer row otherwise.
 
-活动组中的每个 `Task` 调用都绘制为委派摘要卡片，单独的也算（D265）。连续
-的 `Task` 启动是该组中仅有的行（D319）：父级思考、workspace 工具与生命周
-期行留在卡片周围的普通处理组中。卡片头部从同样的工具消息推导 agent 数
-量、已完结数量、耗时与聚合状态；其展开正文渲染一层主 agent 到委派的拓
-扑。每个委派节点保留原始的行折叠、简介、报告、计数器与嵌套步骤。实时扇出
-在首次出现时展开一次拓扑，之后展开由用户控制；重载的历史保持折叠。不新增
-图记录、边、IPC 字段或存储 schema：实时与重载都从持久化的父 id 推导相同
-拓扑，UI 从不虚构委派到委派的边或它不曾拥有的父级摘要。
+Every `Task` call in an activity group is drawn as a delegation summary, a lone
+one included (D265). Consecutive `Task` starts are the only rows in that group
+(D319): parent thinking, workspace tools, and lifecycle rows stay in ordinary
+processing groups around the card. Its header derives agent count, settled count, elapsed time
+and aggregate status from those same tool messages; its expanded body renders a
+one-level main-agent-to-delegate topology. Each delegate node retains the
+original row disclosure, brief, report, counters and nested steps. Live fan-out
+opens the topology once when it first appears, then leaves expansion under user
+control; reloaded history stays collapsed. No graph record, edge, IPC field or
+storage schema is added: live and reload both derive the same topology from the
+persisted parent ids, and the UI never invents delegate-to-delegate edges or a
+parent summary it does not own.
 
-### 7. 权限请求按会话排队
+### 7. Permission requests queue per session
 
-渲染进程此前每个会话持有一个待决权限。并行委派打破了这一点：两个委派可
-能各自在等待一个 `Bash` 调用。待决请求变成按会话的队列，最旧优先。只有队
-头可回答；回答按请求 id 匹配，迟到的回答无法清除后继者；宿主过期的请求按
-工具调用 id 从队列任何位置移除；中止拒绝整个队列。卡片指明提问的委派以及
-它后面还有多少请求等待。
+The renderer used to hold one pending permission per session. Parallel delegates
+break that: two delegates can each be waiting on a `Bash` call. Pending requests
+become a per-session queue, oldest first. Only the head is answerable, answers
+are matched by request id so a late answer cannot clear a successor, a
+host-expired request is removed by tool call id from anywhere in the queue, and
+an abort denies the whole queue. The card names the delegate that asked and how
+many requests wait behind it.
 
-## 已考虑的备选方案
+## Alternatives considered
 
-- **v1 串行委派。** 更简单，也能避免路径锁与权限队列。已拒绝：委派的价值
-  很大程度上在于把巡查扇出，而事后补并发意味着重做 transcript 与权限工
-  作。
-- **总是继承会话模型。** 推理成本更低。已拒绝：宽泛搜索正是值得在便宜快
-  速模型上做、而父级保留贵模型的工作。
-- **让委派继承父级工具。** 静默的、始终开启的继承已被拒绝：它让每次委派
-  与会话一样危险，而定义是读者能看到委派能做什么的唯一地方。ADR 0246 修
-  订：文档可以用 `tools: inherit` 加拒绝列表选择加入；内置保持今天的白名
-  单。
-- **每个委派一个独立进程。** 真正的隔离，但它为已经在 host-core 收容下运
-  行的有界 worker 复制宿主连接、provider 设置与事件管线。v1 拒绝。
-- **把委派行平铺进 transcript。** 已拒绝：并行委派下交错无法阅读，且它暗
-  示父级看到了它从未看到的工作。
-- **把委派消息喂回父级上下文。** 已拒绝：这正是委派消除的成本。
-- **定义放在设置/SQLite。** 已拒绝：定义是 prompt，仍是磁盘上的 Markdown
-  文档。ADR 0112 把用户管理的定义放在 `~/.agents/subagents` 下，使它们跨
-  仓库跟随用户，且不引入项目能力目录。
+- **Serial delegates in v1.** Simpler, and it would have avoided the path lock
+  and the permission queue. Rejected: the value of delegation is largely in
+  fanning out a survey, and retrofitting concurrency would have meant redoing
+  the transcript and permission work.
+- **Inherit the session model always.** Cheaper to reason about. Rejected: a
+  wide search is exactly the work worth doing on a cheap fast model while the
+  parent keeps the expensive one.
+- **Let delegates inherit the parent's tools.** Rejected for silent, always-on
+   inherit: it makes every delegation as dangerous as the session, and a
+   definition is the only place a reader can see what a delegate may do.
+   Amended by ADR 0246: a document may opt in with `tools: inherit` and a
+   deny list; builtins stay on today's whitelist.
+- **A separate process per delegate.** Real isolation, but it duplicates the
+  host connection, provider setup and event plumbing for a bounded worker that
+  already runs under host-core containment. Rejected for v1.
+- **Flatten delegate rows into the transcript.** Rejected: with parallel
+  delegates the interleaving is unreadable, and it implies the parent saw work
+  it never saw.
+- **Feed delegate messages back into the parent's context.** Rejected: it is
+  precisely the cost delegation removes.
+- **Definitions in settings/SQLite.** Rejected: definitions are prompts and
+  remain Markdown documents on disk. ADR 0112 places user-managed
+  definitions under `~/.agents/subagents` so they follow the user across
+  repositories without introducing a project capability directory.
 
-## 后果
+## Consequences
 
-- 宽泛搜索、评审与命令运行以每个一份报告的代价移出会话上下文。
-- 用户可以在 `~/.agents/subagents` 下添加委派；无需重建、无需设置变更，
-  本地启用后在下一个 prompt 生效。
-- 现在同一批工具存在两个能力界面：会话的模式与定义的 `tools` 列表。委派
-  可以严格弱于其会话，绝不能更强。
-- 权限 UX 必须处理多于一个的等待请求，这对任何并行委派的用户可见。
-- 委派行让磁盘上的 transcript 更长；它们保持折叠且在模型上下文之外，但
-  评审与回滚仍能看到它们。
+- Wide searches, reviews and command runs move out of the session's context at
+  the price of one report each.
+- A user can add a delegate under `~/.agents/subagents`; no rebuild, no
+  settings change, effective on the next prompt when enabled locally.
+- Two capability surfaces now exist for the same tools: the session's mode and a
+  definition's `tools` list. A delegate can be strictly weaker than its session,
+  never stronger.
+- The permission UX must handle more than one waiting request, which is visible
+  to any user of parallel delegates.
+- Delegate rows make transcripts longer on disk; they stay collapsed and out of
+  model context, but review and rollback still see them.

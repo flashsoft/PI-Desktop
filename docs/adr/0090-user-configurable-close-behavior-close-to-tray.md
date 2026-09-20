@@ -1,91 +1,97 @@
-# ADR 0090: 用户可配置的关闭行为与关闭到托盘
+# ADR 0090: User-Configurable Close Behavior with Close-to-Tray
 
 - Status: Accepted for implementation
 - Date: 2026-08-12
 - Deciders: PI-Desktop core
 - Related: D230, D256, ADR 0021, ADR 0025, ADR 0078, ADR 0123
 
-## 背景
+## Context
 
-在 Windows/Linux 上，关闭主窗口会调用 `app.quit()`
-（`window-all-closed`），因此应用退出，其任务栏条目消失。最小化
-已经会把窗口隐藏到 D216（ADR 0078）在每个平台上保持常驻的托盘
-中，但拥有长时间运行的聊天的用户期望关闭窗口也能让应用保持可
-用。不同用户想要不同的默认值，而固定的关闭到托盘行为会惊吓到
-期望关闭即退出的用户。
+On Windows/Linux, closing the main window calls `app.quit()`
+(`window-all-closed`), so the app exits and its taskbar entry disappears.
+Minimizing already hides the window into the tray that D216 (ADR 0078) keeps
+resident on every platform, but users with long-running chats expect closing
+the window to keep the app available too. Different users want different
+defaults, and a fixed close-to-tray behavior would surprise users who expect
+close to quit.
 
-应用此前没有关闭拦截，也没有针对这一生命周期决策的用户可选
-项。macOS 不在范围内：原生 Dock 生命周期（关闭后应用保留在
-Dock 中，`activate` 重建窗口）已经符合期望行为。
+The app has no close interception and no user-facing choice for
+this lifecycle decision. macOS is out of scope: the native Dock lifecycle
+(close keeps the app in the Dock, `activate` recreates the window) already
+matches the desired behavior.
 
-## 决策
+## Decision
 
-1. Windows/Linux 的关闭行为成为持久化的、用户可配置的偏好，有三
-   个取值，其中只有两个可被设置：
-   - `ask`：临时的未设置状态——首次关闭时提示一次。做出选择后
-     会被永久记住，且无法再回退到提示状态（`closeBehavior/set`
-     拒绝 `ask`）。
-   - `tray`：关闭窗口将其隐藏到常驻的 D216 系统托盘图标下并保
-     持应用运行；托盘菜单可以还原窗口或退出应用。
-   - `quit`：旧行为——关闭窗口即退出应用。
-2. 偏好未设置时的首次关闭会显示一个原生模态对话框（主进程），
-   选项为取消 / 关闭到托盘 / 退出。选择非取消选项会将其永久持
-   久化；取消则保持窗口打开并保留偏好未设置（因此下一次关闭会
-   再次提示）。
-3. 该偏好由 Electron 主进程存储在 `<data>/close-behavior.json`
-   （与 `window-state.json` 相同的所有权模式），而不是 host-core
-   设置：它是应用外壳生命周期状态，只由主进程读写，不需要宿主
-   RPC 或 schema 变更。
-4. 两个新增的 IPC 通道将其暴露给渲染进程：
-   `pi-desktop/window/closeBehavior/get`（返回 `{ behavior, supported }`）
-   和 `pi-desktop/window/closeBehavior/set`（只接受 `tray` 和
-   `quit`；`ask` 和未知值以 `INVALID_ARGUMENT` 失败）。
-   `supported` 在 macOS 上为 `false`，此时设置行被隐藏，且 `set`
-   本身也以 `INVALID_ARGUMENT` 失败——渲染进程不是唯一调用方，
-   因此守卫放在主进程。
-5. 设置（常规标签页）仅为 Windows/Linux 渲染一个两选项单选段—
-   —关闭到托盘 / 退出应用；未设置的偏好不显示任何选中项。更改
-   立即生效。托盘图标不做协调：D216 拥有它，它在任一选择下都保
-   持常驻，因为无论关闭做什么，最小化到托盘都需要它。
-6. 关闭处理器拦截每一个非 macOS 的、尚未被批准为退出的 `close`
-   事件；`before-quit`（`quitting`）和 macOS 的关闭总是直接放
-   行，因此显式退出、托盘退出菜单项和自动化启动探针不受影响。
-   在 `quit` 下处理器自己调用 `app.quit()`，而不是依赖
-   `window-all-closed`；`window-all-closed` 以偏好为条件——只在
-   `tray` 下保持静默，在窗口被托盘隐藏或意外销毁时保持应用存
-   活，其他情况下即使 D216 托盘存在也会退出。托盘图标不存在时
-   的 `tray` 关闭会回退为真正的退出，而不是把窗口藏到无路可
-   回。
-7. 边界看门狗（`ensureStableBounds`）跳过已最小化和已隐藏的窗
-   口，因此最小化永远保持最小化，被托盘隐藏的窗口绝不会被
-   Stage Manager 搁置区恢复逻辑强制还原。
-8. 已知限制：在 Windows 系统关机/注销时，操作系统可能在偏好为
-   `ask` 或 `tray` 时投递一个被拦截的 `close`。Windows 会在其关
-   机超时后强制终止会话，因此不会丢失数据，但关机不会被应用加
-   速。
+1. Windows/Linux close behavior becomes a persisted, user-configurable
+   preference with three values, of which two are ever settable:
+   - `ask`: the transient unset state — the first close prompts once. After
+     a choice is made it is remembered permanently and cannot be reverted
+     to prompting (`closeBehavior/set` rejects `ask`).
+   - `tray`: closing the window hides it under the resident D216 system-tray
+     icon and keeps the app running; the tray menu restores the window or
+     quits the app.
+   - `quit`: legacy behavior — closing the window exits the app.
+2. The first close with an unset preference shows a native modal dialog
+   (main process) with Cancel / Close to tray / Quit. Picking a non-cancel
+   option persists it forever; Cancel keeps the window open and leaves the
+   preference unset (so the next close prompts again).
+3. The preference is stored by Electron main in
+   `<data>/close-behavior.json` (same ownership pattern as
+   `window-state.json`), NOT in host-core settings: it is app-shell
+   lifecycle state, read and written only by the main process, and needs no
+   host RPC or schema change.
+4. Two additive IPC channels expose it to the renderer:
+   `pi-desktop/window/closeBehavior/get` (returns `{ behavior, supported }`)
+   and `pi-desktop/window/closeBehavior/set`, which accepts only `tray` and
+   `quit` (`ask` and unknown values fail with `INVALID_ARGUMENT`).
+   `supported` is `false` on macOS, where the Settings row is hidden and
+   `set` itself fails with `INVALID_ARGUMENT` — the renderer is not the only
+   caller, so the guard lives in main.
+5. Settings (General tab) renders a two-option radio segment — Close to
+   tray / Quit app — for Windows/Linux only; an unset preference shows no
+   selection. Changing it applies immediately. The tray icon is not
+   reconciled: D216 owns it and it stays resident under either choice,
+   because minimize-to-tray needs it whatever close does.
+6. The close handler intercepts every non-macOS `close` that is not already
+   an approved quit; `before-quit` (`quitting`) and macOS closes always
+   fall through, so an explicit quit, the tray Quit item, and the automated
+   boot probe are unaffected. Under `quit` the handler calls `app.quit()`
+   itself rather than leaning on `window-all-closed`, and
+   `window-all-closed` keys off the preference — it stays silent only under
+   `tray`, keeping the app alive when the window is tray-hidden or
+   destroyed unexpectedly, and quits otherwise even though the D216 tray is
+   present. A `tray` close whose tray icon does not exist falls back to a
+   real quit rather than hiding the window with no way back.
+7. The bounds watchdog (`ensureStableBounds`) skips minimized and hidden
+   windows, so minimize always stays minimized and a tray-hidden window is
+   never force-restored by the Stage-Manager shelf recovery.
+8. Known limitation: on Windows system shutdown/logoff, the OS may deliver
+   a `close` that is intercepted while the preference is `ask` or `tray`.
+   Windows force-terminates the session after its shutdown timeout, so no
+   data is lost, but shutdown is not accelerated by the app.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- **把偏好存入 host-core 设置（`AppSettings`）：** 被拒绝，因为它
-  会为只有 Electron 主进程消费的纯外壳生命周期状态增加一个
-  Rust schema 字段和宿主 RPC 接口面。
-- **渲染进程绘制的首次关闭对话框：** 被拒绝，因为窗口正在关闭；
-  原生模态框把决策保留在拥有关闭生命周期的进程中，且在渲染进
-  程挂载之前就能工作。
-- **无选择地永远关闭到托盘：** 被拒绝——它改变了关闭按钮对期
-  望退出的用户的含义。
-- **托盘图标随偏好协调：** 被拒绝；D216 为最小化到托盘在每个平
-  台保持一个常驻托盘图标，因此在关闭行为为 `quit` 时销毁它会破
-  坏一个无关的功能。关闭行为决定关闭做什么，而不是托盘是否存
-  在。
+- **Store the preference in host-core settings (`AppSettings`):** rejected
+  because it would add a Rust schema field and host RPC surface for pure
+  shell lifecycle state that only Electron main consumes.
+- **Renderer-drawn first-close dialog:** rejected because the window is
+  closing; a native modal keeps the decision in the process that owns the
+  close lifecycle and works before the renderer has mounted.
+- **Always close-to-tray without a choice:** rejected — it changes the
+  meaning of the close button for users who expect exit.
+- **Tray icon reconciled with the preference:** rejected; D216 keeps one
+  tray icon resident on every platform for minimize-to-tray, so destroying
+  it when close behavior is `quit` would break an unrelated feature. Close
+  behavior decides what a close does, not whether the tray exists.
 
-## 后果
+## Consequences
 
-- Windows/Linux 的显式最小化使用正常的任务栏过渡；选择 `tray` 的
-  关闭仍会把窗口隐藏到常驻的 D216 托盘图标下。macOS 原生最小化
-  在 D216 下保持托盘常驻。
-- Windows/Linux 上的关闭按用户选择要么隐藏到托盘，要么退出，跨
-  启动记住，并可在设置中更改。
-- 托盘菜单和首次关闭对话框复用现有的 `@pi-desktop/i18n` 目录
-  （英文和简体中文）。
-- 无宿主协议、存储 schema 或 macOS 行为变化。
+- Windows/Linux explicit minimize uses the normal taskbar transition; a close
+  choice of `tray` still hides the window under the resident D216 tray icon.
+  macOS native minimize remains tray-resident under D216.
+- Close on Windows/Linux either hides to tray or quits, per user choice,
+  remembered across launches and changeable in Settings.
+- The tray menu and the first-close dialog reuse the existing
+  `@pi-desktop/i18n` catalogs (English and Simplified Chinese).
+- No host protocol, storage schema, or macOS behavior changes.

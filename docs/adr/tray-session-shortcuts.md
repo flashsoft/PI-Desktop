@@ -1,52 +1,60 @@
-# ADR tray-session-shortcuts: 原生托盘中的有界会话导航
+# ADR tray-session-shortcuts: Bounded session navigation in the native tray
 
-- 状态：已接受
-- 日期：2026-09-13
-- 相关：Issue #293、ADR 0078、ADR 0016、E2E-TRAY-bounded-session-navigation
+- Status: Accepted
+- Date: 2026-09-13
+- Related: Issue #293, ADR 0078, ADR 0016, E2E-TRAY-bounded-session-navigation
 
-## 背景
+## Context
 
-常驻托盘只暴露"打开"和"退出"。会话置顶和归档是渲染进程所有的呈现
-元数据；Host 拥有会话记录和持久的通知收件箱。后台轮次在主窗口隐藏或
-关闭后继续运行，因此仅渲染进程的菜单快照会变成过期数据。
+The resident tray exposes only Open and Quit. Session pins and archives are
+renderer-owned presentation metadata; Host owns session records and the durable
+notification inbox. Background turns continue after the main window is hidden
+or closed, so a renderer-only menu snapshot would become stale.
 
-## 决策
+## Decision
 
-1. 按"运行中、未读、置顶"的顺序在现有原生菜单中扩展这三个分组。先把
-   每个符合条件的会话分配到它优先级最高的分组，再分配行数：每个非空
-   分组最多保留三行，然后较小分组未用掉的份额按同样的优先级顺序分给
-   仍然溢出的分组，总计最多九行。因此当其他分组为空时，单个繁忙分组
-   可以填满整个菜单，而任何分组都不会被挤占到低于自己的份额。空分组
-   隐藏。遵循现有的会话排序偏好；未读结果使用收件箱的最新在前顺序，
-   以及与侧栏结果徽标相同的最新结果/已读规则。
-2. 渲染进程通过仅主窗口可用的 `tray/setSessionPreferences` IPC，把它的
-   会话置顶/归档/顺序元数据、已归档项目路径和生效的会话排序镜像给
-   Main。Main 校验它并只保留一份临时副本；localStorage 仍是组织偏好
-   的所有者。在第一次偏好同步之前不显示任何分组。
-3. 一个 Main 所有的托盘服务读取 `session.list` 和 `notification.list`
-   （现有的 200 条收件箱），消费根 agent 生命周期/状态事件，并在会话/
-   收件箱变更后刷新。它合并待处理的读取、拒绝过期的 host 代际，并在
-   刷新失败时清空快捷方式。托盘悬停/右键会重试失败的读取。它在没有
-   渲染进程连接时继续刷新；删除会话、归档会话或其项目会移除相应
-   快捷方式。
-4. 点击某个会话会恢复/聚焦主窗口，并且只在渲染进程完成启动并确认
-   菜单就绪之后发送 `tray/event/sessionActivated { sessionId }`
-   （`null` 表示"查看更多"）。异步等待之后重新检查存在性和归档状态。
-   渲染进程使用正常的 `selectSession`，包括项目对齐、导航所有权和
-   读取确认。
-5. 打开 macOS 托盘菜单不恢复窗口，也不把结果标记为已读。单击打开附着
-   菜单；双击和"打开"保留窗口恢复行为。每个溢出的分组都有"查看更多"，
-   它会恢复主窗口并展开现有的会话侧栏。标题为单行，上限 48 个 Unicode
-   码点（含省略号）；标签使用当前随附的语言环境。"退出"保留确认和
-   关机流程。
+1. Extend the existing native menu with Running, Unread, and Pinned groups in
+   that order. Assign each eligible session to its highest-priority group
+   before allocating rows: every non-empty group keeps up to three rows, then
+   the share smaller groups leave unused goes to the groups that still
+   overflow, in the same priority order, up to nine rows in total. A single
+   busy group can therefore fill the whole menu when the others are empty,
+   while no group is ever crowded out below its own share. Hide empty groups.
+   Follow the existing session sort preference; unread results use newest-first
+   inbox order and the same latest-result/read rule as sidebar outcome badges.
+2. Renderer mirrors its session pin/archive/order metadata, archived project
+   paths, and effective session sort through the main-window-only
+   `tray/setSessionPreferences` IPC. Main validates it and retains only an
+   ephemeral copy; localStorage remains the owner of organization preferences.
+   No groups are shown until the first preference synchronization.
+3. A Main-owned tray service reads `session.list` and `notification.list`
+   (the existing 200-record inbox), consumes root agent lifecycle/status
+   events, and refreshes after session/inbox mutations. It coalesces pending
+   reads, rejects obsolete host generations, and clears shortcuts on a failed
+   refresh. Windows/Linux hover/right-click retries a failed read. macOS does
+   not subscribe to mouse-enter, which would replace the native status item.
+   It continues to refresh with no renderer attached; deleting a
+   session or archiving it or its project removes the shortcut.
+4. A session click restores/focuses the main window and sends
+   `tray/event/sessionActivated { sessionId }` (`null` means View more) only after the renderer finishes
+   bootstrap and acknowledges menu readiness. Recheck existence and archive
+   state after asynchronous waits. Renderer uses normal `selectSession`,
+   including project alignment, navigation ownership, and read acknowledgement.
+5. Opening the macOS tray menu does not restore the window or mark results
+   read. Single-click opens the attached menu; double-click and Open retain
+   window restore behavior. Each overflowing group has View more, which
+   restores the main window and expands the existing session sidebar. Titles are one
+   line and capped at 32 display columns including an ellipsis, counting an East
+   Asian wide or emoji code point as two; labels use the active shipped locale.
+   Quit retains confirmation and shutdown.
 
-## 后果
+## Consequences
 
-- 两个增量添加的白名单桌面 IPC 通道；偏好设置器被排除在本地 MCP 控制
-  之外，并对非主窗口发送者拒绝。
-- 没有数据库迁移、host 协议版本变更、持久化偏好格式变更、Plugin SDK
-  变更、新定时器或渲染进程持久化所有者变更。
-- 托盘复用现有的组织排序和最新结果辅助函数，不改变它们的渲染进程行为。
-  Main 保留其 1,500 行预算。
-- 原生菜单渲染和跨平台激活需要文档化的 E2E 场景；仅靠单元/构建结果
-  不能证明 OS 菜单行为。
+- Two additive allowlisted desktop IPC channels; the preferences setter is
+  excluded from local MCP control and rejected for non-main-window senders.
+- No database migration, host protocol version change, persisted preference
+  format change, Plugin SDK change, new timers, or renderer persistence owner.
+- Tray reuses existing organization sorting and latest-result helpers without
+  changing their renderer behavior. Main retains its 1,500-line budget.
+- Native menu rendering and cross-platform activation require the documented
+  E2E scenario; unit/build results alone do not prove OS menu behavior.

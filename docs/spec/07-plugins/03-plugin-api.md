@@ -1,24 +1,38 @@
-# 03. 插件 API
+# 03. Plugin API
 
-## 1. 设计原则
+## Theme variables
 
-1. 小巧稳定
-2. 权限驱动
-3. 异步优先
-4. 可审计
-5、不要暴露主机内部对象
+`pi.themes.setVariables(themeId, values)` requires `ui.theme`. The host accepts
+only values for declared variables on one of the caller's themes, persists them
+in private plugin settings, and refreshes an active theme without selecting a
+new theme or reloading the renderer. It never accepts stylesheet text, URLs,
+selectors, images, fonts, or arbitrary property names.
 
-## 2. 运行时注入的对象
+## 1. Design principles
 
-在插件运行时内部，有一个全局可用：
+1. Small and stable
+2. Permission-driven
+3. Async-first
+4. Auditable
+5. Do not expose host internal objects
+
+## 2. Runtime-injected object
+
+Inside the plugin runtime, a global is available:
 
 ```ts
 declare const pi: PiPluginHostApi;
 ```
 
-## 3. API 概述（MVP）
+## 3. API overview (MVP)
 
-### 应用程序
+> Status legend: every section below is **shipped** and enforced by
+> `PluginRuntime` unless its heading or text says **Planned**. A planned
+> surface is documented ahead of implementation so plugin authors can see the
+> direction; it throws `UNSUPPORTED` until it lands (see §9 for the
+> per-surface list).
+
+### app
 ```ts
 pi.app.getVersion(): Promise<string>
 pi.app.getLocale(): Promise<string>
@@ -26,56 +40,62 @@ pi.app.getAppearance(): Promise<PluginAppearance>
 pi.app.setTheme(themeId: "system" | "light" | "dark" | `plugin:${string}`): Promise<void>
 ```
 
-`app.getAppearance` 返回宿主当前正在呈现的外观，让插件（或它的面板）可以
-完全跟随应用的语言与配色：
+`app.getAppearance` returns the appearance the host is currently showing so a
+plugin (or its panel) can mirror the app's language and color mode exactly:
 
 ```ts
 type PluginAppearance = {
-  theme: string        // 原始偏好："light" | "dark" | "system" | "plugin:<pluginId>:<themeId>"
-  base: "light" | "dark" | "system"  // 该偏好解析出的调色板
-  locale: string       // 当前语言标签（例如 "en"、"zh-CN"）
+  theme: string        // raw preference: "light" | "dark" | "system" | "plugin:<pluginId>:<themeId>"
+  base: "light" | "dark" | "system"  // palette the preference resolves to
+  locale: string       // active language tag (e.g. "en", "zh-CN")
   pluginTheme: { id: string; base: "light" | "dark"; css: string } | null
 }
 ```
 
-面板通过桥通道 `app.getAppearance` 读取同一个值，并在 `appearance:changed`
-事件（见下文）上收到实时更新。插件进程通过 `pi.events` 收到同一事件。在没有该通道的
-旧宿主上，调用以 `UNSUPPORTED` 拒绝；面板应回退到操作系统偏好和它自己的面板内选择。
+Panels read the same value through the bridge channel `app.getAppearance` and
+receive live updates on the `appearance:changed` event (below). Plugin processes
+receive the same event on `pi.events`. On hosts older than the channel, the call
+rejects with `UNSUPPORTED`; panels should fall back to the OS preference and
+their own in-panel choice.
 
-`app.getLocale` 与 `getAppearance().locale` 是同一个语言标签。插件自有界面（面板、
-视图、widget、设置入口、toast、运行时命令标题）据此自行本地化。宿主不再给更多贡献字段
-加 `{ en, "zh-CN" }`；生成式 `contributes.settings` 标题保持作者语言纯字符串
-（ADR 0280）。宿主拥有的身份文案（`manifest.i18n`）以及已经落地的 chrome 标签
-（`ui.title`、视图标题、设置入口）仍走既有契约（ADR 0267、ADR 0082）。
+`app.getLocale` is the same language tag as `getAppearance().locale`. Plugin-owned
+UI (panels, views, widgets, settings destinations, toasts, runtime command titles)
+localizes from this value. The host does not grow `{ en, "zh-CN" }` maps on more
+contribution fields; generated `contributes.settings` titles stay plain strings
+(ADR 0280). Host-owned identity (`manifest.i18n`) and already-shipped chrome
+labels (`ui.title`, view titles, destinations) keep their existing contracts
+(ADR 0267, ADR 0082).
 
-`app.setTheme`（需要 `ui.theme`，ADR 0260）应用与设置选择器相同的
-`AppSettings.theme`。接受内置偏好或当前已注册的插件主题 id；未知 id 以
-`INVALID_ARGUMENT` 拒绝。宿主会持久化设置、刷新原生 chrome / 面板外观，
-并向渲染进程发出 `settingsChanged`。
+`app.setTheme` (requires `ui.theme`, ADR 0260) applies the app theme
+preference the Settings picker writes. It accepts a built-in preference or a
+currently registered plugin theme id; unknown ids reject with
+`INVALID_ARGUMENT`. The host persists `AppSettings.theme`, refreshes native
+chrome / panel appearance, and emits `settingsChanged` to the renderer.
 
-### 主题（需要 `ui.theme`）
+### themes (requires `ui.theme`)
 
-调用方插件自有主题的运行时注册表。生产模式可用，无需卸载/重载（ADR 0260）。
+Runtime registry for the calling plugin's own themes. Works in production
+without unload/reload (ADR 0260).
 
 ```ts
 pi.themes.upsert(input: {
-  id: string;           // 本地 id，规则同 contributes.themes[].id
+  id: string;           // local id, same rules as contributes.themes[].id
   label: string;
   base: "light" | "dark";
-  css: string;          // 使用 sanitizeThemeCss 消毒
+  css: string;          // sanitized with sanitizeThemeCss
 }): Promise<void>
 
 pi.themes.remove(themeId: string): Promise<void>
 pi.themes.list(): Promise<Array<{ id: string; themeId: string; label: string; base: "light" | "dark" }>>
 ```
 
-- 完整 id 命名空间为 `plugin:<pluginId>:<themeId>`。
-- 对已有 id 的 `upsert` 覆盖 label / base / css。
-- 不再有单插件主题数量上限；CSS 体积上限与消毒器仍然生效。
-- upsert/remove 后宿主发出 `pluginChanged`（`reason: "themes"`）并刷新面板外观，
-  使**当前激活**主题立即重新着色。
+- Full ids are namespaced `plugin:<pluginId>:<themeId>`.
+- `upsert` of an existing id replaces label / base / css.
+- There is no per-plugin theme count cap; the CSS size cap and sanitizer still apply.
+- After upsert/remove the host emits `pluginChanged` (`reason: "themes"`) and
+  refreshes panel appearance, so an updated **active** theme restyles immediately.
 
-### 插件
+### plugin
 ```ts
 pi.plugin.getId(): string
 pi.plugin.getManifest(): PluginManifestV1
@@ -84,15 +104,19 @@ pi.plugin.setSettings(partial: Record<string, unknown>): Promise<void>
 pi.plugin.getDataPath(): Promise<string> // plugin-private directory
 ```
 
-插件页面会渲染 `contributes.settings` 中声明的字段，并将修改持久化到插件私有设置文件。
-支持生成字符串、数字、布尔、枚举、JSON 和 `shortcut` 控件。生成式 `title` /
-`description` / `enum[].label` 是作者语言纯字符串，宿主不会在这些字段上解析 locale
-map。需要本地化设置页的插件应贡献 `settingsDestinations` 并读取 `pi.app.getLocale`
-（ADR 0280）。快捷键仅属于插件域：只有在 PI-Desktop 窗口聚焦且插件激活范围匹配当前项目时，
-才会调用声明的命令；本版本不会注册操作系统全局快捷键。用户编辑后，主机会向插件发送
-`plugin:settingsChanged`，便于刷新内存中的配置。
+The installed Plugins page renders every `contributes.settings` field and
+persists edits in the plugin's private settings file. Supported generated
+controls are `string`, `number`, `boolean`, `select`, `json`, and `shortcut`.
+Generated `title` / `description` / `enum[].label` are author-language strings;
+the host does not resolve locale maps on them. A plugin that needs a localized
+settings surface ships `settingsDestinations` and reads `pi.app.getLocale`
+(ADR 0280). Shortcut settings are plugin-local: they invoke the declared
+`command` only while the PI-Desktop app window is focused and while the plugin's
+activation scope matches the current project. They are never registered as
+OS-global shortcuts in this release. The host emits `plugin:settingsChanged`
+after a user edit so a plugin can refresh in-memory configuration.
 
-### 命令
+### commands
 ```ts
 pi.commands.register(def: {
  id: string
@@ -104,7 +128,7 @@ pi.commands.register(def: {
 pi.commands.unregister(id: string): Promise<void>
 ```
 
-### 语音（`speech.adapter.register`）
+### speech (`speech.adapter.register`)
 ```ts
 pi.speech.registerAdapter(adapter: {
   protocol: string
@@ -115,10 +139,12 @@ pi.speech.registerAdapter(adapter: {
 pi.speech.unregisterAdapter(protocol: string): Promise<void>
 ```
 
-handle 留在插件进程。内置协议 id `openai_audio` 和 `openai_chat_audio` 保留。
-HTTP 计划由宿主用绑定 provider 的密钥代发，且必须落在该 origin。
+The handle stays in the plugin process. Built-in protocol ids `openai_audio`
+and `openai_chat_audio` are reserved. HTTP plans are executed by the host with
+the bound provider key and must stay on that origin.
 
-### 用户界面
+### ui
+
 ```ts
 pi.ui.openPanel(options?: { title?: string }): Promise<void>
 pi.ui.closePanel(): Promise<void>
@@ -134,17 +160,18 @@ pi.ui.showNativeNotification(input: {
 type PluginNotificationPermission = "granted" | "denied" | "unknown" | "unsupported"
 ```
 
-`ui.notify` 仍然是应用内 Toast。本机交付可通过以下方式选择加入
-`ui.showNativeNotification` 并由相同的清单 `notify` 保护
-许可。 `requestNotificationPermission` 执行平台原生
-通过显示简短的确认通知来进行权限探测； Electron 确实
-不暴露跨平台只读通知权限API，所以
-`unknown` 在第一次探测之前以及操作系统执行探测操作时返回
-不报告结果。本机交付是尽力而为：操作系统策略可能会抑制
-横幅而不更改持久任务通知收件箱。点击已交付的插件通知会恢复并聚焦主窗口，
-但不会激活会话或创建持久任务通知。
+`ui.notify` remains an in-app Toast. Native delivery is opt-in through
+`ui.showNativeNotification` and is guarded by the same manifest `notify`
+permission. `requestNotificationPermission` performs the platform-native
+permission probe by showing a short confirmation notification; Electron does
+not expose a cross-platform read-only notification permission API, so
+`unknown` is returned before the first probe and when the operating system does
+not report a result. Native delivery is best-effort: an OS policy may suppress
+the banner without changing the durable task notification inbox. Clicking a
+delivered plugin notification restores and focuses the main window, but never
+activates a session or creates a durable task notification.
 
-### 项目（需要 `project.create`）
+### project (requires `project.create`)
 
 ```ts
 pi.project.create(input: { path: string }): Promise<{
@@ -154,13 +181,14 @@ pi.project.create(input: { path: string }): Promise<{
 }>
 ```
 
-该方法创建或复用宿主持久项目记录，但不会切换当前工作区。返回的
-`projectId` 可以显式传给 `pi.session.import()` 或
-`pi.session.importBatch()` 的单项。插件传入项目 id 时必须持有
-`project.create`；省略 `projectId` 的导入会保持未绑定，`projectPath` 只是历史来源
-元数据，本身不会创建项目。
+This creates or reuses a durable host project record without changing the
+active workspace. The returned `projectId` may be passed explicitly to
+`pi.session.import()` or an item in `pi.session.importBatch()`. The plugin must
+hold `project.create` when it supplies a project id. Omitting `projectId` keeps
+the imported session unbound; `projectPath` remains historical source metadata
+and never creates a project by itself.
 
-### 工作区/fs
+### workspace / fs
 ```ts
 pi.workspace.get(): Promise<{
   path: string;
@@ -170,6 +198,16 @@ pi.workspace.get(): Promise<{
 } | null>
 
 pi.fs.readText(pathFromRoot: string): Promise<string>
+pi.fs.stat(pathFromRoot: string, grantId?: string): Promise<{
+  size: number;
+  mtimeMs: number;
+}>
+pi.fs.readRange(
+  pathFromRoot: string,
+  byteOffset: number,
+  length: number,
+  grantId?: string,
+): Promise<{ bytes: Uint8Array; totalSize: number }>
 pi.fs.readPreview(pathFromRoot: string): Promise<{
   kind: "text" | "image" | "binary" | "tooLarge"
   content?: string     // UTF-8 when kind is "text"
@@ -182,51 +220,73 @@ pi.fs.writeText(pathFromRoot: string, content: string): Promise<void>
 pi.fs.glob(pattern: string): Promise<string[]>
 pi.fs.list(pathFromRoot: string): Promise<Array<{
   name: string;
-  path: string;        // 相对 root，可直接用于 readText / list
+  path: string;        // root-relative, usable directly with readText / list
   isDirectory: boolean;
-  size?: number;       // 仅文件
+  size?: number;       // files only
+  mtimeMs?: number;    // files only; Unix epoch milliseconds
 }>>
 pi.fs.remove(pathFromRoot: string): Promise<void>
 pi.fs.requestDirectory(): Promise<{ path: string; name: string } | null>
 ```
 
-`workspace.get` 回答主根——`path` 与其叶子 `name` 都保持不变——并在该文件夹属于某个项目组
-（ADR 0249）时额外给出 `projectId` 与 `roots`：项目组按自身顺序登记的全部文件夹，主文件夹在前，
-每项为 `{ path, name, primary }`（ADR 0263）。`workspace:changed` 携带同一对象，两者都由主机持有
-的项目组记录回答，因此事件与主动拉取不会互相矛盾。无法解析项目组的主机会省略 `projectId` 与
-`roots`，也就是插件本来就会处理的 `{ path, name }`；读取这些元数据不需要新权限，也不新增 SDK 方法。
+`workspace.get` answers with the primary root — `path` and its leaf `name`,
+both unchanged — plus, when that folder belongs to a project group (ADR 0249),
+`projectId` and `roots`: every registered folder of the group in its own order,
+primary first, each `{ path, name, primary }` (ADR 0263). `workspace:changed`
+carries the same object, and main answers both from the host-owned group
+records, so the event and the pull cannot disagree. A host that cannot resolve
+the group omits `projectId` and `roots` — the same `{ path, name }` a plugin
+already handles — and reading this metadata needs no new permission and adds no
+SDK method.
 
-`fs.readPreview` 为一份已存在且可读取的文件做应用内预览分类。它与 `fs.readText`
-使用相同的 `fs.read` 检查，拒绝目录，并返回 `text`（上限 512 KiB）、`image`
-（上限 5 MiB，data URL）、`binary` 或 `tooLarge`。插件不会收到绝对路径。
+`fs.readPreview` classifies one existing readable file for in-app display. It
+uses the same `fs.read` checks as `fs.readText`, rejects directories, and
+returns `text` (capped at 512 KiB), `image` (capped at 5 MiB, as a data URL),
+`binary`, or `tooLarge`. The plugin never receives an absolute path.
 
-`fs.openDefault` 使用操作系统默认关联应用打开一个已存在的文件。它与
-`fs.readText` 使用相同的 `fs.read` 根目录、符号链接、受保护路径、拒绝列表和范围检查；
-目录会被拒绝。主机会记录这次操作。路径默认相对根目录；只有「本项目已注册的另一个文件夹根」
-之内的绝对路径才会被接受，而且**只有这个动作与 `fs.reveal` 接受**（其他模式一律不接受
-绝对路径），该根随即成为这次请求的包含基点（ADR 0249 §5、ADR 0264）——这正是视图用来指
-名「非主文件夹里的文件」的形状。
+`fs.openDefault` opens one existing file with the operating system's default
+associated application. It uses the same `fs.read` root, symlink, protected-path,
+deny-list, and scope checks as `fs.readText`; directories are rejected. The host
+audits the operation. A path is root-relative by default, and an absolute path is
+accepted only by this action and `fs.reveal` (no other mode takes one) when it lies
+inside a registered folder root of the open project — which then becomes the
+containment base for the request (ADR 0249 §5, ADR 0264). That is the shape a view
+uses to name a file in a project folder other than the primary one.
 
-`fs.reveal` 在操作系统文件管理器中显示一个已存在且可读取的文件，并在平台支持时选中它。
-它使用相同的 `fs.read` 检查，拒绝目录，并记录成功和失败。路径的接受方式与 `fs.openDefault`
-完全一致：默认相对根目录，落在本项目另一个已注册文件夹根之内时可以是绝对路径（ADR 0264）。
+`fs.reveal` reveals one existing readable file in the operating system's file
+manager and selects it when the platform supports that behavior. It uses the
+same `fs.read` checks, rejects directories, and audits both success and failure.
+It takes a path exactly as `fs.openDefault` does: root-relative by default, and
+absolute when the file lies inside another registered folder root of the open
+project (ADR 0264).
 
-路径相对于该模式的 root —— 工作区，或者当该模式声明
-`root: "userSelected"` 时，用户通过 `requestDirectory()` 选中的目录。
-每种模式能到哪些路径由 `manifest.fs` 决定；范围之外会问用户，
-而凭证 deny-list 压过两者（参见
-[04-plugin-security.md](/spec/07-plugins/04-plugin-security) §6）。
-`remove` 不递归，并且把路径移进系统回收站。
-在 `workspace` 根下，路径相对于调用该调用的工具会话所属的项目，面板调用没有工具会话时
-回退到可见工作区（ADR 0266）。
+`fs.stat` returns the size and modification time of one existing readable file
+without loading its contents. `fs.readRange` returns at most 8 MiB of bytes and
+the total file size. Both use the same root, symlink, protected-path, deny-list,
+scope, consent, and audit gates as `fs.readText`; offsets and lengths are
+non-negative safe integers. An offset at or beyond EOF returns an empty byte
+array. A `grantId` is only valid for a host-issued dropped-file grant and then
+requires the matching absolute path.
 
-`list` 返回单个目录的条目（按名称排序），使插件可以惰性遍历目录树，
-而不必拉取整个仓库的 `glob` 再自行重组。它施加与 `glob` 完全相同的守卫，
-因为列目录本身就是一次读取：读取范围之外的文件不会出现，被拒绝的名称与
-受保护路径不会出现，`node_modules` 之类的重目录会被跳过。目录始终返回，
-因此即使范围很窄也能得到可导航的树；单次调用最多返回 1000 个条目。
+Paths are relative to the mode's root — the workspace, or the directory the user
+picked through `requestDirectory()` when the mode declares
+`root: "userSelected"`. Which paths each mode may reach comes from `manifest.fs`;
+anything outside it prompts the user, and the credential deny-list overrides both
+(see [04-plugin-security.md](04-plugin-security.md) §6). `remove` is
+non-recursive and moves the path to the OS trash.
+Under the `workspace` root, paths are relative to the project of the tool session
+that invoked the call, falling back to the visible workspace for a panel call,
+which has no tool session (ADR 0266).
 
-###代理
+`list` returns one directory's entries, name-sorted, so a plugin can walk a tree
+lazily instead of pulling a whole-repo `glob` and reassembling it. It applies the
+same guards as `glob`, because a listing is a read: files outside the declared
+read scope are omitted, denied names and protected paths are omitted, and heavy
+directories (`node_modules` and friends) are skipped. Directories are always
+returned so a narrow scope still yields a navigable tree, and at most 1000
+entries come back per call.
+
+### agent
 ```ts
 pi.agent.registerTool(tool: {
  name: string
@@ -239,18 +299,18 @@ pi.agent.registerTool(tool: {
 pi.agent.unregisterTool(name: string): Promise<void>
 ```
 
-注册的插件代理工具是仅代理的贡献。在 Plan 期间
-主机将它们从模型工具列表中过滤出来并拒绝直接执行
-`PLUGIN_DISABLED_IN_PLAN`，包括当明显风险为 `low` 时，用户
-具有 `allow-session` 授予，或者会话权限模式为 `auto`。一个
-成功的计划批准使相同的注册工具再次符合资格
-所选的 Agent 权限策略。
+Registered plugin agent tools are Agent-only contributions. During Plan the
+host filters them out of the model tool list and rejects direct execution with
+`PLUGIN_DISABLED_IN_PLAN`, including when the manifest risk is `low`, the user
+has an `allow-session` grant, or the session permission mode is `auto`. A
+successful plan approval makes the same registered tools eligible again under
+the selected Agent permission policy.
 
 ```ts
 type ToolExecContext = {
  sessionId: string
  turnId?: string
- /** 本会话执行模型，`providerId/modelId`。这是配置，不是转录。 */
+ /** Executor model for this session, `providerId/modelId`. Configuration, not transcript. */
  modelKey?: string
  thinkingLevel?: ThinkingLevel
  signal?: AbortSignal
@@ -258,15 +318,15 @@ type ToolExecContext = {
 }
 ```
 
-`turnId` 对宿主驱动的回合会被填充，并与对应的 `session:turnEnded` 事件（§5）的
-`turnId` 一致。
+`turnId` is populated for host-driven turns and matches the `turnId` of the
+corresponding `session:turnEnded` event (§5).
 
-### models（需要 `models.list`）
+### models (requires `models.list`)
 ```ts
 pi.models.list(): Promise<PluginModelInfo[]>
 
 type PluginModelInfo = {
-  key: string                 // `${providerId}/${modelId}` — 第一个斜杠切开
+  key: string                 // `${providerId}/${modelId}` — first slash splits
   providerId: string
   providerName: string
   modelId: string
@@ -276,25 +336,44 @@ type PluginModelInfo = {
 }
 ```
 
-只返回已启用且已认证的 provider 行（API key、OAuth 或 `authKind: "none"`）。不含密钥。
-`models.list` 也是面板桥通道，选择器页面可以自行填充。宿主传输不可用时返回空列表，不记警告（D080）。
+Only enabled, authenticated provider rows are returned (API key, OAuth, or
+`authKind: "none"`). No secrets. `models.list` is also a panel-bridge channel
+so a picker page can populate itself. When the host transport is unavailable,
+the call returns an empty list instead of warning (D080).
 
-### session（需要 `session.read`）
+### session (requires `session.read`)
 ```ts
 pi.session.getLlmContext(): Promise<PluginLlmContext>
+
+type PluginLlmMessage = {
+  role: "user" | "assistant" | "tool" | "system"
+  content: string
+  toolName?: string
+}
+
+type PluginLlmContext = {
+  sessionId: string
+  modelKey: string | null
+  thinkingLevel?: ThinkingLevel
+  messages: PluginLlmMessage[]
+  truncated: boolean
+}
 ```
 
-插件不能传入 session id。身份来自进行中的 `plugins.execute` 会话（D333 / D336）。
-在工具执行之外调用会以 `INVALID_ARGUMENT` 失败。子代理行会被省略。插件自己
-正在飞行的工具调用会从尾部剥掉。compaction 摘要替换检查点之前的历史。
-合计内容上限 200k 字符。
+The plugin cannot pass a session id. Identity is the in-flight `plugins.execute`
+session (D333 / D336). Calling this outside a tool execution fails with
+`INVALID_ARGUMENT`. Subagent rows are omitted. An in-flight call of the
+plugin's own tool is stripped from the tail. A compaction summary replaces
+pre-checkpoint history. Combined content is capped at 200k characters.
 
-### 插件拥有的会话（P0/P1；需要对应权限）
+### plugin-owned sessions (P0/P1; requires the matching permission)
 
-插件只能导入和管理归属于自身的会话。来源必须在
-`manifest.contributes.sessionSources` 中声明；主机提供本地化来源标签，并生成
-持久会话 id 与消息 id。导入会话不会绑定工作区、provider 或 model；只有调用方显式
-提供已有的 `projectId` 时才会绑定项目；原始导入值仍在 `get().history` 中返回。
+Plugins may import and manage only sessions whose origin belongs to that same
+plugin. The source must be declared in `manifest.contributes.sessionSources`;
+the host supplies the localized source label and generates the durable session
+and message ids. Imported sessions never bind a workspace, provider, or model;
+they bind a project only when the caller supplies an existing `projectId`. The
+original import values remain available in `get().history`.
 
 ```ts
 type PluginSessionSourceContrib = {
@@ -306,16 +385,16 @@ pi.session.import(input: {
   source: string
   externalId: string
   title: string
-  projectId?: number | null // 来自 pi.project.create；省略即未绑定
+  projectId?: number | null // explicit id from pi.project.create; omitted is unbound
   projectPath?: string | null
   modelId?: string | null
   providerId?: string | null
-  createdAt: string // RFC3339
+  createdAt: string // strict RFC3339
   updatedAt: string // >= createdAt
   messages: Array<{
     role: "user" | "assistant" | "tool"
     content: string
-    createdAt: string // 会话内单调递增
+    createdAt: string // monotonic within the session
     modelId?: string
     providerId?: string
     toolName?: string
@@ -346,41 +425,50 @@ pi.session.delete(input: {
 }): Promise<{ deleted: boolean }>
 ```
 
-导入以 `(pluginId, source, externalId)` 幂等。`skip` 批量导入逐项继续，`fail`
-批量导入在任一项失败时全部回滚。`trash` 隐藏会话但保留其转录本和来源；`purge`
-同时删除两者并允许重新导入。读取、重命名和删除均按归属限制；未声明来源返回
-`PERMISSION_DENIED`。
+Import is idempotent on `(pluginId, source, externalId)`. `skip` batches
+continue per item; `fail` batches validate and commit atomically. `trash` hides
+the session while retaining its transcript and origin; `purge` removes both and
+allows a later re-import. Reads, rename, and delete are ownership-scoped, and
+undeclared sources fail with `PERMISSION_DENIED`.
 
-当会话显式绑定项目时，`projectId` 和 `bound.workspace` 报告该绑定，
-`get().projectPath` 解析为绑定项目的当前路径；原始导入的 `projectPath` 保留在
-`get().history` 中。
+When a session has an explicit project binding, `projectId` and
+`bound.workspace` report that binding, and `get().projectPath` resolves the
+bound project's current path. The original import `projectPath` remains in
+`get().history`.
 
-导入、重命名或删除成功后，Electron main 会为这次变更发送一次宿主拥有的
-`sessionsChanged` 事件。渲染器沿用现有的 `refreshSessions()` 权威列表刷新链，
-Projects 页面也会据此刷新持久项目索引；插件不需要、也不应自行发送侧栏事件。
-通过该 API 创建的项目不会自动打开为侧栏项目标签，以保留现有的已关闭项目行为。
+After a successful import, rename, or delete, Electron main emits one
+host-owned `sessionsChanged` event for the affected mutation. The renderer
+refreshes its authoritative session list and the Projects page refreshes its
+durable project index from that list. Plugins do not emit or coordinate this
+event themselves. A project created through this API is not automatically
+opened as a sidebar tab, preserving the existing closed-project behavior.
 
-主机限制每会话 2,000 条消息、每批 100 个会话、每条消息 512 KiB、每个工具值
-256 KiB、每个 payload 32 MiB、JSON 深度 8。每个插件每分钟最多 10 次单条导入、
-5 次批量导入和 20 次删除。写入前会移除工具 `__pi*` 与 `piDesktop.*` 对象键。
-P2/P3（会话创建、消息变更、任意重新绑定、provider/model 绑定、批量删除、标签）不属于本次接口。
+The host enforces a 2,000-message/session, 100-session/batch, 512 KiB/message,
+256 KiB/tool-value, 32 MiB/payload, and JSON-depth-8 limit. Import is limited
+to 10 calls/minute plus 5 batch calls/minute per plugin; delete is limited to
+20 calls/minute. Tool `__pi*` and `piDesktop.*` object keys are removed before
+storage. P2/P3 operations (session create, message mutation, arbitrary re-binding,
+provider/model binding, batch delete, and tags) are intentionally not part of
+this contract.
 
-### 用量（需要 `usage.read`）
+### usage (requires `usage.read`)
 
-面向用户仍可见的未删除会话，提供只读的**已完成回合事实行**。宿主只提供
-每个 turn 一行的扁平事实——计数与标识符；绝不包含消息正文、转录投影或任何
-写路径。**刻意不提供仪表盘形状**：连续天数、热力图、分模型占比、高消耗
-排名都是插件在这些事实行之上自己的计算——日后调整指标口径也不会变成
-SDK 的破坏性变更。
+Read-only completed-turn facts for the non-deleted sessions the user can
+still see. The host serves one flat fact row per turn — counters and
+identifiers only; no message body, no transcript projection, and no write
+path. Deliberately **no dashboard shape**: streaks, heatmaps, per-model
+shares, and top-session rankings are the plugin's own computation on top of
+these rows, so changing a metric definition later is never a breaking SDK
+change.
 
 ```ts
 pi.usage.listTurns(input?: {
-  fromMs?: number      // 含端点的窗口起点（epoch ms）；默认 toMs - 30 天
-  toMs?: number        // 含端点的窗口终点（epoch ms）；默认当前时间
+  fromMs?: number      // inclusive window start, epoch ms; default toMs - 30 days
+  toMs?: number        // inclusive window end, epoch ms; default now
   projectId?: number | null
   sessionId?: string
-  cursor?: string      // 上一次 nextCursor 返回的不透明分页游标
-  limit?: number       // 1..=500 行；默认 200
+  cursor?: string      // opaque page cursor from the previous nextCursor
+  limit?: number       // 1..=500 rows; default 200
 }): Promise<{
   turns: Array<{
     turnId: string; sessionId: string; sessionTitle: string | null
@@ -393,30 +481,36 @@ pi.usage.listTurns(input?: {
 }>
 ```
 
-语义：
+Semantics:
 
-- 只列出未删除会话的已完成 turn。用户删除的会话会从列表中消失。
-- 行按 `endedAt` 升序 + keyset 游标排列，窗口填充时翻页依然稳定；仪表盘
-  展示的排名是插件自己的排序，不是宿主的。
-- 窗口跨度至多 365 天；`limit` 为 1..=500（默认 200）。Electron 侧先校验，
-  宿主 RPC 边界按同样界限再次校验。缺省与 `null` 边界等价；空会话标题返回
-  `null`。
-- `usage_json` 缺失或畸形时 cache/reasoning 计数记 0——绝不返回残缺行。
+- Only completed turns of non-deleted sessions are listed. A session the
+  user deleted leaves the listing.
+- Rows are ordered by `endedAt` ascending with a keyset cursor, so paging is
+  stable while the window fills; the ranking a dashboard shows is its own
+  sort, not the host's.
+- The window spans at most 365 days; `limit` is 1..=500 (default 200). The
+  Electron side validates first, and the host RPC re-checks the same bounds.
+  Absent and `null` bounds are equivalent; an empty session title is returned
+  as `null`.
+- A missing or malformed `usage_json` yields zero cache/reasoning counters —
+  never a partial row.
 
-### 会话协作（需要 `desktop.control`）
+### session collaboration (requires `desktop.control`)
 
-官方 Session Orchestrator 组合了已审查的 desktop-control 目录；这不是第二套 session API，
-也不会暴露 Electron 通道或本地 MCP bearer token。
+The official Session Orchestrator composes the reviewed desktop-control
+catalog; this is not a second session API and it does not expose Electron
+channels or the local MCP bearer token.
 
 ```ts
 type SessionCollaborationOperation =
   | "session/collaboration/spawn"
   | "session/collaboration/send"
+  | "session/collaboration/list"
   | "session/collaboration/status"
   | "session/collaboration/result"
   | "session/collaboration/cancel"
 
-// 所有调用均使用 pi.desktop.invoke({ operation, args: [input] })。
+// All calls use pi.desktop.invoke({ operation, args: [input] }).
 type SpawnInput = {
   task: string
   title?: string
@@ -431,32 +525,51 @@ type SendInput = {
   notifyOnCompletion?: boolean
   idempotencyKey?: string
 }
+type ListInput = {}
 type StatusInput = { sessionId: string }
 type ResultInput = { sessionId: string; messageId?: string; turnId?: string }
 type CancelInput = { sessionId: string; messageId?: string }
 ```
 
-`spawn` 返回真实持久目标 `sessionId` 和宿主投递 `messageId`。`send` 可以双向寻址已有
-Session ID，并复用该会话的项目、模型、上下文和权限配置；`messageId` 只标识一条投递，
-不是 worker 身份。`status` 和 `result` 是有界投影，不会加载完整转录本。`cancel` 只中断
-精确的排队投递或绑定回合，并保留目标会话及其历史。
+`spawn` returns a real durable target `sessionId` and host delivery
+`messageId`. `send` addresses an existing Session ID in either direction and
+reuses that session's project, model, context, and permission configuration;
+`messageId` identifies one delivery and is never a worker identity. `status`
+and `result` are bounded projections and do not load a full transcript.
+`cancel` interrupts only the exact queued delivery or bound turn and retains
+the target session and history.
 
-`spawn` 中显式指定的 `modelKey` 属于 AI 自动调度的模型选择，需要该模型自身的
-`ModelBinding.availableForSubagents` 许可；对用户未勾选的模型，宿主在创建 worker 之前
-返回 `PERMISSION_DENIED`。省略 `modelKey` 仍然是继承——先取已勾选的模型，否则取默认
-模型——显式写出默认模型自己的键同样按继承处理，而不是一次选择
-（ADR subagent-model-opt-in）。
+A named `spawn` `modelKey` is an AI-driven delegation choice and needs that
+model's own `ModelBinding.availableForSubagents` opt-in; the host answers
+`PERMISSION_DENIED` for a model the user has not enabled, before creating a
+worker. Omitting `modelKey` still inherits — the first enabled model, else the
+default — and naming the default model's own key is that same inheritance
+rather than a selection (ADR subagent-model-opt-in).
 
-`spawn` 和 `send` 仅在插件当前 Agent 工具调用期间有效。broker 注入 `pluginId`、来源
-`sessionId`、来源 `turnId` 和调用身份；插件参数不能提供或覆盖这些字段。面向用户的插件
-面板可使用自有插件身份调用 `cancel`，但不能用该路径发送或创建工作。宿主执行来源权限
-上限、Agent 模式目标、收件箱和 worker 限制、幂等性以及有界自主跳数。请求的完成回调是
-宿主拥有的 `completion` 消息，链接到源投递，并且只在实际目标回合结算后最多创建一次。
-回调是会话数据，不是新的用户授权；完成消息不会触发另一个回调。
+`list` returns at most 100 non-deleted Agent sessions that can receive a
+message, including sessions created independently of Session Orchestrator. Each
+entry contains only its Session ID, title, status, updated time, readable
+provider/model labels, and bounded creation links; it does not include a
+transcript, project path, credentials, or message previews. The caller can
+pass the returned Session ID to `send`, and `status`/`result` remain the
+authoritative detail reads.
 
-渲染器可以读取单独的侧边栏协作投影，但插件面板不能绕过此网关调用变更操作。
+`spawn` and `send` are valid only during the plugin's active Agent tool
+invocation. The broker injects `pluginId`, source `sessionId`, source `turnId`,
+and an invocation identity; plugin arguments cannot supply or override those
+values. A user-facing plugin panel may use `cancel` with its own plugin
+identity, but cannot use that path to send or spawn work. The host enforces
+the source permission ceiling, Agent-mode target, inbox and worker limits,
+idempotency, and bounded autonomous hops. A requested completion callback is
+a host-owned `completion` message linked to the source delivery and is created
+at most once after the actual target turn settles.
+The callback is session data, not a new user authorization, and completion
+messages do not trigger another callback.
 
-### agent.complete（需要 `agent.complete`）
+The renderer may read the separate sidebar collaboration projection, but a
+plugin panel cannot invoke the mutation operations outside this gateway.
+
+### agent.complete (requires `agent.complete`)
 ```ts
 pi.agent.complete(input: {
   modelKey: string
@@ -472,12 +585,26 @@ pi.agent.complete(input: {
 }>
 ```
 
-宿主解析凭据，并通过与 Composer 提示增强相同的路径发起 `tools: []` 的一次性补全。
-插件拿不到密钥。`includeSessionContext: true` 还需要 `session.read` 以及进行中的
-工具会话。system ≤ 32 KiB；消息合计 ≤ 200k 字符；每个插件每滚动 60 秒 8 次
-（`RATE_LIMITED`）；预算 90 秒（`TIMEOUT`）。
+The host resolves credentials and runs a one-shot completion with `tools: []`
+through the same path as Composer prompt enhancement. The plugin never receives
+a secret. `includeSessionContext: true` also requires `session.read` and an
+in-flight tool session; the host serializes that context and, if `messages` is
+empty, appends `Please respond to the request.` System prompt
+≤ 32 KiB; combined messages ≤ 200k characters; eight calls per plugin per
+rolling 60s (`RATE_LIMITED`); 90s budget (`TIMEOUT`). Provider 429 and other
+transient provider failures are retried inside the same call under the shared
+provider retry budget (ADR 0206) and a `Retry-After` header is honored. Empty
+model output is `INVALID_ARGUMENT`.
 
-### 剪贴板/外壳
+When the call still fails, the plugin receives the host's classified code
+rather than a single generic failure — `PROVIDER_RATE_LIMITED` once the retry
+budget is exhausted, `PROVIDER_UNAUTHORIZED`, `CONTEXT_TOO_LARGE`,
+`NETWORK_ERROR` — so it can pace itself and report the cause. The broker
+answers with whichever code the failing service classified, in the same
+`data.errorCode` → `errorCode` → `code` precedence every other host boundary
+uses.
+
+### clipboard / shell
 ```ts
 pi.clipboard.readText(): Promise<string>
 pi.clipboard.writeText(text: string): Promise<void>
@@ -496,10 +623,10 @@ type ClipboardHistoryEntry =
 pi.shell.openExternal(url: string): Promise<void>
 ```
 
-`openExternal` 解析 `url`，只打开 `http:`、`https:` 和 `mailto:`（D330 / ADR 0168）。
-其他 scheme 以 `INVALID_ARGUMENT` 失败。
+`openExternal` parses `url` and opens only `http:`, `https:`, and `mailto:`
+hrefs (D330 / ADR 0168). Other schemes fail with `INVALID_ARGUMENT`.
 
-### browser（需要 `browser.cdp`）
+### browser (requires `browser.cdp`)
 ```ts
 pi.browser.navigate(input: { url?: string; path?: string }): Promise<BrowserState | null>
 pi.browser.action(input: { action: "back" | "forward" | "reload" | "stop" }): Promise<void>
@@ -516,18 +643,24 @@ pi.browser.console(input?: { limit?: number }): Promise<{ messages: unknown[] }>
 pi.browser.cdp(input: { method: string; params?: unknown }): Promise<unknown>
 ```
 
-访客页是宿主拥有的 `WebContentsView`（`persist:work-browser`）。
-`setBounds` 相对调用插件视图的内容区，并被夹紧，因此访客页不能盖住聊天/输入框。
-`cdp` 默认拒绝；cookie、storage、target 和网络拦截方法以 `PERMISSION_DENIED` 失败。
-代理调用的会话身份来自进行中的 `plugins.execute` `sessionId`，而不是插件参数（D333 / ADR 0170）。
+The guest page is a host-owned `WebContentsView` (`persist:work-browser`).
+`setBounds` is content-relative to the calling plugin view and is clamped so
+the guest cannot cover chat/composer. `cdp` is deny-by-default; cookie,
+storage, target, and network-interception methods fail with
+`PERMISSION_DENIED`. Session identity for agent calls comes from the in-flight
+`plugins.execute` `sessionId`, not from plugin arguments (D333 / ADR 0170).
 
-`getHistory` 返回由主机明确记录的条目，按最新优先排列，文本和图片按捕获时间混排。
-通过 `writeText` 写入的内容，以及 Composer 用户主动粘贴事件提供的内容会被记录；主机
-不会在后台轮询或重新读取系统剪贴板。连续相同内容会合并并刷新时间戳。历史只保留在
-内存中，最多保留 30 天、500 条和 256 MiB；单条文本最多 100 KiB UTF-8 字节，图片
-最多 50 MiB。图片统一返回 PNG 字节及像素尺寸。没有粘贴过的复制内容不会被记录。
+`getHistory` returns newest-first entries explicitly recorded by the host, with
+text and images interleaved in capture order. Content written through
+`writeText` and content supplied by the Composer's user-initiated `paste` event
+are recorded; the host does not poll or reread the OS clipboard in the
+background. Consecutive identical content is collapsed and refreshes its
+timestamp. History is in-memory only and is bounded to 30 days, 500 entries,
+and 256 MiB total payload; individual entries are limited to 100 KiB of UTF-8
+text or 50 MiB of image bytes. Images are returned as PNG bytes with their
+pixel dimensions. A copy that is never pasted is intentionally not captured.
 
-### 服务（需要 `background.service`）
+### services (requires `background.service`)
 ```ts
 pi.services.register(service: {
  id: string // must match a contributes.services[].id
@@ -538,13 +671,13 @@ pi.services.register(service: {
 pi.services.unregister(id: string): Promise<void>
 ```
 
-注册是本地簿记：它记录处理程序，以便经纪人可以
-打电话给他们。主机在卸载前调用 `onLoad` 和 `stop` 之后调用 `start`，并且
-根据 [05-plugin-lifecycle.md](/spec/07-plugins/05-plugin-lifecycle) 重新启动崩溃的插件。
-`start` 在一个进程内是幂等的——在已经运行的进程上进行第二次启动
-服务是无操作的。
+Registration is local bookkeeping: it records the handlers so the broker can
+call them. The host calls `start` after `onLoad` and `stop` before unload, and
+restarts a crashed plugin per [05-plugin-lifecycle.md](05-plugin-lifecycle.md).
+`start` is idempotent within one process — a second start on an already-running
+service is a no-op.
 
-### 总线（需要 `bus.publish` / `bus.subscribe`）
+### bus (requires `bus.publish` / `bus.subscribe`)
 ```ts
 pi.bus.publish(topic: string, payload?: unknown): Promise<void>
 pi.bus.subscribe(
@@ -562,11 +695,11 @@ type PluginBusMessage = {
 }
 ```
 
-`topic` 必须出现在 `contributes.bus.publish` 中； `pattern` 必须出现在
-`contributes.bus.subscribe`。发布者被排除在自己的扇出之外。帽子
-威胁模型位于 [04-plugin-security.md](/spec/07-plugins/04-plugin-security) §5.1 中。
+`topic` must appear in `contributes.bus.publish`; `pattern` must appear in
+`contributes.bus.subscribe`. A publisher is excluded from its own fan-out. Caps
+and the threat model are in [04-plugin-security.md](04-plugin-security.md) §5.1.
 
-### 网
+### net
 ```ts
 pi.net.fetch(input: {
  url: string
@@ -577,11 +710,13 @@ pi.net.fetch(input: {
 }): Promise<{ status: number; headers: Record<string, string>; bodyText: string }>
 ```
 
-`fetch` 原样返回上游响应 —— `status`、`headers`、`bodyText` —— 所以 `429`
-是插件能读到的数据（`Retry-After` 也在里面），而不是被主机藏起来的错误。宿主
-不重试、不限流、也不重新发起请求：遇到 `429` 之后的重试与退避是插件自己的
-策略，响应头就是插件唯一能拿到的退避信号。失败的调用（`status >= 400`）在
-审计里记为 `ok: false`，并在响应声明了延迟时附带它通告的 `retryAfter`（§7）。
+`fetch` answers with the upstream response unchanged — `status`, `headers`, and
+`bodyText` — so a `429` is data your plugin can read, `Retry-After` included,
+rather than an error the host hides. The host does not retry, throttle, or
+re-issue the request: retry and backoff after a `429` are your plugin's own
+policy, and the response headers are the only backoff signal you get. A failed
+call (`status >= 400`) is audited as `ok: false`, together with the
+`retryAfter` it advertised when the response states one (§7).
 
 ```ts
 pi.net.websocket.connect(input: {
@@ -595,21 +730,23 @@ pi.net.websocket.send(input: { socketId: string; data: string | Uint8Array }): P
 pi.net.websocket.close(input: { socketId: string; code?: number; reason?: string }): Promise<void>
 ```
 
-需要 `net.websocket`。`connect` 会和 `fetch` 一样被严格限制在
-`manifest.net.domains` 之内，`connect` / `close` 会记入审计。帧以宿主事件的
-形式到达：`net:websocket:open`、`net:websocket:message`、`net:websocket:close`、
-`net:websocket:error`，每个都带着持有它的 `socketId`，用 `pi.events.on` 订阅。
-只有持有该套接字的那个插件会收到它们。
+Requires `net.websocket`. `connect` is confined to `manifest.net.domains`
+exactly like `fetch`, and `connect` / `close` are audited. Frames arrive as host
+events: `net:websocket:open`, `net:websocket:message`, `net:websocket:close`,
+`net:websocket:error`, each carrying the owning `socketId`, subscribed to with
+`pi.events.on`. Only the owning plugin receives them.
 
-套接字由宿主持有，所以插件不能超过四个套接字，不能发送或接收大于 1 MiB 的帧，
-也不能排队超过 4 MiB 的未发送数据；每一种都会被拒绝（`LIMIT_EXCEEDED`），或者
-直接关闭连接，而不是让宿主的内存继续增长。一次 connect 会带上 `headers` 与
-`protocols`，所以按连接认证的端点无需把凭证暴露给插件代码。拒绝会说明原因：
-非 `ws(s)` 的 URL 或畸形的协议令牌是 `INVALID_ARGUMENT`，握手没有完成是
-`TIMEOUT`，握手失败是 `CONNECT_FAILED`，套接字不属于该插件是 `NOT_FOUND`，
-主机不在白名单内是 `PERMISSION_DENIED`。
+The host owns the socket, so a plugin cannot exceed four sockets, send or
+receive a frame above 1 MiB, or queue more than 4 MiB of unsent data; each of
+those is refused (`LIMIT_EXCEEDED`) or closes the connection rather than growing
+the host's memory. A connect carries `headers` and `protocols`, so an endpoint
+that authenticates per connection works without exposing the credential to
+plugin code. Refusals name the reason: `INVALID_ARGUMENT` for a non-`ws(s)` URL
+or a malformed protocol token, `TIMEOUT` when the handshake does not finish,
+`CONNECT_FAILED` when it fails, `NOT_FOUND` for a socket this plugin does not
+hold, and `PERMISSION_DENIED` when the host is not in the allowlist.
 
-### 桌面控制（需要 `desktop.control`）
+### desktop control (requires `desktop.control`)
 
 ```ts
 pi.desktop.listOperations(): Promise<Array<{
@@ -625,57 +762,94 @@ pi.desktop.invoke(input: {
 }): Promise<unknown>
 ```
 
-这是第一方插件通往与可选启用的本地 MCP 控制平面共用同一份已审查操作目录的
-网关（ADR 0203 / D370）。两份目录的差异仅在于标记为 plugin-only 的操作：六个
-`session/collaboration/*` 操作可以通过该网关调用，却被刻意排除在 MCP 可见目录
-之外（`tools/list`、`pi_control_describe` 以及 `pi_desktop_invoke` 的枚举），
-因为它们需要已认证的插件调用上下文，且渲染器没有任何变更通道。返回的目录省略
-Electron 通道名，插件也永远拿不到 MCP bearer token。调用复用控制器、IPC 处理器、
-生命周期检查、完成事件和审计边界；插件无法触达任意 Electron IPC。
+The reviewed catalog includes `session/open(sessionId)` for a plugin UI to
+open an existing durable session. Plugin-originated `session/create` and
+`agent/prompt` calls refresh session state without changing the active
+renderer session; `session/open` is explicit navigation.
 
-`dangerous` 操作（删除会话、更改权限模式、批准工具）需要两次答复。
-`confirm: true` 是插件的知会，必须先给出（否则返回
-`CONFIRMATION_REQUIRED`）。随后宿主在原生对话框中询问用户，对话框点名目录中
-的操作 id、目录描述和一段参数预览；对话框绝不显示插件或模型撰写的文本，
-因此一份被提示注入的转录本无法把 `session/delete` 重新包装成无害的东西。
-对话框被关闭、被拒绝，或宿主没有对话框服务，都会在触达控制器之前以
-`PERMISSION_DENIED` 失败。调用会连同插件 id、操作、风险等级和结果状态一起
-记入日志；参数值不会复制进审计条目。
+This is the first-party plugin gateway to the reviewed operation catalog shared
+with the opt-in local MCP control plane (ADR 0203 / D370). The two catalogs
+differ only for operations marked plugin-only: the six
+`session/collaboration/*` operations are callable through this gateway but are
+deliberately absent from the MCP-visible catalog (`tools/list`,
+`pi_control_describe`, and the `pi_desktop_invoke` enum), because they require
+an authenticated plugin invocation context and no renderer mutation channel
+exists for them. The returned catalog omits Electron channel names and the
+plugin never receives the MCP bearer token. Invocation reuses the controller,
+IPC handler, lifecycle checks, completion event, and audit boundary; a plugin
+cannot reach arbitrary Electron IPC.
 
-### 麦克风面板（需要 `ui.microphone`）
+A `dangerous` operation (session delete, permission-mode change, tool
+approval) needs two answers. `confirm: true` is the plugin's acknowledgement
+and is required first (`CONFIRMATION_REQUIRED` otherwise). The host then asks
+the user in a native dialog that names the catalog operation id, its catalog
+description, and an argument preview; the dialog never shows plugin- or
+model-authored text, so a prompt-injected transcript cannot relabel
+`session/delete` as something benign. A dismissed dialog, a declined dialog,
+or a host without a dialog service all fail with `PERMISSION_DENIED` before
+the controller is reached. Calls are logged with the plugin id, operation,
+risk, and result status; argument values are not copied into the audit entry.
 
-只有当清单声明且用户授予了 `ui.microphone` 时，隔离面板才可以通过浏览器
-媒体 API 请求麦克风音频：
+### microphone panels (requires `ui.microphone`)
+
+An isolated panel may request microphone audio through the browser media API
+only when the manifest declares and the user grants `ui.microphone`:
 
 ```ts
 navigator.mediaDevices.getUserMedia({ audio: true })
 ```
 
-宿主的权限处理器为该面板放行 `media` 权限，并继续拒绝摄像头和其他所有
-设备权限。插件拿不到原生麦克风句柄或宿主密钥；浏览器的语音识别和语音合成
-仍由页面持有。面板应提供文本回退，并通过其无障碍状态播报权限或识别失败。
+The host permission handler allows the `media` permission for that panel and
+continues to deny camera and every other device permission. The plugin does
+not receive a native microphone handle or a host secret; browser speech
+recognition and speech synthesis remain page-owned. A panel should provide a
+text fallback and announce permission or recognition failures through its
+accessible status.
 
-### 音频（需要 `audio.capture.background` / `audio.playback.background`）
+## Scenic Settings contribution
 
-**可以调用，但本条分支尚未实现设备后端。** `pi.audio` 存在于插件宿主进程
-中，恰好暴露下面这十个方法。每个方法都保留自己的权限要求：六个采集方法
-（`getInputDevices`、`openInput`、`closeInput`、`getCaptureState`、
-`onInputFrame`、`offInputFrame`）需要 `audio.capture.background`，四个播放
-方法（`openOutput`、`writeOutput`、`stopOutput`、`closeOutput`）需要
-`audio.playback.background`。没有授权时调用会被拒绝为 `PERMISSION_DENIED`，
-并按权限名记入审计，与其他所有需要把关的 API 完全一致。拿到授权后宿主仍然
-没有设备后端，所以每次调用都会以带错误码的 `UNSUPPORTED` 拒绝：消息是
-`host api not available: audio.<method>`，审计条目是
-`{ api: "audio.<method>", ok: false, errorCode: "UNSUPPORTED" }`。八个异步
-方法用这个错误拒绝；`onInputFrame` / `offInputFrame` 是无法 reject 的同步
-注册辅助函数，因此它们直接抛出带同一个 `code: "UNSUPPORTED"` 的 `Error`，
-而不是注册一个永远不会触发的处理器。不会有任何东西接触设备，也不会产生
-任何帧。`onInputFrame` 是注册回调 —— 它不是事件名 —— 帧形状见
-`packages/plugin-sdk/src/index.ts` 中的 `PluginAudioInputFrame`。等设备服务
-落地后，权限和这个表面都保持不变，只有拒绝会被真实行为取代：设备由宿主
-持有，插件只交换 PCM16 帧，永远拿不到设备句柄、`MediaStream`、操作系统
-设备路径或 Node 流，每个插件只允许一条输入流，禁用、卸载或崩溃会停止采集
-并丢弃已排队的播放。
+`contributes.scenicThemes` is a declarative presentation contribution, not a
+plugin page API. It provides localized card metadata for same-plugin themes and
+declared preview assets. The host owns the Settings DOM, styles, selection,
+focus behavior, slider draft, and Apply action. The plugin receives no Settings
+bridge, renderer DOM access, arbitrary CSS, JavaScript, navigation, or actions.
+
+The host persists Apply through the existing typed theme-variable boundary and
+only for the declared `--nexus-backdrop-blur` variable. `ui.panel` windows and
+`contributes.views` retain their independent native-view implementation.
+
+Theme assets declared for scenic cards may be package-relative, in which case
+the host resolves them inside the installed plugin package before rewriting the
+matching CSS `url()` or card preview to `plugin-asset:`. Absolute declared
+assets retain the external-path route. Neither route grants a plugin arbitrary
+filesystem access (ADR 0288).
+
+### audio (requires `audio.capture.background` / `audio.playback.background`)
+
+**Callable, but the device backend is not implemented in this branch.**
+`pi.audio` is present in the plugin host process and exposes exactly the ten
+methods below. Each one keeps its permission requirement: the six capture
+methods (`getInputDevices`, `openInput`, `closeInput`, `getCaptureState`,
+`onInputFrame`, `offInputFrame`) require `audio.capture.background` and the
+four playback methods (`openOutput`, `writeOutput`, `stopOutput`,
+`closeOutput`) require `audio.playback.background`. Without the grant the call
+is refused with `PERMISSION_DENIED` and audited under the permission name,
+exactly like every other gated API. With the grant the host still has no device
+backend, so every call is answered with a coded `UNSUPPORTED` refusal: the
+message is `host api not available: audio.<method>` and the audit entry is
+`{ api: "audio.<method>", ok: false, errorCode: "UNSUPPORTED" }`. The eight
+asynchronous methods reject with that error; `onInputFrame` / `offInputFrame`
+are synchronous registration helpers that cannot reject, so they throw an
+`Error` carrying the same `code: "UNSUPPORTED"` instead of registering a
+handler that could never fire. Nothing touches a device and no frame is ever
+produced. `onInputFrame` registers a callback — it is not an event name — and
+the frame shape is `PluginAudioInputFrame` in
+`packages/plugin-sdk/src/index.ts`. When the device service lands, the
+permission and this surface stay as they are and only the refusal is replaced
+by real behaviour: the host owns the device, a plugin exchanges PCM16 frames
+and never receives a device handle, `MediaStream`, OS device path, or Node
+stream, one input stream per plugin is allowed, and disable, unload, or crash
+stops capture and drops queued playback.
 
 ```ts
 pi.audio.getInputDevices(): Promise<PluginAudioInputDevice[]>
@@ -690,7 +864,7 @@ pi.audio.stopOutput(streamId: string): Promise<void>
 pi.audio.closeOutput(streamId: string): Promise<void>
 ```
 
-### 键盘（需要 `keyboard.globalShortcut`）
+### keyboard (requires `keyboard.globalShortcut`)
 
 ```ts
 pi.keyboard.registerGlobalShortcut(input: {
@@ -711,29 +885,34 @@ type PluginGlobalShortcut = {
 }
 ```
 
-宿主 —— 而不是插件 —— 持有 Electron 的 `globalShortcut`。插件把一个加速键
-映射到自己的一条命令，由宿主完成注册、冲突检查、触发和释放；插件永远
-拿不到键盘钩子、`before-input-event`、原始输入设备或按键事件流，一次触发
-也只是属于该插件的一条命令。
+The host, not the plugin, owns Electron's `globalShortcut`. A plugin maps an
+accelerator to one of its own commands, and the host registers, conflict-checks,
+triggers, and releases it; no keyboard hook, `before-input-event`, raw input
+device, or key event stream is ever exposed, and a trigger runs exactly one
+command belonging to that plugin.
 
-`command` 必须已经由调用插件注册；否则以 `INVALID_ARGUMENT` 失败。被操作
-系统保留、被 PI-Desktop 自己当前占用（默认 `Alt+Space` 打开插件启动器、
-`Alt+Shift+W` 呼出或隐藏窗口；用户改绑后释放出来的加速键可以再次被插件使用）或
-已被另一个插件持有的加速键会被拒绝而不是被抢走，被拒绝的重新注册会保留原来
-的绑定。拒绝是返回的结果，不是抛出的异常：
-`registerGlobalShortcut` 以 `registered: false` 解析，并带 `error` 为
-`SHORTCUT_CONFLICT`、`SHORTCUT_UNAVAILABLE`（平台拒绝）、
-`INVALID_ACCELERATOR` 或 `LIMIT_EXCEEDED`（每个插件最多 8 条）。
-`UNSUPPORTED` 和 `INVALID_ARGUMENT` 会抛出。用同一个 `id` 再次注册会替换
-该条目的加速键。
+`command` must already be registered by the calling plugin; anything else fails
+`INVALID_ARGUMENT`. An accelerator reserved by the operating system, one
+PI-Desktop itself currently spends (by default `Alt+Space` opens the plugin
+launcher and `Alt+Shift+W` shows or hides the window; once the user rebinds one of
+them, the freed accelerator is available again), or one held by another plugin
+is refused rather than taken over, and a refused re-registration leaves the
+previous binding in place.
+Refusals are returned, not thrown: `registerGlobalShortcut` resolves with
+`registered: false` and an `error` of `SHORTCUT_CONFLICT`, `SHORTCUT_UNAVAILABLE`
+(platform refusal), `INVALID_ACCELERATOR`, or `LIMIT_EXCEEDED` (at most 8
+entries per plugin). `UNSUPPORTED` and `INVALID_ARGUMENT` are thrown.
+Registering an `id` again replaces that entry's accelerator.
 
-每条带 `default` 的 `contributes.globalShortcuts` 条目会在插件加载后由宿主
-注册，但仅当它的命令确实注册成功；没有 `default` 的条目等待
-`registerGlobalShortcut` 调用。`unregisterGlobalShortcut` 删除一条条目，
-未知 id 时什么都不做；`listGlobalShortcuts` 列出宿主当前为调用插件持有的
-条目。禁用、卸载和崩溃时全部释放，注册 / 注销都会记入审计。
+Every `contributes.globalShortcuts` entry that declares a `default` is
+registered by the host after the plugin's load, but only when its command
+actually registered; an entry without a `default` waits for a
+`registerGlobalShortcut` call. `unregisterGlobalShortcut` drops one entry and
+does nothing for an unknown id; `listGlobalShortcuts` lists what the host
+currently holds for the calling plugin. Everything is released on disable,
+unload, and crash, and register / unregister are audited.
 
-## 4. 错误模型
+## 4. Error model
 
 ```ts
 type PluginApiError = {
@@ -751,181 +930,235 @@ type PluginApiError = {
 }
 ```
 
-所有 API 失败都会引发携带 `code` 的错误。
+All API failures throw an error carrying a `code`.
 
-## 5. 事件（主机 -> 插件）
+## 5. Events (host -> plugin)
 
 ```ts
 pi.events.on(event, handler)
 pi.events.off(event, handler)
 ```
 
-主机将事件作为单向帧推送到插件进程。今天交付：
+The host pushes events to the plugin process as one-way frames. `pi.events`
+is not a separate channel: it is an alias over the same per-plugin bus stream
+that `pi.bus.subscribe` consumes (`plugin-host-process.mjs`), so an `on`
+handler sees every frame the host delivers to this plugin and nothing else.
+Delivered today:
 
-- `bus.message` — 公交车交付，以 `PluginBusMessage` 作为单一
-  论点。 `pi.bus.subscribe` 是接收这些信息的正常方式； `events.on`
-查看插件持有的每个订阅的原始流。
-- `workspace:changed` —— 载荷是 `workspace.get()` 的对象或 `null`，在缓存的工作区路径变化时发送：
-  主文件夹的 `path` 与 `name`，以及在该文件夹属于某个项目组时的 `projectId` 与 `roots`（ADR 0263）。
-  一次运行中的第一个工作区可能先不带文件夹发送一次、再带文件夹重发一次，因为项目组记录是在那次推送
-  之后才读取的。
-- `plugin:settingsChanged`（由插件设置页面编辑触发）
-- `appearance:changed` —— 载荷是 `PluginAppearance`，在应用配色或语言变化时发送，
-  因此插件进程可以像打开的面板一样实时重标文案（ADR 0280）。
-- `session:modelChanged` — `{ sessionId, modelKey, thinkingLevel }`，在成功的
-  `session.configure` 改变 provider、模型或 thinking level 之后发送
-- `session:turnEnded` —— 载荷为
-  `{ sessionId: string; turnId: string; reason: "completed" | "aborted" | "error" }`，
-  在每个宿主回合的拆除结束时发送一次，位于持久化的 `session.endTurn` 尝试之后。
-  “回合”指 `session.beginTurn` 创建的那个回合：一次用户提交、一次已批准的计划执行、
-  或一次定时运行；排队但从未开始的项目不会产生事件。`completed`、`aborted`、`error`
-  是三种终止原因。事件携带终止运行时事件本身标识的 `turnId`，而不是恰好处于活动
-  状态的那个回合，因此来自更早回合的迟到事件不会结算更新的回合。投递是
-  即发即忘：没有 ack，也没有重放，因此存活的已订阅插件只收到一次；与插件崩溃、
-  重载或宿主退出竞态的投递不作保证。收到该事件**并不**意味着该回合的所有在途
-  工具都已退出——迟到结果仍可能到达——因此插件必须按 `turnId` 串行化或以其他方式
-  限定清理范围。该事件同样不需要新权限：它走既有的插件事件通道，订阅未知的事件名
-  也不会报错。目前尚无任何已发布宿主会发出该事件（0.14.8 也尚未包含），因此依赖它
-  的插件必须按真正包含该事件的发布版本要求，而不能假定 0.14.7 或 0.14.8。
+- `bus.message` — a bus delivery, with the `PluginBusMessage` as the single
+  argument. `pi.bus.subscribe` is the normal way to receive these; `events.on`
+  sees the raw stream of every subscription the plugin holds.
+- `workspace:changed` — payload is the `workspace.get()` object or `null`,
+  sent when the cached workspace path changes: the primary `path` and `name`,
+  plus `projectId` and `roots` when the folder belongs to a project group
+  (ADR 0263). The first workspace of a run may arrive once without the folders
+  and repeat once with them, because the group records are read after that
+  first push.
+- `plugin:settingsChanged` is delivered after edits from the generated Plugins
+  settings UI.
+- `appearance:changed` — payload is `PluginAppearance`, sent whenever the app
+  palette or language changes, so a plugin process can relabel live the same way
+  an open panel does (ADR 0280).
+- `session:modelChanged` — `{ sessionId, modelKey, thinkingLevel }`, sent after
+  a successful `session.configure` that changes provider, model, or thinking
+  level.
+- `session:turnEnded` — payload is
+  `{ sessionId: string; turnId: string; reason: "completed" | "aborted" | "error" }`,
+  sent once per host turn at the end of its teardown, after the durable
+  `session.endTurn` attempt. A turn is the one `session.beginTurn` created: a
+  user submission, an approved plan execution, or a scheduled run, and a queued
+  item that never started produces no event. `completed`, `aborted`, and
+  `error` are the three terminal reasons. The event carries the `turnId` the
+  terminal runtime event identified, not whichever turn happens to be active,
+  so a late event from an earlier turn cannot settle a newer one. Delivery is
+  fire-and-forget: there is no ack and no replay, so a plugin that is alive and
+  subscribed receives it once, and a delivery that races a plugin crash,
+  reload, or host quit is not guaranteed. Receiving it does **not** mean every
+  in-flight tool of that turn has exited — late results can still arrive — so a
+  plugin must serialise or otherwise scope its cleanup by `turnId`. The event
+  also needs no new permission: it travels on the existing event channel, and
+  subscribing to an unknown event name does not error. No published host emits it
+  yet — 0.14.8 does not include it — so a plugin that depends on it must require
+  the release that actually ships it rather than assume 0.14.7 or 0.14.8.
 
-抛出的处理程序会被记录下来，并且不会影响其他侦听器或插件。
+A throwing handler is logged and does not affect other listeners or the plugin.
 
-计划活动：
+Planned events:
 - `session:activated`
 
-## 6. 面板桥 API
+## 6. Panel bridge API
 
-面板UI不直接获取完整的`pi`；相反：
+The Panel UI does not get the full `pi` directly; instead:
 
 ```ts
 window.pluginBridge.invoke(channel, payload?)
 window.pluginBridge.on(event, handler)
 ```
 
-同一个桥同时服务插件的两种表面：独立的 `ui.panel` 窗口，以及停靠在工作面板中的
-`contributes.views` 表面（ADR 0104）。通道列表、权限门与 preload 完全相同，
-因此同一份 HTML 入口在两种放置方式下都能工作。差别只在于 chrome 与下面这个
-视图 `location`：停靠视图没有窗口控制胶囊、没有拖拽带，其
-`--pi-plugin-titlebar-height` 为 `0px` 而非 `46px`。
+The same bridge serves both plugin surfaces: a detached `ui.panel` window and a
+`contributes.views` surface docked in the work panel (ADR 0104). The channel
+list, the permission gate, and the preload are identical, so one HTML entry
+works in either placement. The only differences are chrome and the view
+`location` below: a docked view has no window-control capsule and no drag band,
+and its `--pi-plugin-titlebar-height` is `0px` rather than `46px`.
 
-停靠视图还可以被指定一个要展示的对象。工作面板选项卡本来就携带的 `location`
-会投递给任何贡献视图——不再只限 `pi.browser`（它的地址栏保留自己的导航通道）：
-创建时它作为视图入口 URL 的 `piViewOpen` 查询参数传递，文档加载完成后则通过
-`view:open` 事件送达。在首次加载之前到达的 location 改为重启这次加载；已加载的
-视图永远不会被导航，因此插件里未保存的改动不会被丢弃，重复打开同一个 location
-什么也不做。该载荷对主机是不透明的——每个插件自行决定 `location` 的含义——它
-不需要新权限，也不新增 SDK 方法。
+Detached panel pages using the current chrome contract declare
+`<meta name="pi-plugin-chrome" content="v2">` and use the published variable
+for normal-flow top spacing. The host preserves that page-owned spacing. A
+page without the marker remains supported through the legacy additive offset.
 
-主机拥有的 preload 仅将固定通道转发到插件运行时：
+### 6.1 Floating widgets
 
-| 频道 | 所需许可 |
+A manifest may declare `"ui": { "shape": "widget" }`. The panel then opens as a
+floating widget: the same sandboxed, permission-gated page in a transparent,
+frameless window with no 46px drag band, no control capsule, and no rectangular
+native shadow. The page owns its whole rectangle and normally paints a
+silhouette smaller than it — a round orb, for instance — so the host must not
+draw a frame around that silhouette.
+
+- `--pi-plugin-titlebar-height` is `0px`, and the legacy additive top offset is
+  not applied either, whatever chrome marker the page declares.
+- The placement is published before page scripts run as
+  `document.documentElement.dataset.piPluginPanelShape`: `panel`, `widget`, or
+  `view`.
+- Dragging uses a whole-window drag map: empty space moves the window, while
+  standard controls (`button`, `input`, `a`, `[tabindex]`, …) and every element
+  marked `data-pi-plugin-no-drag` stay clickable.
+- A widget has no capsule, so the host owns an equivalent menu behind the
+  surface's own context menu: close, minimize, and always on top. A plugin may
+  still close its own widget through `ui.closePanel()`.
+- `ui.width` / `ui.height` are honoured down to 120×120 (a panel's minimum stays
+  360×280). `ui.alwaysOnTop` pins a widget above other windows, and
+  `ui.resizable` defaults to `false` for a widget and `true` for a panel.
+- Nothing else changes: same preload, same `pluginBridge` channels, same
+  permission gate, same session partition and egress policy.
+
+A docked view may also be given one subject to show. The `location` a work-panel
+tab already carries is delivered to any contributed view — not only
+`pi.browser`, whose address bar keeps its own navigation channel: on creation it
+travels as the view entry URL's `piViewOpen` query parameter, and once the
+document has finished loading it arrives as the `view:open` event. A location
+that reaches the host before the first load restarts the load instead, and a
+view that is already loaded is never navigated, so unsaved work inside a plugin
+is not discarded; re-opening the same location does nothing. The payload is
+opaque to the host — each plugin decides what its `location` means — and it
+needs no permission and adds no SDK method.
+
+The host-owned preload forwards only fixed channels to the plugin runtime:
+
+| Channel | Required permission |
 |---|---|
-| `ui.showToast`、`ui.closePanel` | 没有超出加载的面板 |
+| `ui.showToast`, `ui.closePanel` | None beyond the loaded panel |
 | `ui.notify` | `notify` |
-| `ui.getNotificationPermission`、`ui.requestNotificationPermission`、`ui.showNativeNotification` | `notify` |
-| `plugin.getSettings`、`workspace.get`、`app.getAppearance` | 无 |
-| `app.setTheme`、`themes.upsert`、`themes.remove`、`themes.list` | `ui.theme` |
+| `ui.getNotificationPermission`, `ui.requestNotificationPermission`, `ui.showNativeNotification` | `notify` |
+| `plugin.getSettings`, `workspace.get`, `app.getAppearance` | None |
+| `app.setTheme`, `themes.upsert`, `themes.remove`, `themes.list` | `ui.theme` |
 | `models.list` | `models.list` |
-| `fs.readText`、`fs.readPreview`、`fs.openDefault`、`fs.reveal`、`fs.glob`、`fs.list` | `fs.read` |
+| `fs.readText`, `fs.stat`, `fs.readRange`, `fs.readPreview`, `fs.openDefault`, `fs.reveal`, `fs.glob`, `fs.list` | `fs.read` |
 | `fs.writeText` | `fs.write` |
-| `clipboard.readText`、`clipboard.getHistory` | `clipboard.read` |
+| `clipboard.readText`, `clipboard.getHistory` | `clipboard.read` |
 | `clipboard.writeText` | `clipboard.write` |
 | `shell.openExternal` | `shell.openExternal` |
 | `net.fetch` | `net.fetch` |
 
-`plugin.setSettings`、`fs.remove` 和任意 Electron IPC 未暴露。主机自己
-没有实现的通道会被转发到插件的 `onPanelInvoke(channel, payload)`，
-因此插件可以自定义面板 ↔ 主进程通道；没有导出 `onPanelInvoke` 的插件
-会从自己的进程收到 `UNSUPPORTED`。主机支持的通道包括
-`skill.list`、`skill.read`、`skill.create`、`skill.update`、`skill.remove`
-和 `skill.setEnabled`。
+`plugin.setSettings`, `fs.remove`, and arbitrary Electron IPC are not exposed. A
+channel the host does not implement itself is forwarded to the plugin's
+`onPanelInvoke(channel, payload)`, so a plugin may define its own panel ↔ main
+channels; a plugin that exports no `onPanelInvoke` gets `UNSUPPORTED` from its own
+process. The host-supported channels include `skill.list`, `skill.read`,
+`skill.create`, `skill.update`, `skill.remove`, and `skill.setEnabled`.
 
-### 面板事件（主机 -> 面板）
+### Panel events (host -> panel)
 
-`window.pluginBridge.on(event, handler)` 接收主机推送的事件。宿主会把同样的
-事件发给独立面板窗口和停靠的工作面板视图。今天已投递的事件：
+`window.pluginBridge.on(event, handler)` receives host-pushed events. The host
+sends the same events to detached panel windows and to docked work-panel views.
+Delivered today:
 
-- `appearance:changed` —— 载荷是上面的 `PluginAppearance`，在应用的配色或
-  语言发生变化时发送，因此面板可以实时重新着色和重新标注文案。
-- `workspace:changed` —— 载荷是 `workspace.get()` 的对象或 `null`，在打开的项目变化时发送：
-  主文件夹的 `path` 与 `name`，以及在该文件夹属于某个项目组时的 `projectId` 与 `roots`（ADR 0263）。
-- `view:open`（仅限停靠的工作面板视图；独立 `ui.panel` 窗口不会收到）——载荷为
-  `{ path: string }`，即主机要求该视图展示的 location。创建时就带 location 的视图
-  已经从入口 URL 拿到它；这个事件投递的是之后的 location。
-- `session:turnEnded` —— 与 §5 的插件进程事件同一载荷，在宿主回合到达终止状态
-  时发送。
+- `appearance:changed` — payload is the `PluginAppearance` above, sent whenever
+  the app's palette or language changes, so a panel can restyle and relabel live.
+- `workspace:changed` — payload is the `workspace.get()` object or `null`,
+  sent when the open project changes: the primary `path` and `name`, plus
+  `projectId` and `roots` when the folder belongs to a project group
+  (ADR 0263).
+- `view:open` (docked work-panel views only; a detached `ui.panel` window never
+  receives it) — payload is `{ path: string }`, the location the host asked this
+  view to show. A view created with a location already carried it in its entry
+  URL; this event delivers a later one.
+- `session:turnEnded` — the same payload as the plugin-process event in §5,
+  sent when a host turn reaches a terminal state.
 
-## 7. 通话审计
+## 7. Call auditing
 
-必须记录以下任何调用以供审核：
+Any of the following calls must be logged for audit:
 
 - fs.writeText
-- fs.remove、fs.requestDirectory，以及每一次被拒绝的 fs 调用（连同路径与
-  `errorCode`），还有每一次同意的答复及其被问的原因（`scope` / `rate`）
-- fs.openDefault（记录 root-relative 路径以及系统打开是否成功）
-- fs.reveal（记录 root-relative 路径以及文件管理器显示是否成功）
-- fs.readPreview（记录 root-relative 路径以及分类后的 `kind`）
-- 在agent.registerTool之后执行（包括从插件发现的工具）
-  MCP 服务器）
-- 网络获取
+- fs.stat, fs.readRange, fs.remove, fs.requestDirectory, and every refused fs call (with its path and
+  `errorCode`), plus each consent answer and why it was asked (`scope` / `rate`)
+- fs.openDefault (with its root-relative path and whether the OS open succeeded)
+- fs.reveal (with its root-relative path and whether the file manager reveal succeeded)
+- fs.readPreview (with its root-relative path and classified `kind`)
+- execute after agent.registerTool (including tools discovered from a plugin's
+  MCP servers)
+- net.fetch
 - shell.openExternal
-- clipboard.read/write（可能是样品）
-- clipboard.getHistory（记录返回的条目数）
--bus.publish/bus.subscribe/bus.unsubscribe（带有主题和扇出大小）
+- clipboard.read/write (may be sampled)
+- clipboard.getHistory (with the returned entry count)
+- bus.publish / bus.subscribe / bus.unsubscribe (with the topic and fan-out size)
 - browser.navigate / evaluate / cdp / openExternal
-- 服务启动/停止/重新启动
-- models.list（返回行数）
-- session.getLlmContext（会话 id、消息数、truncated 标志 —— 不含转录文本）
-- agent.complete（模型 key、体积、usage —— 不含提示或补全文本）
+- service start / stop / restart
+- models.list (returned row count)
+- session.getLlmContext (session id, message count, truncated flag — never transcript text)
+- agent.complete (model key, sizes, usage — never prompt or completion text)
 
-日志字段：
-- 插件ID
-- API
-- TS
-- 会话 ID？
-- 好的/错误代码
-- status / retryAfter（仅 `net.fetch`：已完成调用的上游状态码，以及失败调用所
-  声明的 `Retry-After` —— 绝不记录整个头部集合或响应体）
+Log fields:
+- pluginId
+- api
+- ts
+- sessionId?
+- ok / errorCode
+- status / retryAfter (`net.fetch`: the upstream status of a completed call, and
+  for a failed one the `Retry-After` it stated — never the header set or body)
 
-## 8. 版本控制策略
+## 8. Versioning strategy
 
-- API 表面由 `apiVersion` 管理
+- The API surface is managed by `apiVersion`
 - MVP `apiVersion = 1`
-- 已弃用的 API 至少保留一个主要版本周期
+- A deprecated API is retained for at least one major version cycle
 
-## 9. 实施情况
 
-桌面插件运行时现在实现本地和市场插件使用的 MVP 主机 API 表面：
+## 9. Implementation status
 
-- `app.*`、`plugin.*`、`commands.*`、`ui.*`、`workspace.*`
-- `fs.readText` / `fs.readPreview` / `fs.openDefault` / `fs.reveal` /
-  `fs.writeText` / `fs.glob` / `fs.list` / `fs.remove` / `fs.requestDirectory`，
-  范围由 `manifest.fs` 限定（ADR 0088）
+The desktop plugin runtime now implements the MVP host API surface used by local and marketplace plugins:
+
+- `app.*`, `plugin.*`, `commands.*`, `ui.*`, `workspace.*`
+- `fs.readText` / `fs.stat` / `fs.readRange` / `fs.readPreview` / `fs.openDefault` / `fs.reveal` /
+  `fs.writeText` / `fs.glob` / `fs.list` / `fs.remove` / `fs.requestDirectory`,
+  bounded by `manifest.fs` (ADR 0088)
 - `agent.registerTool` / `unregisterTool` / `agent.complete`
-- `speech.registerAdapter` / `unregisterAdapter`（`speech.adapter.register`）
-
-- `models.list`、`session.getLlmContext`
-- `clipboard.*`、`shell.openExternal`、`net.fetch`
-- `browser.*`（访客页 CDP；`browser.cdp`）
-- `services.register` / `unregister`、`bus.publish` / `subscribe`、`events.on` / `off`
+- `speech.registerAdapter` / `unregisterAdapter` (`speech.adapter.register`)
+- `models.list`, `session.getLlmContext`
+- `clipboard.*`, `shell.openExternal`, `net.fetch`
+- `browser.*` (guest CDP; `browser.cdp`)
+- `services.register` / `unregister`, `bus.publish` / `subscribe`, `events.on` / `off`
 - `keyboard.registerGlobalShortcut` / `unregisterGlobalShortcut` / `listGlobalShortcuts`
-  （`keyboard.globalShortcut`；Electron 的 `globalShortcut` 由宿主持有）
-- `net.websocket.connect` / `send` / `close`（`net.websocket`；套接字由宿主
-  持有，受白名单限制，有界，随插件一起释放）
+  (`keyboard.globalShortcut`; the host owns Electron `globalShortcut`)
+- `net.websocket.connect` / `send` / `close` (`net.websocket`; host-owned
+  sockets, allowlist-confined, bounded, released with the plugin)
 
-`pi.audio.*` 已存在于插件宿主进程中并且可以调用：十个方法都由
-`audio.capture.background` / `audio.playback.background` 把关，而这条分支没有
-设备后端，所以获得授权的调用会以带错误码的 `UNSUPPORTED` 拒绝，并记入该方法
-自己的审计条目（`audio.<method>`、`ok: false`）；`onInputFrame` /
-`offInputFrame` 无法 reject，因此同步抛出同一个错误码。不会打开任何设备。
+`pi.audio.*` is present in the plugin host process and callable: all ten
+methods are gated by `audio.capture.background` / `audio.playback.background`,
+and this branch ships no device backend, so an authorized call is answered with
+a coded `UNSUPPORTED` refusal under the method's own audit entry
+(`audio.<method>`, `ok: false`); `onInputFrame` / `offInputFrame` throw the same
+code synchronously because they cannot reject. No device is opened.
 
-本机插件通知使用 Electron 主进程通知界面；
-他们不会在任务通知收件箱中创建持久行，并且不会
-单击激活会话。
+Native plugin notifications use the Electron main-process notification surface;
+they do not create durable rows in the task notification inbox and do not
+activate a session on click.
 
-声明性贡献没有故意与 `pi.*` 对应：技能、主题、
-MCP 服务器由主机从清单中读取，因此插件无法添加
-一个在运行时。
+Declarative contributions have no `pi.*` counterpart on purpose: skills, themes,
+and MCP servers are read from the manifest by the host, so a plugin cannot add
+one at runtime.
 
-所有高风险入口点都会断言声明+授予的权限并发出审核日志行。
-插件面板不再接收完整的 `pi` 对象；他们使用 `window.pluginBridge.invoke`。
+All high-risk entry points assert declared+granted permissions and emit audit log lines.
+Plugin panels no longer receive the full `pi` object; they use `window.pluginBridge.invoke`.

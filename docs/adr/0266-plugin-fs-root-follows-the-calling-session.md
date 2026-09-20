@@ -1,4 +1,4 @@
-# ADR 0266：插件 fs 根跟随调用方 Session
+# ADR 0266: Plugin fs Roots Follow the Calling Session
 
 - **Status**: Accepted
 - **Date**: 2026-09-16
@@ -9,82 +9,88 @@
   [07-plugins/03-plugin-api](../spec/07-plugins/03-plugin-api.md) ·
   [07-plugins/13-plugin-permissions-matrix](../spec/07-plugins/13-plugin-permissions-matrix.md)
 
-## 背景
+## Context
 
-D093 给侧栏多个保留的项目标签页，同时 shell 保持一个选定的宿主
-workspace，并且它固定了本 ADR 所扩展的规则：**工具执行从持久 session
-项目解析其根**，因此后台 session 在另一个标签页变为活跃时保留自己的
-根。ADR 0016 和 ADR 0249 把这种分离带入项目模型，ADR 0263 / ADR 0264
-使视图浏览的文件夹成为插件本地且按项目的。
+D093 gives the sidebar several retained project tabs while the shell keeps one
+selected host workspace, and it fixes the rule this ADR extends: **tool execution
+resolves its root from the durable session project**, so a background session
+keeps its own root when another tab becomes active. ADR 0016 and ADR 0249 carry
+that separation into the project model, and ADR 0263 / ADR 0264 make the folder
+a view browses plugin-local and per project.
 
-该规则从未到达插件。每个 `pi.fs.*` 请求的根解析为
+That rule never reached a plugin. Every `pi.fs.*` request resolved its root as
 
 ```ts
 rule.root === "userSelected" ? loaded.userRoot : this.services.getWorkspacePath()
 ```
 
-而 `getWorkspacePath()` 是单一的窗口全局可见 workspace。因此两个项目上
-的两个 session 会用窗口恰好显示的那个项目来衡量每一次插件 fs 调用：
-从 session B（项目 B）调用的插件 agent 工具在用户切换标签页后读取项目
-A 的根；而当完全没有可见 workspace 时（临时聊天），同一个工具对所有
-session 同时失败 `NOT_FOUND`（"No workspace is open"）。四个路径安全闸
-门——权限、realpath 包含、拒绝列表、声明的 scope/同意——都是正确的；
-只有它们衡量的目录是错的。
+and `getWorkspacePath()` is the single window-global visible workspace. Two
+sessions on two projects therefore measured every plugin fs call against
+whichever project the window happened to show: a plugin agent tool invoked from
+session B (project B) read project A's root as soon as the user switched tabs, and
+that same tool failed `NOT_FOUND` ("No workspace is open") for every session at
+once when no workspace was visible at all (a temporary chat). The four path-safety
+gates -- permission, realpath containment, the deny-list, and the declared
+scope/consent -- were correct; only the directory they measured against was wrong.
 
-## 决策
+## Decision
 
-1. **`workspace` 根解析发起调用的工具 session 的项目。**
-   `plugin-runtime.ts` 中新的私有 helper `fsRoot(loaded, rule)` 读取在途
-   工具的 `sessionId`，询问增量的宿主服务
-   `getWorkspacePathForSession(sessionId)`，并把它应答的项目作为根。可
-   见 workspace 只是回退，不是首要答案。
-2. **Session 是根跟随的维度；回退是可见 workspace。** 面板 bridge 调用
-   没有工具 session，宿主不跟踪的 session——尚未启动的运行时——完全
-   像以前一样解析可见 workspace。
-3. **`userSelected` 模式不变。** 它保留用户通过 `requestDirectory()` 选
-   择的目录，具有相同的仅内存生命周期。
-4. **`plugin-services.ts` 从它为 D093 已经保留的 `sessionProjects` 映
-   射接线该服务。** 不引入新的事实来源，插件运行时不缓存任何东西：每
-   次调用读取宿主当前的答案。
-5. **没有一个路径安全闸门改变。** 权限、realpath 包含、拒绝列表、带运
-   行时同意的声明 scope 仍以相同顺序在解析出的根上运行。只有
-   `workspace` 根命名*哪个*目录改变了。
-6. **Session 根在没有可见 workspace 时也能解析。** 临时聊天没有可见
-   workspace，因此它的插件工具以前会同时全部失败；有了 session 项目，
-   它们按 session 继续工作。该状态下的面板调用仍失败关闭，因为它没有
-   其他可解析的东西。
+1. **The `workspace` root resolves the project of the tool session that invoked
+   the call.** A new private helper `fsRoot(loaded, rule)` in `plugin-runtime.ts`
+   reads the in-flight tool's `sessionId`, asks the additive host service
+   `getWorkspacePathForSession(sessionId)`, and uses the project it answers as the
+   root. The visible workspace is a fallback only, not the primary answer.
+2. **The session is the dimension the root follows; the fallback is the visible
+   workspace.** A panel-bridge call has no tool session, and a session the host
+   does not track -- a runtime that has not launched yet -- resolves the visible
+   workspace exactly as before.
+3. **A `userSelected` mode is unchanged.** It keeps the directory the user picked
+   through `requestDirectory()`, with the same memory-only lifetime.
+4. **`plugin-services.ts` wires the service from the `sessionProjects` map it
+   already keeps** for D093. No new source of truth is introduced, and the plugin
+   runtime caches nothing: each call reads the host's current answer.
+5. **Not one path-safety gate changes.** Permission, realpath containment, the
+   deny-list, and the declared scope with runtime consent still run, in the same
+   order, over the resolved root. Only *which* directory the `workspace` root
+   names changes.
+6. **A session root also resolves when no workspace is visible.** A temporary
+   chat has no visible workspace, so its plugin tools used to fail all at once;
+   with a session project they keep working per session. A panel call in that
+   state still fails closed, because it has nothing else to resolve.
 
-## 后果
+## Consequences
 
-- 两个项目上的两个 session 不再串话：插件 agent 工具在发起它的
-  session 的项目之下读写，无论哪个标签页活跃。
-- 面板 bridge 的 fs 调用保持其旧含义：它们跟随可见 workspace。
-- 只在一个项目上运行过一个 session 的插件完全看不到变化。
-- `workspace` 根的 `NOT_FOUND` 现在更窄、更精确：发起 session 的项目和
-  可见 workspace 都未解析出。
-- 插件运行时读取宿主已经拥有的 session 元数据，因此该变更不增加存储
-  状态、不需要迁移、不需要新的插件权限。
+- Two sessions on two projects no longer cross-talk: a plugin agent tool reads and
+  writes under the project of the session that invoked it, whatever tab is active.
+- Panel-bridge fs calls keep their old meaning: they follow the visible workspace.
+- A plugin that only ever ran one session on one project sees no change at all.
+- `NOT_FOUND` for a `workspace` root is now narrower and more precise: neither the
+  invoking session's project nor a visible workspace resolved.
+- The plugin runtime reads session metadata the host already owns, so the change
+  adds no stored state, no migration, and no new plugin permission.
 
-## 已考虑的替代方案
+## Alternatives considered
 
-### 保留可见 workspace 并让工具传递项目 id
+### Keep the visible workspace and let the tool pass a project id
 
-被拒绝：宿主已经知道发起的 session，因此插件必须学习并转发一个它并不
-拥有的项目标识符，而插件提供的根会是其 manifest 从未声明的授权。
+Rejected: the host already knows the invoking session, so the plugin would have to
+learn and forward a project identifier it does not own, and a plugin-supplied root
+would be a grant its manifest never declared.
 
-### 在插件进程内解析 session 的项目
+### Resolve the session's project inside the plugin process
 
-被拒绝：session 到项目的映射是宿主持有的 session 元数据（D093），把它
-复制进沙箱化的插件进程会使它脱离保持其最新的宿主权威。
+Rejected: the session-to-project map is host-owned session metadata (D093), and
+copying it into a sandboxed plugin process would move it outside the host
+authority that keeps it current.
 
-### 让可见 workspace 跟随活跃 session
+### Make the visible workspace follow the active session
 
-被拒绝：可见 workspace 是用户正在看的东西，ADR 0016 与 D093 刻意在一
-个选定的宿主 workspace 之上保留多个保留标签页。为了修复插件查找而改
-变用户所见是颠倒因果。
+Rejected: the visible workspace is what the user is looking at, and ADR 0016 with
+D093 deliberately keep several retained tabs over one selected host workspace.
+Changing what the user sees in order to fix a plugin lookup inverts the causality.
 
-### 对宿主不跟踪的 session 回退到最后的可见 workspace
+### Fall back to the last visible workspace for a session the host does not track
 
-作为无操作被拒绝：未跟踪的 session 加上没有可见 workspace，正是
-session 根存在就是为了保持工作的临时聊天情况，因此回退保持为「可见
-workspace，当存在时」。
+Rejected as no-op: an untracked session plus no visible workspace is exactly the
+temporary-chat case the session root exists to keep working, so the fallback stays
+"the visible workspace, when there is one".

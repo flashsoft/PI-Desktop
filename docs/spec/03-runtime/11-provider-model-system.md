@@ -1,36 +1,36 @@
-# 11. 提供商和模型系统
+# 11. Provider & Model System
 
 ## 1. Goal
 
-PI-Desktop 必须支持用户通常需要的**所有主要市场模型供应商和模型**，而无需将一个微小的允许列表硬编码为产品上限。
+PI-Desktop must support **all major market model vendors and models** that users commonly need, without hardcoding a tiny allowlist as product ceiling.
 
-策略：
+Strategy:
 
-> **通过 pi-ai + 兼容 OpenAI 的逃生舱门 + 可刷新的模型目录实现通用提供商覆盖。**
+> **Universal provider coverage via models.dev model metadata + pi-ai transport adapters + OpenAI-compatible escape hatch.**
 
-我们**不会**自己重新实现每个供应商 SDK。
-我们对 pi 的多提供商层进行标准化，并添加产品级配置、目录和用户体验。
+We do **not** re-implement every vendor SDK ourselves.  
+We standardize on pi’s multi-provider layer and add product-level configuration, catalog, and UX.
 
-## 2. 覆盖原则
+## 2. Coverage principle
 
-### 必须支持
-1. 第一方主要厂商
-2. 流行的聚合器/网关
-3. 任何兼容 OpenAI 的端点
-4. 用户定义的自定义提供商
-5. 模型目录持续刷新
+### Must support
+1. First-party major vendors
+2. Popular aggregators / gateways
+3. Any OpenAI-compatible endpoint
+4. User-defined custom providers
+5. Continuous model catalog refresh
 
-### 产品承诺
-- 用户几乎可以通过以下方式连接任何主流 vendor/model：
-  - 原生 pi 提供商集成
-  - OpenAI兼容的API
-  - 自定义提供商定义
+### Product promise
+- Users can connect practically any mainstream vendor/model available through:
+  - native pi provider integrations
+  - OpenAI-compatible APIs
+  - custom provider definitions
 
-### 明确的不承诺
-- 保证每个不起眼的供应商的专有非标准协议，无需适配器
-- 永远发布离线完整世界模型矩阵，无需更新目录
+### Explicit non-promise
+- Guaranteeing every obscure vendor’s proprietary non-standard protocol without an adapter
+- Shipping offline full world-model matrix forever without catalog updates
 
-## 3. 架构
+## 3. Architecture
 
 ```text
 Settings / UI
@@ -40,183 +40,226 @@ Settings / UI
       ├─ openai-compatible provider
       └─ custom provider definitions
   → ModelCatalogService
-      ├─ bundled catalog snapshot
-      ├─ runtime discovery (where supported)
-      └─ refresh from pi model data / remote catalog source
+      ├─ models.dev snapshot (sole model metadata source)
+      ├─ runtime/provider discovery (IDs only for custom/dynamic models)
+      └─ Rust-owned provider cache
 ```
 
-## 4. 提供商类型
+## 4. Provider types
 
-| 类型 | 描述 | 例子 |
+| type | description | examples |
 |---|---|---|
-| `native` | 通过 pi-ai 进行一流供应商集成 | openai、anthropic、google、bedrock、mistral 等 |
-| `openai_compatible` | 任何 OpenAI 聊天 Completions/Responses 兼容网关 | OpenRouter、Together、Groq、Fireworks、DeepSeek、本地网关、企业代理 |
-| `custom` | 基于已知协议配置文件的用户定义的提供商 | 私有部署、区域网关 |
+| `native` | first-class vendor integration via pi-ai | openai, anthropic, google, bedrock, mistral, etc. |
+| `openai_compatible` | any OpenAI Chat Completions/Responses compatible gateway | OpenRouter, Together, Groq, Fireworks, DeepSeek, local gateways, corporate proxies |
+| `custom` | user-defined provider based on known protocol profile | private deployments, regional gateways |
 
-协议配置文件（MVP）：
+Protocol profiles (MVP):
 
 1. `openai`
 2. `anthropic`
 3. `google`
 4. `openai_compatible`
-5. `bedrock`（若运行时支持则启用）
-6. `custom_http`（后续的进阶/实验特性）
+5. `bedrock` (if enabled by runtime support)
+6. `custom_http` (advanced/experimental later)
 
-OpenCode Go 以一个名为 `opencode_go` 的 API 风格预设暴露。它仍然处在
-`openai_compatible` 提供商路径内：该预设把端点固定为
-`https://opencode.ai/zen/go/v1`，使用 Bearer API key 认证，从 `/models` 发现
-模型，并通过 pi-ai 的 OpenAI Chat Completions 适配器发送对话回合。它不会另建
-第二条传输链路，也不会形成封闭的模型许可名单。Agent 运行时会在每一次 LLM
-请求上注入 OpenCode 路由标头（会话回合、子代理、上下文压缩摘要、提示增强以及
-插件的一次性调用）：`x-opencode-session` 是持久的对话 id（调用方没有会话时则是
-按次生成的 UUID），`x-opencode-client` 为 `pi-desktop`，`User-Agent` 为
-`pi-desktop/<APP_VERSION>`，除非该行设置了 `headers["User-Agent"]`。base URL
-主机为 `opencode.ai` 的自定义 OpenAI 兼容行也会收到同样的标头。系统不依赖
-pi-ai 去发出 `x-opencode-session`。每个提供商行（AI 服务或 OAuth 账户）都可以
-设置可选的 `headers`；留空则保持适配器默认值。一层 fetch 包装是最后的写入方，
-因此 Codex 与 Anthropic 无法覆盖它们。
+OpenCode Go is exposed as a named `opencode_go` API-style preset. It remains
+inside the `openai_compatible` provider path: the preset fixes the endpoint to
+`https://opencode.ai/zen/go/v1`, uses Bearer API-key authentication, discovers
+models from `/models`, and sends chat turns through pi-ai's OpenAI Chat
+Completions adapter. It does not create a second transport or a closed model
+allowlist. Agent-runtime injects OpenCode routing headers on every LLM
+request (session turns, subagents, context-compaction summaries, prompt
+enhancement, and plugin one-shots): `x-opencode-session` is the durable
+conversation id (or a per-call UUID when the caller has no session),
+`x-opencode-client` is `pi-desktop`, and `User-Agent` is
+`pi-desktop/<APP_VERSION>` unless the row sets `headers["User-Agent"]`. A custom OpenAI-compatible row whose base URL
+host is `opencode.ai` receives the same headers. pi-ai is not relied on to
+emit `x-opencode-session`. Each provider row (AI service or OAuth account)
+may set optional `headers`; empty keeps adapter defaults. A fetch wrapper is
+the last writer so Codex and Anthropic cannot overwrite them.
 
-当 OAuth 厂商围绕本地 provider 行 id 重建运行时模型时，运行时仍保留 pi-ai
-原生传输元数据，不会把该行当作普通 OpenAI 端点。GitHub Copilot 请求会保留
-固定 pin 模型的 IDE 身份标头，包括 `Editor-Version`、`Editor-Plugin-Version`
-与 `Copilot-Integration-Id`；Agent 运行时还会按上下文加入动态的
-`X-Initiator`、`Openai-Intent` 与图像请求标头。本地行 id 仍然拥有认证绑定与
-对话记录身份；用户设置的提供商 headers 仍是最后的覆盖层。
+When an OAuth vendor is rebuilt around a local provider-row id, runtime keeps
+the native pi-ai transport metadata instead of treating the row as a generic
+OpenAI endpoint. GitHub Copilot requests retain the pinned model's IDE identity
+headers, including `Editor-Version`, `Editor-Plugin-Version`, and
+`Copilot-Integration-Id`; agent-runtime adds the context-sensitive
+`X-Initiator`, `Openai-Intent`, and image-request header. The local row id still
+owns auth binding and transcript identity, and user-supplied provider headers
+remain the final override.
 
-智谱 / GLM 与 Z.AI 是命名的 OpenAI 兼容端点预设，收录在一份由 models.dev
-支撑的、简短的第一方厂商服务列表中（含小米）。添加提供商时的「服务」选择器
-会持久化匹配的 models.dev `vendorKey`，并使用已发布的端点，在命名服务这条
-路径上不显示名称、Base URL 或 API 格式。对话回合仍然使用选定的 pi-ai 适配器
-（`chat_completions`、`responses`、`anthropic_messages`、
-`google_generative_ai` 或 `opencode_go`）。智谱 / Z.AI 的 Completions 请求
-使用 `thinkingFormat: "zai"` 与 `zaiToolStream: true`。DeepSeek 系 Completions
-在 `vendorKey`、Base URL、模型 ID 或目录 `family` 能识别为 DeepSeek 时设置
-`requiresReasoningContentOnAssistantMessages: true`。pi-ai 只根据
-`provider === "deepseek"` 或 `deepseek.com` URL 自动检测，而 PI-Desktop 把 UUID
-存成 `model.provider`，因此聚合网关与自定义端点会在无思考内容的助手回合漏掉
-`reasoning_content`。非官方 DeepSeek 端点还会设置 `requiresNonEmptyReasoningReplay`，
-用文档化的非空占位符而不是 `""` 填补缺失推理（OpenCode / 第三方中转在压缩后拒绝空回传；
-见 ADR 0256 / #296）。官方 `deepseek.com` 行仍使用空串回填（#223）。该覆盖不改
-`thinkingFormat`。
+Zhipu / GLM and Z.AI are named OpenAI-compatible endpoint presets among a
+short models.dev-backed Service list of first-party vendors (including
+Xiaomi). The add-provider Service picker persists the matching models.dev
+`vendorKey` and uses the published endpoint without
+showing Name, Base URL, or API format on the named-service path. Chat turns
+still use the selected pi-ai adapter (`chat_completions`, `responses`,
+`anthropic_messages`, `google_generative_ai`, or `opencode_go`). Zhipu / Z.AI
+Completions requests use `thinkingFormat: "zai"` and `zaiToolStream: true`.
+DeepSeek-family Completions requests set
+`requiresReasoningContentOnAssistantMessages: true` when the row's `vendorKey`,
+base URL, model id, or catalog `family` identifies DeepSeek. pi-ai only
+auto-detects `provider === "deepseek"` or a `deepseek.com` URL, and PI-Desktop
+stores a UUID as `model.provider`, so aggregators and custom gateways would
+otherwise omit `reasoning_content` on assistant turns that produced no thinking.
+Non-official DeepSeek endpoints also set `requiresNonEmptyReasoningReplay` so
+missing reasoning is filled with a documented placeholder instead of `""`
+(OpenCode / third-party relays reject empty echoes after compaction; see
+ADR 0256 / #296). Official `deepseek.com` rows keep empty-string fill (#223).
+The overlay does not change `thinkingFormat`.
 
-## 5. 内置供应商矩阵（发货意图）
+## 5. Built-in vendor matrix (ship intent)
 
-> 确切的可用性取决于引脚版本的 pi-ai 支持；产品必须公开所有受支持的产品，并为其余产品保持与 OpenAI 兼容的路径开放。
+> Model metadata follows the bundled/in-memory models.dev catalog. Provider adapters remain
+> available through pi-ai, and the OpenAI-compatible path stays open for models
+> that models.dev does not list.
 
-### A 层 — 始终暴露在 UI 中
+### Tier A — always exposed in UI
 - OpenAI
 - Anthropic
-- 谷歌 Gemini
-- OpenAI 兼容（通用）
+- Google Gemini
+- OpenAI-Compatible (generic)
 
-### B 层 — 当运行时支持时公开/如果 pi-ai 中存在则默认启用
-- AWS 基岩
-- Azure 上的 Azure OpenAI / OpenAI
-- 米斯特拉尔
+### Tier B — expose when runtime supports / enable by default if present in pi-ai
+- AWS Bedrock
+- Azure OpenAI / OpenAI on Azure
+- Mistral
 - xAI
-- 深寻
-- 格罗克
-- 在一起
-- 烟花
-- 连贯
-- 困惑
-- 开放路由器
-- 登月/基米
-- 智浦/GLM
-- 最小最大
-- 百川
+- DeepSeek
+- Groq
+- Together
+- Fireworks
+- Cohere
+- Perplexity
+- OpenRouter
+- Moonshot / Kimi
+- Zhipu / GLM
+- MiniMax
+- Baichuan
 - Qwen / DashScope
-- 01.AI/易
-- 硅流
+- 01.AI / Yi
+- SiliconFlow
 - NVIDIA NIM
-- 奥拉马（当地）
-- LM Studio（本地 OpenAI 兼容）
-- vLLM / TGI / LocalAI / LiteLLM 网关（通过 OpenAI 兼容）
+- Ollama (local)
+- LM Studio (local OpenAI-compatible)
+- vLLM / TGI / LocalAI / LiteLLM gateways (via OpenAI-compatible)
 
-### C 层 — 用户自定义
-任何未列出但可通过以下方式联系的供应商：
-- OpenAI 兼容基础 URL
-- 自定义标题
-- 自定义授权方案
+### Tier C — user custom
+Any vendor not listed but reachable by:
+- OpenAI-compatible base URL
+- custom headers
+- custom auth scheme
 
-## 6. 模型支持策略
+## 6. Model support policy
 
-### 6.1 无硬性模型许可名单上限
-PI-Desktop 不得把用户永久限制在一份简短的固定模型列表上。
+### 6.1 No hard model allowlist ceiling
+PI-Desktop must not permanently restrict users to a short fixed model list.
 
-### 6.2 目录职责
-1. **models.dev**（`https://models.dev/api.json`）是唯一的模型元数据来源。
-   Electron main 在开发时读取签入仓库的发布资源
-   `apps/desktop/resources/models.dev/api.json`，在发布构建中读取打包后的
-   `resources/models.dev/api.json` 路径。它绝不会把提供商凭据发给目录。
-2. 签入的快照由 `scripts/release.mjs` 在创建发布标签之前刷新。运行时，
-   设置 → 模型配置可以显式地重新抓取 `https://models.dev/api.json`；成功的
-   响应只替换当前进程的内存内目录。抓取失败则保留上一份有效的内存内目录，
-   并且绝不写入用户数据。
-3. **运行时/提供商发现**与 Rust 拥有的缓存，为自定义、本地或需要认证的账户
-   专属端点提供模型 id。提供商匹配接受已配置的厂商键、归一化的 API URL、
-   models.dev 的提供商身份，以及带厂商前缀的 id（例如
-   `deepseek/deepseek-v4`）；不带目录前缀的提供商模型 id，只有在提供商身份
-   明确无歧义时，才会匹配到那个去掉前缀的精确后缀。原生适配器键可以使用目录
-   别名——例如 pi-ai 的 `openai-codex` ChatGPT 订阅适配器通过 `openai` 记录
-   解析模型元数据——而适配器本身保留自己的传输身份。它们不能凭空发明或替换
-   模型元数据。已配置的自由格式 id 在 models.dev 中不存在时，仍可选中，
-   并使用通用的纯文本、非推理基线。对于目录尚不认识的端点，设置里依然允许
-   显式覆盖思考级别。
-4. models.dev 记录把 `id`、`name`、`description`、`family`、`attachment`、
-   `reasoning`、`reasoning_options`、`tool_call`、`structured_output`、
-   `temperature`、`knowledge`、`release_date`、`last_updated`、
-   `modalities.input/output`、`open_weights`、`limit.context/input/output`、
-   `cost`、`interleaved`、`status`、`experimental` 和 `provider` 映射到共享的
-   模型界面上。
-5. pi-ai 仅仅是请求/OAuth 的实现层。它自带的模型目录与模型能力函数，不会被
-   用来读取名称、上限、定价、模态、推理或其他模型配置。
-6. 输入与输出模态数组保留 `text`、`image`、`audio`、`video` 和 `pdf`。文本
-   agent 选择器暴露能处理文本的模型，同时在文件中保留全部原始记录以备将来的
-   界面使用。只有当模型接受图片输入时，图片才会作为临时图片内容块发送。PDF
-   能力会在模型元数据中呈现并保留；由于 pi-ai 0.85 没有原生的 PDF 内容块，
-   PDF 附件仍然是有界的文件引用，而不会被错误地编码成图片。
-7. 用户编辑过的 `ModelBinding` 值仍属于显式的提供商配置：它们控制选定的请求
-   上限、启用的思考级别、应用到新的主页草稿与新持久化会话的默认思考级别
-   （会被钳制到已启用集合上；只有在默认值未设置时才取已启用中最强的那个），
-   以及附件能力覆盖。`models.dev` 提供已发布的元数据，并为新添加的已知模型
-   播下初始的思考级别选择；它不是对用户为该端点显式启用的级别的运行时闸门。
-   出于兼容考虑，仍然带着旧的通用 `128,000` 上下文种子的 binding 会跟随新
-   发布的 `limit.context`；非默认的 Advanced 值仍保持显式。这样目录刷新之后，
-   sidecar 与上下文检查器仍处在同一个有效窗口上。
-8. 设置为每个 binding 渲染七个规范思考级别。对已知的推理模型，已发布的级别
-   一开始就是选中的。非推理或未知模型显示同样的选项但不选中，并附一行简短的
-   手动覆盖说明。`defaultThinkingLevel` 从该 binding 已启用的级别中选取，
-   因此存下来的默认值始终属于那个显式集合。
-9. `supportsImages` 与 `supportsDocuments` 是三态覆盖。缺省或 `null` 表示跟随
-   已发布的 models.dev 模态，因此目录的更正仍然能作用到已保存的 binding；
-   `true` 或 `false` 是用户的显式回答，并在目录变动后继续有效。与思考级别
-   不同，这两个覆盖不会被收窄到已发布的能力，因为经过代理或自托管的端点
-   经常接受其目录条目未列出的输入。启用图片输入会打开临时图片内容块；启用
-   PDF 输入只记录该能力，不改变编码方式——pi-ai 0.85 没有 PDF 内容块，
-   PDF 仍是有界的文件引用。
-10. 设置里的复选框展示的是相对于已发布基线的有效答案；把某一项设回已发布的
-    值，存下来的是"跟随目录"，而不是一个取值相同的覆盖。因此与 models.dev
-    保持一致本身就是重置，不需要另外的重置控件，也不需要逐项能力的解释文案。
-11. `ModelInfo` 是设置界面用来对照的已发布记录，因此已存储的 binding 不得
-    塑造它的能力或推理字段。有效上限、推理与思考级别都通过那个确切的 binding
-    解析；有效的传输模态数组还会额外套用显式的附件覆盖。
-12. 用户已配置过的模型，即使实时发现不再列出它，也保留它已发布的记录，使其
-    能力仍然可见、可编辑。只有已经存在于该提供商 `models` 中的 id 才会被
-    重新加入，绝不会加入整个目录；而且只有发现实际返回的那些行才会被写入
-    模型缓存。
+### 6.2 Catalog responsibilities
+1. **models.dev** (`https://models.dev/api.json`) is the sole model metadata
+   source. Electron main reads the checked-in release resource at
+   `apps/desktop/resources/models.dev/api.json` in development and the
+   packaged `resources/models.dev/api.json` path in released builds. It never
+   sends provider credentials to the catalog.
+2. The checked-in snapshot is refreshed by `scripts/release.mjs` before a
+   release tag is created. At runtime, Settings → Model configuration may
+   explicitly refetch `https://models.dev/api.json`; a successful response
+   replaces only the in-memory catalog for the current process. A failed fetch
+   keeps the last valid in-memory catalog and never writes user data.
+3. **Runtime/provider discovery** and the Rust-owned cache supply model IDs for
+   custom, local, or authenticated account-specific endpoints. Provider matching
+   accepts the configured vendor key, normalized API URL, models.dev provider
+   identity, and vendor-prefixed IDs such as `deepseek/deepseek-v4`; a provider
+   model ID without the catalog prefix is matched to the exact unprefixed
+   suffix only when the provider identity is unambiguous. Native adapter keys
+   may use a catalog alias — for example, pi-ai's `openai-codex` ChatGPT
+   subscription adapter resolves model metadata through the `openai` record —
+   while the adapter keeps its own transport identity. They cannot invent or
+   replace model metadata. A configured free-form ID remains selectable with
+   the generic text-only, non-reasoning baseline when it is absent from
+   models.dev. Settings still permits an explicit thinking-level override for
+   an endpoint the catalog does not know yet.
+4. The models.dev record maps `id`, `name`, `description`, `family`,
+   `attachment`, `reasoning`, `reasoning_options`, `tool_call`,
+   `structured_output`, `temperature`, `knowledge`, `release_date`,
+   `last_updated`, `modalities.input/output`, `open_weights`,
+   `limit.context/input/output`, `cost`, `interleaved`, `status`,
+   `experimental`, and `provider` into the shared model surfaces.
+5. pi-ai remains only the request/OAuth implementation layer. Its bundled model
+   catalog and model capability functions are not read for names, limits,
+   pricing, modalities, reasoning, or other model configuration.
+6. Input and output modality arrays retain `text`, `image`, `audio`, `video`,
+   and `pdf`. The text agent picker exposes models that can handle text while
+   preserving all raw records in the file for future surfaces. Image input is
+   sent as a transient image content block only when the model accepts image
+   input. PDF capability is surfaced and retained in model metadata; because
+   pi-ai 0.85 has no native PDF content block, PDF attachments remain bounded
+   file references rather than being incorrectly encoded as images.
+7. User-edited `ModelBinding` values remain explicit provider configuration:
+   they control selected request limits, enabled thinking levels, the default
+   thinking level applied to a new home draft and newly persisted session
+   (clamped onto the enabled set; strongest-enabled only when the default is
+   unset), and the attachment capability overrides. `models.dev` supplies published metadata and seeds the initial
+   thinking selection for a newly added known model; it is not a runtime gate
+   on a level the user explicitly enables for the endpoint. For compatibility,
+   a binding that still contains the legacy generic `128,000` context seed
+   follows a newly published `limit.context`; a non-default Advanced value
+   remains explicit. This keeps the sidecar and context inspector on the same
+   effective window after a catalog refresh.
+8. Settings renders the seven canonical thinking levels for every binding.
+   Published levels begin selected for a known reasoning model. A non-reasoning
+   or unknown model shows the same choices unselected, with a short manual
+   override note. `defaultThinkingLevel` is chosen from `omit` plus the levels
+   the binding enables, so a stored default is either `omit` or part of that
+   explicit set.
+9. `supportsImages` and `supportsDocuments` are three-state overrides. Absent
+   or `null` follows the published models.dev modality, so a catalog correction
+   still reaches a saved binding; `true` or `false` is the user's explicit
+   answer and survives catalog changes. Unlike thinking levels these overrides
+   are not narrowed to the published capability, because a proxied or
+   self-hosted endpoint routinely accepts input its catalog entry omits.
+   Enabling image input turns on the transient image content block; enabling PDF
+   input records the capability but does not change the encoding, since pi-ai
+   0.85 has no PDF content block and PDFs stay bounded file references.
+10. The settings checkboxes show the effective answer against the published
+    baseline, and setting one back to the published value stores "follow the
+    catalog" rather than an equal-valued override. Agreeing with models.dev is
+    therefore the reset, and no separate reset control or per-capability
+    explanatory copy is required.
+10a. `nativeWebSearch` is a two-state opt-in (absent means off; there is no
+    catalog baseline because models.dev publishes no hosted-tool capability).
+    When enabled and the model's resolved wire API is `anthropic-messages`,
+    `openai-responses`, or `azure-openai-responses` (stored apiStyle
+    `anthropic_messages` / `responses`), the adapter attaches the provider's
+    hosted web search tool (`web_search_20250305` / `web_search`), extracts
+    the search activity into `UiMessage.hostedSearch` (`rounds` for display,
+    `replay` for convertMessages), and restores those raw blocks on later
+    turns including after a restart (ADR 0297). The checkbox is disabled
+    when the provider's API style is neither of those two. Gateways that do
+    not support the tool surface the provider error; the remedy is unchecking.
+    Search runs on the provider: there is no local fetch and no permission
+    prompt. Compaction still drops search blocks.
+11. `ModelInfo` is the published record the settings surface compares against,
+    so a stored binding must not shape its capabilities or reasoning fields.
+    Effective limits, reasoning and thinking levels are resolved through the
+    exact binding; the effective transport modality arrays additionally apply
+    the explicit attachment overrides.
+12. A model the user has configured keeps its published record even when live
+    discovery no longer lists it, so its capabilities remain visible and
+    editable. Only ids already present in the provider's `models` are re-added,
+    never the catalog at large, and only the rows discovery actually returned
+    are written to the model cache.
 
-### 6.3 涵盖的模型系列
-目录和自定义模型条目必须支持通用功能类：
+### 6.3 Model families to cover
+Catalog and custom model entry must support common capability classes:
 
-- 文字聊天/编码模型
-- 推理/思维模型
-- 长上下文模型
-- 视觉/多模式输入模型
-- 具有工具调用能力的模型
-- JSON/structured 具有输出功能的模型（提供商支持的情况下）
+- text chat / coding models
+- reasoning / thinking models
+- long-context models
+- vision / multimodal input models
+- tool-calling capable models
+- JSON/structured output capable models (where provider supports)
 
-## 7. 配置模式
+## 7. Configuration schema
 
 ```ts
 type ProviderAuthKind =
@@ -226,7 +269,7 @@ type ProviderAuthKind =
   | "azure_api_key"
   | "aws_sdk_default"
   | "custom_headers"
-  | "oauth" // 厂商订阅账户，凭据由 Electron 主进程持有
+  | "oauth" // vendor subscription account, credential owned by Electron main
   | "none" // local no-auth
 
 type ProviderConfig = {
@@ -242,11 +285,12 @@ type ProviderConfig = {
   headers?: Record<string, string> // optional outbound headers; empty keeps adapter defaults
   apiStyle?:
     | "chat_completions"
+    | "opencode_go"
     | "responses"
     | "anthropic_messages"
     | "google_generative_ai"
-    | "openai_codex_responses" // 仅厂商账户
-    | "pi_messages"            // 仅厂商账户
+    | "openai_codex_responses" // vendor account only
+    | "pi_messages"            // vendor account only
     | "auto"
   compatibility?: {
     supportsTools?: boolean
@@ -256,7 +300,7 @@ type ProviderConfig = {
     supportedThinkingLevels?: ThinkingLevel[]
   }
   defaultModelId?: string
-  models?: UserModelConfig[]    // optional user-defined models
+  models: ModelBinding[]        // selected models and per-model settings
   createdAt: string
   updatedAt: string
 }
@@ -275,12 +319,13 @@ type UserModelConfig = {
 type ModelBinding = {
   id: string
   contextWindow: number
-  /** `contextWindow` 的来源；早于该标记的记录没有此字段，按历史规则解析
-   * （见 `13-model-catalog-and-selection.md` §9.1）。 */
+  /** Where `contextWindow` came from; absent on records older than the marker,
+   * which then resolve through the historical rule (see
+   * `13-model-catalog-and-selection.md` §9.1). */
   contextWindowSource?: "catalog" | "user"
   maxTokens: number
   thinkingLevels: ThinkingLevel[]
-  defaultThinkingLevel: ThinkingLevel | null
+  defaultThinkingLevel: SessionThinkingLevel | null
   availableForSubagents?: boolean // opt-in for AI-driven delegation
 }
 
@@ -299,99 +344,126 @@ type ThinkingLevel =
   | "max"
 ```
 
-上面这些兼容性字段，是为老客户端保留的持久化模式兼容面。PI-Desktop 不再把
-它们当作运行时的模型覆盖来读取。`ModelInfo` 的推理支持与受支持的思考级别
-描述的是解析出的 models.dev 记录；有效的 provider/会话能力则来自那个确切的
-`ModelBinding`。未知的自由格式 id 以通用形态起步，不带任何推断出的推理能力，
-但显式的 binding 可以主动启用相应级别。
+The compatibility fields above are retained as a persisted-schema compatibility
+surface for older clients. PI-Desktop no longer reads them as runtime model
+overrides. `ModelInfo` reasoning support and supported thinking levels describe
+the resolved models.dev record; effective provider/session capability comes from
+the exact `ModelBinding`. Unknown free-form ids start with the generic shape and
+no inferred reasoning capability, but an explicit binding may opt into levels.
 
-提供商对话框会为每个选中的模型持久化一条 `ModelBinding`。第一条 binding 是
-当前对话以及旧版运行时消费方的有效模型。对话级别的模型切换与跨数组路由仍属
-后续工作。只有 `defaultModelId` 的旧版提供商，在主机读取时会被具体化为一条
-回退 binding，并在下一次提供商写入时升级为 `models`。
+The provider dialog persists one `ModelBinding` for every selected model. The
+first binding is the effective model for current conversations and legacy
+runtime consumers. Conversation-level model switching and routing across the
+array remain future work. A legacy provider with only `defaultModelId` is
+materialized as one fallback binding on host read and upgraded to `models` on
+the next provider write.
 
-`ModelBinding.availableForSubagents`（布尔值，默认 false）：这是一个选择加入
-的标志，让该模型可用于 AI 驱动的子代理委托。启用后，该模型会出现在注入父
-agent 系统提示的委托目录中。父 agent 随后就能通过 Task 工具的 `model` 参数
-选中它。为某个定义解析固定模型不代表授予此许可。启动载荷通过独立的
-`subagentModelKeys` 传递允许覆盖的模型键；仅供定义固定使用的绑定仍只通过
-正常的固定模型解析生效，包括 `Task.model` 重复该定义自己的固定键。按需匹配使用唯一
-provider id/vendor/name 查找，不得用另一账号凭据覆盖固定模型。多个账号的 vendor/model 别名冲突时，已勾选账号改用
-确切的提供商 ID 作为覆盖键。优先级保持 Task.model → 定义固定模型 → 会话模型
-（D278；ADR subagent-model-opt-in）。该许可约束所有让 AI 为委派工作挑选模型的入口，
-而不只是 `Task.model`：`session/collaboration/spawn` 的 `modelKey` 指向未勾选的模型时
-以 `PERMISSION_DENIED` 拒绝，省略该键或写出默认模型自己的键仍按继承处理。
+`ModelBinding.availableForSubagents` (boolean, default false): opt-in flag that
+makes the model available for AI-driven subagent delegation. When enabled, the
+model appears in the delegation catalog injected into the parent agent's system
+prompt. The parent agent can then select it via the Task tool's `model`
+parameter. Resolving a model for a definition pin does not imply this opt-in.
+The launch payload carries the permitted override keys separately as
+`subagentModelKeys`; definition-only bindings remain available solely through
+normal pin resolution, including when `Task.model` repeats that definition's
+own pin key. On-demand matching uses unique provider id/vendor/name lookup and
+must not overwrite a pin with another account's credentials. If vendor/model aliases collide across accounts, the
+opted-in account uses its exact provider ID as the override key. Selection priority remains Task.model → definition pin
+→ session model (D278; ADR subagent-model-opt-in). The opt-in governs every entry point that lets the AI pick a model
+for delegated work, not only `Task.model`: a `session/collaboration/spawn` `modelKey` naming a model without it is
+refused with `PERMISSION_DENIED`, while omitting the key, or naming the default model's own key, still inherits.
 
-## 8. 秘密
+## 8. Secrets
 
-- 通过安全存储存储的 API 密钥（`SECRET_*` API）
-- 提供程序配置仅存储 `secretRef` / hasSecret 布尔值
-- Renderer 从未在列表 API 中接收原始密钥
-- 可选的密钥验证调用：`providers.testConnection`
-- 厂商账户行保存的是 OAuth 授权而不是密钥；`hasSecret` 覆盖任一种凭据，
-  `hasOauth` 用于区分二者（第 8a 节）
+- API keys stored via secure storage (`SECRET_*` APIs)
+- Provider config stores only `secretRef` / hasSecret boolean
+- Renderer never receives raw key in list APIs
+- Optional key validation call: `providers.testConnection`
+- A vendor-account row stores an OAuth grant instead of a key; `hasSecret`
+  covers either credential and `hasOauth` distinguishes them (§8a)
 
-## 8a. 厂商账户（OAuth）提供商
+## 8a. Vendor-account (OAuth) providers
 
-提供商行可以由厂商订阅账户认证 —— Claude Pro/Max、ChatGPT Plus/Pro、
-Copilot 以及 pi-ai 其余的 OAuth 厂商 —— 而不是粘贴的密钥（ADR 0095、
-D237）。可选厂商由 `models.getProviders().filter(p => p.auth.oauth)` 派生，
-因此列表跟随依赖版本而不是写死的表；`registerBunOAuthFlows()` 在启动时
-调用一次，因为 pi-ai 通过 electron-vite 无法打包的动态 import 加载流程。
+A provider row can be authenticated by a vendor subscription — Claude Pro/Max,
+ChatGPT Plus/Pro, Copilot and the rest of pi-ai's OAuth vendors — instead of a
+pasted key (ADR 0095, D237, D240). The offered vendors are derived from
+`models.getProviders().filter(p => p.auth.oauth)`, so the list follows the pin
+rather than a hardcoded table, and `registerBunOAuthFlows()` runs once at
+startup because pi-ai loads flows through a dynamic import electron-vite
+cannot bundle.
 
-Electron 主进程拥有登录会话与凭据；渲染层只看到事件与一个非敏感的账户
-标签。登录会按 `vendorKey` 幂等 upsert 一行 `authKind: "oauth"`，随后用
-账户自己的目录填入 `baseUrl`、`apiStyle` 与 `defaultModelId`。
+Electron main owns the login conversation and the credential; the renderer sees
+only events and a non-secret account label. Every login creates a fresh provider
+row with `authKind: "oauth"`; the row id is the account identity even when
+several rows share the same `vendorKey`. Electron main creates one pi-ai model
+collection and one `CredentialStore` scope per row, mapping the vendor id to
+`secret:provider:<rowId>:oauth`. It then fills `baseUrl`, `apiStyle` and
+`defaultModelId` from that account's own catalog. A vendor catalog response
+contains every local row as an account, including disconnected/orphaned rows so
+the user can remove them explicitly.
 
-请求认证**按请求**解析，而不是在启动时解析：
+Request auth is resolved **per request**, not at launch:
 
 ```text
-sidecar 请求
-  → 运行时 provider binding（启动时注入 `resolveAuth`）
-  → 宿主代理 `provider.resolveAuth` { sessionId, providerId }
-  → Electron 主进程（本地应答，绝不转发给 host-core）
-      · 绑定表校验 → 不匹配则 PROVIDER_NOT_BOUND
-      · pi-ai `models.getAuth(providerId)` → 仅过期时在锁下刷新
-  → 短时 ModelAuth { apiKey?, headers?, baseUrl? }
+sidecar request
+  → runtime provider binding (`resolveAuth` injected at launch)
+  → host-proxy `provider.resolveAuth` { sessionId, providerId }
+  → Electron main (answered locally, never forwarded to host-core)
+      · binding table check → PROVIDER_NOT_BOUND on a mismatch
+      · row-scoped pi-ai `models.getAuth(vendorKey)` → refresh under that row's lock only if expired
+  → short-lived ModelAuth { apiKey?, headers?, baseUrl? }
 ```
 
-有两条后果值得写明：厂商访问令牌约一小时有效，因此载荷与运行时都不得
-缓存它；而由于该行的 `apiKey` 恒为 `""`、注入的解析器是函数，运行时身份
-（`matches()`）保持稳定，所以 OAuth 会话跨回合复用温热运行时而不是重建。
-因此 sidecar 永远拿不到刷新令牌，拿到的访问令牌也只属于其会话绑定的那个
-提供商。
+Two consequences worth stating: a vendor access token lives about an hour, so
+nothing may be cached in the payload or the runtime; and because the row's
+`apiKey` stays `""` and the injected resolver is a function, runtime identity
+(`matches()`) is stable, so an OAuth session reuses its warm runtime across
+turns instead of rebuilding it. The sidecar therefore never holds the refresh
+token, and holds an access token only for the provider its session is bound to.
 
-这类行的模型发现读取已认证的目录（`models.getAvailable`，它已应用厂商
-自己的 `filterModels`），而不是探测 `/models`；连接测试通过解析认证来
-证明账户。对 ChatGPT Plus/Pro（`openai-codex`）这类静态 OAuth 厂商，该
-目录是已固定的 pi-ai 模型列表，而不是实时 `/models` 探测，因此 `gpt-6-astra`
-这类新账户模型只有在 pin 包含它之后才会出现。models.dev 在 ID 可用后仍
-提供元数据，但不能把 ID 加进已认证列表。一个厂商可以跨越多种线路 API ——
-Copilot 同时提供 Anthropic、Chat Completions 与 Responses 模型 —— 因此行
-的 `apiStyle` 跟随所选模型。
+Model discovery for such a row reads the authenticated catalog
+(`models.getAvailable`, which applies the vendor's own `filterModels`) rather
+than probing `/models`, and the connection test proves the account by resolving
+auth. For static OAuth vendors such as ChatGPT Plus/Pro (`openai-codex`), that
+catalog is the pinned pi-ai model list rather than a live vendor `/models`
+probe, so a newly published account model such as `gpt-6-astra` appears only
+after the pin includes it. models.dev still supplies metadata once the ID is
+available, but it cannot add the ID to the authenticated list. A vendor may
+span wire APIs — Copilot serves Anthropic, Chat Completions and Responses
+models — so the row's `apiStyle` follows the selected model.
+Deleting a row calls the normal host `providers.delete` path, which removes its
+OAuth secret and metadata; it never logs out or deletes another row with the
+same vendor key.
 
-### Anthropic token 端点限流
+### Anthropic token endpoint rate limits
 
-固定版本 pi-ai 0.85.1 的仓库补丁为 Anthropic 授权码交换与刷新提供同一套
-有限策略：只重试明确的 HTTP 429，最多总共三次请求。先等待至少 1 秒、再
-等待至少 2 秒；若 `Retry-After` 给出更长的秒数或 HTTP 日期，则遵守该时间。
-服务器要求的等待超出剩余预算时结束本次尝试，不缩短等待后提前重试。
-缺失或无效提示使用有限的指数退避。
+The pinned pi-ai 0.85.1 patch gives Anthropic authorization-code exchange and
+refresh a shared, bounded token-request policy: retry only an explicit HTTP
+429, at most three total requests. Wait at least 1 s then 2 s, or longer when
+`Retry-After` gives delta seconds or an HTTP date. A server delay beyond the
+remaining budget ends the attempt; it is never shortened to fit. Malformed or
+missing hints use the bounded exponential fallback.
 
-请求、响应体读取和等待共用一个 30 秒 helper 截止时间及原始调用方 signal；
-更早的调用方截止时间优先。pi-ai 现有刷新操作在凭据存储锁内有 15 秒限制。
-取消同样中断等待。补丁不把刷新移出该锁：失败保留已有凭据，成功旋转后
-仅写入一次新授权。
+One 30 s helper deadline covers requests, response-body reads and waits, and
+all use the original caller signal. An earlier caller deadline wins; pi-ai's
+existing refresh operation has a 15 s limit inside the credential-store lock.
+Cancellation also stops pending waits. The patch does not move refresh outside
+that lock: failed attempts leave the stored credential unchanged, and a
+successful rotated grant is written once.
 
-网络失败、响应体中断、5xx 和 `invalid_grant` 均不重放，因为非幂等 token
-请求的结果可能不确定。明确的 `invalid_grant` 即使标为 429 也立即结束。
-HTTP/token JSON 失败显示有限恢复说明，不包含原始响应体、URL 或嵌套堆栈。
-登录失败提示稍后关闭弹窗并重新发起登录；刷新失败提示等待后重试，持续失败
-时重新登录。仅凭 HTTP 429 不能证明授权码是否已被使用，因此不声称其已失效。
+Network failures, interrupted bodies, 5xx and `invalid_grant` are not replayed:
+the result of a non-idempotent token request may be ambiguous. An explicit
+`invalid_grant` stops even if a response is labelled 429. HTTP/token-JSON
+failures expose a bounded recovery message rather than raw response bodies,
+URLs or embedded stacks. Login guidance tells the user to wait, close the
+failed dialog and start sign-in again; refresh guidance suggests waiting before
+retrying and signing in again if the problem continues. HTTP 429 alone does
+not prove whether a code was consumed, so no expiry claim is made.
 
-沿用现有依赖补丁机制，OAuth 端点、PKCE、凭据归属、IPC 和存储 schema 不变。
+This uses the existing repository dependency-patch mechanism; OAuth endpoints,
+PKCE, credential ownership, IPC and storage schemas are unchanged.
 
-## 9. 模型目录服务
+## 9. Model catalog service
 
 ```ts
 interface ModelCatalogService {
@@ -403,7 +475,7 @@ interface ModelCatalogService {
 }
 ```
 
-### 模型描述符
+### ModelDescriptor
 
 ```ts
 type ModelDescriptor = {
@@ -412,6 +484,7 @@ type ModelDescriptor = {
   modelId: string
   displayName: string
   source: "bundled" | "discovered" | "user"
+  catalogSource?: "models.dev"
   capabilities: Array<"text" | "tools" | "vision" | "reasoning" | "json">
   contextWindow?: number
   maxOutputTokens?: number
@@ -421,215 +494,245 @@ type ModelDescriptor = {
 }
 ```
 
-## 10. UI 要求
+## 10. UI requirements
 
-### 设置 → Agent → 提供商
-- 快速添加内置供应商
-- 添加 OpenAI 兼容端点
-- 添加自定义提供商
-- 编辑基础 URL/headers
-- set/replace/delete 密钥
-- 在高级选项中设置可选自定义请求头（留空则保持适配器默认值）；复制与持久化
-  所用的同一份规范化 JSON
-- 登录/退出厂商账户，并看到某一行使用的是哪个账户
-- 编辑厂商账户的非机密标签、自定义请求头与默认模型
-- enable/disable 提供商
-- 测试连接
-- 选择多个模型并编辑每条绑定的上下文窗口、输出上限与启用的思考级别；目录
-  元数据为 API 提供商与已登录的厂商账户提供初始值。选择器始终暴露七个规范
-  级别：已发布的级别为已知模型播种，而任何显式选择都会为代理端点或新发布的
-  模型保留下来。两种界面通过同一个选择器呈现，因此厂商账户编辑器提供与 API
-  提供商编辑器相同的按绑定编辑
-- 模型卡片默认保持紧凑，按需展开 metadata/configuration，并让对话框操作留在
-  可独立滚动的内容区域之外
-- 不要暴露原始的目录兼容性内部细节或提供商机密
-- 设置 → 导入可以从 Claude Code、Codex、OpenCode、Pi 和 CC Switch 复制
-  provider/model 行。扫描是显式的。已存储的 API key 会被复制进宿主密钥库；
-  OAuth/订阅授权则不会。重复导入时只会跳过等价提供商（归一化 URL + API
-  风格 + 相同凭据）；同一端点的不同凭据仍保持为独立提供商。
-  不涉及协议或模式版本升级（D342 / ADR 0179 / ADR 0188）
+### Settings → Agent → Providers
+- add built-in vendor quickly
+- add OpenAI-compatible endpoint
+- add custom provider
+- edit base URL/headers
+- set/replace/delete key
+- set optional custom headers in Advanced (empty keeps adapter defaults);
+  copy the same normalized JSON used for persistence
+- sign in to / out of a vendor account, and see which account a row uses
+- edit a vendor account's non-secret label, custom headers, and default model
+- enable/disable provider
+- test connection
+- select multiple models and edit each binding's context window, output limit,
+  and enabled thinking levels; catalog metadata supplies the initial values for
+  both API providers and signed-in vendor accounts. The picker always exposes
+  the seven canonical levels: published levels seed known models, while any
+  explicit selection is retained for a proxy or newly released model. Both
+  surfaces present this through the same picker, so a vendor account editor
+  offers the same per-binding editing as an API provider editor
+- keep model cards compact by default, expand metadata/configuration on demand,
+  and keep dialog actions outside the independently scrollable content
+- do not expose raw catalog compatibility internals or provider secrets
+- Settings → Import can copy provider/model rows from Claude Code, Codex,
+  OpenCode, Pi, and CC Switch. The scan is explicit. Stored API keys are
+  copied into the host secret store; OAuth/subscription grants are not.
+  An equivalent provider (normalized URL + API style + same credential) is
+  skipped on re-import. Different credentials at one endpoint remain
+  independent providers. No protocol or schema version bump
+  (D342 / ADR 0179 / ADR 0188).
 
-### 模型选择器
-- 搜索启用的提供商的所有模型
-- provider/vendor 分组
-- 显示能力徽章（tools/vision/reasoning）
-- 允许“刷新模型”
-- 允许自定义模型 ID 输入
+### Model selector
+- search all models across enabled providers
+- group by provider/vendor
+- show capability badges (tools/vision/reasoning)
+- allow “refresh models”
+- allow custom model id entry
 
-### Empty/error 状态
-- 没有配置提供商
-- 密钥缺失
-- 找不到模型
-- 提供商未经授权
-- 目录刷新失败（仍然允许手动模型 ID）
+### Empty/error states
+- no provider configured
+- key missing
+- model not found
+- provider unauthorized
+- catalog refresh failed (still allow manual model id)
 
-## 11. 运行时解析算法
+## 11. Runtime resolution algorithm
 
-当使用 `(providerId, modelId)` 开始回合时：
+When starting a turn with `(providerId, modelId)`:
 
-1.从主机加载提供程序配置
-2. 如果 missing/disabled → 失败（`MODEL_NOT_CONFIGURED`；保留详细信息：`PROVIDER_DISABLED`）
-3. 解析凭据：密钥行通过 `secretRef` 读取机密（从不记录机密；丢失 →
-   `PROVIDER_SECRET_MISSING`）；`oauth` 行完全跳过这一步并以空密钥启动，
-   因为认证按请求解析（第 8a 节）
-4. 通过精确的 vendor/id 或兼容的解析完整的 pi-ai 模型记录
-   带有分隔符限制后缀的网关别名
-5.解决后，复制pi的名字，推理标志，思维层次图，输入
-   模式、定价、上下文窗口、输出限制、标题和兼容性
-   逐字记录；当未解决时，接受原始模型 ID 和通用模型
-   纯文本、非推理后备
-6. 将会话思维水平与 PI 支持的水平相结合并构建
-   通过仅替换 provider/model 标识来选择运行时提供程序适配器
-   API 适配器、身份验证和显式配置的端点 URL
-7. 使用中止句柄和单独的 answer/thinking 事件执行流
-8. 将供应商错误转换为共享 `AppError` 代码 (§15)
+1. load provider config from host
+2. if missing/disabled → fail (`MODEL_NOT_CONFIGURED`; reserved detail: `PROVIDER_DISABLED`)
+3. resolve the credential: for a keyed row read the secret via `secretRef`
+   (never log it; missing → `PROVIDER_SECRET_MISSING`); for an `oauth` row skip
+   this entirely and launch with an empty key, because auth is resolved per
+   request (§8a)
+4. resolve the models.dev record by matched provider key/API URL and exact model
+   id
+5. copy its complete model configuration — name, description, family,
+   attachment/reasoning/tool/structured-output/temperature flags, knowledge and
+   release dates, input/output modalities, weights, status, interleaving,
+   limits, cost data, and thinking options — into the runtime model snapshot;
+   when absent, use the generic text-only, non-reasoning shape
+6. derive vision transport from models.dev `modalities.input`; provider
+   discovery/cache claims cannot promote an unresolved model, while an explicit
+   attachment binding override can
+7. clamp the session thinking level against the exact binding's enabled levels
+   and build the runtime provider adapter by replacing only provider/model
+   identity, selected API adapter, auth, and an explicitly configured endpoint
+   URL. For `anthropic_messages`, the runtime removes a trailing `/v1` from
+   that URL before passing it to pi-ai because the Anthropic SDK appends `/v1`
+   itself; configured roots with or without `/v1` therefore both reach the
+   same `/v1/messages` route. Subagent providers resolved from a definition pin,
+   the delegation model catalog, or `Task.model` use this same binding-aware
+   model configuration before their thinking level is clamped; models.dev is
+   only the baseline and cannot erase explicit binding levels.
+8. execute stream with abort handle and separate answer/thinking events
+9. translate vendor errors into shared `AppError` codes (§15)
 
-如果模型不在 pi 的目录中，当用户明确指定时仍然允许它
-输入模型 ID，提供商接受未知 ID。 Cached/discovered
-能力字段不会促进回退到已知的运行时模型。
+If the model is absent from models.dev, still allow it when the user explicitly
+enters a model id and the provider accepts unknown ids. Cached/provider
+capability fields do not promote that fallback into a known runtime model.
 
-## 12. 兼容性层
+## 12. Compatibility tiers
 
-| 层 | 意义 |
+| tier | meaning |
 |---|---|
-| 满 | 工具 + 流媒体 + 愿景 verified/expected |
-| 标准 | 预计聊天流媒体 |
-| 有限 | 通过兼容网关尽最大努力 |
-| 未知 | 用户定制，不保证 |
+| full | tools + streaming + vision verified/expected |
+| standard | chat streaming expected |
+| limited | best-effort via compatible gateway |
+| unknown | user custom, no guarantees |
 
-UI 可能会显示层级提示，但默认情况下不得硬阻止未知模型。
+UI may show tier hints, but must not hard-block unknown models by default.
 
-## 13. 刷新和更新策略
+## 13. Refresh & update policy
 
-1. Electron main 在提供模型元数据之前先读取随包的发布资源：开发时是
-   `apps/desktop/resources/models.dev/api.json`，打包构建中是
-   `resources/models.dev/api.json`。
-2. `scripts/release.mjs` 抓取 `https://models.dev/api.json`，校验它，并在创建
-   发布标签之前原子地替换签入仓库的那份资源。
-3. 设置 → 模型配置可以随时强制一次远程刷新；成功的响应只更新当前进程的
-   内存内目录。
-4. 提供商端点发现只为随包/内存内 models.dev 快照中没有的模型提供 id；未知的
-   id 使用通用元数据。
-5. 刷新失败不得擦除随包文件、Rust 拥有的提供商缓存，或已配置的 binding。
+1. Electron main reads the bundled release resource before serving model
+   metadata: `apps/desktop/resources/models.dev/api.json` in development and
+   `resources/models.dev/api.json` in packaged builds.
+2. `scripts/release.mjs` fetches `https://models.dev/api.json`, validates it,
+   and atomically replaces the checked-in resource before creating a release
+   tag.
+3. Settings → Model configuration can force a remote refresh at any time; a
+   successful response updates only the current process's in-memory catalog.
+4. Provider endpoint discovery supplies IDs only for models absent from the
+   bundled/in-memory models.dev snapshot; unknown IDs use generic metadata.
+5. Refresh failure must not wipe the bundled file, Rust-owned provider cache, or
+   configured bindings.
 
-## 14. 本地/离线模型支持
+## 14. Local / offline model support
 
-通过兼容 OpenAI 的本地服务器支持：
+Supported via OpenAI-compatible local servers:
 
-- Ollama（如果 pi 支持，则为原生，否则与 OpenAI 兼容的代理）
-- LM工作室
-- vLLM / TGI / LocalAI / LiteLLM 代理
-- 其他本地网关
+- Ollama (native if pi supports it, otherwise OpenAI-compatible proxy)
+- LM Studio
+- vLLM / TGI / LocalAI / LiteLLM proxies
+- other local gateways
 
-要求：
+Requirements:
 
-- 自定义基础 URL
-- 身份验证可能是 `none`
-- 手动输入模型 ID 始终可用
-- 目录刷新可以使用 `/v1/models`（如果可用）；否则用户定义的模型
+- custom base URL
+- auth may be `none`
+- manual model id entry always available
+- catalog refresh may use `/v1/models` when available; otherwise user-defined models
 
-## 15. 故障分类（提供商域）
+## 15. Failure taxonomy (provider domain)
 
-规范代码位于 [08-error-codes](/spec/03-runtime/08-error-codes) 中；保留细节
-代码映射到规范父级直到发出（第 3.6 节）。
+Canonical codes live in [08-error-codes](08-error-codes.md); reserved detail
+codes map to a canonical parent until emitted (§3.7 there).
 
-| 代码 | 状态 | 意义 | 面向用户的指导 |
+| code | status | meaning | user-facing guidance |
 |---|---|---|---|
-| `PROVIDER_UNAUTHORIZED` | 直播 | invalid/expired 密钥或身份验证被拒绝 | 重新输入秘密/检查帐户 |
-| `PROVIDER_RATE_LIMITED` | 直播 | 429/名额 | 稍后重试/切换模型 |
-| `PROVIDER_SECRET_MISSING` | 直播 | 无秘密启用的提供商 | 完成设置 |
-| `MODEL_NOT_CONFIGURED` | 直播 | 没有选定的模型或提供商拒绝选定的模型并返回 404 | 选择或配置可用模型 |
-| `PROVIDER_ERROR` | 直播 | 其他上游提供商失败 | 重试/检查详细信息 |
-| `NETWORK_ERROR` | 直播 | 无法到达提供商端点 | 检查网络和基础 URL |
-| `STREAM_FAILED` | 直播 | 流在中途掉线 | 重试回合 |
-| `PROVIDER_BASE_URL_INVALID` | 保留 → `PROVIDER_ERROR` | 格式错误或无法访问的基础 URL | 固定端点 |
-| `PROVIDER_PROTOCOL_MISMATCH` | 保留 → `PROVIDER_ERROR` | 端点协议错误 | 切换协议配置文件 |
-| `PROVIDER_MODEL_NOT_FOUND` | 保留 → `MODEL_NOT_CONFIGURED` | 提供商的模型 ID 未知 | 刷新目录或自定义 ID |
-| `PROVIDER_TIMEOUT` | 保留 → `TIMEOUT` | 网络或服务器超时 | 重试/检查网络 |
-| `PROVIDER_UNSUPPORTED_CAPABILITY` | 保留 → `PROVIDER_ERROR` | tools/vision/reasoning 不支持 | 切换模型或禁用功能 |
-| `PROVIDER_DISABLED` | 保留 → `MODEL_NOT_CONFIGURED` | 提供程序存在但已禁用 | 启用提供商 |
+| `PROVIDER_UNAUTHORIZED` | live | invalid/expired key or denied auth | re-enter secret / check account |
+| `PROVIDER_RATE_LIMITED` | live | 429 / quota | retry later / switch model |
+| `PROVIDER_SECRET_MISSING` | live | enabled provider without secret | complete setup |
+| `MODEL_NOT_CONFIGURED` | live | no selected model or provider rejects selected model with 404 | select or configure an available model |
+| `PROVIDER_ERROR` | live | other upstream provider failure | retry / inspect details |
+| `NETWORK_ERROR` | live | provider endpoint cannot be reached | check network and base URL |
+| `STREAM_FAILED` | live | stream dropped mid-turn | retry turn |
+| `PROVIDER_BASE_URL_INVALID` | reserved → `PROVIDER_ERROR` | malformed or unreachable base URL | fix endpoint |
+| `PROVIDER_PROTOCOL_MISMATCH` | reserved → `PROVIDER_ERROR` | wrong protocol for endpoint | switch protocol profile |
+| `PROVIDER_MODEL_NOT_FOUND` | reserved → `MODEL_NOT_CONFIGURED` | model id unknown for provider | refresh catalog or custom id |
+| `PROVIDER_TIMEOUT` | reserved → `TIMEOUT` | network or server timeout | retry / check network |
+| `PROVIDER_UNSUPPORTED_CAPABILITY` | reserved → `PROVIDER_ERROR` | tools/vision/reasoning unsupported | switch model or disable feature |
+| `PROVIDER_DISABLED` | reserved → `MODEL_NOT_CONFIGURED` | provider exists but disabled | enable provider |
 
-## 16. OpenAI兼容的一级路径
+## 16. OpenAI-compatible first-class path
 
-如果供应商公开了 OpenAI 兼容的 API，则任何供应商都可以在没有本机 SDK 的情况下加入。
+Any vendor can be onboarded without a native SDK if it exposes OpenAI-compatible APIs.
 
-必填字段：
+Required fields:
 - `baseUrl`
-- 身份验证（`api_key` / `bearer` / `none` / 自定义标头）
-- 模型 ID（目录或自由格式）
+- auth (`api_key` / `bearer` / `none` / custom headers)
+- model id (catalog or free-form)
 
-可选：
-- `apiStyle`（`chat_completions` | `opencode_go` | `responses` | `auto`）
-- 兼容性标志
-- `headers`（可选的出站 HTTP 标头；留空则保持适配器默认值）
+Optional:
+- `apiStyle` (`chat_completions` | `opencode_go` | `responses` | `auto`)
+- compatibility flags
+- `headers` (optional outbound HTTP headers; empty keeps adapter defaults)
 
-对于 OpenAI Chat Completions 适配器，系统指令默认使用标准的 `system` 角色。
-这样做是为了让任意兼容网关都能互通，因为有些上游路由会拒绝较新的 `developer`
-角色，其中也包括推理模型的路由。当某个端点已知接受该角色时，解析出的模型
-记录可以显式设置 `compat.supportsDeveloperRole: true`；这个覆盖的作用域限于
-该模型，不会改变其他提供商。
+For the OpenAI Chat Completions adapter, system instructions use the
+standard `system` role by default. This keeps arbitrary compatible gateways
+interoperable because some upstream routes reject the newer `developer` role,
+including reasoning-model routes. A resolved model record may explicitly set
+`compat.supportsDeveloperRole: true` when its endpoint is known to accept that
+role; this override is model-scoped and does not change other providers.
 
-这是**通用逃生舱**，保证超出原生集成之外的市场覆盖范围。
+A catalog entry may additionally pin a model-level wire API (for example,
+`api: "openai-responses"`). When present it wins over the provider-wide
+`apiStyle`, so responses-only models under an `opencode_go` provider are sent
+through the Responses adapter instead of Chat Completions. Without a
+model-level pin the provider-wide style applies unchanged.
 
-目录条目还可以额外固定模型级 wire API（例如 `api: "openai-responses"`）。存在时它优先于 provider 级 `apiStyle`，因此 `opencode_go` 下的 responses-only 模型会走 Responses adapter 而非 Chat Completions；没有模型级固定时保持 provider 级风格不变。
+This is the **universal escape hatch** guaranteeing market coverage beyond native integrations.
 
-### 16.1 Responses 流终止（pi-ai 补丁）
+### 16.1 Responses stream termination (pi-ai patch)
 
-OpenAI Responses 适配器必须把 `response.completed`（以及
-`response.incomplete`）视为流的终点：完成响应收尾后即停止消费流，
-而不是继续等待服务端的 TCP FIN。上游 pi-ai 会一直迭代直到服务端关闭
-连接，在保持空闲连接不关的反向代理后面会导致整个回合挂起。在该修复
-随上游发布之前，`patches/` 通过 pnpm patch 修改
-`@earendil-works/pi-ai@0.85.1`，在终态事件处跳出事件循环（消费方停止
-迭代时 OpenAI SDK 会中止底层请求）。待 pi-ai 发布包含该修复的版本后
-移除补丁。
+The OpenAI Responses adapter must treat `response.completed` (and
+`response.incomplete`) as the end of the stream: after finalizing the
+response, it stops consuming the stream instead of awaiting the server's
+TCP FIN. Upstream pi-ai keeps iterating until the server closes the
+connection, which hangs the turn behind reverse proxies that hold the idle
+connection open. Until the fix ships upstream, `patches/` carries a pnpm
+patch on `@earendil-works/pi-ai@0.85.1` that breaks the event loop on the
+terminal event (the OpenAI SDK aborts the underlying request when the
+consumer stops iterating). Drop the patch once a pi-ai release includes the
+fix.
 
-## 17. 多提供商产品规则
+## 17. Multi-provider product rules
 
-1. 允许多个提供商具有相同的供应商密钥（例如两个 OpenRouter 帐户）。
-2. 提供商 `name` 是用户可编辑的，并且每个 workspace/user 配置文件都是唯一的。
-3. 默认应用程序模型是 `(providerId, modelId)` 对，而不是单独的 modelId。
-4. 会话存储其自己的 `(providerId, modelId)` 绑定。
-5. 删除提供商会阻止引用该提供商的新轮次；历史会话保留 audit/display 的 ID。
-6. 导出设置从不包含原始机密。
-7. 导入设置可以重新创建提供商 shell 并提示输入机密。
-8. 推理能力是特定于模型的，除非提供商有明确的说明
-   兼容性覆盖；提供程序默认值不得覆盖会话的
-   在回合解析期间选择的模型。
+1. Multiple providers of the same `vendorKey` are allowed and independent (for
+   example, two OpenRouter accounts); each row has its own OAuth secret scope.
+2. Provider `name` is user-editable and unique for API/custom services. OAuth
+   rows may share the vendor display name; their stable identity is `providerId`
+   and their non-secret account label is presentation metadata.
+3. Default app model is a `(providerId, modelId)` pair, not modelId alone.
+4. Session stores its own `(providerId, modelId)` binding.
+5. Deleting a provider blocks new turns that reference it; historical sessions keep the ids for audit/display.
+6. Export settings never includes raw secrets.
+7. Import settings can recreate provider shells and prompt for secrets.
+8. Reasoning capability is model-specific unless the provider has an explicit
+   compatibility override; provider defaults must not override a session's
+   selected model during turn resolution.
 
-## 18. 验证规则
+## 18. Validation rules
 
-- 需要 `name`
-- 需要 `vendorKey`
-- 需要 `protocol`
-- 当端点不隐式时，openai_compatible/custom 需要 `baseUrl`
-- 当 `authKind` 需要密钥时需要秘密
-- 标头不得包含原始 api 密钥（使用密钥存储）
-- 模型 ID 非空
+- `name` required
+- `vendorKey` required
+- `protocol` required
+- `baseUrl` required for openai_compatible/custom when endpoint not implicit
+- secret required when `authKind` needs key
+- headers must not contain raw api keys (use secret store)
+- model id non-empty
 
-## 19. 验收标准
+## 19. Acceptance criteria
 
-- [ ] 从 UI 添加 OpenAI / Anthropic / Google / OpenAI 兼容的提供商
-- [ ] 使用基本 URL + 密钥添加任意 OpenAI 兼容的自定义提供程序
-- [ ] 通过跨提供商的目录搜索选择模型
-- [ ] 当目录丢失时接受自由格式模型 ID
-- [ ] 目录刷新填充至少一个本机和一个兼容提供程序的模型，而不破坏现有提供程序
-- [ ] 连接测试返回结构化 success/failure，无秘密泄露
-- [ ] 可以在设置中登录厂商账户、用它跑完一个回合并退出登录；sidecar 全程
-      拿不到刷新令牌
-- [ ] 会话可以在回合之间切换模型
-- [ ] 具有推理能力的模型仅公开受支持的思维水平和
-      所选级别达到pi；不受支持的提供商解析为 `off`
-- [ ] 缺少 key/model 块，以稳定、可操作的错误代码运行
-- [ ] 至少一个本地提供程序路径（Ollama 或 LM Studio 风格）已记录并可测试
-- [ ] 没有产品硬性限制，如“只有 3 个供应商/10 个模型”
+- [ ] Add OpenAI / Anthropic / Google / OpenAI-Compatible providers from UI
+- [ ] Add arbitrary OpenAI-compatible custom provider with base URL + key
+- [ ] Select models via catalog search across providers
+- [ ] Free-form model id accepted when catalog misses it
+- [ ] Catalog refresh populates models for at least one native and one compatible provider, without destroying existing providers
+- [ ] Connection test returns structured success/failure without secret leakage
+- [ ] Two accounts from the same vendor can be signed into from Settings, used
+      independently for turns, and removed one at a time; the sidecar never
+      receives either refresh token
+- [ ] Session can switch model between turns
+- [ ] Known reasoning levels seed a binding, while all seven canonical levels
+      remain explicitly selectable and the selected level reaches pi;
+      bindings with no non-`off` level resolve to `off`
+- [ ] Missing key/model blocks run with stable, actionable error codes
+- [ ] At least one local provider path (Ollama or LM Studio style) documented and testable
+- [ ] No product hard-limit like “only 3 vendors / 10 models”
 
-## 20. 非目标 (MVP)
+## 20. Non-goals (MVP)
 
-- 建立我们自己的完整供应商SDK生态系统
-- 保证所有供应商具有相同的 tool/vision 质量
-- 提供商市场（不需要；配置是本地的）
-- 超越模型功能标志的完整多模式附件工作室
-- 自动发现每个供应商门户的付费计划
-- 不支持 pi-ai 的专有非 HTTP SDK
-- 云同步的提供商配置文件
+- Building our own full provider SDK ecosystem
+- Guaranteeing identical tool/vision quality across all vendors
+- Marketplace of providers (not needed; config is local)
+- Full multi-modal attachment studio beyond model capability flags
+- Automatic paid-plan discovery for every vendor portal
+- Proprietary non-HTTP SDKs without pi-ai support
+- Cloud-synced provider profiles

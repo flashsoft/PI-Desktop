@@ -1,81 +1,98 @@
-# ADR 0094: 每个数据目录只允许一个桌面实例
+# ADR 0094: Admit one desktop instance per data directory
 
 - Status: Accepted
 - Date: 2026-08-18
 - Deciders: PI-Desktop core
 - Related: D236, D002, D216, ADR 0078, ADR 0090
 
-## 背景
+## Context
 
-此前没有任何东西阻止第二个 PI-Desktop 进程启动。在应用已经运行
-时再次启动它——Windows 或 Linux 上的双击、macOS 上的 `open -n`
-或与开发宿主并排启动的打包应用、或用户以为已经退出的托盘常驻会
-话——都会启动一个完整的第二副本：同一个 `pi.sqlite` 上的另一个
-host-core、同一数据目录中的另一套持久化 outbox 和日志树、另一个
-agent sidecar、另一个托盘图标、另一次全局启动器快捷键注册，以及
-另一个更新器。
+Nothing stopped a second PI-Desktop process from starting. Launching the app
+again while it was already running — a double click on Windows or Linux, a
+`open -n` or a packaged app started next to a development host on macOS, or a
+tray-resident session the user assumed had exited — booted a complete second
+copy: another host-core over the same `pi.sqlite`, another persistence outbox
+and log tree in the same data directory, another agent sidecar, another tray
+icon, another global launcher shortcut registration, and another updater.
 
-host-core 独占拥有 SQLite（D002）正是为了保证只有一个写入者。第
-二个应用进程会破坏这一点：两个外壳在同一个数据库上显示分歧的会
-话列表，启动器组合键的第二次注册会静默失败，退出其中一个会拆掉
-另一个仍在使用的状态。用户的心智模型是一个桌面应用；只有进程模
-型与此相悖。
+host-core owns SQLite exclusively (D002) precisely so there is a single writer.
+A second app process defeats that: the two shells show divergent session lists
+over one database, the second registration of the launcher chord silently loses,
+and quitting one of them tears down state the other is still using. The user's
+mental model is one desktop app; the process model was the only thing that
+disagreed.
 
-数据目录才是真正无法共享的东西，但 Electron 的单实例锁的作用域
-是 `userData`，而不是 `PI_DESKTOP_DATA_DIR`。指向自己数据目录的
-运行——E2E 测试具、捕获装置、刻意并排的配置——与默认安装不共
-享任何状态，且必须在其中一个运行时保持可启动。
+The data directory is what cannot be shared, but Electron's single-instance lock
+is scoped to `userData`, not to `PI_DESKTOP_DATA_DIR`. Runs that point at their
+own data directory — the E2E harnesses, the capture rig, a deliberate
+side-by-side profile — share no state with the default installation and must
+stay launchable while one is running.
 
-## 决策
+## Decision
 
-1. Electron 主进程在模块求值期间获取
-   `app.requestSingleInstanceLock()`，时机在 `app.setName` 之后
-   （锁文件位于由名称派生的 `userData` 路径下）、在任何读写数据
-   目录的代码之前。
-2. 未获得锁的启动立即调用 `app.quit()`，不启动任何东西。就绪处
-   理器和关闭处理器都对它提前返回，因此它绝不会在运行实例的数
-   据目录中创建窗口、托盘、子进程或日志行。
-3. 持有锁的实例通过与托盘"显示"动作相同的路径处理
-   `second-instance`：还原并聚焦其主窗口，该路径会重建被关闭或
-   隐藏到托盘的窗口。
-4. 仅当 `PI_DESKTOP_DATA_DIR` 未设置时才请求锁。被赋予自己数据
-   目录的运行保持当前的随时启动行为。
+1. Electron main takes `app.requestSingleInstanceLock()` during module
+   evaluation, after `app.setName` (the lock file lives under the name-derived
+   `userData` path) and before anything reads or writes the data directory.
+2. A launch that does not get the lock calls `app.quit()` immediately and boots
+   nothing. The readiness handler and the shutdown handler both return early for
+   it, so it never creates a window, a tray, a child process, or a log line in
+   the running instance's data directory.
+3. The instance that holds the lock handles `second-instance` by restoring and
+   focusing its main window through the same path as the tray's Show action,
+   which recreates a window that was closed or hidden into the tray.
+4. The lock is requested only when `PI_DESKTOP_DATA_DIR` is unset. A run given
+   its own data directory keeps the current start-anytime behavior.
 
-## 后果
+## Consequences
 
-- 一个安装就是一个进程：一个 host-core、一个 SQLite 写入者、一
-  个 outbox、一个托盘、一个启动器快捷键绑定、一个更新器。
-- 重新启动应用是回到托盘隐藏或已关闭窗口的可靠途径，与托盘、
-  Dock 和 `did-become-active`（ADR 0078、ADR 0086）并列。
-- E2E 测试具、捕获装置和并排配置不受影响，因为它们设置了
-  `PI_DESKTOP_DATA_DIR`。
-- 两个指向*同一个*显式数据目录的运行仍会被放行。这种组合是刻
-  意行为，而不是意外的重新启动；把锁限定到它意味着要把
-  `userData` 迁到数据目录之下，并为每个配置用户丢弃渲染进程本
-  地状态。
+- One installation is one process: one host-core, one SQLite writer, one
+  outbox, one tray, one launcher shortcut binding, one updater.
+- Relaunching the app is a reliable way back to a tray-hidden or closed window,
+  alongside the tray, the Dock, and `did-become-active` (ADR 0078, ADR 0086).
+- E2E harnesses, the capture rig, and side-by-side profiles are unaffected
+  because they set `PI_DESKTOP_DATA_DIR`.
+- Two runs that are pointed at the *same* explicit data directory are still
+  admitted. That combination is a deliberate act, not an accidental relaunch,
+  and scoping the lock to it would mean relocating `userData` under the data
+  directory and discarding renderer-local state for every profile user.
 
-## 替代方案
+## Alternatives
 
-### 将 `userData` 迁到 `PI_DESKTOP_DATA_DIR` 之下
+### Relocate `userData` under `PI_DESKTOP_DATA_DIR`
 
-这会把锁限定到真正无法共享的资源上。被拒绝，因为 `userData` 还
-保存渲染进程的 `localStorage`（保留的项目标签页和侧边栏呈现，
-D093）、插件面板分区和浏览器窗格 cookie；移动它会为了一个罕见
-的边缘情况静默丢弃现有配置用户的这些状态。
+This would scope the lock to the resource that actually cannot be shared.
+Rejected because `userData` also holds renderer `localStorage` (retained project
+tabs and sidebar presentation, D093), plugin panel partitions, and browser pane
+cookies; moving it would silently discard that state for existing profile users
+to close a rare edge case.
 
-### 在数据目录中保留一个锁文件
+### Keep a lock file in the data directory
 
-被拒绝，因为它重新实现了 Electron 已经提供的东西，而且仍然没有
-唤起运行中窗口的通道；崩溃后的陈旧锁文件还会在没有恢复路径的
-情况下阻塞应用。
+Rejected because it re-implements what Electron already provides and still has
+no channel to raise the running window; a stale lock file after a crash would
+also block the app with no recovery path.
 
-### 让第二次启动聚焦第一个实例并保持存活
+### Let the second launch focus the first and stay alive
 
-被拒绝，因为一个常驻的副本会毫无目的地保留第二个 Electron 进
-程、托盘和快捷键注册。立即退出有相同的可见结果而没有这些成
-本。
+Rejected because a resident duplicate keeps a second Electron process, tray, and
+shortcut registration for no purpose. Quitting immediately is the same visible
+result with none of the cost.
 
-### 不做任何处理，只记录该隐患
+### Do nothing and document the hazard
 
-被拒绝，因为失败是单写入者数据库上静默的数据分歧，而且用户没
-有任何信号得知两个外壳开在同一个工作区上。
+Rejected because the failure is silent data divergence over a single-writer
+database, and the user has no signal that two shells are open on one workspace.
+
+## Amendment (D599)
+
+The alternatives below still stand: the lock is not scoped to
+`PI_DESKTOP_DATA_DIR`, and `userData` is not relocated under it.
+
+What changed is that a development build is no longer the same installation as
+the packaged app. It takes `PI-Desktop Dev` in the OS application-data root and
+`~/.pi-desktop-dev`, so `pnpm dev` starts while the packaged app holds its lock
+and the two never share `pi.sqlite`, the outbox, or the log tree. An explicit
+`--user-data-dir` still wins, because the E2E harnesses point a build at a
+throwaway profile with it. Only the development side moved: a shipped
+installation keeps `PI-Desktop` and `~/.pi-desktop`, so no existing profile is
+relocated. See D599.

@@ -1,4 +1,4 @@
-# ADR 0210: Subagent 输出 token 上限
+# ADR 0210: Subagent output-token cap
 
 - Status: Accepted (issue #171, merged in #193)
 - Date: 2026-09-10
@@ -7,66 +7,81 @@
 
 ## Context
 
-subagent 定义可以限定委托的轮次和推理级别，但不能限定其响应长度。
-唯一在起作用的输出限制是模型绑定携带的那个：`ModelBinding.maxTokens`
-在模型高级设置的 **Max output** 下编辑，`modelConfigWithBinding` 会把
-它折叠进会话构建的模型中。该值属于模型，而不属于某个调用方，因此它
-适用于该模型服务的每一个请求。
+A subagent definition could bound a delegate's turns and its reasoning level,
+but not its response length. The only output limit in play was the one the
+model binding carries: `ModelBinding.maxTokens` is edited under **Max output**
+in a model's Advanced settings, and `modelConfigWithBinding` folds it into the
+model the session builds. That value belongs to the model, not to a caller, so
+it applies to every request that model serves.
 
-委托正是这个粒度不对的地方。委托在设计上是有界的工作者
-（ADR 0062）：`explorer` 扫过大量文件并汇报结论，而 `fixer` 只编辑
-一个路径。为了缩小那个便宜的工作者而给模型设上限，会同时给会话和每
-一个其他委托设上限，而定义根本无法表达“这个工作者回答简短”。因此
-用户没有办法限定某个委托自己的输出，issue 所指出的成本——一个搜索
-委托花费远超其报告所需的输出——也无法从设置中解决。
+Delegation is where that is the wrong granularity. A delegate is a bounded
+worker by design (ADR 0062): `explorer` sweeps many files and reports a
+conclusion, while `fixer` edits one path. Capping the model to size the cheap
+one would also cap the session and every other delegate, and a definition
+cannot express "this worker answers briefly" at all. Users therefore had no
+way to bound a delegate's own output, and the cost the issue names — a search
+delegate spending far more output than its report needs — was not addressable
+from Settings.
 
 ## Decision
 
-1. **D383——定义声明自己的输出上限。** Subagent frontmatter 和设置
-   API 接受 `maxTokens`，一个可选的非负整数。省略、`none` 或 `0` 表
-   示“遵循模型公布的限制”，这正是每个现有文档已有的行为。该值走
-   与 `maxTurns` 相同的路径：frontmatter、`SubagentDefinition`、
-   `UserSubagentRecord`、设置输入和编辑器草稿。
-2. **上限天花板为 200000，可接受范围从 1 开始。** 钳制是防御性的，
-   而非策略：没有任何已发布的模型接受超过 128k 的输出限制，所以更
-   大的数字是笔误，而 `0` 的限制意味着“没有输出”——空字段已经表
-   达了这个状态。超过天花板的值被钳制到天花板；负数或小数值根本不
-   是上限，会被忽略，委托继续沿用模型的限制。解析器对两种情况都报
-   警告，而不是静默改变文档所要求的内容。
-3. **上限覆盖为该委托构建的模型，且只覆盖该委托。** `SubagentRun`
-   已经构建自己的模型和自己的单模型 provider 注册表，因此上限以
-   `{ ...builtModel, maxTokens }` 的形式应用在那个对象上。适配器从
-   该字段推导 `max_tokens` / `max_completion_tokens` /
-   `max_output_tokens`，因此不引入任何适配器专属分支，会话的请求保
-   持绑定不被触碰。
-4. **编辑器把它放在轮次限制旁边，位于已存在的高级区域。** 两者都
-   是属于定义而非模型的上限；既有的高级折叠区域已经承载模型、思
-   考、轮次限制和作用域，因此不创建新界面。空字段读作“遵循模型”，
-   而不是“无限制”，所以它的占位符是模型默认值。
-5. **仅增量。** 没有 SQLite 迁移、协议版本提升、IPC 方法或工具结果
-   形态变更。没有 `maxTokens` 的文档解析、存储和运行与之前完全一致。
+1. **D383 — a definition declares its own output cap.** Subagent frontmatter
+   and the settings API accept `maxTokens`, an optional non-negative integer.
+   Omitted, `none`, or `0` means "follow the model's published limit", which is
+   the behavior every existing document already had. The value travels the same
+   path as `maxTurns`: frontmatter, `SubagentDefinition`, `UserSubagentRecord`,
+   the settings input, and the editor draft.
+2. **The ceiling is 200000 and the accepted range starts at 1.** The clamp is
+   defensive, not policy: no published model accepts an output limit above
+   128k, so a larger number is a typo, and a limit of `0` would mean "no
+   output" — a state the empty field already expresses. A value above the
+   ceiling is clamped to it; a negative or fractional value is not a cap at
+   all and is ignored, leaving the delegate on the model's limit. The parser
+   reports both as warnings rather than silently changing what the document
+   asked for.
+3. **The cap overrides the model built for that delegate, and only that
+   delegate.** `SubagentRun` already builds its own model and its own
+   single-model provider registry, so the cap is applied as
+   `{ ...builtModel, maxTokens }` on that object. The adapters derive
+   `max_tokens` / `max_completion_tokens` / `max_output_tokens` from this
+   field, so no adapter-specific branch is introduced, and the session's
+   requests keep the binding untouched.
+4. **The editor places it beside the turn limit, in the Advanced area that
+   already exists.** Both are caps that belong to the definition rather than to
+   the model; the pre-existing Advanced disclosure already carries model,
+   thinking, turn limit and scope, so no new surface is created. The empty
+   field reads as "follow the model", not "no limit", so its placeholder is the
+   model default.
+5. **Additive only.** No SQLite migration, protocol version bump, IPC method,
+   or tool-result shape changes. A document without `maxTokens` parses, stores
+   and runs exactly as before.
 
 ## Consequences
 
-- 委托的输出可以被限定，而无需改变模型绑定，因此给一个工作者设定
-  大小不再会改变会话或其兄弟委托的大小。
-- 上限可以比模型自己的限制更严格，但实际效果绝不会更宽松：provider
-  仍然强制执行自己的最大值，天花板则阻止笔误到达那个值。
-- 定义获得了一个只在委托写长回答时才有意义的字段；现有文档继续遵
-  循模型。
-- 内置定义不声明上限，因此其行为不变。预设今后可以为每个内置角色
-  携带一个上限；那是后续工作而非本决策的一部分，因为这会改变预设在
-  编辑器中覆盖的内容。
+- A delegate's output can be bounded without changing the model binding, so
+  sizing one worker no longer resizes the session or its siblings.
+- A cap may be stricter than the model's own limit but never looser in effect:
+  the provider still enforces its own maximum, and the ceiling keeps a typo
+  from reaching it.
+- Definitions gain a field that only matters when a delegate writes long
+  answers; an existing document keeps following the model.
+- The built-in definitions do not declare a cap, so their behavior is
+  unchanged. Presets could carry one per builtin role later; that is a
+  follow-up rather than part of this decision, because it would change what a
+  preset overwrites in the editor.
 
 ## Alternatives rejected
 
-- **复用 `ModelBinding.maxTokens`。** 它是按模型的值，因此会给会话
-  和每一个钉在该模型上的委托设上限。它也无法表达同一模型上两个预
-  算不同的委托。
-- **把上限做成轮次级或会话级设置。** 两者都比问题本身更粗：问题
-  是一个委托的报告长度，而会话范围的上限会静默截断父级的回答。
-- **拒绝超过天花板的值而不是钳制它。** 定义文档是手工可编辑的，因
-  为一个笔误就拒绝加载会把委托从目录中移除。钳制并警告既保持委托
-  可用，也说明发生了什么。
-- **给该字段一个具体数字默认值。** 默认值会在升级时改变现有委托的
-  请求，而这正是一个可选加入的上限绝不能做的事。
+- **Reuse `ModelBinding.maxTokens`.** It is a per-model value, so it would cap
+  the session and every delegate pinned to that model. It also cannot express
+  two delegates on one model with different budgets.
+- **Make the cap a turn-level or session-level setting.** Both are coarser than
+  the problem: the issue is one delegate's report length, and a session-wide
+  cap would silently truncate the parent's answers.
+- **Reject a value above the ceiling instead of clamping it.** A definition
+  document is hand-editable, and refusing to load it over one typo would take
+  the delegate out of the catalog. Clamping with a warning keeps the delegate
+  usable and says what happened.
+- **Default the field to a concrete number.** A default would change existing
+  delegates' requests on upgrade, which is exactly what an opt-in cap must not
+  do.

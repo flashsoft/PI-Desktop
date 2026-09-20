@@ -1,44 +1,44 @@
-# 02. 非目标
+# 02. Non-Goals
 
-## 1. MVP 将不包括
+## 1. MVP will not include
 
-1.远程 Gateway / WebUI 远程控制（本地回环 MCP 控制是默认关闭的桌面侧例外，
-  不是远程网关）
-2. 云账号与多设备同步
-3.完整的IDE（LSP、调试器、多文件编辑器工作区）
-4. 一个从头开始的代理循环替换 pi
-5. 第一天的完整插件市场
-6. 移动客户端
-7. 多用户认证系统
-8.Billing/subscription 模块
-9.计算机使用浏览器接管
-10、未确认的全盘高权限模式
-11. 非英语作为主要源语言
-12. 第二个规划器 Agent、规划器服务、规划器模型或单独的
-    Plan 的权限配置文件
-13. 将 Plan 视为严格的只读安全沙箱或自动批准
-    计划的 Plan 运行
+1. Remote Gateway / WebUI remote control (the local loopback MCP control plane
+   is an opt-in desktop-side exception, not a remote gateway)
+2. Cloud accounts and multi-device sync
+3. Full IDE (LSP, debugger, multi-file editor workspace)
+4. A from-scratch agent loop replacing pi
+5. Full plugin marketplace at day one
+6. Mobile clients
+7. Multi-user auth systems
+8. Billing/subscription modules
+9. Computer Use browser takeover
+10. Unconfirmed full-disk high privilege mode
+11. Non-English as the primary source language
+12. A second planner Agent, planner service, planner model, or separate
+    permission profile for Plan
+13. Treating Plan as a strict read-only security sandbox or auto-approving a
+    scheduled Plan run
 
-## 2. 尚未优化
+## 2. Not optimized yet
 
-- 最小封装尺寸极限
-- 复杂的动画系统
-- 发布时完成多区域覆盖
-- 像素完美的多平台打磨
-- 海量历史搜索性能
+- Minimal package size extremes
+- Complex animation systems
+- Complete multi-locale coverage at launch
+- Pixel-perfect multi-platform polish
+- Massive history search performance
 
-## 3. 不是成功标准
+## 3. Not success criteria
 
-- 克隆每个 ChatGPT 桌面功能
-- 克隆 WorkBuddy 企业集成
-- 克隆 LiveAgent 网关堆栈
+- Clone every ChatGPT Desktop feature
+- Clone WorkBuddy enterprise integrations
+- Clone LiveAgent gateway stack
 
-## 4. MVP 的架构选项 deferred/rejected
+## 4. Architecture options deferred/rejected for MVP
 
-| 选项 | 为什么 |
+| Option | Why |
 |---|---|
-| 金牛座贝壳 | Electron 路线被冻结 |
-| 渲染器端代理循环 | 安全和生命周期风险 |
-| 远程优先设计 | 与本地优先 MVP 冲突 |
-| 本地插件运行时之前的市场 | 过早扩张 |
-| 立即重写 Rust 中的 pi 代理引擎 | 成本太高；保留 pi 引擎 |
+| Tauri shell | Electron route is frozen |
+| Renderer-side agent loop | Security and lifecycle risk |
+| Remote-first design | Conflicts with local-first MVP |
+| Marketplace before local plugin runtime | Premature expansion |
+| Rewrite pi agent engine in Rust immediately | Too costly; keep pi engine |

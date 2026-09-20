@@ -11,10 +11,11 @@ import {
   verifyAdrCatalog,
   verifyAdrCitations,
   verifyAdrIndex,
+  verifyChineseMirrors,
   verifyDocumentation,
   verifyPageStructure,
   verifySpecIndex,
-  verifySpecTree,
+  verifySpecTreeSymmetry,
 } from './check-docs.mjs'
 
 /** Build a throwaway `docs/` tree from a `{ relativePath: source }` map. */
@@ -152,20 +153,38 @@ test('citations resolve, and prose beside a citation is not read as one', () => 
   ])
 })
 
-test('spec sections are numbered, and NAV lists every page', () => {
+test('a Chinese page must mirror an English page, where README and index are one page', () => {
+  assert.deepEqual(
+    verifyChineseMirrors(['guide/index.md', 'zh-CN/guide/index.md', 'adr/README.md', 'zh-CN/adr/index.md']),
+    [],
+  )
+  assert.deepEqual(
+    verifyChineseMirrors(['zh-CN/spec/product/index.md']),
+    ['zh-CN/spec/product/index.md: no English page at docs/spec/product/index.md'],
+  )
+})
+
+test('both spec trees carry the same numbered sections, and NAV lists every page', () => {
   const root = fixture({
-    'spec/NAV.md': '# 导航\n\n- [README.md](/spec/README)\n- [00-baseline.md](00-baseline.md)\n- [01-product/00-overview.md](/spec/01-product/00-overview)\n',
-    'spec/README.md': '# 规格\n',
-    'spec/00-baseline.md': '# 基线\n',
-    'spec/01-product/00-overview.md': '# 总览\n',
-    'spec/legacy/index.md': '# 遗留\n',
+    'spec/NAV.md': '# NAV\n\n- [README.md](README.md)\n- [00-baseline.md](00-baseline.md)\n- [01-product/00-overview.md](01-product/00-overview.md)\n',
+    'spec/README.md': '# Spec\n',
+    'spec/00-baseline.md': '# Baseline\n',
+    'spec/01-product/00-overview.md': '# Overview\n',
+    'spec/legacy/index.md': '# Legacy\n',
+    'zh-CN/spec/NAV.md': '# 导航\n\n- [README.md](/zh-CN/spec/README)\n',
+    'zh-CN/spec/README.md': '# 规格\n',
+    'zh-CN/spec/legacy/index.md': '# 遗留\n',
   })
 
-  assert.deepEqual(verifySpecTree(root), [
+  assert.deepEqual(verifySpecTreeSymmetry(root), [
     'docs/spec/legacy: a spec section directory must be numbered, like 01-product',
+    'docs/zh-CN/spec/legacy: a spec section directory must be numbered, like 01-product',
   ])
-  assert.deepEqual(verifySpecIndex(root), [
+  assert.deepEqual(verifySpecIndex('spec', root), [
     'docs/spec/NAV.md: does not list legacy/index.md',
+  ])
+  assert.deepEqual(verifySpecIndex('zh-CN/spec', root), [
+    'docs/zh-CN/spec/NAV.md: does not list legacy/index.md',
   ])
 })
 
@@ -177,6 +196,7 @@ test('the documentation tree in this repository is clean', () => {
   assert.deepEqual(result.adrCatalog, [], 'ADR catalog failures')
   assert.deepEqual(result.adrIndex, [], 'ADR index failures')
   assert.deepEqual(result.adrCitations, [], 'ADR citation failures')
+  assert.deepEqual(result.mirrors, [], 'Chinese mirror failures')
   assert.deepEqual(result.specTree, [], 'spec tree failures')
   assert.deepEqual(result.specIndex, [], 'spec index failures')
 })

@@ -1,48 +1,55 @@
-# ADR 0181: 主进程拥有的选择器能力
+# ADR 0181: Main-owned picker capabilities
 
-- 状态：已接受
-- 日期：2026-09-08
-- 决策者：PI-Desktop 核心团队
-- 相关：ADR 0059、ADR 0172、D197、D334、D344、
-  `03-runtime/01-ipc-protocol.md` §13c、E2E-102h
+- Status: Accepted
+- Date: 2026-09-08
+- Deciders: PI-Desktop core
+- Related: ADR 0059, ADR 0172, D197, D334, D344,
+  `03-runtime/01-ipc-protocol.md` §13c, E2E-102h
 
-## 背景
+## Context
 
-Composer 附件可以通过原生 Electron 文件选择器选取，然后复制进所属会话
-的 scratch 目录。渲染进程需要在物化一个归属草稿之后请求复制，但渲染
-进程 IPC 负载不能被当作"用户选择了其中包含的路径"的证明。
+Composer attachments can be selected through a native Electron file picker and
+then copied into the owning session's scratch directory. The renderer needs to
+request the copy after it materializes a home draft, but a renderer IPC payload
+must not be treated as proof that a user selected the paths it contains.
 
-早期的选择器流程把原生绝对路径返回给渲染进程，然后又通过
-`composer/importFiles` 接受这些路径。这使任何能访问桥接的渲染进程代码
-都可以请求复制任意常规文件，包括工作区和附件根目录之外的文件。同一
-流程还宣称支持目录选择，尽管导入器只接受常规文件。
+The earlier picker flow returned native absolute paths to the renderer and then
+accepted those paths again through `composer/importFiles`. That allowed any
+renderer code with access to the bridge to request a copy of an arbitrary
+regular file, including outside the workspace and attachment roots. The same
+flow also advertised directory selection even though the importer accepted
+regular files only.
 
-## 决策
+## Decision
 
-1. `composer/pickFiles` 和 `composer/pickPhotos` 在 Electron 主进程中
-   执行原生对话框。主进程把所选路径存储在一个随机 token 下，该 token
-   绑定到发起调用的 `WebContents`。
-2. 选择器 token 60 秒后过期，并在导入开始前被消费。`composer/importFiles`
-   接受 token 和持久的 `sessionId`，绝不接受渲染进程提供的源路径。
-   token 不能被重放，也不能被另一个渲染进程 WebContents 使用。
-3. `pickFiles` 在 MVP 中只提供常规文件。文件夹导入仍是一项独立的未来
-   功能，必须先定义有界的遍历和所有权规则，才能在 UI 中暴露。
-4. 主进程仍然对每个记录的源做 realpath 和 stat，执行现有的单文件和
-   总大小限制，并且只复制进会话 scratch 目录。
+1. `composer/pickFiles` and `composer/pickPhotos` execute the native dialog in
+   Electron main. Main stores the selected paths against a random token bound to
+   the invoking `WebContents`.
+2. The picker token expires after 60 seconds and is consumed before the import
+   starts. `composer/importFiles` accepts the token and durable `sessionId`,
+   never renderer-supplied source paths. A token cannot be replayed or used by
+   another renderer WebContents.
+3. `pickFiles` offers regular files only in the MVP. Folder import remains a
+   separate future feature that must define bounded traversal and ownership
+   rules before it is exposed in the UI.
+4. Main still realpaths and stats every recorded source, enforces the existing
+   per-file and total-size limits, and copies only into the session scratch
+   directory.
 
-## 后果
+## Consequences
 
-- 被攻陷或过期的渲染进程无法把选择器导入通道变成任意绝对路径复制原语。
-- 取消选择器不会创建草稿会话或写入 scratch 文件。
-- 导入后渲染进程只保留返回的会话拥有的 scratch 引用，源路径留在
-  Electron 主进程。
-- 目录选择不再以误导性的不支持标签提供。
+- A compromised or stale renderer cannot turn the picker import channel into an
+  arbitrary absolute-path copy primitive.
+- Canceling a picker does not create a draft session or write scratch files.
+- The renderer retains only the returned session-owned scratch references after
+  import, while the source paths remain in Electron main.
+- Directory selection is no longer offered with a misleading unsupported label.
 
-## 已否决的替代方案
+## Alternatives rejected
 
-- 从选择器返回原生路径并在导入 IPC 中再次校验：否决，因为校验不能
-  证明用户选择。
-- 在选择器 IPC 返回之前直接导入：否决，因为渲染进程必须在非取消的
-  选择之后才物化归属草稿。
-- 在本次改动中通过递归复制支持文件夹：否决，因为它需要显式的遍历、
-  大小、符号链接和 UI 语义，超出当前 MVP。
+- Returning native paths from the picker and validating them again in the import
+  IPC: rejected because validation does not prove user selection.
+- Importing directly before returning from the picker IPC: rejected because the
+  renderer must materialize a home draft only after a non-canceled selection.
+- Supporting folders by recursive copy in this change: rejected because it needs
+  explicit traversal, size, symlink, and UI semantics beyond the current MVP.

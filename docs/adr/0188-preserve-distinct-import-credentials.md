@@ -1,43 +1,49 @@
-# ADR 0188: 模型配置导入时保留不同的凭据
+# ADR 0188: Preserve distinct credentials during model configuration import
 
-- 状态：已接受
-- 日期：2026-09-08
-- 决策者：PI-Desktop 核心团队
-- 相关：D342、D351、ADR 0179、E2E-209
+- Status: Accepted
+- Date: 2026-09-08
+- Deciders: PI-Desktop core
+- Related: D342, D351, ADR 0179, E2E-209
 
-## 背景
+## Context
 
-CC Switch 可以为一个网关端点保存多个命名配置。这些配置可能使用不同的
-API 密钥，例如分开的账户或配额。最初的导入幂等规则把规范化端点和 API
-风格当作完整身份，因此导入一组选择会创建第一个配置并静默跳过其余的
-配置。
+CC Switch can keep several named profiles for one gateway endpoint. Those
+profiles may use different API keys, such as separate accounts or quotas. The
+original import idempotence rule treated normalized endpoint and API style as
+the complete identity, so importing a selection created the first profile and
+silently skipped the remaining profiles.
 
-渲染进程仍然不得收到原始凭据，且重复导入同一配置应保持幂等。
+The renderer must still receive no raw credentials, and re-importing the same
+profile should remain idempotent.
 
-## 决策
+## Decision
 
-1. 导入的 provider 仅当其规范化端点、API 风格和凭据都与现有 provider
-   匹配时才视为等价。
-2. 同一端点下使用不同凭据的配置被创建为独立的 provider 行，并在
-   Composer 模型菜单中保持分别可选。
-3. Electron 主进程通过宿主密钥边界解析现有 API 密钥以进行比较。原始值
-   留在主进程内存中，从不进入扫描结果、渲染进程状态、日志或 provider
-   元数据。
-4. 无凭据候选只匹配同一端点和 API 风格下的另一个无凭据 provider。仅
-   OAuth 凭据不匹配 API 密钥候选。
-5. 存活工具与 CC Switch 之间的扫描应用同样的凭据感知规则，因此完全
-   相同的存活配置被省略，而密钥不同的配置被保留。不改变宿主协议或
-   存储 schema 版本。
+1. An imported provider is equivalent only when its normalized endpoint, API
+   style, and credential match an existing provider.
+2. Profiles using different credentials at the same endpoint are created as
+   independent provider rows and remain separately selectable in the Composer
+   model menu.
+3. Electron main resolves existing API keys through the host secret boundary
+   for the comparison. Raw values remain in main-process memory and are never
+   included in scan results, renderer state, logs, or provider metadata.
+4. A no-credential candidate only matches another no-credential provider at
+   the same endpoint and API style. OAuth-only credentials do not match an
+   API-key candidate.
+5. The live-tool-versus-CC Switch scan applies the same credential-aware rule,
+   so an identical live profile is omitted while a different-key profile is
+   retained. No host protocol or storage schema version changes.
 
-## 后果
+## Consequences
 
-- 一个网关的多个 CC Switch 配置可以在一次运行中导入。
-- 重复导入未变化的配置仍报告为已跳过。
-- 如果来源密钥变化，导入会创建新的独立行；旧行不被覆盖。
+- Multiple CC Switch profiles for one gateway can be imported in one run.
+- Re-importing an unchanged profile still reports it as skipped.
+- If a source key changes, import creates a new independent row; the old row
+  is not overwritten.
 
-## 替代方案
+## Alternatives
 
-- 仅按端点匹配：否决，因为会丢失有效凭据。
-- 按显示名匹配：否决，因为名称可编辑，不是稳定的凭据。
-- 用新密钥更新现有行：否决，因为这会覆盖一个正常工作的账户，并违反
-  显式的导入审查边界。
+- Endpoint-only matching was rejected because it loses valid credentials.
+- Matching by display name was rejected because names are editable and are not
+  stable credentials.
+- Updating an existing row with the new key was rejected because it would
+  overwrite a working account and violate the explicit import review boundary.

@@ -1,4 +1,4 @@
-# ADR 0101: 感知模型的图片附件传输
+# ADR 0101: Model-aware image attachment transport
 
 - Status: Accepted
 - Date: 2026-08-18
@@ -6,54 +6,61 @@
 - Amends: D197, ADR 0059, ADR 0070
 - Amended by: D361 (inline bound is 10 MB, matching MiniMax's OpenAI-compatible cap), D392 / ADR 0218 (binding image-input overrides)
 
-## 背景
+## Context
 
-剪贴板图片可以成功实体化，但 Composer 把每个文件都降级为
-`@<path>` 文本。因此支持图片输入的模型收到的是文件系统引用，而
-不是图片块。能力信号必须由 pi-ai 用来序列化 provider 请求的同一
-个模型目录拥有；渲染进程的发现和用户输入的模型 id 都不是充分证
-据。
+Clipboard images were materialized successfully, but the composer reduced every
+file to `@<path>` text. A model that supports image input therefore received a
+filesystem reference instead of an image block. The capability signal must be
+owned by the same model catalog that pi-ai uses to serialize provider requests;
+renderer discovery and user-entered model ids are not sufficient evidence.
 
-## 决策
+## Decision
 
-1. 保持 Composer 草稿紧凑且文本化。每个文件引用保留其种类、名
-   称、MIME 类型和来源路径作为结构化元数据；可见的 textarea 中绝
-   不包含粘贴的二进制数据。
-2. 从精确的 pi-ai 模型记录解析视觉能力。只有
-   `model.input.includes("image")` 才启用图片传输。未知和自定义
-   模型 id 保持走保守的非视觉路径，即使发现元数据声称 `vision`。
-3. Electron 主进程仍是附件边界。它针对会话 scratch 根、会话绑定
-   的项目根或内容寻址的附件根校验每个来源路径。图片存储为
-   `attachments/<sha256>`，持久化的 `UiMessage` 只存储引用和元数
-   据。
-4. 对具备视觉能力的模型，10 MB 内联限制内的图片仅以瞬态 base64
-   数据穿过 sidecar，并成为 pi-ai 的图片内容块。base64 值绝不会
-   持久化到 SQLite、JSONL 或渲染进程 transcript 状态中。
-5. 对非视觉模型、未知模型或超过内联限制的图片，prompt 收到安全
-   的 `@path` 回退。重放的内容存储图片在该回退暴露给模型之前，
-   会先被复制到会话 scratch 的 `replayed/` 目录。
-6. 附加图片时 Composer 显示一条紧凑的无障碍状态行：说明所选模
-   型是否能接收视觉输入。模型选择器和会话/provider 摘要暴露同一
-   个权威视觉能力。
+1. Keep the composer draft compact and textual. Each file reference retains its
+   kind, name, MIME type, and source path as structured metadata; the visible
+   textarea never contains pasted binary data.
+2. Resolve vision capability from the exact pi-ai model record. Only
+   `model.input.includes("image")` enables image transport. Unknown and custom
+   model ids stay on the conservative non-vision path, even when discovery
+   metadata claims `vision`.
+3. Electron main remains the attachment boundary. It validates every source
+   path against the session scratch root, the session-bound project root, or
+   the content-addressed attachment root. Images are stored as
+   `attachments/<sha256>` and the durable `UiMessage` stores only the reference
+   and metadata.
+4. For a vision-capable model, an image within the 10 MB inline limit crosses
+   the sidecar only as transient base64 data and becomes a pi-ai image content
+   block. The base64 value is never persisted in SQLite, JSONL, or renderer
+   transcript state.
+5. For a non-vision model, an unknown model, or an image above the inline
+   limit, the prompt receives a safe `@path` fallback. Replayed content-store
+   images are copied into the session scratch `replayed/` directory before that
+   fallback is exposed to the model.
+6. The Composer shows a compact accessible status row when an image is attached:
+   it states whether the selected model can receive visual input. The model
+   picker and session/provider summaries expose the same authoritative vision
+   capability.
 
-## 后果
+## Consequences
 
-- GPT/具备视觉能力的模型可以检查粘贴的图片，无需按模型定制的渲
-  染进程实现。
-- 纯文本和非视觉模型保留现有的文件工具工作流。
-- 图片字节被去重，并可在重试、fork 和运行时重建后存活，而无需
-  把二进制数据放进 transcript。
-- 附件垃圾回收仍是后续的存储任务；引用是内容寻址的，因此可以在
-  不改变消息契约的情况下添加。
-- 完整视觉预览、拖拽、图片变换和 provider 特定的图片限制仍在范
-  围之外。10 MB 内联阈值是应用侧的安全界限；provider 可能施加更
-  严格的限制并返回其正常的 provider 错误。
+- GPT/vision-capable models can inspect pasted images without requiring a
+  model-specific renderer implementation.
+- Text-only and non-vision models retain the existing file-tool workflow.
+- Image bytes are deduplicated and can survive retry, fork, and runtime
+  recreation without putting binary data in the transcript.
+- Attachment garbage collection remains a later storage task; references are
+  content-addressed so it can be added without changing the message contract.
+- Full visual previews, drag-and-drop, image transforms, and provider-specific
+  image limits remain out of scope. The 10 MB inline threshold is an app-side
+  safety bound; providers may impose stricter limits and return their normal
+  provider error.
 
-## 被拒绝的替代方案
+## Rejected alternatives
 
-- **始终发送 `@path` 文本：** 保留非视觉行为，但无法满足视觉模
-  型。
-- **信任渲染进程/provider 发现标志：** 可能宣传运行时适配器无法
-  序列化的能力，并使未知模型的分类变得不安全。
-- **在消息中持久化 base64：** 使重载和 SQLite/JSONL 增长失去界
-  限，并无谓地越过持久化边界。
+- **Always send `@path` text:** preserves non-vision behavior but cannot satisfy
+  vision models.
+- **Trust renderer/provider discovery flags:** can advertise a capability that
+  the runtime adapter cannot serialize and would make unknown models unsafe to
+  classify.
+- **Persist base64 in messages:** makes reloads and SQLite/JSONL growth
+  unbounded and crosses the persistence boundary unnecessarily.

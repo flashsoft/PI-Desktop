@@ -1,141 +1,147 @@
-# 13. 插件权限矩阵
+# 13. Plugin Permissions Matrix
 
-## 1. 目标
+## 1. Goals
 
-提供权限-能力-风险-默认策略参考表，供 UI 复制和验证重用。
+Provide a permission–capability–risk–default-policy reference table for reuse by UI copy and validation.
 
-## 2. 矩阵
+## 2. Matrix
 
-| 许可 | 风险 | 允许的 API/功能 | 默认政策 | 注释 |
+| Permission | Risk | Allowed API / capability | Default policy | Notes |
 |---|---|---|---|---|
-| `ui.panel` | 低 | 打开插件面板 | 安装时授予 | 几乎所有 UI 插件都需要 |
-| `ui.view` | 低 | `contributes.views` 在工作面板中列出并可打开 | 安装时授予 | 与面板窗口同级隔离：沙箱页面、按插件划分的会话分区、`net.domains` 出口限制。按激活范围过滤 |
-| `ui.theme` | 低 | `contributes.themes` CSS 已在“设置”中加载并提供 | 安装时授予 | CSS 由主机清理；它无法编写脚本。已声明的 `assets` 通过主机的只读 `plugin-asset:` 协议提供 |
-| `ui.window.appearance` | 低 | 该插件主题被选中时，用 `contributes.windowAppearance` 设置原生窗口背景 | 安装时授予 | 仅接受 `#rrggbb` / `#rrggbbaa`；按解析后的明暗生效，主题消失后回到宿主默认值。macOS 保持 vibrancy |
-| `clipboard.read` | 中等 | `clipboard.readText`、`clipboard.getHistory` | 首次使用时确认 | 可能会读取敏感信息和保留的剪贴板历史 |
-| `clipboard.write` | 中等 | `clipboard.writeText` | 首次使用时确认 | 防止剪贴板污染 |
-| `notify` | 低 | `ui.notify`、`ui.getNotificationPermission`、`ui.requestNotificationPermission`、`ui.showNativeNotification` | 可以默认授予 | 本机交付由操作系统控制；避免通知垃圾邮件滥用 |
-| `fs.read` | 中等 | `fs.readText` / `fs.readPreview` / `fs.openDefault` / `fs.reveal` / `fs.glob` / `fs.list` / `fs.requestDirectory` | 安装时授予，范围由 `manifest.fs.read` 限定 | `fs.readPreview`、`fs.openDefault` 和 `fs.reveal` 仅限显式选择的文件和相同的读取范围；所有文件调用仍受根目录与拒绝列表保护 |
-| `fs.write` | 高 | `fs.writeText` | 安装时授予，范围由 `manifest.fs.write` 限定 | 必须声明范围；整棵树的模式无法通过校验。范围外要问用户 |
-| `fs.delete` | 高 | `fs.remove` | 安装时授予，范围由 `manifest.fs.delete` 限定 | 分两档（`own` / `scope`），一律进系统回收站，不递归，并有速率刹车（§2B） |
-| `fs.read.workspace` | 中等 | — | 加载时降级为 `fs.read` + 整棵树范围 | 旧权限名，早于文件范围机制 |
-| `fs.write.workspace` | 高 | — | 加载时降级为 `fs.write` 且**没有**范围 | 旧权限名；在 manifest 声明范围之前，每次写入都要问用户 |
-| `fs.delete.workspace` | 高 | — | 加载时降级为 `fs.delete` + `own: true` | 旧权限名；只有插件自己写过的文件才不用问 |
-| `agent.tool.register` | 高 | 注册代理工具 | 安装时确认 | 工具执行情况单独审核 |
-| `agent.prompt.inject` | 高 | 注入系统提示符；激活 `contributes.skills` | 默认拒绝/强确认 | 容易导致行为劫持 |
-| `agent.extension` | 高 | 在 agent 进程内运行 `contributes.agentExtensions` 模块 | 显式确认；v1.1 仅限本地导入和开发插件 | 与 agent 自身工具同等权限；插件沙箱不适用（规格 16） |
-| `provider.register` | 高 | `contributes.providers` 成为原生 Provider 列表中的行，归插件所有并在每次加载时按 manifest 刷新 | 显式确认；v1.1 仅限本地导入和开发插件，与 `agent.extension` 一致 | 用户路径拒绝该行（`PROVIDER_OWNED_BY_PLUGIN`）；凭据仍存放在 Host secret store 的常规 provider 引用下；暂不启用 `oauth` 声明 |
-| `net.fetch` | 高 | `net.fetch` | 默认拒绝 | 限定在 `manifest.net.domains` 之内；列表为空或非法即完全不放行出网（§2A） |
-| `net.websocket` | 高 | `pi.net.websocket.connect` / `send` / `close`（套接字由宿主持有；每个插件最多 4 个，帧封顶 1 MiB） | 默认拒绝 | 与 `net.fetch` 一样被限制在 `manifest.net.domains` 之内；被拒绝的主机永远到不了传输层，插件卸载、被禁用或崩溃时每个套接字都会被关闭 |
-| `shell.openExternal` | 中等 | 打开外部链接 | 首次使用时确认 | 防止网络钓鱼链接 |
-| `mcp.server.local` | 高 | 生成清单中声明的 `transport: "stdio"` MCP 服务器 | 默认拒绝 | 运行本地可执行文件；其工具到达代理 |
-| `mcp.server.remote` | 高 | 连接 `transport: "http"` MCP 服务器 | 默认拒绝 | 将工具参数发送到第三方端点；非回环 HTTP 不加密 |
-| `background.service` | 中等 | 启动 `contributes.services` 并保持插件进程常驻 | 安装时确认 | 受后退监督；在插件页面上可见 |
-| `bus.publish` | 中等 | `bus.publish` 声明的主题 | 安装时确认 | 其他插件可以对消息进行操作 |
-| `bus.subscribe` | 中等 | `bus.subscribe` 到声明的模式 | 安装时确认 | 可以观察另一个插件的消息 |
-| `browser.cdp` | 高 | 对宿主工作面板访客页调用 `pi.browser.*` | 安装时确认 | 访客页边界夹紧到调用插件视图；CDP 走白名单 |
-| `desktop.control` | 高 | `pi.desktop.listOperations`、`pi.desktop.invoke` | 安装时确认 | 与本地 MCP 控制平面共用同一份已审查的操作目录，但标记为 plugin-only 的操作例外：六个 `session/collaboration/*` 操作可以经由插件网关调用，却被刻意排除在 MCP 可见目录之外，且没有渲染器变更通道；`dangerous` 操作需要插件传 `confirm: true` **并且**用户在宿主拥有的原生对话框中作答，对话框点名目录中的操作；MCP bearer token 和 Electron 通道名永不暴露 |
-| `ui.microphone` | 中等 | 在插件的隔离面板内调用 `navigator.mediaDevices.getUserMedia({ audio: true })` | 安装时确认 | 仅音频；摄像头和其他所有设备权限仍被拒绝；插件拿不到原生句柄或宿主密钥 |
-| `audio.capture.background` | 高 | `pi.audio.getInputDevices`、`openInput`、`closeInput`、`getCaptureState`、`onInputFrame` / `offInputFrame`（已注册在插件 API 中并由该权限把关；两个同步注册辅助函数同步抛出带错误码的拒绝） | 默认拒绝 | 设备由宿主持有；只交换 PCM16 帧，没有设备句柄或 `MediaStream`。宿主目前还没有设备后端，所以获得授权的调用会以带错误码的 `UNSUPPORTED` 拒绝并记入审计；不会打开任何设备 |
-| `audio.playback.background` | 中等 | `pi.audio.openOutput`、`writeOutput`、`stopOutput`、`closeOutput`（已注册在插件 API 中并由该权限把关） | 安装时确认 | 播放队列由宿主持有，仅 PCM16。宿主目前还没有设备后端，所以获得授权的调用会以带错误码的 `UNSUPPORTED` 拒绝并记入审计；不会打开任何设备 |
-| `keyboard.globalShortcut` | 中等 | `pi.keyboard.registerGlobalShortcut`、`unregisterGlobalShortcut`、`listGlobalShortcuts`；`contributes.globalShortcuts` | 安装时确认 | 宿主持有 Electron 的 `globalShortcut`；快捷键只能运行插件自己的命令；冲突会被拒绝（`SHORTCUT_CONFLICT` / `SHORTCUT_UNAVAILABLE` / `INVALID_ACCELERATOR` / `LIMIT_EXCEEDED`，每个插件最多 8 条）；卸载、禁用或崩溃时释放 |
-| `models.list` | 中等 | `pi.models.list` | 安装时确认 | 仅已就绪的 provider/model 行；不含密钥 |
-| `project.create` | 高 | `pi.project.create` 及会话导入中的显式 `projectId` | 安装时确认 | 创建或复用持久项目记录但不激活工作区；只有显式传入 id 的导入会绑定项目 |
-| `session.read` | 高 | `pi.session.getLlmContext` | 安装时确认 | 仅限进行中的工具会话；带 compaction 的投影（D019 / D336） |
-| `session.import` | 高 | `pi.session.import`、`pi.session.importBatch` | 安装时确认 | 只能导入插件声明来源；有大小和频率限制 |
-| `session.read.own` | 中等 | `pi.session.list`、`pi.session.get`、`pi.session.listMessages` | 安装时确认 | 只能读取本插件导入的会话；不能跨插件访问 |
-| `session.update.own` | 中等 | `pi.session.rename` | 安装时确认 | 只能重命名本插件拥有的活动导入会话 |
-| `session.delete.own` | 高 | `pi.session.delete` | 安装时确认 | 只能回收或清除本插件导入的会话；有频率限制 |
-| `usage.read` | 中等 | `pi.usage.listTurns` | 安装时确认 | 已完成 turn 事实行的只读列举（每回合 token 计数与标识符，keyset 分页）；不含消息正文，无写路径 |
-| `agent.complete` | 高 | `pi.agent.complete` | 安装时确认 | 宿主代发一次性补全；消耗用户额度；`includeSessionContext` 还需要 `session.read` |
-| `speech.adapter.register` | 高 | `pi.speech.registerAdapter` / `unregisterAdapter` | 安装时确认 | 注册语音协议。handle 留在插件进程；HTTP 计划由宿主用绑定密钥代发且必须同 origin |
+| `ui.panel` | low | Open the plugin panel | Granted at install | Needed by almost all UI plugins |
+| `ui.view` | low | `contributes.views` are listed in the work panel and may be opened | Granted at install | Same isolation as a panel window: sandboxed page, per-plugin partition, `net.domains` egress. Filtered by activation scope |
+| `ui.theme` | low | `contributes.themes` CSS is loaded and offered in Settings; runtime `pi.themes.upsert` / `remove` / `list` and `pi.app.setTheme` (ADR 0260) | Granted at install | CSS is sanitized by the host; it cannot script. Declared `assets` are served over the host's read-only `plugin-asset:` scheme. `setTheme` may only select a built-in preference or a currently registered plugin theme. There is no per-plugin theme count cap |
+| `ui.window.appearance` | low | `contributes.windowAppearance` sets the native window background while one of the plugin's themes is selected | Granted at install | `#rrggbb` / `#rrggbbaa` only; applied per resolved palette and back to the host default once the theme is gone. macOS keeps vibrancy |
+| `clipboard.read` | medium | `clipboard.readText`, `clipboard.getHistory` | Confirm on first use | May read sensitive information and retained clipboard history |
+| `clipboard.write` | medium | `clipboard.writeText` | Confirm on first use | Prevents clipboard pollution |
+| `notify` | low | `ui.notify`, `ui.getNotificationPermission`, `ui.requestNotificationPermission`, `ui.showNativeNotification` | Can be granted by default | Native delivery is OS-controlled; avoid notification-spam abuse |
+| `fs.read` | medium | `fs.readText` / `fs.stat` / `fs.readRange` / `fs.readPreview` / `fs.openDefault` / `fs.reveal` / `fs.glob` / `fs.list` / `fs.requestDirectory` / dropped-file grant | Granted at install, bounded by `manifest.fs.read` | `fs.stat` and `fs.readRange` share the read gate; a dropped-file grant is one-file, read-only, memory-only, and gesture-bound; all file calls remain root- and deny-list-checked |
+| `fs.write` | high | `fs.writeText` | Granted at install, bounded by `manifest.fs.write` | Scope is required; a whole-tree pattern fails validation. Out of scope asks the user |
+| `fs.delete` | high | `fs.remove` | Granted at install, bounded by `manifest.fs.delete` | Two tiers (`own` / `scope`), always via the OS trash, non-recursive, rate-braked (§2B) |
+| `fs.read.workspace` | medium | — | Downgraded on load to `fs.read` with a whole-tree scope | Legacy name; predates scopes |
+| `fs.write.workspace` | high | — | Downgraded on load to `fs.write` with **no** scope | Legacy name; every write asks the user until the manifest declares scope |
+| `fs.delete.workspace` | high | — | Downgraded on load to `fs.delete` with `own: true` | Legacy name; only the plugin's own output goes without asking |
+| `agent.tool.register` | high | Register an agent tool | Confirm at install | Tool execution is audited separately |
+| `agent.prompt.inject` | high | Inject a system prompt; activates `contributes.skills` | Deny by default / strong confirmation | Easily leads to behavior hijacking |
+| `agent.extension` | high | Run `contributes.agentExtensions` modules inside the agent process | Explicit confirmation; local imports and development plugins only in v1.1 | Same access as the agent's own tools; the plugin sandbox does not apply (spec 16) |
+| `provider.register` | high | `contributes.providers` become rows in the native provider list, owned by the plugin and refreshed from the manifest on load | Explicit confirmation; local imports and development plugins only in v1.1, matching `agent.extension` | The user path refuses the row (`PROVIDER_OWNED_BY_PLUGIN`); credentials stay in the Host secret store under the usual provider refs; `oauth` declarations are not enabled yet |
+| `net.fetch` | high | `net.fetch` | Deny by default | Confined to `manifest.net.domains`; an empty or malformed list means no egress (§2A) |
+| `net.websocket` | high | `pi.net.websocket.connect` / `send` / `close` (host-owned sockets; at most 4 per plugin, 1 MiB frames) | Deny by default | Confined to `manifest.net.domains` like `net.fetch`; a refused host never reaches the transport, and every socket is closed when the plugin unloads, is disabled, or crashes |
+| `shell.openExternal` | medium | Open external link | Confirm on first use | Prevents phishing links |
+| `mcp.server.local` | high | Spawn a `transport: "stdio"` MCP server declared in the manifest | Deny by default | Runs a local executable; its tools reach the agent |
+| `mcp.server.remote` | high | Connect a `transport: "http"` MCP server | Deny by default | Sends tool arguments to a third-party endpoint; non-loopback HTTP is unencrypted |
+| `background.service` | medium | Start `contributes.services` and keep the plugin process resident | Confirm at install | Supervised with backoff; visible on the Plugins page |
+| `bus.publish` | medium | `bus.publish` to declared topics | Confirm at install | Other plugins can act on the message |
+| `bus.subscribe` | medium | `bus.subscribe` to declared patterns | Confirm at install | Can observe another plugin's messages |
+| `browser.cdp` | high | `pi.browser.*` against the host work-panel guest | Confirm at install | Guest bounds are clamped to the calling plugin view; CDP is allowlisted |
+| `desktop.control` | high | `pi.desktop.listOperations`, `pi.desktop.invoke`, including the reviewed `session/collaboration/*` operations | Confirm at install | Shared with the local MCP control plane's reviewed operation catalog, except for operations marked plugin-only: the six `session/collaboration/*` operations reach the plugin gateway but are deliberately absent from the MCP-visible catalog and have no renderer mutation channel; collaboration `spawn`/`send` additionally require an active plugin Agent tool invocation, whose source Session/turn/invocation identity is injected by the host; panel cancellation is limited to that plugin's own deliveries; a `dangerous` operation needs `confirm: true` from the plugin **and** the user's answer to a host-owned native dialog that names the catalog operation; the MCP bearer token and Electron channel names are never exposed |
+| `ui.microphone` | medium | `navigator.mediaDevices.getUserMedia({ audio: true })` inside the plugin's isolated panel | Confirm at install | Audio only; camera and every other device permission stay denied; no native handle or host secret reaches the plugin |
+| `audio.capture.background` | high | `pi.audio.getInputDevices`, `openInput`, `closeInput`, `getCaptureState`, `onInputFrame` / `offInputFrame` (registered in the plugin API and gated by this permission; the two synchronous registration helpers throw the coded refusal) | Deny by default | Host owns the device; PCM16 frames only, no device handle or `MediaStream`. The host has no device backend yet, so an authorized call is refused with a coded `UNSUPPORTED` (audited); no device is opened |
+| `audio.playback.background` | medium | `pi.audio.openOutput`, `writeOutput`, `stopOutput`, `closeOutput` (registered in the plugin API and gated by this permission) | Confirm at install | Host-owned playback queue, PCM16 only. The host has no device backend yet, so an authorized call is refused with a coded `UNSUPPORTED` (audited); no device is opened |
+| `keyboard.globalShortcut` | medium | `pi.keyboard.registerGlobalShortcut`, `unregisterGlobalShortcut`, `listGlobalShortcuts`; `contributes.globalShortcuts` | Confirm at install | Host owns Electron `globalShortcut`; a shortcut only runs the plugin's own command; conflicts are refused (`SHORTCUT_CONFLICT` / `SHORTCUT_UNAVAILABLE` / `INVALID_ACCELERATOR` / `LIMIT_EXCEEDED`, max 8 per plugin); released on unload/disable/crash |
+| `models.list` | medium | `pi.models.list` | Confirm at install | Ready provider/model rows only; no secrets |
+| `project.create` | high | `pi.project.create` and explicit `projectId` on session import | Confirm at install | Creates or reuses a durable project row without activating the workspace; imported sessions remain unbound unless the id is supplied |
+| `session.read` | high | `pi.session.getLlmContext` | Confirm at install | In-flight tool session only; compaction-aware projection (D019 / D336) |
+| `session.import` | high | `pi.session.import`, `pi.session.importBatch` | Confirm at install | Imports only into the calling plugin's declared session sources; bounded and rate-limited |
+| `session.read.own` | medium | `pi.session.list`, `pi.session.get`, `pi.session.listMessages` | Confirm at install | Reads only sessions imported by the calling plugin; no cross-plugin access |
+| `session.update.own` | medium | `pi.session.rename` | Confirm at install | Renames only the calling plugin's active imported sessions |
+| `session.delete.own` | high | `pi.session.delete` | Confirm at install | Trash/purge only the calling plugin's imported sessions; rate-limited |
+| `usage.read` | medium | `pi.usage.listTurns` | Confirm at install | Read-only listing of completed-turn facts (per-turn token counters and identifiers, keyset-paginated); no message body and no write path |
+| `agent.complete` | high | `pi.agent.complete` | Confirm at install | Host-owned one-shot; spends user quota; `includeSessionContext` also needs `session.read` |
+| `speech.adapter.register` | high | `pi.speech.registerAdapter` / `unregisterAdapter` | Confirm at install | Registers a speech protocol. Handles stay in the guest; HTTP plans are executed by the host with the bound provider key and must stay on that origin. Built-in protocol ids are reserved |
 
-## 2A. 权限是开关，manifest 承载范围
+## 2A. A permission is the switch; the manifest carries the range
 
-有两种能力光靠一个权限名说不清楚：名字负责回答「插件能不能做」，
-manifest 里的字段负责回答「能做到多远」。两个字段都由主机强制执行、
-在权限旁展示给用户，并在安装时校验。
+Two capabilities are too coarse to be answered by a name alone, so the name says
+whether the plugin may act and a manifest field says how far. Both fields are
+enforced by the host, shown to the user next to the permissions, and validated at
+install time.
 
-| 字段 | 限定的范围 | 缺失或为空时 |
+| Field | Bounds | Absent or empty means |
 |---|---|---|
-| `net.domains` | 主机掌握的每一条出网路径：面板 session、`pi.net.fetch`、远程 HTTP MCP 端点 | 完全不放行出网，无论 `net.fetch` 是否声明 |
-| `fs.read` / `fs.write` / `fs.delete` | 该文件模式可以触碰哪些路径 | 没有常驻可达范围；每次访问都落到确认弹窗 |
+| `net.domains` | Every host-owned egress path: the panel session, `pi.net.fetch`, remote HTTP MCP endpoints | No egress at all, whatever `net.fetch` says |
+| `fs.read` / `fs.write` / `fs.delete` | Which paths that file mode may touch | No standing reach; every access falls to a confirmation |
 
-字段缺失时一律 fail closed，这正是它们可以省略的原因：manifest 什么都不说，
-就什么都不授予。参见
-[04-plugin-security.md](/spec/07-plugins/04-plugin-security) §6 与 §8.1，以及 ADR 0088。
+Failing closed on an absent field is what makes the two safe to omit: a
+manifest that says nothing grants nothing. See
+[04-plugin-security.md](04-plugin-security.md) §6 and §8.1, and ADR 0088.
 
-两者还互相牵连。`fs.read` 之所以可以声明整棵树，是因为读取只有在字节能离开时
-才变成泄露，而 `net.domains` 已经把这一半关上了。`fs.write` 和 `fs.delete`
-本身就有破坏性，所以整棵树的模式（`**`、`**/*`、`*/**`、`./*`）在这两种模式下
-无法通过清单校验。
+The two are also linked. `fs.read` may declare the whole tree because a read
+only becomes a leak when the bytes can leave, and `net.domains` closes that
+half. `fs.write` and `fs.delete` are dangerous on their own, so a whole-tree
+pattern (`**`, `**/*`, `*/**`, `./*`) fails manifest validation for those modes.
 
-## 2B. 删除
+## 2B. Deletion
 
-`fs.delete` 是唯一一种「重跑一遍插件也补不回来」的文件操作，因此比其他模式多三道约束：
+`fs.delete` is the one file mode whose damage is not undoable by re-running the
+plugin, so it carries three bounds the other modes do not:
 
-1. **两档。** `own: true` 允许插件删除自己写过的文件 —— 主机在插件数据目录里
-   维护一份写入台账 —— 无需范围、无需弹窗；用户之后改过的文件会掉出台账。
-   删别的东西必须声明 `scope`，范围之外要问用户。
-2. **系统回收站。** 删除走 `shell.trashItem`，不走 `rm`，并且永不递归：
-   非空目录直接拒绝而不是清空。主机不为此保留用户数据的任何副本。
-3. **速率刹车。** 每个插件每滚动 60 秒 50 次删除。超过之后问用户一次，
-   理由写的是速率而不是路径 —— 因为 `recursive: false` 只能约束单次调用，
-   约束不了 `glob` 加一个循环。
+1. **Two tiers.** `own: true` lets a plugin remove files it wrote itself — the
+   host keeps a write ledger in the plugin's data directory — with no scope and
+   no prompt; a file the user has modified since drops out of the ledger.
+   Deleting anything else needs a declared `scope`, and out-of-scope paths ask
+   the user.
+2. **The OS trash.** Removal goes through `shell.trashItem`, never `rm`, and
+   never recursively: a non-empty directory is refused rather than emptied. The
+   host keeps no copy of the user's data to provide this.
+3. **A rate brake.** 50 deletes per rolling 60s per plugin. Past it the user is
+   asked once with the reason given as rate rather than path, because
+   `recursive: false` bounds one call and not a `glob` plus a loop.
 
-## 3. 权限依赖
+## 3. Permission dependencies
 
-- 加载面板条目需要 `ui.panel`
-- 贡献工作面板视图需要 `ui.view`；它与 `ui.panel` 相互独立，
-  因此插件可以只提供停靠视图而没有独立窗口
-- 需要`agent.tool.register`来贡献agent工具
-- 当 `fs.write` 存在时，建议同时声明 `fs.read`
-- `manifest.fs.<mode>` 需要对应的 `fs.<mode>` 权限；没人能用的范围会导致校验失败，
-  而不是被悄悄忽略
-- `fs.requestDirectory`（`userSelected` root）由 `fs.read` 把关；在用户选中的目录里
-  写入或删除仍然需要 `fs.write` / `fs.delete`
-- 缺少权限的贡献未通过清单验证
-  （`themes`、`mcpServers`、`services`、`bus`）； `skills` 是例外，并且是
-  相反，在加载时跳过（参见
-  [02-plugin-manifest-schema.md](/spec/07-plugins/02-plugin-manifest-schema) §7)
-- 生命周期与状态事件不需要权限：`workspace:changed`、`session:modelChanged`、
-  `session:turnEnded` 和 `plugin:settingsChanged` 走既有的插件事件通道，
-  订阅未知的事件名也不会报错
+- `ui.panel` is required to load a panel entry
+- `ui.view` is required to contribute work panel views; it is independent of
+  `ui.panel`, so a plugin may ship docked views without a detached window
+- `agent.tool.register` is required to contribute agentTools
+- When `fs.write` is present, it is recommended to also declare `fs.read`
+- `manifest.fs.<mode>` requires the matching `fs.<mode>` permission; a scope
+  nobody can use fails validation rather than being silently ignored
+- `fs.requestDirectory` (the `userSelected` root) is gated on `fs.read`; writing
+  or deleting inside the chosen directory still needs `fs.write` / `fs.delete`
+- A contribution whose permission is missing fails manifest validation
+  (`themes`, `mcpServers`, `services`, `bus`); `skills` is the exception and is
+  skipped at load time instead (see
+  [02-plugin-manifest-schema.md](02-plugin-manifest-schema.md) §7)
+- Lifecycle and state events need no permission: `workspace:changed`,
+  `session:modelChanged`, `session:turnEnded`, and `plugin:settingsChanged`
+  arrive on the existing plugin event channel, and subscribing to an unknown
+  event name does not error
 
-## 3A。 Plan 操作状态规则
+## 3A. Plan operating-state rule
 
-每个 `agentTools` 贡献都会在 Plan 中被拒绝，无论此矩阵的值如何
-风险或违约政策。 `agent.tool.register` 授权注册
-Agent，在 Plan 中不可见。主机返回 `PLUGIN_DISABLED_IN_PLAN`
-直接 Plan 调用并记录拒绝。仅插件工具符合资格
-在同一个 Agent 被批准进入 Agent 模式后。
+Every `agentTools` contribution is denied in Plan, regardless of this matrix's
+risk or default policy. `agent.tool.register` authorizes registration for
+Agent, not visibility in Plan. The host returns `PLUGIN_DISABLED_IN_PLAN` for a
+direct Plan call and records the denial. Plugin tools become eligible only
+after the same Agent is approved into Agent mode.
 
-## 4. 权限显示副本
+## 4. Permission display copy
 
-英文是主要副本。 zh-CN 列保存本地化的示例字符串。
-文件权限从不单独展示：声明的范围会渲染在它旁边，
-所以「修改它列出的文件」后面紧跟着那份清单。
+English is the primary copy. The zh-CN column holds the localized example strings.
+A file permission is never shown alone: the declared scope is rendered beside it,
+so "Modify the files it lists" is followed by the list.
 
-| 许可 | 英文副本 | zh-CN 示例 |
+| Permission | English copy | zh-CN example |
 |---|---|---|
 | `fs.read` | Read the files it lists | 读取它列出的文件 |
 | `clipboard.read` | Read the current clipboard and retained history | 读取当前剪贴板和保留的历史 |
 | `fs.write` | Modify the files it lists | 修改它列出的文件 |
 | `fs.delete` | Delete the files it lists, to the trash | 删除它列出的文件（进回收站） |
-| `notify` | 显示应用内和本机通知 | 显示应用内和系统通知 |
-| `agent.tool.register` | 为AI Agent提供可执行工具 | 向AI Agent提供可执行工具 |
-| `agent.prompt.inject` | 调整代理指令 | 调整智能体指令 |
-| `agent.extension` | 在 agent 内运行代码 | 在 agent 内运行代码 |
-| `net.fetch` | 访问网络 | 访问网络 |
-| `shell.openExternal` | 打开外部链接 | 打开外部链接 |
-| `ui.theme` | 提供一个主题 | 提供主题 |
+| `notify` | Show in-app and native notifications | 显示应用内和系统通知 |
+| `agent.tool.register` | Provide executable tools to the AI Agent | 向 AI Agent 提供可执行工具 |
+| `agent.prompt.inject` | Adjust agent instructions | 调整智能体指令 |
+| `agent.extension` | Run code inside the agent | 在 agent 内运行代码 |
+| `net.fetch` | Access the network | 访问网络 |
+| `shell.openExternal` | Open external links | 打开外部链接 |
+| `ui.theme` | Provide a theme | 提供主题 |
 | `ui.settings` | Add a sandboxed Settings entry in Extensions | 在“扩展”中添加沙盒设置项 |
-| `ui.window.appearance` | 设置窗口背景 | 设置窗口背景 |
-| `mcp.server.local` | 运行本地 MCP 服务器 | 运行本地 MCP 服务 |
-| `mcp.server.remote` | 到达远程 MCP 服务器 | 连接远端 MCP 服务 |
-| `background.service` | 保持后台服务运行 | 保持后台服务运行 |
-| `bus.publish` | 向其他插件发送消息 | 向其他插件发送消息 |
-| `bus.subscribe` | 接收来自其他插件的消息 | 接收其他插件的消息 |
+| `ui.window.appearance` | Set the window background | 设置窗口背景 |
+| `mcp.server.local` | Run a local MCP server | 运行本地 MCP 服务 |
+| `mcp.server.remote` | Reach a remote MCP server | 连接远端 MCP 服务 |
+| `background.service` | Keep a background service running | 保持后台服务运行 |
+| `bus.publish` | Send messages to other plugins | 向其他插件发送消息 |
+| `bus.subscribe` | Receive messages from other plugins | 接收其他插件的消息 |
 | `browser.cdp` | Control the work-panel browser | 控制工作面板浏览器 |
 | `models.list` | List authenticated models | 列出已登录的模型 |
 | `session.read` | Read the current conversation sent to the model | 读取当前发给模型的对话 |
@@ -151,15 +157,15 @@ Agent，在 Plan 中不可见。主机返回 `PLUGIN_DISABLED_IN_PLAN`
 | `keyboard.globalShortcut` | Register system-wide shortcuts | 注册系统级快捷键 |
 | `net.websocket` | Open real-time connections | 建立实时双向连接 |
 
-## 5. 添加升级权限
+## 5. Adding permissions on upgrade
 
-如果升级时出现新权限：
+If new permissions appear on upgrade:
 
-1. 计算差异
-2.强制用户确认
-3. 如果没有确认，请取消升级或禁用新功能（建议取消升级）
+1. Compute the diff
+2. Force user confirmation
+3. If not confirmed, cancel the upgrade or disable the new capabilities (canceling the upgrade is recommended)
 
-## 6. 运行时检查伪代码
+## 6. Runtime check pseudocode
 
 ```ts
 assertPermission(pluginId, perm) {
@@ -167,29 +173,33 @@ assertPermission(pluginId, perm) {
 }
 ```
 
-每个主机 API 入口点必须首先置位。文件类入口点之后还要再过三道门，
-顺序固定 —— 后面的门只能拒绝，永远不能放宽：
+Every Host API entry point must assert first. A file entry point then passes
+three more gates, in this order — a later gate can only refuse, never widen:
 
 ```ts
 assertFsAccess(pluginId, mode, requestedPath, sessionId) {
- assertPermission(pluginId, `fs.${mode}`)              // 已声明且已授予
+ assertPermission(pluginId, `fs.${mode}`)              // declared AND granted
  full = realpathWithinRoot(root(pluginId, mode, sessionId), requestedPath)
- if (!full) throw NOT_FOUND | INVALID_ARGUMENT         // 先解析软链
+ if (!full) throw NOT_FOUND | INVALID_ARGUMENT         // symlinks resolved first
  if (isDenied(full) || isHostReserved(full)) throw ERROR_PERMISSION_DENIED
  if (!inScope(full, declaredScope(pluginId, mode))) await confirmWithUser(...)
 }
 ```
-`workspace` 根是调用该调用的工具会话所属的项目，面板调用没有工具会话，回退到可见工作区（ADR 0266）。
+The `workspace` root is the invoking tool session's project, falling back to the
+visible workspace for a panel call (ADR 0266).
 
-## 7. 验收
+## 7. Acceptance
 
-1. 未经授权的API调用失败
-2. 权限副本在安装 UI 中可见，且文件权限会同时显示它声明的范围
-3.添加权限提示用户的升级
-4. 声明范围之外的写入或删除会弹窗，拒绝会以 `PERMISSION_DENIED` 记入审计
-5. 在整棵树的读取范围下，`.env` 与 `.git/**` 仍然不可读，也不会出现在
-   `fs.glob` 的结果里
-6. root 之内指向外部的软链不能把访问带出去
-7. 删除进系统回收站、拒绝非空目录，并在滚动一分钟内超过 50 次后被打断
-8. 只声明旧权限名 `fs.*.workspace` 的插件会失去写入与删除的可达范围，
-   插件页面会把这件事说出来
+1. Unauthorized API calls fail
+2. Permission copy is visible in the install UI, and a file permission shows its
+   declared scope alongside
+3. Upgrades that add permissions prompt the user
+4. A write or delete outside the declared scope prompts, and a denial is audited
+   as `PERMISSION_DENIED`
+5. `.env` and `.git/**` stay unreadable under a whole-tree read scope, and do not
+   appear in `fs.glob` results either
+6. A symlink inside the root pointing outside it does not carry an access out
+7. A delete lands in the OS trash, refuses a non-empty directory, and is
+   interrupted past 50 removals in a rolling minute
+8. A plugin declaring only the legacy `fs.*.workspace` names loses write and
+   delete reach, and the Plugins page says so

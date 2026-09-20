@@ -1,103 +1,117 @@
-# ADR 0121: Composer 提示词增强保持一次性执行并由主进程持有
+# ADR 0121: Keep Composer prompt enhancement one-shot and main-owned
 
 - Status: Accepted
 - Date: 2026-08-24
 - Updated: 2026-09-20 (one Prompt enhancement card on Settings → AI)
 - Related: Issue #14, Issue #562
 
-## 背景
+## Context
 
-Composer 需要一种方便的方式来改进草稿，而不发送消息、不改变会话
-transcript、也不向渲染进程暴露 provider 凭据。该功能还需要遵循
-Composer 中显示的模型，同时在该选择于请求进行中发生变化时保持
-安全。
+The Composer needs a convenient way to improve a draft without sending a
+message, changing the conversation transcript, or exposing provider
+credentials to the renderer. The feature also needs to honor the model shown
+in the Composer while remaining safe when that selection changes during an
+in-flight request.
 
-第一个版本搭载了一个固定的系统提示词加上一条 `Draft:\n<draft>`
-用户消息。用户认为改写效果偏弱，要求提示词本身可调，并要求能在
-比会话所用模型更便宜或更强的模型上运行改写。
+The first version shipped one fixed system prompt plus a `Draft:\n<draft>`
+user message. Users found the rewrite weak, asked for the prompt itself to be
+adjustable, and asked to run the rewrite on a cheaper or stronger model than the
+conversation's.
 
-## 决策
+## Decision
 
-提示词增强是一个白名单化的渲染进程到 Electron 的 IPC 操作。渲染
-进程发送草稿以及 provider/model/thinking 快照。Electron 主进程校验
-草稿，通过既有的运行时启动解析器解析出有效的 provider 和凭据，并
-直接调用 agent-runtime 执行单次补全。该补全没有会话历史、工具、
-附件、持久化轮次或 transcript 副作用。
+Prompt enhancement is an allowlisted renderer-to-Electron IPC operation. The
+renderer sends the draft and a provider/model/thinking snapshot. Electron main
+validates the draft, resolves the effective provider and credentials through
+the existing runtime launch resolver, and calls agent-runtime directly for a
+single completion. The completion has no session history, tools, attachments,
+durable turn, or transcript side effect.
 
-补全上下文是一个内置系统提示词加上一条由用户模板构建的用户消息，
-模板中的 `{{draft}}` 占位符会被替换为草稿。用户模板可通过
-`AppSettings.promptEnhancementUserTemplate` 覆盖，其默认值位于
-`packages/shared/src/prompt-enhancement.ts`，使运行时、设置 UI 和
-"恢复默认"操作读取同一份拷贝。
-`AppSettings.promptEnhancementCustomTemplate` 决定存储的模板是否
-生效。该开关仅在存在可用模板时才能启用，因此它无法在两个完全相同
-的状态之间选择，并且保存模板会将其打开。关闭开关会保留文本，因此
-重新打开时会恢复该文本；空白或不可用的模板则解析为默认值。
-host-core 在持久化覆盖值之前会校验它：它必须是长度在
-`PROMPT_ENHANCEMENT_TEMPLATE_MAX_LENGTH` 以内的字符串并包含草稿
-变量；存储的系统提示词覆盖会被丢弃。渲染进程会替换占位符的所有
-出现位置，并从模型的回答中剥除一对匹配的外层引号。
+The completion context is a built-in system prompt plus one user message built
+from a user template whose `{{draft}}` placeholder receives the draft. The user
+template is overridable through `AppSettings.promptEnhancementUserTemplate`, and
+its default lives in `packages/shared/src/prompt-enhancement.ts` so the runtime,
+the settings UI, and the restore-default action read one copy.
+`AppSettings.promptEnhancementCustomTemplate` gates whether the stored template
+applies. The switch is enabled only when a usable template exists, so it cannot
+choose between two identical states, and saving a template turns it on. Turning
+it off keeps the text so turning it back on restores it, and a blank or unusable
+template resolves to the default. host-core validates the override before it persists:
+it must be a string within `PROMPT_ENHANCEMENT_TEMPLATE_MAX_LENGTH` and carry the
+draft variable, and a stored system-prompt override is dropped. The renderer
+substitutes every occurrence of the placeholder and strips one matching pair of
+wrapping quotation marks from the model's answer.
 
-系统提示词被刻意设为不可覆盖，只能在源码中编辑。它承载了该功能
-验证所依据的改写契约——专有名词保留、跟随语言且不带元注释、长度
-刹车以及输出契约——因此用户可编辑的拷贝会让一个存储值悄悄丢弃
-E2E 场景所断言的规则。
+The system prompt is deliberately not overridable, and it is edited only in
+source. It carries the rewrite contract the feature is verified against —
+proper-noun preservation, language following without meta notes, the length
+brake, and the output contract — so a user-editable copy would let a stored
+value silently drop a rule the E2E scenario asserts.
 
-增强带有自己的推理级别，通过
-`AppSettings.promptEnhancementThinkingLevel` 配置，默认为 `off`，
-并且绝不继承会话的 effort：改写很少从推理中受益，而推理是慢路径。
-该行只列出所选模型支持的级别，当集合为空时仍显示
-`Off (no reasoning)`，并完全按照轮次的方式解析这些级别（先看绑定，
-再看目录，再看 provider 默认值）。所选级别会被该阶梯钳制，切换模型
-时会重新钳制已存储的值。一次请求以 60 秒上限为界：到期会（尽力地）
-中止进行中的调用并与 promise 竞争，使渲染进程被释放，然后以
-`TIMEOUT` 失败，而不是在会话模型上重试。
+The enhancement carries its own reasoning level through
+`AppSettings.promptEnhancementThinkingLevel`, defaulting to `off`, and never
+inherits the conversation's effort: a rewrite rarely benefits from reasoning and
+reasoning is the slow path. The row lists only the levels the selected model
+supports and still shows `Off (no reasoning)` when that set is empty, resolving
+them exactly as a turn does (binding, then catalog, then provider default). The
+chosen level is clamped by that ladder, and switching model re-clamps the stored
+value. One request is bounded by a 60-second ceiling: expiry aborts the
+in-flight call (best-effort) and races the promise so the renderer is released,
+then fails with `TIMEOUT` rather than retrying on the session model.
 
-增强模型及其推理级别与模板配置在同一个 Settings → AI 提示词增强
-卡片上，作为自定义模板开关下方的行。增强模型跟随 Composer 当前的
-模型，除非 `promptEnhancementProviderId` / `promptEnhancementModelId`
-固定了另一个。一个其 provider 已禁用、账户已登出或绑定已不存在的
-固定值是无法兑现的偏好而不是失败：主进程回退到 Composer 模型并
-记录警告。
+The enhancement model and its reasoning level are configured on the same
+Settings → AI Prompt enhancement card as the template, as rows below the
+custom-template switch. The enhancement
+model follows the Composer's current model unless
+`promptEnhancementProviderId` / `promptEnhancementModelId` pin another. A pin
+whose provider is disabled, whose account is signed out, or whose binding no
+longer exists is a preference that cannot be honoured rather than a failure:
+main falls back to the Composer model and logs a warning.
 
-渲染进程持有交互状态：加载中、一级撤销、可关闭的分类错误，以及
-丢弃迟到结果的编辑代数守卫。主进程仍然是 API 密钥和厂商 OAuth
-解析的唯一持有者。provider 失败复用既有的分类和有界的安装重试
-行为；纯空白输出是一个专用的终态错误。
+The renderer owns the interaction state: loading, one-level undo, dismissible
+classified errors, and an edit-generation guard that discards late results.
+The main process remains the only owner of API keys and vendor OAuth
+resolution. Provider failures reuse the existing classification and bounded
+setup retry behavior; whitespace-only output is a dedicated terminal error.
 
-## 后果
+## Consequences
 
-- 草稿改进快速且可逆，不会创建隐藏消息或 agent 运行。
-- provider/model 快照使请求相对于可见选择器具有确定性，而主进程
-  侧的回退使过期或不完整的快照保持安全。
-- 渲染进程只接收文本和分类后的错误数据，绝不接收密钥。
-- 可覆盖的用户模板让用户无需新增 IPC 接口即可调整请求。代价是
-  用户模板可能丢失 `<draft>` 框架，这就是为什么缺失草稿变量时会
-  回退到默认值，而不是发送一条不含用户草稿的提示词。系统提示词
-  保持内置则限制了该代价：改写规则无法被编辑掉。
-- 从 `packages/shared` 共享默认值增加了一次跨边界读取。但只有在
-  这种安排下，设置页面显示的文本才是模型收到的文本，也是"恢复
-  默认"所恢复的文本。
-- 该功能有一个新的类型化 IPC 契约，其 UX 和 E2E 场景必须与运行时
-  行为保持同步。
+- Draft improvement is fast and reversible without creating hidden messages or
+  agent runs.
+- The provider/model snapshot makes the request deterministic relative to the
+  visible selector, while main-side fallback keeps stale or incomplete
+  snapshots safe.
+- The renderer receives only text and classified error data, never secrets.
+- The overridable user template lets a user tune the request without a new IPC
+  surface. The cost is that a user template can drop the `<draft>` framing,
+  which is why a missing draft variable falls back to the default rather than
+  sending a prompt without the user's draft. Keeping the system prompt built in
+  bounds that cost: the rewrite rules cannot be edited away.
+- Sharing the defaults from `packages/shared` adds a cross-boundary read. It is
+  the only arrangement in which the text the settings page shows is the text
+  the model receives, and the text "restore default" restores.
+- The feature has a new typed IPC contract and must keep its UX and E2E
+  scenarios synchronized with the runtime behavior.
 
-## 考虑过的替代方案
+## Alternatives considered
 
-- 复用 `agent/prompt`：否决，因为它会持久化一个用户轮次、使用会话
-  上下文，并启动正常的 agent 生命周期行为。
-- 在渲染进程中执行 provider 调用：否决，因为凭据和厂商 OAuth 绑定
-  是由主进程持有的安全材料。
-- 存储增强历史：v1 否决；一个精确的撤销快照已足够，并避免引入
-  持久化归属。
-- 把模板保留在 `agent-runtime` 中，并通过一个新的 IPC 方法把默认值
-  暴露给设置 UI：否决，因为这纯粹为了显示一个常量而增加协议接口，
-  并让显示的默认值与实际生效的值产生漂移。
-- 允许用户也覆盖系统提示词：否决，因为该文本是功能契约的一部分。
-  存储的覆盖可能移除专有名词规则或无元注释规则，而 spec 和 E2E
-  场景仍在断言它们，从而把一个受支持的配置变成静默的契约违规。
-- 当用户从未编辑过默认值时，把内置默认文本存为用户值：否决，因为
-  之后产品对默认值的改进将永远无法触达这些用户；空覆盖让他们保持
-  在当前默认值上。
-- 要求固定的增强模型必须可解析，否则失败：否决，因为过期的固定值
-  会在用户早已忘记该选择之后直接禁用该操作；带警告的回退让操作
-  保持可用。
+- Reuse `agent/prompt`: rejected because it persists a user turn, uses the
+  conversation context, and starts normal agent lifecycle behavior.
+- Run the provider call in the renderer: rejected because credentials and
+  vendor OAuth bindings are main-owned security material.
+- Store enhancement history: rejected for v1; one exact undo snapshot is
+  sufficient and avoids adding persistence ownership.
+- Keep the template in `agent-runtime` and expose the default to the settings
+  UI over a new IPC method: rejected because it adds a protocol surface purely
+  to display a constant, and lets the displayed default drift from the one in
+  force.
+- Let the user override the system prompt as well: rejected because that text is
+  part of the feature contract. A stored override could remove the proper-noun
+  rule or the no-meta-note rule while the spec and E2E scenario still assert
+  them, turning a supported configuration into a silent contract violation.
+- Store the built-in default text as the user's value when they never edited it:
+  rejected because a later product improvement to the defaults would then never
+  reach those users; an empty override keeps them on the current default.
+- Require the pinned enhancement model to resolve, failing otherwise: rejected
+  because a stale pin would disable the action outright, long after the user
+  forgot the choice; falling back with a warning keeps the action usable.

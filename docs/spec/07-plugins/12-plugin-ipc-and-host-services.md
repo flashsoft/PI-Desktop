@@ -1,10 +1,10 @@
-# 12. 插件 IPC 与宿主服务
+# 12. Plugin IPC and Host Services
 
-## 1. 目标
+## 1. Goals
 
-补全插件相关的宿主服务与 UI IPC，使实现不依赖临时约定。
+Complete the plugin-related host services and UI IPC so implementation does not rely on ad-hoc conventions.
 
-## 2. 主进程服务
+## 2. Main-process services
 
 ```text
 PluginManager
@@ -25,20 +25,21 @@ PluginManager
  └─ MarketClient
 ```
 
-## 3. UI IPC（新增）
+## 3. UI IPC (additions)
 
-### plugin 域
+### plugin domain
 - `plugin/list`
 - `plugin/detail`
-- `plugin/loadDev` —— 打开文件夹选择器，并把该文件夹*声明*的权限作为
-  一次权限评审返回；此时尚未注册任何内容
-- `plugin/loadDevConfirm` —— 对该评审的回答：把文件夹注册为开发插件，
-  并以已接受的权限加载它；这些权限成为此后每次热重载衡量所依据的上限
-- `plugin/reload` —— 解析已注册的插件路径，将 manifest 与记录的批准
-  对比；如果 manifest 现在要求更多权限，则返回一次评审，否则在
-  Electron main 中直接重载
-- `plugin/reloadConfirm` —— 对该评审的回答：按已接受的权限重载，并刷新
-  开发插件的权限上限
+- `plugin/loadDev` — open the folder picker and return what the folder
+  *declares* as a permission review; nothing is registered yet
+- `plugin/loadDevConfirm` — the answer to that review: register the folder as a
+  development plugin and load it with the accepted permissions, which become
+  the ceiling every later hot reload is measured against
+- `plugin/reload` — resolve the registered plugin path, compare the manifest
+  against the recorded approval, and either reload in Electron main or return a
+  review when the manifest now asks for more
+- `plugin/reloadConfirm` — the answer to that review: reload under the accepted
+  permissions and refresh the development-plugin permission ceiling
 - `plugin/installFromPath` ✅
 - `plugin/installFromPackage` ✅
 - `plugin/enable`
@@ -53,78 +54,81 @@ PluginManager
 - `plugin/openInstallDir`
 - `plugin/openPanel`
 - `plugin/setAutoUpdate`
-- `plugin/themes` ✅ —— 每个已加载插件经净化的主题 CSS，供主题选择器
-  和注入的 `<style>` 元素使用
-- `plugin/services` ✅ —— 常驻服务状态（`starting` | `running` |
-  `stopped` | `failed`）加重启次数，供插件页面的标记使用
+- `plugin/themes` ✅ — every loaded plugin's sanitized theme CSS, for the theme
+  picker and the injected `<style>` element
+- `plugin/services` ✅ — resident service status (`starting` | `running` |
+  `stopped` | `failed`) plus the restart count, for the Plugins page chips
 
-### commandPalette 域
+### commandPalette domain
 - `commandPalette/search`
 - `commandPalette/execute`
 - `commandPalette/listRecent`
 
-### market 域（已实现）
+### market domain (implemented)
 - `market/search`
 - `market/getDetail`
 - `market/install`
 - `market/checkUpdates`
 - `market/applyUpdates`
-- `market/listProviders`（目前只有单一官方 provider）
+- `market/listProviders` (single official provider for now)
 
-## 4. 事件（main → renderer）
+## 4. Events (main → renderer)
 
-- `plugin/event/changed`（安装/启用变化）
+- `plugin/event/changed` (installed/enabled change)
 - `plugin/event/loadError`
 - `plugin/event/permissionRequired`
 - `market/event/updateAvailable`
 
-已交付的 `pluginChanged` 事件携带 `reason`，以便渲染器决定要重新获取
-什么：`install`、`loadDev`、`enable`、`disable`、`uninstall`、`crash`、
-`service`、`market.install`、`market.applyUpdates`、`themes`（运行时的
-`themes.upsert` / `themes.remove`）。`service` 在每次监督状态转换时
-触发，是其中开销最小的一种 —— 只有服务列表需要重新加载。
+The shipped `pluginChanged` event carries a `reason` so the renderer can decide
+what to refetch: `install`, `loadDev`, `enable`, `disable`, `uninstall`, `crash`,
+`service`, `market.install`, `market.applyUpdates`, `themes` (runtime
+`themes.upsert` / `themes.remove`). `service` fires on every
+supervision transition and is the cheapest of them — only the service list needs
+a reload.
 
-`settingsChanged`（`pi-desktop/app/event/settingsChanged`）在**宿主**
-于渲染器路径之外写入应用设置时携带一个设置补丁 —— 目前只有插件的
-`app.setTheme`（`{ theme }`）。渲染器把补丁合并进自己的 store，外壳
-随即绘制新的偏好。
+`settingsChanged` (`pi-desktop/app/event/settingsChanged`) carries a settings
+patch when the **host** writes app settings outside the renderer path — today
+only plugin `app.setTheme` (`{ theme }`). The renderer merges the patch into
+its store so the shell paints the new preference.
 
-Panel 桥接的固定通道还包括 `app.setTheme`、`themes.upsert`、
-`themes.remove` 与 `themes.list`（都要求 `ui.theme`）。
+Panel bridge fixed channels also include `app.setTheme`, `themes.upsert`,
+`themes.remove`, and `themes.list` (all require `ui.theme`).
 
-## 4.1 事件（host → 插件进程）
+## 4.1 Events (host → plugin process)
 
-broker 还会向插件的 `utilityProcess` 下发单向帧：
+The broker also pushes one-way frames down to a plugin's `utilityProcess`:
 
 ```text
 { t: "event", event: "bus.message", subscriptionId, message }
 ```
 
-没有回复帧，也没有背压：投递是 fire-and-forget，因此卡住的订阅者无法
-拖住发布者。子进程把消息分发给为 `subscriptionId` 注册的处理函数以及
-任何 `pi.events.on` 监听器；抛异常的处理函数只记录日志，绝不致命。
-正是这条通道最终让 `pi.events.on` / `off` 成为现实（见
-[03-plugin-api.md](03-plugin-api.md) §5）。
+There is no reply frame and no backpressure: delivery is fire-and-forget so a
+wedged subscriber cannot stall the publisher. The child dispatches to the handler
+registered for `subscriptionId` and to any `pi.events.on` listener; a throwing
+handler is logged, never fatal. This is the same channel that finally makes
+`pi.events.on` / `off` real (see
+[03-plugin-api.md](03-plugin-api.md) §5).
 
-## 5. ContributionRegistry 行为
+## 5. ContributionRegistry behavior
 
-### 注册
-- key 必须唯一
-- 插件命令共享前缀：`plugin.<pluginId>.<commandId>`
-- 插件工具前缀策略：`plugin_<pluginIdSafe>_<toolName>`（实现中固定）
+### Registration
+- key must be unique
+- Plugin commands share the prefix: `plugin.<pluginId>.<commandId>`
+- Plugin tool prefix policy: `plugin_<pluginIdSafe>_<toolName>` (fixed in the implementation)
 
-### 查询
-- 命令面板只查询已启用 + 加载成功的贡献
-- Agent 能看到已注册的工具；无论风险或授权状态如何，Plan 都收不到
-  插件工具
+### Query
+- The command palette only queries contributions that are enabled + loaded successfully
+- Agent sees registered tools; Plan receives no plugin tools regardless of risk
+  or grant state
 
-### 注销
-- 禁用/卸载/卸载加载时移除一切，包括停止常驻服务、断开 MCP 服务器、
-  丢弃总线订阅，以及把该插件的主题从选择器中移除
+### Deregistration
+- Remove everything on disable/unload/uninstall, including stopping resident
+  services, disconnecting MCP servers, dropping bus subscriptions, and removing
+  the plugin's themes from the picker
 
-## 6. RuntimeBroker 调用链
+## 6. RuntimeBroker call chain
 
-插件 API 调用：
+Plugin API call:
 
 ```text
 plugin runtime
@@ -135,119 +139,121 @@ plugin runtime
  → response
 ```
 
-### 6.1 实时能力的 allowlist 名称与审计操作
+### 6.1 Allowlist names and audit operations for the real-time capabilities
 
-broker 的 `HOST_API_ALLOWLIST` 增加了三个已实现的条目，全部以
-`keyboard.globalShortcut` 为门控：
+The broker's `HOST_API_ALLOWLIST` gains three implemented entries, all gated on
+`keyboard.globalShortcut`:
 
 - `keyboard.registerGlobalShortcut`
 - `keyboard.unregisterGlobalShortcut`
 - `keyboard.listGlobalShortcuts`
 
-它们的审计操作是 `keyboard.globalShortcut.register`、
-`keyboard.globalShortcut.unregister` 和 `keyboard.globalShortcut.trigger`
-（一次已触发的快捷键）。register 与 trigger 条目记录 accelerator 和
-command；绝不记录任何按键事件和输入文本。
+Their audit operations are `keyboard.globalShortcut.register`,
+`keyboard.globalShortcut.unregister`, and `keyboard.globalShortcut.trigger` (a
+shortcut that fired). Register and trigger entries record the accelerator and
+command; no key events and no input text are ever recorded.
 
-socket 能力已实现：`net.websocket.connect` / `net.websocket.send` /
-`net.websocket.close` 注册在同一个 allowlist 中，以 `net.websocket`
-为门控。其审计操作是 `net.websocket.connect` 与
-`net.websocket.close`（插件 id 和结果，绝不记录负载、头部或密钥），
-外加一次被拒绝的 `net.websocket.send`；成功的 send 不做审计。帧只以
-宿主事件 `net:websocket:open`、`net:websocket:message`、
-`net:websocket:close` 和 `net:websocket:error` 的形式回传给所属插件。
+The socket capability is implemented: `net.websocket.connect` /
+`net.websocket.send` / `net.websocket.close` are registered in the same
+allowlist, gated on `net.websocket`. Its audit operations are
+`net.websocket.connect` and `net.websocket.close` (plugin id and result, never
+payloads, headers, or keys), plus a refused `net.websocket.send`; a successful
+send is not audited. Frames travel back to the owning plugin only, as the host
+events `net:websocket:open`, `net:websocket:message`, `net:websocket:close`,
+and `net:websocket:error`.
 
-audio 名称注册在同一个 allowlist 中：`audio.getInputDevices`、
-`audio.openInput`、`audio.closeInput`、`audio.getCaptureState`、
-`audio.onInputFrame`、`audio.offInputFrame`、`audio.openOutput`、
-`audio.writeOutput`、`audio.stopOutput` 和 `audio.closeOutput`。
-权限门控先执行，因此未授权的调用与其他受门控 API 一样，在
-`audio.capture.background` / `audio.playback.background` 下以
-`PERMISSION_DENIED` 被拒绝。该宿主还没有设备后端，所以每个通过门控的
-调用都会被审计为一次 `UNSUPPORTED` 拒绝 ——
-`{ api: "audio.<method>", ok: false, errorCode: "UNSUPPORTED" }` ——
-并以该错误码拒绝；两个同步注册辅助函数
-`audio.onInputFrame` / `audio.offInputFrame` 会同步抛出该错误。为设备
-服务预留的审计操作名：`audio.input.open` / `audio.input.close`、
-`audio.output.open` / `audio.output.stop` / `audio.output.close`
-（ADR 0257）。
+The audio names are registered in the same allowlist:
+`audio.getInputDevices`, `audio.openInput`, `audio.closeInput`,
+`audio.getCaptureState`, `audio.onInputFrame`, `audio.offInputFrame`,
+`audio.openOutput`, `audio.writeOutput`, `audio.stopOutput`, and
+`audio.closeOutput`. The permission gate runs first, so an ungranted call is
+refused with `PERMISSION_DENIED` under `audio.capture.background` /
+`audio.playback.background`, exactly like any other gated API. This host has no
+device backend yet, so every call that passes the gate is audited as an
+`UNSUPPORTED` refusal — `{ api: "audio.<method>", ok: false, errorCode: "UNSUPPORTED" }` —
+and rejected with that code; the two synchronous registration helpers
+`audio.onInputFrame` / `audio.offInputFrame` throw it synchronously. Reserved
+audit-operation names for the device service: `audio.input.open` /
+`audio.input.close`, `audio.output.open` / `audio.output.stop` /
+`audio.output.close` (ADR 0257).
 
-## 7. PanelHost 交互
+## 7. PanelHost interaction
 
-- 打开面板时创建隔离视图
-- 传入 pluginId / 主题 token
-- 关闭时销毁视图与消息订阅。需要 `webContents` 身份的清理要在窗口
-  销毁前复制该 id；`closed` 处理函数不得在已销毁的窗口上读取
-  `webContents`，否则宿主会抛出未捕获的
-  `TypeError: Object has been destroyed`。
-- preload 暴露 `pluginBridge.getDroppedFilePath(file)`，但不向页面暴露
-  Node。面板可以携带该路径调用 `fs.registerDropped`；宿主一次性消费一
-  条与发送方绑定的最近拖放记录，并为 `fs.stat` / `fs.readRange` 发放一
-  次单文件读取授权。
+- Create an isolated view when opening a panel
+- Pass in pluginId / theme tokens
+- Destroy the view and message subscriptions on close. Cleanup that needs a
+  `webContents` identity copies that id before the window is destroyed; the
+  `closed` handler must not read `webContents` on a destroyed window, or the
+  host surfaces an uncaught `TypeError: Object has been destroyed`.
+- The preload exposes `pluginBridge.getDroppedFilePath(file)` without exposing
+  Node to the page. A panel may call `fs.registerDropped` with that path; the
+  host consumes a sender-bound recent drop record once and issues a one-file
+  read grant for `fs.stat` / `fs.readRange`.
 
-Panel 桥接的文件通道按如下方式做权限门控：
+Panel bridge file channels are permission-gated as follows:
 
-| 通道 | 所需权限 |
+| Channel | Required permission |
 |---|---|
-| `fs.readText`、`fs.stat`、`fs.readRange`、`fs.readPreview`、`fs.openDefault`、`fs.reveal`、`fs.glob`、`fs.list` | `fs.read` |
-| `fs.registerDropped` | `fs.read` 外加一次真实拖放手势 |
+| `fs.readText`, `fs.stat`, `fs.readRange`, `fs.readPreview`, `fs.openDefault`, `fs.reveal`, `fs.glob`, `fs.list` | `fs.read` |
+| `fs.registerDropped` | `fs.read` plus a real drop gesture |
 | `fs.writeText` | `fs.write` |
 
-## 8. 故障隔离
+## 8. Failure isolation
 
-- 插件 API 超时：返回 TIMEOUT
-- 运行时崩溃：标记 load_error，清理贡献
-- 面板崩溃：只关闭面板，不卸载插件（可提示重载）
+- Plugin API timeout: return TIMEOUT
+- runtime crash: mark load_error, clean up contributions
+- panel crash: only close the panel, do not unload the plugin (can prompt to reload)
 
-**已实现（2026-07-29，ADR 0008）：** broker 位于
-`electron/main/plugin-runtime.ts`，每个插件调用都是发往该插件自有
-`utilityProcess` 的请求。预算：load 15s、生命周期钩子 5s、command 30s、
-tool 110s（低于 host-core 的 120s 工具预算）。进程退出时，broker 以
-`PLUGIN_CRASHED` 拒绝未完成的调用，注销该插件的命令与工具，关闭其面板，
-写入一条 `plugin.crash` 审计记录，并向渲染器发出 toast 和
-`pluginChanged`。
+**Implemented (2026-07-29, ADR 0008):** the broker lives in
+`electron/main/plugin-runtime.ts` and every plugin call is a request to the
+plugin's own `utilityProcess`. Budgets: load 15s, lifecycle hook 5s, command 30s,
+tool 110s (under host-core's 120s tool budget). On process exit the broker
+rejects pending calls with `PLUGIN_CRASHED`, deregisters that plugin's commands
+and tools, closes its panel, writes a `plugin.crash` audit entry, and emits a
+toast plus `pluginChanged` to the renderer.
 
-## 9. 验收
+## 9. Acceptance
 
-1. 插件列表 IPC 可用
-2. 命令面板 IPC 可以执行插件命令
-3. 启动/停止触发贡献注册/注销
-4. 市场 IPC 在 mock provider 下端到端运行（后续里程碑）
+1. The plugin list IPC works
+2. The command palette IPC can execute plugin commands
+3. Start/stop triggers contribution registration/deregistration
+4. The market IPC runs end-to-end under a mock provider (later milestone)
 
-## 附录：agent-tool 分发协议（M5 已实现）
+## Appendix: agent-tool dispatch protocol (implemented M5)
 
-插件 agent 工具在桌面运行器（Electron main）中执行，而权限门控与结果
-信封留在 host-core：
+Plugin agent tools execute in the desktop runner (Electron main), while the
+permission gate and result envelope stay in host-core:
 
-1. 模型调用 `plugin_<pluginIdSafe>_<toolName>`；sidecar 像对待任何内置
-   工具一样把它转发给宿主的 `tools.execute`。
-2. host-core 先解析持久的运行模式。在 Agent 下走正常权限流程（风险、
-   会话授权、120s 超时），然后发出通知 `plugins.execute`
-   `{ executionId, sessionId, toolCallId, toolName, args, turnId }`。
-   `turnId` 是运行时回身份，原样转发，以便插件工具上下文可以与
-   `session:turnEnded` 事件匹配。
-3. Plan 调用在宿主策略步骤以 `PLUGIN_DISABLED_IN_PLAN` 失败；它们永远
-   不会到达 Electron 或插件运行时。Agent 调用继续，由 Electron main
-   执行已注册的插件工具 JS，并通过 RPC `plugins.resolveExecution`
-   `{ executionId, ok, content, errorCode? }` 作答。
-4. host-core 结算该挂起执行，并向 sidecar 返回标准的
-   `ToolsExecuteResult`。分发超时映射为 `TOOL_TIMEOUT`；未知/未加载的
-   工具映射为 `TOOL_NOT_FOUND`。
+1. Model calls `plugin_<pluginIdSafe>_<toolName>`; the sidecar forwards it
+   to host `tools.execute` like any built-in tool.
+2. host-core resolves the durable operating mode first. In Agent it runs the
+   normal permission flow (risk, session grants, 120s timeout), then emits
+   notification `plugins.execute`
+   `{ executionId, sessionId, toolCallId, toolName, args, turnId }`. `turnId` is
+   the runtime turn identity, forwarded unchanged so the plugin tool context can
+   be matched against the `session:turnEnded` event.
+3. Plan calls fail at the host policy step with `PLUGIN_DISABLED_IN_PLAN`; they
+   never reach Electron or the plugin runtime. Agent calls continue with
+   Electron main executing the registered plugin tool JS and answering via RPC
+   `plugins.resolveExecution` `{ executionId, ok, content, errorCode? }`.
+4. host-core resolves the pending execution and returns a standard
+   `ToolsExecuteResult` to the sidecar. Dispatch timeout maps to
+   `TOOL_TIMEOUT`; an unknown/unloaded tool maps to `TOOL_NOT_FOUND`.
 
-面向模型的注册表按 prompt 增加插件工具：main 把已注册的定义
-（`fullName`、描述、JSON-schema 参数）传给 `agent.prompt`，运行时将
-它们保存在延迟目录中，而不是把每个 schema 都序列化进第一个请求。模型
-通过本地 `ToolSearch` 工具加载匹配的插件工具；下一个回合收到选中的
-schema，然后使用上面同一条宿主权限/分发路径。由协议冒烟场景 E2E-024
-和运行时加载场景 E2E-008a 覆盖。
+The model-facing registry gains plugin tools per prompt: main passes registered
+defs (`fullName`, description, JSON-schema parameters) to `agent.prompt`, and
+the runtime keeps them in a deferred catalog instead of serializing every
+schema into the first request. The model loads a matching plugin tool through
+the local `ToolSearch` tool; the next turn receives the selected schema and
+then uses the same host permission/dispatch path above. Covered by protocol
+smoke scenario E2E-024 and the runtime-loading scenario E2E-008a.
 
-从插件的 MCP 服务器发现的工具以
-`plugin_<pluginIdSafe>_<serverId>_<toolName>` 进入同一个注册表，因此
-上面的步骤 1–4 不变；只有步骤 3 内部不同，改为转发给 MCP 客户端而不是
-插件 JS。
+Tools discovered from a plugin's MCP servers enter the same registry under
+`plugin_<pluginIdSafe>_<serverId>_<toolName>`, so steps 1–4 above are unchanged;
+only step 3 differs internally, forwarding to the MCP client instead of plugin JS.
 
-Skills 使用一条独立、更简单的路径。目录（id、name、description）是
-基础系统提示的一部分，`Skill` schema 本身也延迟在 `ToolSearch` 之后，
-其正文由一个由 Electron main 直接提供的本地 `Skill` 工具获取 ——
-sidecar 从不持有 skill 文本，skill 文档只在模型主动索要时才送达模型
-（D174/D185）。
+Skills use a separate, simpler path. The catalog (id, name, description) is part
+of the base system prompt, the `Skill` schema is itself deferred behind
+`ToolSearch`, and its body is fetched by a local `Skill` tool that Electron main
+serves directly — the sidecar never holds skill text, and a skill document
+reaches the model only when it asks for it (D174/D185).

@@ -1,105 +1,124 @@
-# ADR 0248 — 打包主题资源与贡献的窗口背景
+# ADR 0248 — Package theme assets and contributed window backgrounds
 
 - **Status**: Accepted for implementation
 - **Date**: 2026-09-14
 - **Related**: issue #334, issue #335, `07-plugins/04-plugin-security.md` §3.1, `07-plugins/02-plugin-manifest-schema.md` §4, `07-plugins/13-plugin-permissions-matrix.md`
 
-## 背景
+## Context
 
-贡献的主题（`ui.theme`）只能影响渲染进程的 CSS，而且只能在两堵墙之内，
-这使真正的主题化成为不可能：
+A contributed theme (`ui.theme`) could only affect the renderer's CSS, and only
+within two walls that made real theming impossible:
 
-1. **引用仅限 `data:`。** `sanitizeThemeCss` 拒绝任何不是 `data:` URI 的
-   `url()` 目标，样式表本身上限 256 KB。Base64 会增大约三分之一，因此
-   照片级背景完全无法表达：可用的原始内容不足约 190 KB。
-2. **原生窗口背景忽略插件主题。** 窗口以解析出的浅色/深色基色的宿主
-   调色板创建，因此一个带深色 #0d1424 底板的插件主题会闪现——并一直
-   保持——宿主的 `#181818`，而渲染进程在其中绘制主题自己的颜色。
+1. **References were `data:`-only.** `sanitizeThemeCss` refuses every `url()`
+   target that is not a `data:` URI, and the sheet itself is capped at 256 KB.
+   Base64 inflates by about a third, so a photographic background is not
+   expressible at all: the usable original is under ~190 KB.
+2. **The native window background ignored plugin themes.** The window is created
+   with the host palette for the resolved light/dark base, so a plugin theme
+   with a dark #0d1424 plate flashed — and kept — the host's `#181818`, while the
+   renderer painted the theme's own colours inside it.
 
-两堵墙都是刻意的。第一堵墙存在是因为插件编写 CSS 中的相对或远程
-`url()` 是一条渲染进程会自行解析的路径，没有宿主在环路中检查它。第二
-堵墙存在是因为只有内置主题 id 有可应用的背景色。
+Both walls were deliberate. The first existed because a relative or remote
+`url()` in plugin-authored CSS is a path the renderer would resolve on its own,
+with no host in the loop to check it. The second existed because only built-in
+theme ids had a background colour to apply.
 
-## 决策
+## Decision
 
-两个 opt-in 新增，缺席时均为惰性。
+Two opt-in additions, both inert when absent.
 
-### 1. `contributes.themes[].assets` 与 `plugin-asset:` 方案
+### 1. `contributes.themes[].assets` and the `plugin-asset:` scheme
 
-主题可以声明 `assets: string[]`——包内相对路径，其扩展名在白名单上
-（`png`、`jpg`、`jpeg`、`webp`、`avif`、`svg`、`woff2`），且总大小至多
-4 MB。该声明**不会**放宽样式表：校验仍拒绝任何引用的原始文本，而是把
-每个匹配已声明资源的 `url()` 重写为
-`plugin-asset://<pluginId>/<normalizedPath>`。其他一切保持现有的仅
-`data:` 规则。
+A theme may declare `assets: string[]` — package-relative paths whose extension
+is on a whitelist (`png`, `jpg`, `jpeg`, `webp`, `avif`, `svg`, `woff2`) and
+whose summed size is at most 4 MB. The declaration **does not** widen the sheet:
+validation still refuses the raw text of any reference, and instead rewrites
+each `url()` that matches a declared asset to
+`plugin-asset://<pluginId>/<normalizedPath>`. Everything else keeps the existing
+`data:`-only rule.
 
-该方案由宿主持有：
+The scheme is host-owned:
 
-- 在应用就绪之前注册为特权方案（`standard`、`secure`、`supportFetchAPI`、
-  `corsEnabled`、`stream`）。
-- 由主进程解析器处理，只从运行时的按插件资源映射应答——该映射在主题
-  注册时从存在于插件包内、不在 `node_modules` 之下、且符合预算的文件
-  填充。无人声明的路径一开始就没有 URL，卸载插件会清除其整个映射。
-- 以显式 MIME 类型、`nosniff` 和 `no-store` 提供。
-- 被渲染进程 CSP 的 `img-src` 和 `font-src` 接纳，并被插件面板出口策略
-  作为本地方案接纳（它是只读且包作用域的，因此不会放宽面板出口）。
+- Reserved as privileged (`standard`, `secure`, `supportFetchAPI`, `corsEnabled`,
+  `stream`) before the app is ready.
+- Handled by a main-process resolver that answers only from the runtime's
+  per-plugin asset map — populated at theme registration from files that exist
+  inside the plugin package, are not under `node_modules`, and fit the budget. A
+  path nobody declared has no URL to begin with, and unloading a plugin clears
+  its whole map.
+- Served with an explicit MIME type, `nosniff`, and `no-store`.
+- Admitted by the renderer CSP for `img-src` and `font-src`, and by the plugin
+  panel egress policy as a local scheme (it is read-only and package-scoped, so
+  it does not widen panel egress).
 
-权限：不变。读取插件已经随附的文件、通过只解析到该插件已声明列表的
-宿主方案，与 `ui.theme` 已经授予的能力相同。
+Permission: unchanged. Reading a file the plugin already ships, through a host
+scheme that resolves only to that plugin's declared list, is the same capability
+`ui.theme` already grants.
 
 ### 2. `contributes.windowAppearance.backgroundColor.{light,dark}`
 
-主题可以把原生窗口背景命名为 `#rrggbb` 或 `#rrggbbaa`，每个解析出的
-调色板一个槽位。它仅在该插件的某个主题是所选主题时应用，且仅针对渲染
-进程已解析的调色板——`system` 先解析为浅色或深色，与 `data-theme`
-完全一致。
+A theme may name the native window background as `#rrggbb` or `#rrggbbaa`, one
+slot per resolved palette. It is applied only while one of that plugin's themes
+is the selected theme, and only for the palette the renderer has resolved —
+`system` resolves to light or dark first, exactly as `data-theme` does.
 
-恢复是**派生的，而不是记忆的**。渲染进程在每次主题、插件和 OS 外观
-变化时，从持久化偏好和活跃主题目录重新计算颜色，并发送结果（或不发送）。
-切换到另一个主题、禁用插件和卸载插件都会收敛到宿主调色板，因为插件
-主题只是从目录中消失了。没有存储的值会泄漏，也没有任何退出路径能留下
-半应用的颜色——包括崩溃的渲染进程，它会留下完全没有应用任何主题的
-宿主默认值。
+Restoration is **derived, not remembered**. The renderer recomputes the colour
+from the persisted preference and the live theme catalog on every theme, plugin,
+and OS-appearance change and sends the result (or nothing). A switch to another
+theme, a plugin disable, and a plugin uninstall all converge on the host palette
+because the plugin theme is simply gone from the catalog. There is no stored
+value to leak, and no exit path that can leave a half-applied colour behind —
+including a crashed renderer, which leaves the host default with no theme
+applied at all.
 
-macOS 保留其 `vibrancy` 底板，从不接收颜色，与 darwin 不下载颜色的现有
-规则一致。
+macOS keeps its `vibrancy` plate and never receives a colour, matching the
+existing rule that darwin does not download one.
 
-权限：新增 `ui.window.appearance`，在安装时确认，并显示在 Settings 权限
-列表中。没有授权的声明会被审计并忽略。
+Permission: new `ui.window.appearance`, confirmed at install and shown in the
+Settings permission list. A declaration without the grant is audited and
+ignored.
 
-内置主题通过共享表（`packages/shared/src/theme.ts`）得到同一个值：
-`BUILTIN_THEMES` 一次性携带每个调色板的 `windowBackground`，
-`isThemeColorScheme` 一次性携带「这是调色板而不是 `system`/插件主题吗」
-的问题。渲染进程、main、插件面板宿主、面板 preload 和主题选择器都读取
-它，而不是重述 `#ffffff` / `#181818` 这一对或重新列举内置 id。因此两条
-路径只在颜色声明的位置上不同，而在如何应用或恢复上相同。`system` 保持
-本地解析，因为渲染进程询问 `matchMedia`、main 询问 `nativeTheme`。
+Built-in themes reach the same value through a shared table
+(`packages/shared/src/theme.ts`): `BUILTIN_THEMES` carries each palette's
+`windowBackground` once, and `isThemeColorScheme` carries the "is this a
+palette rather than `system`/a plugin theme" question once. The renderer, main,
+the plugin panel host, the panel preload, and the theme picker all read it
+instead of restating the `#ffffff` / `#181818` pair or re-listing the built-in
+ids. The two paths therefore differ only in where the colour is declared, not in
+how it is applied or restored. `system` stays resolved locally, because the
+renderer asks `matchMedia` and main asks `nativeTheme`.
 
-## 后果
+## Consequences
 
-- 主题可以随附照片级背景或 webfont，并可以拥有自己调色板背后的原生
-  底板，而不放松样式表自身的规则。
-- 渲染进程永远只看到宿主方案或 `data:` URI；相对路径仍无法到达样式表。
-- 没有 `ui.window.appearance` 的 `contributes.windowAppearance` 在 SDK
-  校验器和 host-core 中都是 manifest 错误，因此不匹配在安装时而非加载
-  时浮现。
-- 窗口在任何主题已知之前创建，因此冷启动的最开始一帧仍使用宿主调色板。
-  它在渲染进程运行主题效果时立即被替换，这正是今天基色调色板被应用的
-  同一时刻。
-- 资源处理器同步读取每个文件。在每个插件 4 MB 预算内这是有界的，并避免
-  在插件卸载期间持有打开的流——那才是更重要的失败模式。
-- 内置窗口调色板只有一个定义。它此前存在于四个文件中，因此一次调色板
-  变更可能落下其中一个，使内置路径和贡献路径分裂——这正是本 ADR 存在
-  要防止的分歧。
+- A theme can ship a photographic background or a webfont and can own the native
+  plate behind its own palette, without loosening the sheet's own rules.
+- The renderer only ever sees a host scheme or a `data:` URI; a relative path
+  still cannot reach the sheet.
+- `contributes.windowAppearance` without `ui.window.appearance` is a manifest
+  error in the SDK validator and in host-core, so the mismatch surfaces at
+  install rather than at load.
+- The window is created before any theme is known, so the very first frame of a
+  cold start still uses the host palette. It is replaced as soon as the renderer
+  runs its theme effect, which is the same moment the base palette is applied
+  today.
+- The asset handler reads each file synchronously. Within a 4 MB per-plugin
+  budget this is bounded and avoids holding a stream open across a plugin
+  unload, which is the failure mode that would matter more.
+- The built-in window palette has one definition. It previously lived in four
+  files, so a palette change could leave one of them behind and split the
+  built-in and contributed paths — the exact divergence this ADR exists to
+  prevent.
 
-## 替代方案
+## Alternatives
 
-- **提高 `data:` 大小上限。** 保持单一通道，但 4 MB 的样式表放在
-  `<style>` 元素中要付出 base64 膨胀、每次插件变更时解析，以及渲染进程
-  内存的代价，而且仍不能很好地表达大图片。
-- **允许相对 `url()` 并让渲染进程解析它。** 这会把路径解析交还给插件
-  编写的内容；这正是仅 `data:` 规则存在要防止的。
-- **通过 `file://` 提供资源。** 没有允许列表，没有 MIME 控制，而且每个
-  插件都能到达应用可读的整个文件系统。
-- **在 main 侧记忆并恢复原生背景。** 需要持久化一个派生值并在每条退出
-  路径上重新派生它；在每次变化时从活跃状态派生则没有需要恢复的状态。
+- **Raise the `data:` size cap.** Keeps one channel, but a 4 MB sheet in a
+  `<style>` element costs base64 inflation, a parse on every plugin change, and
+  memory in the renderer, and it still cannot express a large image well.
+- **Allow relative `url()` and let the renderer resolve it.** Hands path
+  resolution back to plugin-authored content; that is precisely what the
+  `data:`-only rule exists to prevent.
+- **Serve assets over `file://`.** No allowlist, no MIME control, and every
+  plugin would reach the whole filesystem the app can read.
+- **Remember and restore the native background on the main side.** Requires
+  persisting a derived value and re-deriving it on every exit path; deriving it
+  from live state on each change has no state to restore.

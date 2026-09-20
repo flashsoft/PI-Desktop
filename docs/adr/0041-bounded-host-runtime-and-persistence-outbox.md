@@ -1,45 +1,55 @@
-# ADR 0041: 为宿主运行时资源设界，并解耦消息持久化
+# ADR 0041: Bound host runtime resources and decouple message persistence
 
-- 状态： 已接受
-- 日期： 2026-08-01
+- Status: Accepted
+- Date: 2026-08-01
 
-## 背景
+## Context
 
-Rust 宿主此前为每个 RPC 生成一个无界的 Tokio 任务，并且可以启动无界数量的
-shell 进程。在本地突发流量期间，这会产生 `Resource temporarily unavailable`，
-随后是并发宿主重启以及向已销毁的 stdio 管道写入。由此产生的持久化错误掩盖
-了最初的资源故障。
+The Rust host previously spawned an unbounded Tokio task for every RPC and
+could start an unbounded number of shell processes. During a local burst this
+produced `Resource temporarily unavailable`, followed by concurrent host
+restarts and writes to a destroyed stdio pipe. The resulting persistence
+errors obscured the original resource failure.
 
-## 决策
+## Decision
 
-host-core 为 RPC 与工具执行持有一个有界的准入预算。各类工具有独立的全局上
-限，每个会话有上限，且队列是有限的。瞬时进程创建资源失败会得到有界退避；
-已启动的命令绝不自动重试。超时的子进程在其许可被释放之前先被回收。
+Host-core owns a bounded admission budget for RPC and tool execution. Tool
+classes have independent global limits, every session has a limit, and the
+queue is finite. Transient process-spawn resource failures receive bounded
+backoff; started commands are never automatically retried. Timed-out children
+are reaped before their permits are released.
 
-Electron 宿主监督是单飞（single-flight）且世代感知的。过期的宿主世代不能发
-出通知，也不能接受新的 RPC 写入。assistant 与 tool 消息的追加要经过一个由
-Electron 主进程持有的、文件支撑的 outbox，并在宿主握手成功后按顺序冲刷。握
-手会**等待**这次冲刷完成，然后才把宿主通告为就绪，因此冷启动的
-`session.get` 不可能与队列中的 assistant/tool 行竞争（D327）。宿主侧的消息追
-加按消息 id 幂等。已属于其他会话的冲突 id 会在 JSONL 写入前被重映射为
-`{sessionId}:{id}`（D444）。outbox 将
-`UNIQUE constraint failed: messages.id` 视为确认而非暂停。被永久拒绝的追加
-（该行的 `PERMISSION_DENIED:` 来源或权限）也以同样方式丢弃，这样一个毒头消
-息就不会填满 1024 条上限并丢弃后面所有行（D597）。
+Electron host supervision is single-flight and generation-aware. A stale host
+generation cannot issue notifications or accept new RPC writes. Assistant and
+tool message appends pass through an Electron-main-owned, file-backed outbox
+and are flushed sequentially after a successful host handshake. The handshake
+**awaits** that drain before the host is advertised ready, so a cold
+`session.get` cannot race a queued assistant/tool row (D327). Host-side
+message append is idempotent by message id. A colliding id that already belongs
+to another session is remapped to `{sessionId}:{id}` before the JSONL write
+(D444). The outbox treats `UNIQUE constraint failed: messages.id` as an ack,
+not a pause. A permanently rejected append (`PERMISSION_DENIED:` provenance
+or permission on that row) is dropped the same way so one poison head cannot
+fill the 1024-entry cap and discard every later row (D597).
 
-## 后果
+## Consequences
 
-- 突发流量被拒绝或被背压，而不是耗尽进程资源。
-- 一次宿主失败不会引发重启风暴或数百个过期管道错误。
-- SQLite 的所有权仍独占在 host-core。
-- 应用数据目录新增一个小型恢复 outbox 文件。
-- 缺失的 sessions 行会从存活的 JSONL 恢复（或以同一 id 创建占位行），以便
-  排队的 outbox 得以冲刷；`session.delete` 会丢弃该会话的 outbox 条目，因此
-  占位行无法复活已删除的会话（D318）。
-- 工具容量可通过 `app.health` 与结构化日志观测。
+- A burst is rejected or backpressured instead of exhausting process resources.
+- One failed host does not create a restart storm or hundreds of stale-pipe
+  errors.
+- SQLite ownership remains exclusively in host-core.
+- The application data directory gains one small recovery outbox file.
+- A missing sessions row is restored from the live JSONL (or created as a
+  stub under the same id) so a queued outbox can drain; `session.delete`
+  drops that session's outbox entries so a stub cannot resurrect a deleted
+  conversation (D318).
+- Tool capacity becomes observable through `app.health` and structured logs.
 
-## 已拒绝的备选方案
+## Alternatives rejected
 
-- 提高重启次数：掩盖资源泄漏并放大崩溃循环。
-- 只在 `Bash` 周围加信号量：RPC、插件、读取与持久化扇出仍然无界。
-- 纯内存持久化缓冲：如果 Electron 在宿主恢复前退出会丢失消息。
+- Raising the restart count: masks the resource leak and amplifies the crash
+  loop.
+- A semaphore only around `Bash`: leaves RPC, plugin, read, and persistence
+  fan-out unbounded.
+- In-memory-only persistence buffering: loses messages if Electron exits before
+  host recovery.

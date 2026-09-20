@@ -1,115 +1,136 @@
-# 03. 仓库结构
+# 03. Repo Structure
 
-## 1. 工作区布局
+## 1. Workspace layout
 
-一个仓库里有两个工作区：pnpm 管理全部 JavaScript 包（`apps/*`、`packages/*`、`docs`），Cargo 管理 Rust crate。根目录 `package.json` 的脚本同时驱动两者。
+Two workspaces share one repository: pnpm owns every JavaScript package
+(`apps/*`, `packages/*`, `docs`), Cargo owns the Rust crate. Root
+`package.json` scripts fan out to both.
 
 ```text
 PI-Desktop/
 ├── apps/
-│ └── desktop/                # Electron 产品外壳
+│ └── desktop/                # Electron product shell
 │   ├── electron/
-│   │ ├── main/               # 主进程，每个关注点一个模块
-│   │ ├── preload/            # 渲染器与插件面板的 preload
-│   │ └── shared/             # main 与 preload 共用的代码
-│   ├── src/                  # React 渲染器
-│   │ ├── components/         # UI；含 settings/、workpanel/、plugins/、extensions/
+│   │ ├── main/               # main process, one module per concern
+│   │ ├── preload/            # renderer and plugin-panel preloads
+│   │ └── shared/             # code both main and preload import
+│   ├── src/                  # React renderer
+│   │ ├── components/         # UI; settings/, workpanel/, plugins/, extensions/
 │   │ ├── hooks/              # React hooks
-│   │ ├── lib/                # 与框架无关的渲染器逻辑和 IPC 客户端
-│   │ ├── pages/              # 路由目的页
-│   │ ├── stores/             # zustand 应用 store
-│   │ ├── styles/             # 按界面拆分的 CSS；tokens.css 是设计系统
-│   │ └── assets/             # 字体与品牌素材
-│   ├── test/                 # node --test 套件（*.test.mjs）与 helpers/
-│   ├── resources/            # 打包 extraResources：skills/、plugins/、models.dev/
-│   ├── build/                # electron-builder 用的图标与 macOS entitlements
+│   │ ├── lib/                # framework-free renderer logic and the IPC client
+│   │ ├── pages/              # routed destinations
+│   │ ├── stores/             # zustand app store
+│   │ ├── styles/             # CSS split by surface; tokens.css is the design system
+│   │ └── assets/             # fonts and brand art
+│   ├── test/                 # node --test suites (*.test.mjs) and helpers/
+│   ├── resources/            # packaged extraResources: skills/, plugins/, models.dev/
+│   ├── build/                # icons and macOS entitlements for electron-builder
 │   ├── index.html
 │   ├── electron.vite.config.ts
-│   └── package.json          # 同时承载 electron-builder 配置
+│   └── package.json          # also holds the electron-builder config
 ├── crates/
-│ └── host-core/              # Rust 特权宿主（二进制 pi-desktop-host-core）
+│ └── host-core/              # Rust privileged host (binary pi-desktop-host-core)
 │   ├── Cargo.toml
-│   └── src/                  # rpc/、tools/，其余每个领域一个模块
+│   └── src/                  # rpc/, tools/, plus one module per domain
 ├── packages/
-│ ├── shared/                 # IPC/协议契约、错误码、更新日志
-│ ├── i18n/                   # en 与 zh-CN 目录及 locale 辅助函数
-│ ├── agent-runtime/          # pi sidecar 与运行时包装（打包进应用）
-│ ├── agent-host/             # 无头 Agent Host 模块：准入、队列、审批、事件日志
-│ ├── host-runtime/           # 与 Electron 无关的运行时：stdio 传输、监督器、回合生命周期
-│ ├── racp/                   # RACP-WS 服务端与客户端、设备令牌配对
-│ ├── plugin-sdk/             # 插件作者类型与校验器
-│ └── plugin-devkit/          # pi-plugin CLI：scaffold、check、pack、publish
+│ ├── shared/                 # IPC/protocol contracts, error codes, changelog
+│ ├── i18n/                   # shipped UI catalogs plus locale helpers
+│ ├── agent-runtime/          # pi sidecar and runtime wrapper (bundled into the app)
+│ ├── agent-host/             # headless Agent Host module: admission, queue, approvals, event log
+│ ├── host-runtime/           # Electron-independent runtime: stdio transports, supervisor, turn lifecycle
+│ ├── racp/                   # RACP-WS server and client, device-token pairing
+│ ├── plugin-sdk/             # plugin author types and validators
+│ └── plugin-devkit/          # pi-plugin CLI: scaffold, check, pack, publish
 ├── examples/
-│ ├── plugins/                # hello 与 roundtable 示例插件
-│ └── fixtures/sample-project # E2E 场景使用的工作区 fixture
-├── docs/                     # VitePress 站点与中文文档事实
-│ ├── spec/                   # 编号的规格领域（见 spec/README.md）
-│ ├── adr/                    # 架构决策记录
-│ ├── project/                # 看板、审计、实施计划
-│ ├── guide/                  # 面向用户的快速指南
-│ ├── image/                  # 仓库 README 内嵌的图片
-│ ├── public/                 # 文档站提供的静态资源
-│ ├── scripts/                # 仅文档使用的检查（check-docs.mjs）
-│ └── .vitepress/             # 站点配置与主题
-├── scripts/                  # 仓库自动化（见 scripts/README.md）
-├── .github/                  # CI 与发布工作流、issue 模板
-├── AGENTS.md                 # AI 编码代理的强制规则
-├── package.json              # 根脚本、pnpm 工作区
+│ ├── plugins/                # hello and roundtable sample plugins
+│ └── fixtures/sample-project # workspace fixture for E2E scenarios
+├── docs/                     # VitePress site and the English source of truth
+│ ├── spec/                   # numbered specification domains (see spec/README.md)
+│ ├── adr/                    # architecture decision records
+│ ├── project/                # board, audits, implementation plans
+│ ├── guide/                  # user-facing quick guide
+│ ├── zh-CN/                  # path-for-path Chinese mirror of spec/ and guide/
+│ ├── image/                  # images embedded by the repository READMEs
+│ ├── public/                 # static assets served by the docs site
+│ ├── scripts/                # docs-only checks (check-locales.mjs)
+│ └── .vitepress/             # site config and theme
+├── scripts/                  # repository automation (see scripts/README.md)
+├── .github/                  # CI and release workflows, issue templates
+├── AGENTS.md                 # mandatory rules for AI coding agents
+├── package.json              # root scripts, pnpm workspace
 ├── pnpm-workspace.yaml
-├── Cargo.toml                # Rust 工作区
-└── README.md                  # 中文主文档
+├── Cargo.toml                # Rust workspace
+└── README.md · README.zh-CN.md
 ```
 
-## 2. 包职责
+## Split-domain facades
+
+Large entry points remain compatibility facades while their implementation is
+owned by domain modules. Electron main wires `ipc/`, `runtime/`, `bootstrap/`,
+and `services/`; renderer page entry points delegate to `features/app`,
+`features/plugins`, and `features/settings`; and host-core facades delegate to
+the `plugins/`, `db/`, `providers/`, and `plans/` submodules. The shared
+`types.ts` entry point re-exports the domain files under `shared/src/types/`.
+
+The facade paths preserve existing imports and public contracts. New logic
+belongs in the domain module that owns its state or process boundary.
+
+Source budgets are reported and enforced by
+[`scripts/check-architecture.mjs`](../../architecture/README.md). Its
+allowlist records only existing extraction debt with a reason.
+
+## 2. Package responsibilities
 
 ### `apps/desktop`
-产品入口：
-- Electron 生命周期、窗口、托盘、应用菜单
-- 渲染器与主进程之间的 IPC 面
-- host-core 与 sidecar 进程监管
-- 插件运行时、面板与视图
-- 打包配置
+Product entry:
+- Electron lifecycle, windows, tray, application menu
+- IPC surface between renderer and main
+- host-core and sidecar process supervision
+- plugin runtime, panels, and views
+- packaging configuration
 
 ### `crates/host-core`
-Rust 宿主服务：
-- 工具执行
-- 权限网关
-- 插件宿主服务
-- 持久化（SQLite、转录、工件、密钥）
-- 审计日志
+Rust host services:
+- tools execution
+- permission gateway
+- plugin host services
+- persistence (SQLite, transcripts, artifacts, secrets)
+- audit logging
 
 ### `packages/agent-runtime`
-Node 对 pi 的包装：
-- 模型引导
-- 代理回合控制
-- 事件标准化
-- 宿主工具桥客户端
+Node wrapper over pi:
+- model bootstrap
+- agent turn control
+- event normalization
+- host tool bridge client
 
 ### `packages/shared`
-跨边界契约：
-- IPC 通道名称
-- DTO 类型
-- 错误码
-- 协议版本
-- 应用内展示的更新日志条目
+Cross-boundary contracts:
+- IPC channel names
+- DTO types, split by domain under `src/types/` and re-exported from `types.ts`
+- error codes
+- protocol versioning
+- changelog entries surfaced in the app
 
 ### `packages/i18n`
-- 英文源目录与 zh-CN 目录
-- locale 解析辅助函数
-- 消息 ID 约定
+- English source catalog and shipped translated catalogs
+- locale registry and resolution helpers
+- message ID conventions
 
 ### `packages/plugin-sdk`
-- 清单类型
-- 宿主 API 类型
-- 校验器
+- manifest types
+- host API types
+- validators
 
 ### `packages/plugin-devkit`
-- 插件作者与市场发布流程使用的 `pi-plugin` CLI
-- 模板脚手架、清单检查、打包、发布
+- `pi-plugin` CLI used by plugin authors and the marketplace publish flow
+- template scaffolding, manifest check, package, publish
 
-## 3. 运行时数据（不在 git 中）
+## 3. Runtime data (not in git)
 
-`PI_DESKTOP_DATA_DIR` 可覆盖默认位置。
+`PI_DESKTOP_DATA_DIR` overrides the default location: `~/.pi-desktop` for a
+packaged installation, `~/.pi-desktop-dev` for a development build, which is
+how `pnpm dev` runs beside the packaged app (D599).
 
 ```text
 ~/.pi-desktop/
@@ -135,14 +156,14 @@ Node 对 pi 的包装：
  └── close-behavior.json     # persisted close-to-tray choice (main)
 ```
 
-## 4. 命名约定
+## 4. Naming conventions
 
-| 对象 | 约定 |
+| Object | Convention |
 |---|---|
-| JS 包 | `@pi-desktop/*` |
-| Rust crate | `pi-desktop-host-core`（或 `host-core`） |
-| IPC 通道 | `pi-desktop/<domain>/<action>` |
-| i18n 键 | `domain.section.key` |
-| 插件 ID | 反向域名风格 |
-| 主进程模块 | `electron/main/` 下每个关注点一个文件；`index.ts` 负责接线 |
-| 渲染器测试 | `apps/desktop/test/<subject>.test.mjs`，不放在源码旁 |
+| JS packages | `@pi-desktop/*` |
+| Rust crate | `pi-desktop-host-core` (or `host-core`) |
+| IPC channels | `pi-desktop/<domain>/<action>` |
+| i18n keys | `domain.section.key` |
+| Plugin IDs | reverse-domain style |
+| Main-process modules | one file per concern under `electron/main/`; `index.ts` wires them |
+| Renderer tests | `apps/desktop/test/<subject>.test.mjs`, never beside the source |

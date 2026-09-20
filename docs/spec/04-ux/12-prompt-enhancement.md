@@ -1,126 +1,167 @@
-# 输入框提示词增强
+# Composer Prompt Enhancement
 
-## 1. 范围
+## 1. Scope
 
-提示词增强能力为非空草稿提供一次性的 `Enhance prompt` 请求。输入框把它渲染成
-一个独立的 Sparkles 操作，位于「模型 × 推理」组合选择器与单一的 Stop/Send 提交
-位之间。调用时，该请求仅用输入框当前显示的模型重写草稿文本，文件引用块保持不变。
+The prompt-enhancement capability supports a one-shot `Enhance prompt` request
+for a non-empty draft. The Composer renders it as a standalone Sparkles action
+between the combined model × reasoning selector and the single Stop/Send
+submit slot. When invoked, the request rewrites only the draft text with the
+model currently displayed in the Composer. Inline file-reference chips,
+including pasted image chips, remain unchanged and do not disable the action.
 
-这是 v1 的工具型操作，而不是一次 agent 回合：它不追加消息、不读取会话历史、
-不运行工具，也不持久化任何转录行。
+This is a v1 utility action, not an agent turn: it does not append a message,
+read session history, run tools, or persist a transcript row.
 
-## 2. 可用性与交互
+## 2. Availability and interaction
 
-Sparkles 操作仅在下列条件全部成立时启用：
+The Sparkles action is enabled only when all of the following are true:
 
-- 草稿经 trim 后非空；
-- 生效的显示提供商/模型已启用且已认证，判定使用与 Send 相同的就绪谓词；以及
-- trim 后的草稿不以 `/` 开头。
+- the draft is non-empty after trimming;
+- the effective displayed provider/model is enabled and authenticated, using
+  the same readiness predicate as Send; and
+- the trimmed draft does not start with `/`.
 
-请求进行期间，该操作被禁用，并显示共享的 `.tool-spinner` 与本地化的
-`Enhancing…` 标签。发送仍然允许。输入框从当前显示的模型选择器发送
-`providerId`、`modelId` 与 `thinkingLevel`；主进程校验这些值，并在快照缺失或
-过期时依次回退到会话、草稿、全局与提供商默认值。
+While the request is running, the action is disabled and shows the shared
+`.tool-spinner` plus the localized `Enhancing…` label. Sending remains allowed.
+The Composer sends `providerId`, `modelId`, and `thinkingLevel` from the
+currently displayed model selector; main validates those values and falls
+back through session, draft, global, and provider defaults when a snapshot is
+missing or stale.
 
-成功时，trim 后的结果替换文本，光标移到末尾，并出现单个 `Undo enhancement`
-操作用于还原增强前的原始文本。任何用户编辑、发送或输入框会话切换都会清除该撤销
-操作。不存在多级历史、快捷键或取消操作。
+On success, the trimmed result replaces the text, the caret moves to the end,
+and a single `Undo enhancement` action restores the exact pre-enhancement text.
+Any user edit, send, or Composer session switch clears the undo action.
+There is no multi-level history, keyboard shortcut, or cancel action.
 
-## 3. 请求与提供商边界
+## 3. Request and provider boundary
 
-渲染层通过列入允许清单的 `pi-desktop/prompt/enhance` invoke 通道发起请求。
-Electron 主进程使用与 agent 回合相同的运行时启动解析器解析生效的提供商/模型，
-仅在主进程读取 API 凭据，并调用 agent-runtime 的一次性补全辅助函数。厂商 OAuth
-提供商通过既有的、由主进程持有的解析器获得短时效的 `ModelAuth`；任何密钥或
-刷新令牌都不会进入渲染层。
+Renderer requests use the allowlisted `pi-desktop/prompt/enhance` invoke
+channel. Electron main resolves the effective provider/model through the same
+runtime launch resolver used for agent turns, reads API credentials only in
+main, and invokes agent-runtime's one-shot completion helper. Vendor OAuth
+providers receive a short-lived `ModelAuth` through the existing main-owned
+resolver; no key or refresh token crosses into the renderer.
 
-补全上下文由一段内置系统提示词与一条用户消息组成。用户消息来自用户模板，
-默认模板位于 `packages/shared/src/prompt-enhancement.ts`，可在设置中覆盖（见 §5）。
-用户模板带有 `{{draft}}` 占位符；该占位符的每一次出现都会被替换为草稿文本，
-默认模板把草稿放在 `<draft>` 标签内，使草稿文本被当作待改进的内容、而不是
-指令。系统提示词不可由用户编辑，它规定了角色、改写原则、明确的禁止清单（包括
-代码、命令、文件路径、标识符等专有名词必须原样保留）、禁止输出语言元注释的
-语言跟随规则、长度刹车（不要扩到草稿约两倍以上；长草稿可以保持长，不要为了短而压短）
-与输出契约。
+The completion context is a built-in system prompt plus one user message built
+from a user template. The template defaults to
+`packages/shared/src/prompt-enhancement.ts` and can be overridden in Settings
+(see §5). It carries a `{{draft}}` placeholder; every occurrence is replaced
+with the draft text, and the default template keeps the draft inside `<draft>`
+tags so draft text reads as content to improve rather than as instructions. The
+system prompt is not user-editable and states the role, the rewrite principles,
+an explicit do-not list (including leaving code, commands, file paths,
+identifiers, and other proper nouns exactly as written), language-following
+rules that forbid language meta notes, a length brake (do not expand beyond
+roughly twice the draft's length; a long draft may stay long), and the output
+contract.
 
-不包含任何先前对话、工具、附件或会话状态。渲染层在请求前移除内联文件引用的
-占位符 token，并在收到文本结果后按原顺序与相对位置恢复这些文件引用块；不信任
-模型会保留渲染层的私有标记。所选思考等级会传给 pi-ai，提供商初始化的重试沿用
-既有的有界重试控制器。当解析出的提供商为 OpenCode Go（或其他 `opencode.ai`
-主机）时，一次性请求会把输入框会话 id 作为 `x-opencode-session` 转发；没有会话
-的请求会获得一个按调用生成的 id。模型输出按纯文本消费，去掉一对包裹引号、去掉
-开头的 `Enhanced:` 一类改写标签后 trim。输出为空或仅含空白字符时，记为
-`PROMPT_ENHANCEMENT_EMPTY` 失败。
+No prior conversation, tools, attachments, or session state are included. The
+renderer removes its inline file-reference chip tokens before the request and
+restores those chips in their original order and relative position after the
+text response; the model is not trusted to preserve opaque renderer sentinels.
+The selected thinking level is passed to pi-ai, and provider setup retries use
+the existing bounded retry controller. When the resolved provider is OpenCode Go
+(or another `opencode.ai` host), the one-shot forwards the Composer session id
+as `x-opencode-session`; a request with no session gets a per-call id. Model
+output is consumed as plain text, has one matching pair of wrapping quotation
+marks removed, has a leading rewrite label such as `Enhanced:` stripped, and is
+trimmed. Empty or whitespace-only output is a `PROMPT_ENHANCEMENT_EMPTY`
+failure.
 
-处理器为单次请求设置 60 秒上限。超时后会 abort 进行中的请求（尽力而为：传输层只在
-提供商重试之间查看 abort 信号），并与 promise 竞速以保证调用方被释放。该操作以
-`TIMEOUT` 失败。它不会静默改用会话模型重试：模型是用户指定的，隐藏的第二次尝试会
-让等待时间翻倍。
+The handler bounds one request with a 60-second ceiling. On expiry it aborts
+the in-flight request (best-effort: the transport consults the signal between
+provider retries) and races the promise so the caller is released. The action
+fails with `TIMEOUT`. It does not silently retry on the session model: the user
+chose the pinned model, and a hidden second attempt would double the wait.
 
-## 4. 失败与竞态处理
+## 4. Failure and race handling
 
-失败时保留当前草稿，并渲染一条可关闭的输入框错误条，其中包含归类后的错误消息
-与错误码。既有的提供商错误码如 `PROVIDER_UNAUTHORIZED`、`NETWORK_ERROR` 与
-`TIMEOUT` 会被复用。
+Failures preserve the current draft and render a dismissible Composer error
+bar containing the classified error message and code. Existing provider codes
+such as `PROVIDER_UNAUTHORIZED`, `NETWORK_ERROR`, and `TIMEOUT` are reused.
 
-渲染层在发起请求时捕获草稿键与一个编辑代号。若响应到达前草稿发生变化、被发送
-或清空，或用户切换了会话，则响应被丢弃，不能覆盖更新后的草稿。文件引用块不参与
-重写，也不会因成功或失败而被移除。
+The renderer captures the draft key and an edit generation when starting a
+request. If the draft changes, is sent/cleared, or the user switches sessions
+before the response arrives, the response is discarded and cannot overwrite
+the newer draft. File chips are not included in the rewrite and are not
+removed by success or failure.
 
-## 5. 可自定义用户模板、模型与思考强度
 
-设置 → AI 中有一张「提示词增强」卡片。一行内是一个开关——「使用自定义提示词」——
-以及子智能体行所用的设置图标按钮，点击后打开编辑弹窗。弹窗内是用户模板，点击
-「保存」才写入，因此关闭弹窗即放弃本次编辑；`取消` 与 `Esc` 均可关闭，点击弹窗遮罩
-只在没有正在保存时关闭。
+## 5. Configurable user template, model, and reasoning
 
-| 字段 | 关闭或为空时的效果 |
+Settings -> AI hosts a Prompt enhancement card. One row carries a switch —
+`Use a custom template` — and the settings icon button the subagent rows use for
+editing, which opens an editor sheet. The sheet holds the user template and
+saves on `Save`, so closing it abandons the edit; `Cancel` and `Escape` close it,
+and a click on the sheet backdrop closes it only when no save is in flight.
+
+| Field | Effect when off or empty |
 |---|---|
-| `promptEnhancementCustomTemplate` | 使用内置用户模板 |
-| `promptEnhancementUserTemplate` | 内置用户模板 |
+| `promptEnhancementCustomTemplate` | the built-in user template applies |
+| `promptEnhancementUserTemplate` | the built-in user template |
 
-开关决定是否生效，而不是文本本身；只有在存在可用的自定义模板时它才可用。没有已存
-模板时该开关显示为禁用并给出提示，说明保存模板后即可启用，否则它只是在两个相同状态
-之间切换。保存模板后开关会自动打开，因为用户刚刚写好了模板。
+The switch is the gate, not the text, and it is enabled only once a usable
+custom template exists. With no saved template it renders disabled with a hint
+that saving one unlocks it, because it would otherwise choose between two
+identical states. Saving a template turns the switch on, since the user just
+wrote one.
 
-关闭开关会保留 `promptEnhancementUserTemplate`，因此再次打开时会恢复用户的文本而
-不是丢弃它。开关关闭但存有模板，或开关打开但模板不可用，两种情况都会解析为内置模板。
+Turning the switch off keeps `promptEnhancementUserTemplate`, so turning it back
+on restores the user's text instead of discarding it. A stored template with the
+switch off, or an enabled switch whose template cannot be found, both resolve to
+the built-in template.
 
-系统提示词不可编辑，也不提供任何输入项。它属于功能契约的一部分（专有名词原样
-保留、语言跟随且不输出语言元注释、长度刹车、输出契约），要修改它就是修改源码并
-同步更新本规格。若早期版本曾写入系统提示词覆盖值，host-core 会将其丢弃，使存储中
-不会留下无人读取的值。
+The system prompt is not editable and exposes no field. It is part of the
+feature contract (proper-noun preservation, language following without meta
+notes, the length brake, the output contract), so changing it is a source change
+that updates this spec. host-core drops a stored system-prompt override written
+by an earlier build, so the store cannot hold a value nothing reads.
 
-未保存覆盖值时，模板字段显示内置默认文本，因此编辑器打开时显示的就是实际生效的
-值。把字段编辑回与默认完全相同的文本会清空覆盖，而不是保存一份固化副本，这样后续
-对默认值的改进仍能到达从未自定义过的用户。刻意不持久化默认文本。
+The template field shows the built-in default text when no override is stored,
+so the editor opens on the value in force. Editing the field back to the exact
+default text clears the override rather than storing a frozen copy, so later
+improvements to the default still reach users who never customized it. Never
+persisting the default text is deliberate.
 
-该字段提供插入操作，在光标处写入草稿变量；若保存会让模板缺少该变量，则会就地拒绝
-并给出提示。host-core 对任何写入方都执行同样的规则：非空的
-`promptEnhancementUserTemplate` 必须包含 `{{draft}}`；该值必须是不超过
-`PROMPT_ENHANCEMENT_TEMPLATE_MAX_LENGTH` 的字符串；空值按不存在存储，而不是空字符串。
+The field offers an insert action that writes the draft variable at the caret,
+and a save that would leave the template without it is refused locally with a
+message. host-core enforces the same rules for any writer: a non-blank
+`promptEnhancementUserTemplate` must contain `{{draft}}`, the value must be a
+string within `PROMPT_ENHANCEMENT_TEMPLATE_MAX_LENGTH`, and a blank value is
+stored as absent rather than as an empty string.
 
-### 增强模型与思考强度
+### Enhancement model and reasoning
 
-改写使用哪个模型、用多大思考强度，位于设置 → AI 的「提示词增强」卡内，作为自定义模板
-开关下方的两行。模型行标题为「默认模型」，使用与设置 → 模型「默认项」卡片相同行的锚定可搜索菜单。
+Which model runs the rewrite, and with how much reasoning, live on the same
+Settings -> AI Prompt enhancement card as the template, as two rows below the
+custom-template switch. The model row is titled `Default model` and uses the
+same anchored, searchable menu as Settings -> Models' default-model row.
 
-| 字段 | 为空时的效果 |
+| Field | Effect when empty |
 |---|---|
-| `promptEnhancementProviderId` + `promptEnhancementModelId` | 跟随输入框当前模型 |
+| `promptEnhancementProviderId` + `promptEnhancementModelId` | follow the Composer's current model |
 | `promptEnhancementThinkingLevel` | `off` |
 
-因此两处只呈现一种模型选择交互。
-当设置了 `promptEnhancementProviderId` 时，该行仍显示该指定项（提供商已消失或已禁用时附不可用提示）。
-主进程优先使用该指定项；若无法解析，则记录警告并回退到输入框当前模型：过期的指定项只是无法满足的偏好，绝不会成为使该操作不可用
-的失败。
+Both destinations therefore offer one kind of model picker. Both rows read
+`Default model`; the card heading (Prompt enhancement vs Models Defaults) is
+what separates the conversation's default from the enhancement's. When
+`promptEnhancementProviderId` is set, the row still shows that pin even if the
+provider is gone or disabled, with an unavailable hint. Main prefers the pin
+and logs a warning plus falls back to the Composer's current model if it cannot
+be resolved: a stale pin is a preference that cannot be honoured, never a
+failure that disables the action.
 
-思考强度行列出的，是所选模型**实际支持**的等级，采用的解析方式与 Composer 对一次回合
-的做法一致：先取模型绑定的 `thinkingLevels`，再取实时模型目录，最后回退到提供商默认值。
-因此不支持思考的模型只会提供「关闭思考」并禁用该行，而不是列出一套它无法运行的能力。
-未指定模型时，请求跟随会话模型，而此处无法得知其能力，因此会列出全部规范等级。
+The reasoning row lists the levels the selected model actually supports, using
+the same resolution the Composer applies to a turn: the model binding's
+`thinkingLevels`, then the live catalog, then the provider default. A model
+without reasoning therefore offers only `Off (no reasoning)` and disables the
+row, rather than presenting a ladder it cannot run. With no model pinned the
+request follows the conversation's model, whose ladder is not knowable here, so
+every canonical level is offered.
 
-该行默认「关闭思考」，且不提供「跟随会话」选项：增强永远不会继承会话的思考强度，因为
-改写通常不需要思考，而思考正是慢的那条路。切换模型会把已存等级**重新钳制**到新模型的
-能力上，且写入的就是钳制后的值，因此存储中的等级始终是模型能运行的等级。让显示值经过
-同一个解析器，可保证该行与存储始终一致。
+The row defaults to `Off`, with no follow-the-session option: the enhancement
+never inherits the conversation's effort, because a rewrite rarely benefits from
+reasoning and reasoning is the slow path. Changing the model re-clamps the stored
+level onto the new model's ladder, and the value written is the clamped one, so a
+stored level is always one the model can run. Round-tripping the displayed value
+through the same resolver keeps the row and the store in step.

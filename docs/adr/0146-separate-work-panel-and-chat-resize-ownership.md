@@ -1,45 +1,51 @@
-# ADR 0146: 按边界分配工作面板外层与内层调整大小的归属
+# ADR 0146: Assign outer and inner work-panel resize ownership by boundary
 
 - Status: Superseded by ADR 0151
 - Date: 2026-09-02
 - Related: ADR 0122, ADR 0132
 
-## 背景
+## Context
 
-可见的工作面板是一个流内右列，由原生宽度保留支撑。它的渲染进程
-分隔条和原生窗口的右边缘都是调整大小的交互形式，但把两种手势指派
-给同一个维度，就无法在不改变会话宽度的情况下调整面板，也无法在不
-改变面板偏好的情况下调整会话。
+The visible work panel is an in-flow right column backed by a native width
+reservation. Its renderer divider and the native window's right edge are both
+resize affordances, but assigning both gestures to the same dimension makes it
+impossible to adjust the panel without changing the conversation width, or to
+adjust the conversation without changing the panel preference.
 
-## 决策
+## Decision
 
-当工作面板打开时：
+When the work panel is open:
 
-- 外层原生右边缘（包括 Electron 报告它们的右角）持有面板目标。
-  Main 保持基础会话宽度固定，向渲染进程预览有界的 `244..720px`
-  面板目标，并在原生调整事件流安定后提交目标。原生最小宽度被临时
-  降低，以允许面板目标达到其最小值。
-- 内层渲染进程分隔条持有基础会话宽度。指针和键盘修改使用有界的
-  `window/setWorkPanelChatWidth({width})` 目标状态通道
-  （`1040..10000px`），并保留当前活动的面板保留。请求被串行化，
-  使快速指针流无法重排原生边界更新；当工作区过窄时，会话目标会在
-  压缩面板之前停止。取消会重新发送按下时的目标。
-- 左侧和非右侧的原生边缘保留其既有的基础窗口行为。显示器转换、
-  最大化/全屏延迟、持久化基础边界和工作区保留钳制继续遵循
-  ADR 0122 和 ADR 0132。
+- The outer native right edge, including right corners where Electron reports
+  them, owns the panel target. Main keeps the base conversation width fixed,
+  previews the bounded `244..720px` panel target to the renderer, and commits
+  the target after the native resize stream settles. The native minimum is
+  temporarily lowered to allow the panel target to reach its minimum.
+- The inner renderer divider owns the base conversation width. Pointer and
+  keyboard changes use the bounded `window/setWorkPanelChatWidth({width})`
+  target-state channel (`1040..10000px`) and preserve the currently active
+  panel reservation. Requests are serialized so a fast pointer stream cannot
+  reorder native bounds updates; when the work area is too tight, the
+  conversation target stops before it would narrow the panel. Cancellation
+  sends the press-time target again.
+- Left and non-right native edges retain their existing base-window behavior.
+  Display transitions, maximized/fullscreen deferral, persisted base bounds,
+  and work-area reservation clamping continue to follow ADR 0122 and ADR 0132.
 
-该事件是 Electron 本地的，不改变宿主协议版本。
+The event is Electron-local and does not change the host protocol version.
 
-## 后果
+## Consequences
 
-两种调整手势有了无歧义的维度持有者。在任一手势期间，渲染进程必须
-临时阻止合成的 Browser 和插件视图，且面板分隔条的无障碍值描述的
-是会话目标而不是面板目标。Linux 使用主进程右边缘光标位置作为回退，
-因为 Electron 的 `will-resize` 边缘细节在该平台不可用。
+The two resize gestures have an unambiguous dimension owner. The renderer must
+temporarily block composited Browser and plugin views during either gesture,
+and the panel separator's accessible value describes the conversation target,
+not the panel target. Linux uses the main-process right-edge cursor position as
+the fallback because Electron's `will-resize` edge detail is not available on
+that platform.
 
-## 被否决的替代方案
+## Alternatives rejected
 
-- 保留旧的渲染进程分隔条作为面板调整器，让原生边缘调整聊天：这不
-  满足所要求的边界归属。
-- 暴露不受限的 BrowserWindow 调整大小 IPC：这会在两种手势都不需要
-  的情况下削弱目标状态和校验边界。
+- Keep the old renderer divider as the panel resizer and let native edges resize
+  the chat: this does not satisfy the requested boundary ownership.
+- Expose an unrestricted BrowserWindow resize IPC: this would weaken the
+  target-state and validation boundary without being needed for either gesture.

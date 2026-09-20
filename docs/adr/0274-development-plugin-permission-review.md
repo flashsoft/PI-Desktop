@@ -1,4 +1,4 @@
-# ADR 0274：开发插件在加载之前经过审查
+# ADR 0274: A development plugin is reviewed before it is loaded
 
 - Status: Accepted for implementation
 - Date: 2026-09-17
@@ -8,60 +8,69 @@
   [07-plugins/12](../spec/07-plugins/12-plugin-ipc-and-host-services.md) ·
   [07-plugins/13](../spec/07-plugins/13-plugin-permissions-matrix.md)
 
-## 背景
+## Context
 
-插件的权限由用户在加载时批准，该批准就是上限：热重载绝不放宽它
-（`plugin-runtime.ts`，`reloadDevPlugin`）。这条规则周围有两个洞。
+A plugin's permissions are approved by the user at load time, and the approval is
+the ceiling: hot reload never widens it (`plugin-runtime.ts`, `reloadDevPlugin`).
+Two holes sat around that rule.
 
-第一，加载开发插件文件夹从来不是一次审查。文件夹选择器用 manifest 声
-明的权限调用 `plugins.loadDev` 和 `PluginRuntime.loadFromPath`，因此声
-明*就是*授权。守卫 marketplace 安装路径的权限审查模态
-（`PluginDialogs.tsx`）对开发插件不可达——而那正是插件作者实际工作
-的地方。
+First, loading a development plugin folder was never a review. The folder picker
+called `plugins.loadDev` and `PluginRuntime.loadFromPath` with the permissions the
+manifest declared, so the declaration *was* the grant. The permission-review modal
+that guards the marketplace install path (`PluginDialogs.tsx`) was unreachable for
+development plugins, which is where plugin authors actually work.
 
-第二，手动 **Reload** 把注册表行的权限列表当作批准，并通过
-`loadFromPath` 的 `granted ∩ declared` 过滤器传递它。因此新增了权限的
-manifest 编辑会在该权限被丢弃的情况下*静默*重载，然后 `watchDevPlugin`
-把交集记录为新上限。插件带着部分损坏回来，原因不可见，之后每次保存
-都撞上 `PERMISSION_DENIED: manifest now requests ui.microphone; load the
-plugin again to review`——这条建议指向的是一个什么也不审查的选择器。
+Second, the manual **Reload** used the registry row's permission list as the
+approval and passed it through `loadFromPath`'s `granted ∩ declared` filter.
+A manifest edit that added a permission therefore reloaded *silently* with that
+permission dropped, and `watchDevPlugin` then recorded the intersection as the new
+ceiling. The plugin came back partly broken, the reason was invisible, and every
+following save hit `PERMISSION_DENIED: manifest now requests ui.microphone; load
+the plugin again to review` — advice that pointed at a picker which reviewed
+nothing.
 
-## 决策
+## Decision
 
-1. 选择开发插件文件夹是请求，不是同意。`plugin/loadDev` 返回
-   `{ canceled: false, review }`，其中 `review` 是经过校验的声明
-   （`PluginPermissionReview`）：id、名称、版本、每个声明的权限，以及
-   超出当前批准的部分。此时不注册任何东西，也不加载任何东西。
-2. `plugin/loadDevConfirm` 提交答案。它注册文件夹（`plugins.loadDev`，
-   从 manifest 重写注册表行），仅以接受的权限加载它，并武装以上限为
-   同一接受集合的 watcher。
-3. `plugin/reload` 把 manifest 与**记录的批准**
-   （`PluginRuntime.devApproval`）比较，绝不与注册表行比较。权限名称
-   和文件 scope 都被比较：新 glob 就是要求更多，与新权限完全一样。什
-   么都没新增时立即重载——普通的编辑/保存/重载循环绝不能变成对话
-   框。
-4. 有新增时，`plugin/reload` 返回审查而不是加载。插件在当前批准下继
-   续运行，直到用户通过 `plugin/reloadConfirm` 回答——它在接受的集
-   合下重载，并使该集合成为新上限。
-5. 脚手架流程（`plugin/createFromTemplate`）写入文件，然后返回相同的
-   审查。注册脚手架插件与任何选择的文件夹一样走经过审查的加载。
-6. 确认中的路径和身份来自宿主：渲染进程发送 id（或它刚选择的路径）
-   和接受的权限列表，绝不为已注册的插件发送自己选择的路径。
-7. 热重载拒绝的 `PERMISSION_DENIED` 文本现在指明一个存在的动作：
-   *从 Plugins 页面重载它以审查*。
-8. 两个审查通过一个 `PermissionGroups` 组件渲染，因此安装审查和开发
-   审查在什么是危险的这一点上不会漂移。
+1. Choosing a development plugin folder is a request, not consent.
+   `plugin/loadDev` returns `{ canceled: false, review }` where `review` is the
+   validated declaration (`PluginPermissionReview`): id, name, version, every
+   declared permission, and what is beyond the current approval. Nothing is
+   registered and nothing is loaded at this point.
+2. `plugin/loadDevConfirm` commits the answer. It registers the folder
+   (`plugins.loadDev`, which rewrites the registry row from the manifest), loads
+   it with the accepted permissions only, and arms the watcher whose ceiling is
+   that same accepted set.
+3. `plugin/reload` compares the manifest against the **recorded approval**
+   (`PluginRuntime.devApproval`), never against the registry row. Permission
+   names and file scope are both compared: a new glob is asking for more, exactly
+   like a new permission. When nothing was added it reloads immediately — the
+   ordinary edit/save/reload loop must not become a dialog.
+4. When something was added, `plugin/reload` returns a review instead of
+   loading. The plugin keeps running under its current approval until the user
+   answers through `plugin/reloadConfirm`, which reloads under the accepted set
+   and makes that set the new ceiling.
+5. The scaffold flow (`plugin/createFromTemplate`) writes files and then returns
+   the same review. Registering a scaffolded plugin goes through the reviewed
+   load like any picked folder.
+6. Paths and identities in a confirmation come from the host: the renderer sends
+   an id (or the path it just picked) and the accepted permission list, never a
+   path of its own choosing for an already-registered plugin.
+7. The `PERMISSION_DENIED` text of the hot-reload refusal now names an action
+   that exists: *reload it from the Plugins page to review*.
+8. Both reviews render through one `PermissionGroups` component, so the install
+   review and the development review cannot drift apart about what is risky.
 
-## 后果
+## Consequences
 
-- 插件作者在选择文件夹的时刻，以及之后每次编辑要求更多时，看到与
-  marketplace 安装相同的权限审查。运行时执行的是答案，而不是
-  manifest。
-- 静默放宽的 manifest 编辑不再能产生半工作的插件：它要么带着用户的
-  答案被应用，要么根本不被应用。
-- 对不可读的 manifest 不授予任何东西：声明在成为审查之前被校验，读
-  取失败拒绝整个流程。
-- 注册表行在每次经过审查的加载时重写，因此它总是陈述当前声明而不是
-  首次加载时的那个；*批准*是 watcher 上限，这才是对重载重要的记录。
-- 即使在开发中，放宽仍需要用户决定，因此热重载守卫存在的安全性质在
-  修复后存活。
+- A plugin author sees the same permission review a marketplace install shows,
+  at the moment they choose a folder, and again whenever an edit asks for more.
+  The answer, not the manifest, is what the runtime enforces.
+- A manifest edit that widens silently can no longer produce a half-working
+  plugin: it is either applied with the user's answer or not applied at all.
+- Nothing is granted against an unreadable manifest: the declaration is
+  validated before it becomes a review, and a failed read refuses the flow.
+- The registry row is rewritten on every reviewed load, so it always states the
+  current declaration rather than the one from first load; the *approval* is the
+  watcher ceiling, which is the record that matters for reload.
+- Widening still requires a user decision even in development, so the security
+  property the hot-reload guard exists for survives the fix.

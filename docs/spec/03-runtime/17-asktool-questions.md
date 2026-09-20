@@ -1,52 +1,52 @@
-# 17. asktool 互动问题
+# 17. asktool Interactive Questions
 
-## 1. 目的
+## 1. Purpose
 
-`asktool` 让模型暂停回合并询问用户一个或多个有界的
-问题。它在 Agent、Plan 和 Goal 模式下可用，并且独立于
-权限审批：不授权操作，无有效性
-截止日期。
+`asktool` lets the model pause a turn and ask the user one or more bounded
+questions. It is available in Agent, Plan, and Goal mode and is separate from
+permission approval: it does not authorize an operation and has no validity
+deadline.
 
-## 2. 请求形状
+## 2. Request shape
 
-该工具接受非空 `questions` 数组。每个问题包含：
+The tool accepts a non-empty `questions` array. Each question contains:
 
-- `question`：提示文字；
-- `options`：一个或多个可选答案标签；
-- `multiSelect`：可选；如果为 true，则允许多个可选答案。
+- `question`: the prompt text;
+- `options`: one or more selectable answer labels;
+- `multiSelect`: optional; when true, more than one selectable answer is allowed.
 
-桌面卡总是添加一个额外的 `Enter another answer` 选项以及文本
-场。该模型不需要向工具添加特殊的自由文本选择
-论据。
+The desktop card always adds one extra `Enter another answer` option with a text
+field. The model does not need to add a special free-text choice to the tool
+arguments.
 
-## 3. 卡片交互
+## 3. Card interaction
 
-一次仅显示一个问题。为每个呈现一个小指示器
-问题并使用三种状态：未回答、已回答和已跳过。选择一个
-指标重新审视了这个问题。 `Next` 当存在答案时记录答案；
-否则记录一个跳过。 `Skip` 显式记录跳过并前进。
-`Decline all` 解决了跳过的每个问题。
+Only one question is shown at a time. A small indicator is rendered for every
+question and uses three states: unanswered, answered, and skipped. Selecting an
+indicator revisits that question. `Next` records an answer when one exists;
+otherwise it records a skip. `Skip` explicitly records a skip and advances.
+`Decline all` resolves every question as skipped.
 
-没有计时器、倒计时或自动过期。该卡仍处于待处理状态
-直到用户提交或回合停止。如果回合停止时
-卡已打开，运行时会解决跳过的所有剩余问题。
+There is no timer, countdown, or automatic expiration. The card remains pending
+until the user submits or the turn is stopped. If the turn is stopped while a
+card is open, the runtime resolves every remaining question as skipped.
 
-## 4. 工具输出
+## 4. Tool output
 
-响应是返回到模型并持续存在的正常工具结果
-工具行。对于每个问题，内容序列化为：
+The response is the normal tool result returned to the model and persisted with
+the tool row. For each question, the content is serialized as:
 
 ```text
 question text：answer 1、answer 2
 ```
 
-多个问题由 `\n---\n` 分隔。跳过或未答复
-Question 保留问题文本并使用空占位符：
+Multiple questions are separated by `\n---\n`. A skipped or unanswered
+question keeps the question text and uses an empty placeholder:
 
 ```text
 question text：
 ```
 
-这种格式是确定性的，保留问题顺序，并进行多项选择
-无需将仅渲染器状态对象暴露给
-模型。
+This format is deterministic, preserves question order, and makes multi-select
+answers distinguishable without exposing a renderer-only state object to the
+model.

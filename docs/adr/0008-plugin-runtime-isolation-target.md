@@ -1,61 +1,63 @@
-# ADR 0008: 插件运行时的目标是在独立进程中隔离
+# ADR 0008: Plugin runtime targets isolation in a separate process
 
-- 状态: 已接受（2026-07-29 已实现）
-- 日期: 2026-07-25
+- Status: Accepted (Implemented 2026-07-29)
+- Date: 2026-07-25
 
-## 背景
+## Context
 
-插件代码是不可信的；我们必须防止它拖垮或侵入宿主。
+Plugin code is untrusted; we must prevent it from dragging down or intruding into the host.
 
-## 决策
+## Decision
 
-目标架构：插件主体运行在**独立进程**（UtilityProcess/Child Process）中，通过 RPC 访问 Host API。
+Target architecture: the plugin main runs in a **separate process** (UtilityProcess/Child Process) and accesses the Host API via RPC.
 
-如果 MVP 进度受限，可以暂时采用更轻量的隔离方式，但不得破坏：
+If MVP progress is constrained, a lighter isolation may be adopted temporarily, but it must not break:
 
-- 权限网关
-- API 白名单
-- 贡献点的统一注册
-- 崩溃不致命
+- The permission gateway
+- The API allowlist
+- Unified registration of contribution points
+- Crash non-fatality
 
-临时方案及其迁移计划必须在实现 ADR 中注明。
+The temporary solution and its migration plan must be noted in the implementation ADR.
 
-## 理由
+## Rationale
 
-1. 崩溃隔离
-2. 权限代理更清晰
-3. 后续可以加入资源限制
+1. Crash isolation
+2. Clearer permission proxying
+3. Resource limits can be added later
 
-## 后果
+## Consequences
 
-### 正面
-- 更好的安全性和稳定性
+### Positive
+- Better security and stability
 
-### 负面
-- 实现和调试成本更高
+### Negative
+- Higher implementation and debugging cost
 
-## 实现（2026-07-29）
+## Implementation (2026-07-29)
 
-目标架构已发布；不再保留任何过渡期主进程内运行时。
+The target architecture shipped; no transitional in-main runtime remains.
 
-- `apps/desktop/electron/main/plugin-host-process.mjs` 是每个插件的入口，
-  通过 `utilityProcess.fork` 派生（每个插件一个进程，打包到
-  `out/main/plugin-host-process.js`）。它接收最小化环境，因此
-  宿主的 shell 环境变量和 provider 密钥永远不会到达插件代码。
-- `apps/desktop/electron/main/plugin-runtime.ts` 变为代理层：它维护
-  命令/工具的注册表，每个 `pi.*` 调用都以 RPC 形式到达，依次经过
-  `HOST_API_ALLOWLIST`、`assertPermission`、宿主服务，最后写入
-  审计日志。插件代码不持有任何宿主对象，也不能 `require` 宿主模块。
-- 贡献点仅以描述符形式注册；可调用的一半留在插件进程中，通过 RPC
-  回调调用并带超时（命令 30s，工具 110s，生命周期钩子 5s，加载 15s）。
-- 垂死的插件进程会被收容：挂起的调用以 `PLUGIN_CRASHED` 拒绝，
-  贡献被注销，面板关闭，渲染进程收到 toast 和 `pluginChanged`。
-- `onUnload` 现在（在子进程中）于进程被杀掉之前运行。
+- `apps/desktop/electron/main/plugin-host-process.mjs` is the per-plugin entry,
+  forked with `utilityProcess.fork` (one process per plugin, bundled to
+  `out/main/plugin-host-process.js`). It receives a minimal environment, so the
+  host's shell env and provider keys never reach plugin code.
+- `apps/desktop/electron/main/plugin-runtime.ts` became the broker: it keeps the
+  registry of commands/tools, and every `pi.*` call arrives as RPC, passes
+  `HOST_API_ALLOWLIST`, then `assertPermission`, then the host service, then the
+  audit log. Plugin code holds no host object and no `require` of host modules.
+- Contribution points register by descriptor only; the callable half stays in the
+  plugin process and is invoked back over RPC with a timeout (command 30s, tool
+  110s, lifecycle hook 5s, load 15s).
+- A dying plugin process is contained: pending calls reject with
+  `PLUGIN_CRASHED`, contributions are deregistered, the panel closes, and the
+  renderer gets a toast plus `pluginChanged`.
+- `onUnload` now runs (in the child) before the process is killed.
 
-已知限制，明确不在本次改动范围内：
+Known limits, deliberately out of this change:
 
-- 插件进程是 Node 环境；权限管控覆盖 `pi.*` 接口面，
-  不覆盖插件进程内原始的 `require("node:fs")`。能力沙箱
-  （D009）仍是未来工作。
-- 资源限制（CPU/内存）尚未强制执行。
-- manifest 中声明的权限仍在加载时自动授予。
+- The plugin process is a Node environment; permission gating covers the `pi.*`
+  surface, not raw `require("node:fs")` inside the plugin process. Capability
+  sandboxing (D009) remains future work.
+- Resource limits (CPU/memory) are not enforced yet.
+- Declared manifest permissions are still auto-granted at load time.
