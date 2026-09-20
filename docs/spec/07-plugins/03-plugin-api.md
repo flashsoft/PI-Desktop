@@ -790,7 +790,7 @@ or a host without a dialog service all fail with `PERMISSION_DENIED` before
 the controller is reached. Calls are logged with the plugin id, operation,
 risk, and result status; argument values are not copied into the audit entry.
 
-Review capabilities (ADR 0299) reach first-party plugins through the same
+Review capabilities (ADR local-002) reach first-party plugins through the same
 catalog: `review/reviewTurns` (read) returns a session's change records
 grouped by the shared turn semantics (`@pi-desktop/shared`'s
 `groupReviewChangesByTurn`, the same source as the core Review tab);

@@ -1,4 +1,4 @@
-# ADR 0299: Review capabilities as a bundled plugin with shared turn semantics
+# ADR local-002: Review capabilities as a bundled plugin with shared turn semantics
 
 - Status: Accepted
 - Date: 2026-09-20

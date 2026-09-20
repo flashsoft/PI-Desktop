@@ -207,7 +207,7 @@ type ToolBudgetHealth = {
 - `review.rollback({sessionId, snapshotId})` — verify the current post-tool
   hash, restore the session-owned previous bytes, and return one of
   `rolledBack`, `alreadyRolledBack`, `conflict`, or `unavailable`.
-- Control plane (ADR 0299) reuses these three primitives in a turn-agnostic
+- Control plane (ADR local-002) reuses these three primitives in a turn-agnostic
   batch form: `review/reviewTurns` (read; Electron main groups by the shared
   turn semantics), `review/checkBatch` (read; forwards `review.checkTurn`),
   `review/rollbackBatch` (dangerous + confirm; forwards `review.rollbackTurn`).

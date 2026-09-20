@@ -1,5 +1,5 @@
 /**
- * Review — bundled first-party plugin (ADR 0299).
+ * Review — bundled first-party plugin (ADR local-002).
  *
  * The view is chrome only. Every host interaction goes through the reviewed
  * control-plane operations via `pi.desktop.invoke`, gated by the

@@ -152,7 +152,7 @@ test("Browser declares plan-safe actions for Plan-mode URL inspection (ADR 0211)
   }
 });
 
-test("Review ships as an ordinary plugin over the reviewed control plane (ADR 0299)", () => {
+test("Review ships as an ordinary plugin over the reviewed control plane (ADR local-002)", () => {
   const reviewManifest = JSON.parse(read("resources/plugins/pi.review/manifest.json"));
   const reviewMain = read("resources/plugins/pi.review/main.js");
   const reviewView = read("resources/plugins/pi.review/views/review.html");

@@ -23,6 +23,7 @@ Each ADR includes:
 | subagent-model-fallback | [Ordered subagent model fallback](subagent-model-fallback.md) | Accepted for implementation |
 | subagent-model-opt-in | [Separate Subagent Model Opt-In from Definition Pins](subagent-model-opt-in.md) | Accepted for implementation |
 | local-001 | [Root packaging script renamed to `package`](local-001-pack-script-rename.md) | Accepted (fork-only) |
+| local-002 | [Review capabilities as a bundled plugin with shared turn semantics](local-002-review-capabilities-as-bundled-plugin.md) | Accepted (fork-only; ADR 0043 / ADR 0203 / ADR 0170 / ADR 0241) |
 | 0001 | Use Electron as the desktop shell | Accepted |
 | 0002 | Use the pi Agent Harness as the kernel | Accepted |
 | 0003 | Hybrid runtime — Rust host core + Node pi agent sidecar | Superseded in part |
@@ -327,6 +328,5 @@ Each ADR includes:
 | 0296 | [Signed macOS DMG is a two-icon install](0296-macos-signed-dmg-two-icon-install.md) | Accepted (D457; amends ADR 0232 / ADR 0204) |
 | 0297 | [Provider-hosted web search as an adapter capability](0297-provider-hosted-web-search-adapter-capability.md) | Accepted |
 | 0298 | [The app ships no fonts](0298-remove-bundled-fonts.md) | Accepted (D598; amends ADR 0083 / D232) |
-| 0299 | [Review capabilities as a bundled plugin with shared turn semantics](0299-review-capabilities-as-bundled-plugin.md) | Accepted (ADR 0043 / ADR 0203 / ADR 0170 / ADR 0241) |
 | turn-process-and-thinking-display | [Turn process and thinking presentation](turn-process-and-thinking-display.md) | Accepted |
 | provider-display-order | [Provider display order](provider-display-order.md) | Accepted |

@@ -3,15 +3,15 @@
   "id": "pi.review",
   "name": "Review",
   "version": "1.0.0",
-  "description": "Turn-grouped workspace change review with guarded rollback and rewind, over the reviewed control-plane operations (ADR 0299).",
+  "description": "Turn-grouped workspace change review with guarded rollback and rewind, over the reviewed control-plane operations (ADR local-002).",
   "i18n": {
     "en": {
       "name": "Review",
-      "description": "Turn-grouped workspace change review with guarded rollback and rewind, over the reviewed control-plane operations (ADR 0299)."
+      "description": "Turn-grouped workspace change review with guarded rollback and rewind, over the reviewed control-plane operations (ADR local-002)."
     },
     "zh-CN": {
       "name": "审阅",
-      "description": "按轮次分组的工作区变更审阅，带预检保护的回滚与倒回，经由受审的控制面操作实现（ADR 0299）。"
+      "description": "按轮次分组的工作区变更审阅，带预检保护的回滚与倒回，经由受审的控制面操作实现（ADR local-002）。"
     }
   },
   "author": "PI-Desktop",
